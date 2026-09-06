@@ -36,6 +36,7 @@ const DEPLOYED_CONTRACT_NAMES = {
   AntseedSellerRegistry: 'sellerRegistry',
   AntseedPositionInit: 'positionInit',
   AntseedWashTradingRegistry: 'washTradingRegistry',
+  AntseedWashTradingPointsPolicy: 'washTradingPointsPolicy',
   AntseedUsageAccounting: 'usageAccounting',
   AntseedPointsPolicyRegistry: 'pointsPolicyRegistry',
   AntseedSellerPoolsRewards: 'sellerPoolsRewards',
@@ -46,6 +47,7 @@ const DEPLOYED_CONTRACT_NAMES = {
 
 const REQUIRED_DEPLOYED_CONTRACTS = [
   'usageAccounting', 'sellerRegistry', 'emissionsGate', 'pointsPolicyRegistry', 'positionInit', 'washTradingRegistry',
+  'washTradingPointsPolicy',
 ];
 const CONTRACT_ALIASES = { emissions: 'usageAccounting', staking: 'sellerRegistry' };
 
@@ -205,7 +207,7 @@ export function recordErrors(record) {
   expect('verificationMinterController', (value) => address.test(value ?? ''), 'an address');
   expect('verificationMinterShareBps', (value) => value === 10_000, '10000');
   expect('verificationMinterEditable', (value) => value === true, 'true');
-  expect('pointsPolicyCount', (value) => value === 0, '0');
+  expect('pointsPolicyCount', (value) => value === 1, '1');
   expect('emissionsGateOwner', (value) => address.test(value ?? ''), 'an address');
   expect('pointsPolicyRegistryOwner', (value) => address.test(value ?? ''), 'an address');
   expect(
@@ -214,6 +216,11 @@ export function recordErrors(record) {
     'the recorded washTradingRegistry address',
   );
   if (!address.test(record.contracts?.positionInit?.address ?? '')) errors.push('contracts.positionInit is required');
+  expect(
+    'washTradingPointsPolicy',
+    (value) => address.test(value ?? '') && sameAddress(value, record.contracts?.washTradingPointsPolicy?.address),
+    'the recorded washTradingPointsPolicy address',
+  );
   return errors;
 }
 
@@ -224,12 +231,17 @@ function verificationConfiguration(context, contracts) {
     'minters(bytes32)(address,uint32,bool)',
     [VERIFICATION_MINTER_ID],
   );
+  const pointsPolicyCount = numberValue(call(context.rpcUrl, contracts.pointsPolicyRegistry.address, 'policyCount()(uint256)'));
+  const washTradingPointsPolicy = pointsPolicyCount === 1
+    ? call(context.rpcUrl, contracts.pointsPolicyRegistry.address, 'policyAt(uint256)(address)', ['0'])
+    : '0x0000000000000000000000000000000000000000';
   return {
-    washTradingRegistry: call(context.rpcUrl, contracts.positionInit.address, 'washTradingRegistry()(address)'),
+    washTradingRegistry: call(context.rpcUrl, contracts.washTradingPointsPolicy.address, 'washTradingRegistry()(address)'),
+    washTradingPointsPolicy,
     verificationMinterController: minter[0],
     verificationMinterShareBps: Number(minter[1] ?? 0),
     verificationMinterEditable: booleanValue(minter[2]),
-    pointsPolicyCount: numberValue(call(context.rpcUrl, contracts.pointsPolicyRegistry.address, 'policyCount()(uint256)')),
+    pointsPolicyCount,
     emissionsGateOwner: call(context.rpcUrl, contracts.emissionsGate.address, 'owner()(address)'),
     pointsPolicyRegistryOwner: call(context.rpcUrl, contracts.pointsPolicyRegistry.address, 'owner()(address)'),
   };
@@ -253,7 +265,7 @@ function checkpointMatchesChain(context, checkpoint, liveChainId) {
 
   const actual = verificationConfiguration(context, checkpoint.contracts);
   return recordErrors({ contracts: checkpoint.contracts, verificationConfiguration: actual }).length === 0
-    && ['washTradingRegistry', 'verificationMinterController', 'emissionsGateOwner', 'pointsPolicyRegistryOwner']
+    && ['washTradingRegistry', 'washTradingPointsPolicy', 'verificationMinterController', 'emissionsGateOwner', 'pointsPolicyRegistryOwner']
       .every((key) => sameAddress(actual[key], expected[key]));
 }
 
@@ -458,7 +470,8 @@ async function cutover(context, mode, environment, observation, wallet) {
       receiptDirectory: context.receiptDirectory, simulation: mode === 'dry-run', canAdoptPause,
       pauseOwner: environment.CHANNELS_OWNER, pauseWallet: wallet.signers.channelsOwner.castArgs,
       walletArgs: wallet.forgeArgs, etherscanApiKey: environment.BASESCAN_API_KEY, forkTest: context.forkTest,
-      pollSeconds: environment.POLL_SECS ? Number(environment.POLL_SECS) : undefined, environment,
+      pollSeconds: environment.POLL_SECS ? Number(environment.POLL_SECS) : undefined,
+      environment: { ...environment, WASH_TRADING_POINTS_POLICY: checkpoint.contracts.washTradingPointsPolicy.address },
     });
   } finally {
     if (mode === 'broadcast') await captureCutoverBroadcast(context, checkpoint);

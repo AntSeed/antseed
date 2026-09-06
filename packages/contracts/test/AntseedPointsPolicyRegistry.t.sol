@@ -2,52 +2,58 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
-
 import { IAntseedPointsModifier } from "../interfaces/IAntseedPointsModifier.sol";
 import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
 
 contract MockPointsModifier is IAntseedPointsModifier {
-    bytes32 internal immutable _category;
-    uint16 internal immutable _sellerMultiplierBps;
-    uint16 internal immutable _buyerMultiplierBps;
+    uint256 internal immutable _sellerMultiplierBps;
+    uint256 internal immutable _buyerMultiplierBps;
     bool internal immutable _reverts;
 
-    constructor(bytes32 category_, uint16 sellerMultiplierBps_, uint16 buyerMultiplierBps_, bool reverts_) {
-        _category = category_;
-        _sellerMultiplierBps = sellerMultiplierBps_;
-        _buyerMultiplierBps = buyerMultiplierBps_;
+    constructor(uint256 sellerMultiplierBps, uint256 buyerMultiplierBps, bool reverts_) {
+        _sellerMultiplierBps = sellerMultiplierBps;
+        _buyerMultiplierBps = buyerMultiplierBps;
         _reverts = reverts_;
     }
 
-    function modifierCategory() external view returns (bytes32) {
-        return _category;
-    }
-
-    function pointsMultiplierBps(bytes32, address, address, uint256)
+    function points(bytes32, address, address, uint256 sellerPoints, uint256 buyerPoints)
         external
         view
-        returns (uint16 sellerMultiplierBps, uint16 buyerMultiplierBps)
+        returns (uint256, uint256)
     {
         if (_reverts) revert("policy failure");
-        return (_sellerMultiplierBps, _buyerMultiplierBps);
+        return (sellerPoints * _sellerMultiplierBps / 10_000, buyerPoints * _buyerMultiplierBps / 10_000);
+    }
+}
+
+contract AddingPointsModifier is IAntseedPointsModifier {
+    function points(bytes32, address, address, uint256 sellerPoints, uint256 buyerPoints)
+        external
+        pure
+        returns (uint256, uint256)
+    {
+        return (sellerPoints + 100, buyerPoints + 200);
+    }
+}
+
+contract ContextCheckingPointsModifier is IAntseedPointsModifier {
+    function points(bytes32 channelId, address buyer, address seller, uint256 sellerPoints, uint256 buyerPoints)
+        external
+        pure
+        returns (uint256, uint256)
+    {
+        require(channelId == bytes32(uint256(7)) && buyer == address(0xB0B) && seller == address(0xA11CE));
+        require(sellerPoints == 500 && buyerPoints == 2_000);
+        return (sellerPoints, buyerPoints);
     }
 }
 
 contract InvalidPointsModifier { }
 
-contract MalformedPointsModifier {
-    function modifierCategory() external pure returns (bytes32) {
-        return keccak256("malformed");
-    }
-}
-
 contract PointsPolicyRegistryTest is Test {
     bytes32 internal constant CHANNEL_ID = bytes32(uint256(7));
     address internal constant BUYER = address(0xB0B);
     address internal constant SELLER = address(0xA11CE);
-    bytes32 internal constant CATEGORY_A = keccak256("category-a");
-    bytes32 internal constant CATEGORY_B = keccak256("category-b");
-
     AntseedPointsPolicyRegistry internal registry;
 
     function setUp() public {
@@ -55,84 +61,102 @@ contract PointsPolicyRegistryTest is Test {
     }
 
     function test_emptyRegistryPassesRawPointsThrough() public view {
-        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
-        assertEq(sellerPoints, 1_000);
-        assertEq(buyerPoints, 1_000);
+        _assertPoints(1_000, 1_000);
     }
 
-    function test_sameCategoryUsesStrongestModifierPerSide() public {
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 9_000, 12_000, false)));
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 7_000, 10_500, false)));
-
-        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
-        assertEq(sellerPoints, 700);
-        assertEq(buyerPoints, 1_200);
+    function test_policiesReceivePreviousOutputAndOriginalContext() public {
+        registry.registerPolicy(address(new MockPointsModifier(5_000, 20_000, false)));
+        registry.registerPolicy(address(new ContextCheckingPointsModifier()));
+        _assertPoints(500, 2_000);
     }
 
-    function test_sameCategoryTieUsesLowerMultiplier() public {
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 12_000, 10_000, false)));
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 8_000, 10_000, false)));
-
-        (uint256 sellerPoints,) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
-        assertEq(sellerPoints, 800);
+    function test_adjustmentsCompoundWithoutCategoryMergingOrCaps() public {
+        registry.registerPolicy(address(new MockPointsModifier(30_000, 100, false)));
+        registry.registerPolicy(address(new MockPointsModifier(40_000, 5_000, false)));
+        _assertPoints(12_000, 5);
     }
 
-    function test_differentCategoriesCombineReductionsAndBoosts() public {
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 9_000, 12_000, false)));
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_B, 13_000, 9_500, false)));
+    function test_policiesRunInRegistrationOrder() public {
+        MockPointsModifier scaling = new MockPointsModifier(20_000, 20_000, false);
+        AddingPointsModifier adding = new AddingPointsModifier();
+        registry.registerPolicy(address(scaling));
+        registry.registerPolicy(address(adding));
+        _assertPoints(2_100, 2_200);
 
-        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
-        assertEq(sellerPoints, 1_200);
-        assertEq(buyerPoints, 1_150);
+        registry.removePolicy(address(scaling));
+        registry.registerPolicy(address(scaling));
+        _assertPoints(2_200, 2_400);
     }
 
-    function test_combinedModifiersRespectFloorAndCeiling() public {
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 2_000, 18_000, false)));
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_B, 6_000, 15_000, false)));
-
-        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
-        assertEq(sellerPoints, 100);
-        assertEq(buyerPoints, 2_000);
-    }
-
-    function test_hardVetoReducesOnlyAffectedSideToZero() public {
-        registry.registerPolicy(address(new MockPointsModifier(CATEGORY_A, 0, 12_500, false)));
-
-        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
+    function test_zeroRawPointsSkipsAllPolicies() public {
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, true)));
+        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 0);
         assertEq(sellerPoints, 0);
-        assertEq(buyerPoints, 1_250);
+        assertEq(buyerPoints, 0);
     }
 
-    function test_registrationRemovalAndOrdering() public {
-        MockPointsModifier first = new MockPointsModifier(CATEGORY_A, 9_900, 9_900, false);
-        MockPointsModifier second = new MockPointsModifier(CATEGORY_B, 10_200, 10_200, false);
+    function test_zeroResultReturnsBeforeRevertingPolicy() public {
+        registry.registerPolicy(address(new MockPointsModifier(0, 0, false)));
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, true)));
+        _assertPoints(0, 0);
+    }
+
+    function test_zeroResultCannotBeRevivedByLaterPolicy() public {
+        registry.registerPolicy(address(new MockPointsModifier(0, 0, false)));
+        registry.registerPolicy(address(new AddingPointsModifier()));
+        _assertPoints(0, 0);
+    }
+
+    function test_zeroedSellerStaysZeroWhileBuyerContinues() public {
+        registry.registerPolicy(address(new MockPointsModifier(0, 10_000, false)));
+        registry.registerPolicy(address(new AddingPointsModifier()));
+        _assertPoints(0, 1_200);
+    }
+
+    function test_zeroedBuyerStaysZeroWhileSellerContinues() public {
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 0, false)));
+        registry.registerPolicy(address(new AddingPointsModifier()));
+        _assertPoints(1_100, 0);
+    }
+
+    function test_separateSideVetoesStopRemainingPolicies() public {
+        registry.registerPolicy(address(new MockPointsModifier(0, 10_000, false)));
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 0, false)));
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, true)));
+        _assertPoints(0, 0);
+    }
+
+    function test_registrationRemovalPreservesOrderAndIndexes() public {
+        MockPointsModifier first = new MockPointsModifier(10_000, 10_000, false);
+        MockPointsModifier second = new MockPointsModifier(20_000, 20_000, false);
+        MockPointsModifier third = new MockPointsModifier(30_000, 30_000, false);
         registry.registerPolicy(address(first));
         registry.registerPolicy(address(second));
+        registry.registerPolicy(address(third));
+        assertEq(registry.policyAt(1), address(second));
 
+        registry.removePolicy(address(second));
         assertEq(registry.policyCount(), 2);
-        assertTrue(registry.isPolicyRegistered(address(first)));
-        (address policy, bytes32 category) = registry.policyAt(1);
-        assertEq(policy, address(second));
-        assertEq(category, CATEGORY_B);
-
+        assertEq(registry.policyAt(0), address(first));
+        assertEq(registry.policyAt(1), address(third));
+        assertFalse(registry.isPolicyRegistered(address(second)));
+        registry.removePolicy(address(third));
         registry.removePolicy(address(first));
-        assertEq(registry.policyCount(), 1);
-        assertFalse(registry.isPolicyRegistered(address(first)));
-        (policy, category) = registry.policyAt(0);
-        assertEq(policy, address(second));
-        assertEq(category, CATEGORY_B);
+        assertEq(registry.policyCount(), 0);
+        registry.registerPolicy(address(second));
+        assertEq(registry.policyAt(0), address(second));
+        assertTrue(registry.isPolicyRegistered(address(second)));
     }
 
-    function test_registrationRejectsInvalidAndDuplicatePolicies() public {
+    function test_registrationRejectsInvalidAndDuplicateAddresses() public {
         vm.expectRevert(AntseedPointsPolicyRegistry.InvalidPolicy.selector);
         registry.registerPolicy(address(0));
         vm.expectRevert(AntseedPointsPolicyRegistry.InvalidPolicy.selector);
         registry.registerPolicy(address(0xBEEF));
-        InvalidPointsModifier invalidPolicy = new InvalidPointsModifier();
         vm.expectRevert(AntseedPointsPolicyRegistry.InvalidPolicy.selector);
-        registry.registerPolicy(address(invalidPolicy));
+        registry.registerPolicy(address(registry));
 
-        MockPointsModifier policy = new MockPointsModifier(CATEGORY_A, 10_000, 10_000, false);
+        MockPointsModifier policy = new MockPointsModifier(10_000, 10_000, false);
         registry.registerPolicy(address(policy));
         vm.expectRevert(
             abi.encodeWithSelector(AntseedPointsPolicyRegistry.PolicyAlreadyRegistered.selector, address(policy))
@@ -140,43 +164,56 @@ contract PointsPolicyRegistryTest is Test {
         registry.registerPolicy(address(policy));
     }
 
+    function test_removingUnknownPolicyReverts() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(AntseedPointsPolicyRegistry.PolicyNotRegistered.selector, address(0xBEEF))
+        );
+        registry.removePolicy(address(0xBEEF));
+    }
+
     function test_registrationEnforcesPolicyLimit() public {
         for (uint256 index = 0; index < registry.MAX_POLICIES(); ++index) {
-            registry.registerPolicy(address(new MockPointsModifier(bytes32(index + 1), 10_000, 10_000, false)));
+            registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, false)));
         }
-        MockPointsModifier overflowPolicy = new MockPointsModifier(bytes32(uint256(9)), 10_000, 10_000, false);
+        MockPointsModifier overflowPolicy = new MockPointsModifier(10_000, 10_000, false);
         vm.expectRevert(AntseedPointsPolicyRegistry.TooManyPolicies.selector);
         registry.registerPolicy(address(overflowPolicy));
     }
 
-    function test_policyFailureBubbles() public {
-        MockPointsModifier revertingPolicy = new MockPointsModifier(CATEGORY_A, 10_000, 10_000, true);
-        registry.registerPolicy(address(revertingPolicy));
+    function test_onlyOwnerCanRegisterOrRemovePolicies() public {
+        MockPointsModifier policy = new MockPointsModifier(10_000, 10_000, false);
+        vm.prank(BUYER);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", BUYER));
+        registry.registerPolicy(address(policy));
+        registry.registerPolicy(address(policy));
+        vm.prank(BUYER);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", BUYER));
+        registry.removePolicy(address(policy));
+    }
 
+    function test_policyFailureBubbles() public {
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, true)));
         vm.expectRevert("policy failure");
         registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
     }
 
-    function test_malformedPolicyRevertsEvaluation() public {
-        registry.registerPolicy(address(new MalformedPointsModifier()));
-
+    function test_missingPointsEntryPointRevertsEvaluation() public {
+        registry.registerPolicy(address(new InvalidPointsModifier()));
         vm.expectRevert();
         registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
     }
 
-    function test_multiplierAboveMaximumRevertsEvaluation() public {
-        MockPointsModifier policy = new MockPointsModifier(CATEGORY_A, 20_001, 10_000, false);
-        registry.registerPolicy(address(policy));
+    function testFuzz_zeroResultSkipsLaterPolicy(uint128 rawPoints) public {
+        registry.registerPolicy(address(new MockPointsModifier(0, 0, false)));
+        registry.registerPolicy(address(new MockPointsModifier(10_000, 10_000, true)));
+        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, rawPoints);
+        assertEq(sellerPoints, 0);
+        assertEq(buyerPoints, 0);
+    }
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AntseedPointsPolicyRegistry.InvalidPointsMultiplier.selector,
-                address(policy),
-                uint256(0),
-                uint256(20_001),
-                uint256(10_000)
-            )
-        );
-        registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
+    function _assertPoints(uint256 expectedSeller, uint256 expectedBuyer) internal view {
+        (uint256 sellerPoints, uint256 buyerPoints) = registry.points(CHANNEL_ID, BUYER, SELLER, 1_000);
+        assertEq(sellerPoints, expectedSeller);
+        assertEq(buyerPoints, expectedBuyer);
     }
 }

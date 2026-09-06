@@ -59,7 +59,10 @@ the network keeps running on the legacy stack until the in-flight epoch
 finalizes.
 
 This phase also deploys `AntseedWashTradingRegistry` and pins its address into
-the new `AntseedPositionInit`. Do not deploy a separate registry for M001.
+`AntseedWashTradingPointsPolicy`, registered in the usage-points policy registry.
+Proven wash-trading sellers generate zero seller and buyer usage points, but
+can still initialize starter positions and settle USDC payments. Do not deploy
+a separate registry for M001.
 Set `SP1_VERIFIER` to a concrete SP1 verifier (not the gateway),
 `SP1_VERIFIER_HASH` to its release hash, `WASH_TRADING_SELLER_PROGRAM_VKEY` to
 the seller proof program vkey, and `HISTORICAL_PERIOD_START_BLOCK` /
@@ -70,11 +73,15 @@ M001 uses the existing deployer signer, not `DEPLOYER_PRIVATE_KEY`.
 
 The deployment record includes the registry's address, constructor arguments,
 and bytecode provenance. Deployment and resumed cutover checks require
-`PositionInit.washTradingRegistry()` to match that record. Activation history
+`AntseedWashTradingPointsPolicy.washTradingRegistry()` to match that record and
+the policy to be the sole registered modifier. The CLI supplies
+`WASH_TRADING_POINTS_POLICY` from the deployment record to the cutover script.
+Activation history
 retains these contract entries with their original provenance, marked as
 inherited rather than newly deployed during cutover. Submit historical
-proofs to this new registry before funding the faucet or allowing starter
-claims: it is empty immediately after deployment, and prior submissions to
+proofs to this new registry before cutover: only usage recorded after a seller
+is flagged is filtered, with no retroactive deletion of points. The registry
+is empty immediately after deployment, and prior submissions to
 another registry are not copied. The fork rehearsal deploys the real registry
 with a test-only verifier stub by default, not a replacement status registry.
 
@@ -138,8 +145,7 @@ Writes `history/001-recognized-usage-activated.json` and updates
 ## Post-flip checklist (manual)
 
 - Seed the proxy's agent pool before the flip boundary to activate its power
-  in the first rewarded epoch. Once the faucet is funded and historical proofs
-  are finalized, an authorized proxy operator can call
+  in the first rewarded epoch. Once the faucet is funded, an authorized proxy operator can call
   `AntseedPositionInit.initPosition(proxyAddress)`. The operator owns the lANTS
   position, staker rewards, and withdrawal rights; the proxy's agent pool gets
   the stake. Operator revocation does not remove those position rights. Usage
