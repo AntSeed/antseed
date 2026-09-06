@@ -8,6 +8,7 @@ import { ISP1Verifier, ISP1VerifierWithHash } from "../interfaces/ISP1Verifier.s
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     uint32 public constant SCHEMA_VERSION = 1;
     uint64 public constant BASE_CHAIN_ID = 8_453;
+    uint256 public constant WASH_TRADING_THRESHOLD_BPS = 2_500;
 
     struct SellerJournal {
         uint32 schemaVersion;
@@ -316,7 +317,9 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     }
 
     function isProvenWashTrader(address seller) external view returns (bool) {
-        return sellerRecords[seller].provenWashVolume != 0;
+        SellerRecord storage record = sellerRecords[seller];
+        return record.totalSellerVolume != 0
+            && uint256(record.provenWashVolume) * 10_000 >= uint256(record.totalSellerVolume) * WASH_TRADING_THRESHOLD_BPS;
     }
 
     function _finalChunkSize(StagedProof storage staged) internal view returns (uint32) {

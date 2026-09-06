@@ -72,6 +72,14 @@ starts at protocol genesis, so no opening counter is subtracted. The registry ex
 Later proofs must strictly increase the seller's proven wash volume and preserve
 the recorded total. Zero totals and mismatched replacement totals are rejected.
 
+`isProvenWashTrader(seller)` is true only when finalized proven wash volume is
+at least 25% of the authenticated total (`WASH_TRADING_THRESHOLD_BPS = 2500`).
+Proofs below that threshold are still recorded and can be replaced by stronger
+proofs. This status controls the starter-position faucet; the threshold does not
+change the proof journal, guest vkey, or proof bytes, and is separate from the
+guest's return-coverage rule. Existing deployments need a new registry to apply
+this policy; runtime bytecode checks must use the new build.
+
 For a Base-fork rehearsal, the development submission script also accepts
 `--use-chainlink-blockhash-store`. This uses the existing Chainlink store without
 seeding or replacing it, while retaining the digest-pinned development verifier.
