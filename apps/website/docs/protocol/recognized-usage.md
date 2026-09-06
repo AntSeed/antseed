@@ -45,6 +45,11 @@ The caller owns the resulting position, its staking rewards, and withdrawal
 rights; the seller's agent pool receives the power. There is one starter grant
 per agent. Historical wash flags do not prevent initialization.
 
+With the recognized-usage CLI, use `antseed seller legacy claim-starter`
+for starter-position initialization. It creates a staking position;
+it does not withdraw locked legacy rewards. That separate release is described
+in [Locked seller rewards: M002](./legacy-emissions.md#locked-seller-rewards-m002).
+
 ## Points policies and historical wash trading
 
 The owner-managed registry applies policies in registration order. Each policy

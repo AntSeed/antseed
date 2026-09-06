@@ -52,6 +52,26 @@ require moving or re-creating those points.
 Use the legacy contract addresses below for these claims. The recognized-usage
 accounting contract is not a replacement claim endpoint for old V2 epochs.
 
+## Locked seller rewards: M002
+
+The M002 migration releases **10% of each eligible seller's cumulative
+locked legacy ANTS**, less anything already released. This is 10% of the
+seller's locked rewards, not a `10 / 65` adjustment to the legacy seller bucket.
+For example, 1,000 ANTS cumulatively locked permits 100 ANTS in total releases;
+repeating a claim does not release another 10%. The remainder stays locked.
+
+Sellers proven as wash traders by the configured wash-trading registry, or
+flagged manually by the claim-policy owner, receive **zero** from this policy.
+This restriction is separate from starter-position initialization, which is
+not blocked by historical wash flags.
+
+M002 is a separate deployment after M001 activation. It installs the
+legacy seller claim policy and enables the locked-rewards pool to transfer ANTS
+before global token transfers are enabled. The September 10 protocol start does
+not automatically unlock these rewards. Claims through the pool become
+available only after M002 is installed; its default is an immediate
+10% entitlement, with release and vesting parameters verified at deployment.
+
 ## Escrow and flushes {#escrow-and-flushes}
 
 Since M001 phase 1, V2's registry points to `AntseedLegacyEmissionsEscrow`.
