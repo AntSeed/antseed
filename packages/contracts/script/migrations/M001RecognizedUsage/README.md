@@ -137,9 +137,13 @@ Writes `history/001-recognized-usage-activated.json` and updates
 
 ## Post-flip checklist (manual)
 
-- Create and seed an ANTS seller pool for the proxy's agent id right after the
-  flip: usage of pool-less agents is not accounted, so the proxy earns nothing
-  in the new stack until it has a pool.
+- Seed the proxy's agent pool before the flip boundary to activate its power
+  in the first rewarded epoch. Once the faucet is funded and historical proofs
+  are finalized, an authorized proxy operator can call
+  `AntseedPositionInit.initPosition(proxyAddress)`. The operator owns the lANTS
+  position, staker rewards, and withdrawal rights; the proxy's agent pool gets
+  the stake. Operator revocation does not remove those position rights. Usage
+  of pool-less agents is not accounted, and late stake activates next epoch.
 - Do **not** renounce `AntseedEmissionsGate` ownership before the verification
   rollout: that rollout rotates the editable 10% controller from
   `VERIFICATION_WALLET` to `AntseedVerification`.

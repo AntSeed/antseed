@@ -9,6 +9,10 @@ import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
+interface ISellerDelegation {
+    function isOperator(address account) external view returns (bool);
+}
+
 /**
  * @title AntseedPositionInit
  * @notice One-shot ANTS starter positions that bootstrap seller-pool
@@ -21,7 +25,7 @@ import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStat
  *         own agent pool, turning their accounting on.
  *
  *         Eligibility is anchored to the legacy USDC staking contract: the
- *         caller must have an agent binding there and stake above the legacy
+ *         seller must have an agent binding there and stake above the legacy
  *         minimum, so only sellers who put up real USDC stake can claim.
  *         Sellers the wash-trading registry has proven as wash traders are
  *         refused: a starter position is what switches their recognized-usage
@@ -68,6 +72,7 @@ contract AntseedPositionInit is ReentrancyGuard {
     error AlreadyInitialized();
     error InitDepleted();
     error InitExpired();
+    error NotOperator();
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(
@@ -108,9 +113,24 @@ contract AntseedPositionInit is ReentrancyGuard {
      *         are refused.
      */
     function initPosition() external nonReentrant returns (uint256 positionId) {
-        uint256 agentId = legacyStaking.getAgentId(msg.sender);
-        if (agentId == 0 || !legacyStaking.isStakedAboveMin(msg.sender)) revert NotLegacySeller();
-        if (washTradingRegistry.isProvenWashTrader(msg.sender)) revert WashTrader();
+        return _initPosition(msg.sender);
+    }
+
+    function initPosition(address seller) external nonReentrant returns (uint256 positionId) {
+        return _initPosition(seller);
+    }
+
+    function _initPosition(address seller) internal returns (uint256 positionId) {
+        if (seller == address(0)) revert InvalidAddress();
+        if (seller != msg.sender) {
+            (bool success, bytes memory result) =
+                seller.staticcall(abi.encodeCall(ISellerDelegation.isOperator, (msg.sender)));
+            if (!success || result.length != 32 || abi.decode(result, (uint256)) != 1) revert NotOperator();
+        }
+
+        uint256 agentId = legacyStaking.getAgentId(seller);
+        if (agentId == 0 || !legacyStaking.isStakedAboveMin(seller)) revert NotLegacySeller();
+        if (washTradingRegistry.isProvenWashTrader(seller)) revert WashTrader();
         if (agentInitialized[agentId]) revert AlreadyInitialized();
         if (antsToken.balanceOf(address(this)) < initAmount) revert InitDepleted();
 
@@ -122,7 +142,7 @@ contract AntseedPositionInit is ReentrancyGuard {
 
         agentInitialized[agentId] = true;
         positionId = sellerPools.stakeFor(msg.sender, agentId, initAmount, stakeEpochs);
-        emit PositionInitialized(msg.sender, agentId, positionId, initAmount, stakeEpochs);
+        emit PositionInitialized(seller, agentId, positionId, initAmount, stakeEpochs);
     }
 
     // ═══════════════════════════════════════════════════════════════════
