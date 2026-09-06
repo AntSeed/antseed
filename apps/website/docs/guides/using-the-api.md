@@ -16,7 +16,7 @@ There are two ways to get that proxy running:
 
 Everything in this guide works identically against both.
 
-If the client runs outside this computer—or uses a hosted backend that cannot reach `localhost`—open the VPR's **Agents** view and [define an authenticated internet-accessible endpoint](/docs/guides/agents#define-your-internet-accessible-antseed-endpoint).
+If the client runs outside this computer—or uses a hosted backend that cannot reach `localhost`—open the VPR's **Agents** view and [connect a remote agent](/docs/guides/agents#connect-a-remote-agent).
 
 ## Quick Start (CLI)
 

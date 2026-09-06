@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Docs: added a dedicated reward-policy guide covering composition, configuration, failure handling, and the historical wash-trading rule with SP1 and canonical block authentication. Consolidated reward explanations and corrected stale legacy-reward, wallet-custody, routing-filter, and staking guidance without changing the network's presentation.
+
 - Docs: documented ANTS stake-move and early-withdrawal penalties, preserved reward claims, owner-configurable settings, and the legacy-USDC eligibility and expiry requirements for starter positions.
 
 - Docs: clarified the M002 release of 10% of cumulative locked seller rewards, less prior releases, with zero for flagged wash traders; distinguished the recognized-usage CLI starter-position command from legacy reward withdrawals and documented the activation requirements.

@@ -174,14 +174,19 @@ Stats are factual counters with no reputation scoring logic. They feed into emis
 | Layer | Mechanism | Default |
 |---|---|---|
 | Minimum deposit | Buyers must deposit at least N USDC to participate | 10 USDC |
-| Minimum stake | Sellers must stake USDC bound to ERC-8004 agentId | 10 USDC |
+| Seller eligibility | Checked through the registry's active staking contract | Legacy USDC fallback while enabled; ANTS pool rules after cutover |
 | Budget binding | ReserveAuth binds maxAmount and deadline to buyer signature | Per-session |
 | Cumulative auth | SpendingAuth cumulativeAmount is monotonically increasing | Per-request |
 | Gasless buyer | Buyer never submits transactions — cannot be griefed for gas | Always |
 
 ## 6. Staking
 
-Sellers must stake USDC via `stake(agentId, amount)` on `AntseedStaking`, binding their stake to an ERC-8004 agentId. Minimum stake: `MIN_SELLER_STAKE` (default: 10 USDC). An unstaked seller cannot have `reserve()` called — the transaction reverts.
+Before the epoch-22 cutover, `AntseedStaking` uses USDC stake bound to an ERC-8004
+agent ID, with a 10 USDC minimum. After cutover, `AntseedSellerRegistry` supplies
+seller eligibility, with legacy USDC stake accepted while its fallback is enabled.
+New reward points additionally require sufficient ANTS pool power. See
+[staking and exit terms](../../../apps/website/docs/protocol/recognized-usage.md)
+and [legacy USDC staking](../../../apps/website/docs/protocol/legacy-emissions.md#legacy-usdc-staking).
 
 ## 7. Stats and Identity
 
@@ -233,6 +238,10 @@ The public policy returns remain `(sellerPoints, buyerPoints)`. A zeroed side
 cannot be restored and evaluation stops when both sides are zero. Historical
 wash flags zero future records involving the seller, not previously credited
 points, and do not prevent starter-position initialization or USDC settlement.
+
+See [Reward Policies](../../../apps/website/docs/protocol/reward-policies.md)
+for modifier composition, failure handling, and the distinction
+between proof verification and canonical block authentication.
 
 Locked ANTS positions are lANTS NFTs. Power activates in the next epoch. For a
 contract seller, an authorized operator may call `initPosition(seller)`; the

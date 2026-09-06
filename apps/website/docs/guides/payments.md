@@ -121,19 +121,12 @@ lANTS staking-position NFTs; pool power activates in the following epoch.
 Eligible sellers can initialize a starter position, including contract sellers
 whose authorized operator initializes on their behalf.
 
-Weekly allocation ceilings are:
-- 40% for seller-pool rewards.
-- 20% for buyer and seller/operator usage rewards.
-- 15% for the emissions reserve.
-- 15% for the team.
-- 10% for verification.
-
-Actual rewards depend on eligibility, pool power, usage, and the reward
-contracts' allocation rules. USDC payments can still settle even when no
-usage points are earned. Enabling ANTS trading is a separate action.
+Rewards depend on eligibility, pool power, usage, and the configured
+[reward policies](../protocol/reward-policies.md). USDC payments can still settle
+when no usage points are earned. Enabling ANTS transfers is a separate action.
 
 See [Recognized Usage and ANTS Rewards](../protocol/recognized-usage.md) for
-starter positions, pool staking, policies, and contract addresses.
+starter positions, staking exit terms, emission allocations, and contract addresses.
 
 **Looking for rewards or USDC staking from before migration?** See
 [Legacy emissions and claims](../protocol/legacy-emissions.md).

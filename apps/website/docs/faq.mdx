@@ -270,7 +270,10 @@ Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session
 
 ### Are seller ANTS incentives claimable now?
 
-Seller ANTS emissions are currently tracked but routed into a dedicated Provider Pool and locked for now. They are not freely claimable yet. Future claimability is expected after stronger provider validation, audits, attestations, and proof systems are introduced, and may be subject to verification or slashing.
+ANTS rewards are separate from USDC payments. From epoch 22 (September 10, 2026),
+they depend on recognized usage, seller-pool power, and the configured
+[reward policies](/docs/reward-policies). Earlier rewards use the
+[legacy claim contracts](/docs/legacy-emissions).
 
 ### Where do protocol fees go?
 
@@ -278,7 +281,10 @@ Network fees are set to 4% and may be directed to ecosystem mechanisms such as r
 
 ### Are ANTS incentives guaranteed?
 
-No. ANTS incentives are designed for real usage and real contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing. ANTS token economics are evolving, and more trust and utility mechanisms are planned.
+No. Paying for service does not guarantee ANTS rewards. Missing pool power or a
+wash-trading flag can exclude usage from rewards. If you stake ANTS, withdrawing
+before the lock ends also incurs a principal penalty. See
+[reward eligibility and staking terms](/docs/recognized-usage).
 
 ---
 
