@@ -46,6 +46,7 @@ const ADDRESS = {
   legacyStaking: '0x0000000000000000000000000000000000000005',
   usageAccounting: '0x0000000000000000000000000000000000000006',
   sellerRegistry: '0x0000000000000000000000000000000000000007',
+  sellerRewardsPool: '0x00000000000000000000000000000000000000ee',
 };
 
 const REHEARSAL_FORK = { rpcEnv: 'ANTSEED_TEST_FORK_RPC_URL', forkBlockNumber: 123, chainId: 8453 };
@@ -932,7 +933,7 @@ async function m001Fixture(testContext) {
       'emissionsGate()(address)': contracts.AntseedEmissionsGate,
       'pointsPolicy()(address)': contracts.AntseedPointsPolicyRegistry,
       'washTradingRegistry()(address)': contracts.AntseedWashTradingRegistry,
-      'sellerRewardsPool()(address)': ADDRESS.channels,
+      'sellerRewardsPool()(address)': ADDRESS.sellerRewardsPool,
       'paused()(bool)': String(state.paused), 'currentEpoch()(uint256)': '11',
       'effectiveEpoch()(uint256)': '11', 'genesis()(uint256)': '1000', 'epochDuration()(uint256)': '100',
       'policyCount()(uint256)': String(state.policyCount),
@@ -1047,14 +1048,27 @@ test('M001 signer discovery and validation share ownership targets without dropp
   await fixture.deploy('broadcast');
   const deployed = await migration.observe(fixture.context);
   migration.verifyRoles(fixture.context, deployed, environment);
-  for (const [role, contract] of [
-    ['deployer', fixture.contracts.AntseedEmissionsGate], ['registryOwner', ADDRESS.registry],
-    ['channelsOwner', ADDRESS.channels], ['sellerRewardsPoolOwner', ADDRESS.channels],
+  for (const [role, contract, label] of [
+    ['deployer', fixture.contracts.AntseedEmissionsGate, 'emissions gate'], ['registryOwner', ADDRESS.registry, 'Registry'],
+    ['channelsOwner', ADDRESS.channels, 'Channels'], ['sellerRewardsPoolOwner', ADDRESS.sellerRewardsPool, 'seller rewards pool'],
   ]) {
     fixture.owners[contract] = ADDRESS.ants;
     assert.equal(migration.expectedSigner(role, fixture.context, deployed), ADDRESS.ants);
-    assert.throws(() => migration.verifyRoles(fixture.context, deployed, environment), /not the .* owner/);
+    assert.throws(() => migration.verifyRoles(fixture.context, deployed, environment),
+      new RegExp(`${role} .*is not the ${label} owner`));
     delete fixture.owners[contract];
+  }
+  delete environment.DIEM_STAKING_PROXY;
+  fixture.owners[ADDRESS.sellerRewardsPool] = ADDRESS.ants;
+  migration.verifyRoles(fixture.context, deployed, environment);
+  delete fixture.owners[ADDRESS.sellerRewardsPool];
+  for (const [name, value, message] of [
+    ['HISTORICAL_PERIOD_START_BLOCK', '0', /must be nonzero/],
+    ['HISTORICAL_PERIOD_START_BLOCK', '101', /must not exceed/],
+    ['HISTORICAL_PERIOD_END_BLOCK', '0x64', /decimal block number/],
+    ['HISTORICAL_PERIOD_END_BLOCK', String(2n ** 64n), /exceeds uint64/],
+  ]) {
+    assert.throws(() => migration.verifyRoles(fixture.context, ready, { ...environment, [name]: value }), message);
   }
 });
 

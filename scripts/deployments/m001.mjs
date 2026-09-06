@@ -331,6 +331,22 @@ function expectedSigner(role, context, observation) {
   return call(context.rpcUrl, ownedContracts(role, context, observation)[0][0], 'owner()(address)');
 }
 
+const UINT64_MAX = 2n ** 64n - 1n;
+
+/** Mirrors the AntseedWashTradingRegistry constructor so a bad range fails before signers are unlocked. */
+function verifyHistoricalPeriod(env) {
+  const parse = (name) => {
+    if (!/^\d+$/.test(env[name])) throw new Error(`${name} must be a decimal block number, got ${JSON.stringify(env[name])}`);
+    const value = BigInt(env[name]);
+    if (value > UINT64_MAX) throw new Error(`${name} exceeds uint64`);
+    return value;
+  };
+  const start = parse('HISTORICAL_PERIOD_START_BLOCK');
+  const end = parse('HISTORICAL_PERIOD_END_BLOCK');
+  if (start === 0n) throw new Error('HISTORICAL_PERIOD_START_BLOCK must be nonzero');
+  if (start > end) throw new Error('HISTORICAL_PERIOD_START_BLOCK must not exceed HISTORICAL_PERIOD_END_BLOCK');
+}
+
 function verifyRoles(context, observation, env) {
   requireEnvironment(['VERIFICATION_WALLET'], env);
   if (!context.forkTest) requireEnvironment(['BASESCAN_API_KEY'], env);
@@ -340,6 +356,7 @@ function verifyRoles(context, observation, env) {
       'SP1_VERIFIER', 'SP1_VERIFIER_HASH', 'WASH_TRADING_SELLER_PROGRAM_VKEY',
       'HISTORICAL_PERIOD_START_BLOCK', 'HISTORICAL_PERIOD_END_BLOCK',
     ], env);
+    verifyHistoricalPeriod(env);
   }
   const roles = deploying ? DEPLOY_SIGNERS : [...CUTOVER_SIGNERS, ...(env.DIEM_STAKING_PROXY ? ['sellerRewardsPoolOwner'] : [])];
   for (const role of roles) {
