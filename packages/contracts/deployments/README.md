@@ -107,7 +107,7 @@ export const migration = {
   networks: ['base-sepolia'],
   releases: ['002-example'],          // releases this migration may write
   phases: [                           // first phase whose guard passes is run
-    { id: 'deploy', guard: (o) => o.state === 'ready', signers: () => ['deployer'], run },
+    { id: 'deploy', guard: (observation) => observation.state === 'ready', signers: () => ['deployer'], run },
   ],
   expectedSigner,                     // role -> live owner address, for dry runs
   expectedState,                      // pointers read from current.json
@@ -119,3 +119,19 @@ export const migration = {
 
 The registry rejects a migration that declares no phases, a phase without an
 `id`/`guard`/`run`, no releases, or a release another migration already claims.
+
+M001 keeps its production flow in ordinary phase `run` functions: deployment
+runs Forge and records the result; cutover uses explicit `try/finally` to
+retain confirmed partial receipts before recording a successful activation.
+Recovery checks live state and bytecode before repairing local records.
+
+Shared helpers perform small data operations, not lifecycle callbacks:
+`buildReleaseRecord` supplies standard ledger metadata; `mergeBroadcast`
+deduplicates transaction hashes while retaining creation provenance;
+`writeActivationRecords` checks history and `current.json` independently.
+Checkpoints retain their existing keys so interrupted M001 runs remain resumable.
+
+M001-specific Anvil fixtures and rehearsal assertions live in the local-test
+section at the bottom of `scripts/deployments/m001.mjs` and execute only for
+`--fork-test`. They run the same production phases; the shared framework still
+owns Anvil, temporary deployment records, and prerequisite ordering.

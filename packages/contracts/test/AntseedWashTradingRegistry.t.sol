@@ -168,6 +168,55 @@ contract AntseedWashTradingRegistryTest is Test {
         assertEq(registry.provenWashShareBps(address(0xB0B)), 0);
     }
 
+    function test_unprovenSellerIsNotWashTrader() public view {
+        assertFalse(registry.isProvenWashTrader(SELLER_A));
+        assertEq(registry.WASH_TRADING_THRESHOLD_BPS(), 2500);
+    }
+
+    function test_washTraderStatusRequiresTwentyFivePercentAndCanCrossThreshold() public {
+        bytes32 below = _finalize(_journal(249, bytes32(uint256(71))));
+        assertTrue(registry.proofFinalized(below));
+        assertEq(registry.provenWashVolume(SELLER_A), 249);
+        assertFalse(registry.isProvenWashTrader(SELLER_A));
+
+        bytes32 boundary = _stage(_journal(250, bytes32(uint256(72))));
+        _authenticateAll(boundary);
+        assertFalse(registry.isProvenWashTrader(SELLER_A));
+        registry.finalizeSellerProof(boundary);
+        assertTrue(registry.isProvenWashTrader(SELLER_A));
+
+        _finalize(_journal(251, bytes32(uint256(73))));
+        assertTrue(registry.isProvenWashTrader(SELLER_A));
+    }
+
+    function test_washTraderThresholdDoesNotRoundRequiredVolumeDown() public {
+        AntseedWashTradingRegistry.SellerJournal memory journal = _journal(250, bytes32(uint256(71)));
+        journal.totalSellerVolume = 1001;
+        _finalize(journal);
+        assertFalse(registry.isProvenWashTrader(SELLER_A));
+
+        journal.provenWashVolume = 251;
+        journal.evidenceDigest = bytes32(uint256(72));
+        _finalize(journal);
+        assertTrue(registry.isProvenWashTrader(SELLER_A));
+    }
+
+    function test_washTraderThresholdHandlesMaximumVolumes() public {
+        AntseedWashTradingRegistry.SellerJournal memory journal = _journal(type(uint128).max, bytes32(uint256(71)));
+        journal.totalSellerVolume = type(uint128).max;
+        _finalize(journal);
+        assertTrue(registry.isProvenWashTrader(SELLER_A));
+    }
+
+    function testFuzz_washTraderStatusMatchesShare(uint128 washVolume, uint128 totalVolume) public {
+        washVolume = uint128(bound(washVolume, 1, type(uint128).max));
+        totalVolume = uint128(bound(totalVolume, 1, type(uint128).max));
+        AntseedWashTradingRegistry.SellerJournal memory journal = _journal(washVolume, bytes32(uint256(71)));
+        journal.totalSellerVolume = totalVolume;
+        _finalize(journal);
+        assertEq(registry.isProvenWashTrader(SELLER_A), registry.provenWashShareBps(SELLER_A) >= 2500);
+    }
+
     function test_rejectsConflictingTotalSellerVolume() public {
         _finalize(_journal(300, bytes32(uint256(71))));
 
