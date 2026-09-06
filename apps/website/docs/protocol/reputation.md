@@ -32,7 +32,11 @@ No counter can be incremented without a corresponding on-chain state transition 
 
 ## Staking
 
-Sellers stake USDC via AntseedStaking, binding their stake to an ERC-8004 agentId. Minimum stake: 10 USDC. An unstaked seller cannot have `reserve()` called on AntseedChannels.
+From **September 10, 2026 at 09:54:21 UTC (epoch 22)**, seller eligibility is
+resolved through AntseedSellerRegistry and ANTS pool positions contribute epoch
+power. Legacy USDC stake can remain an eligibility fallback while enabled;
+recognized-usage rewards require pool power. See [Recognized Usage](./recognized-usage.md)
+and [legacy USDC staking](./legacy-emissions.md#legacy-usdc-staking).
 
 ## ERC-8004 Feedback
 
@@ -45,51 +49,24 @@ Buyers submit structured feedback via the deployed ERC-8004 ReputationRegistry (
 | Accuracy | uint8 | 0-100 |
 | Reliability | uint8 | 0-100 |
 
-Feedback produces a multiplier on the seller's emission rate:
+Feedback and routing reputation do not automatically grant ANTS or apply a
+fixed on-chain reward multiplier. Recognized-usage accounting applies the
+configured points policies; the registered historical wash-trading policy
+can zero future rewards without changing settlement stats.
 
-```
-feedbackMultiplier = 0.5 + (avgFeedbackScore / 100)
-// Range: 0.5x (score=0) to 1.5x (score=100)
-```
+## ANTS Rewards
 
-Feedback does not affect core stats counters. It modulates emission only.
+**Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
 
-## ANTS Emission
+ANTS rewards use recognized usage, seller-pool power, and epoch-based reward
+accounting. Allocation ceilings are 40% for pool rewards, 20% for buyer and
+seller/operator usage rewards, 15% for the reserve, 15% for the team, and 10%
+for verification. Actual pool and usage rewards depend on the contracts'
+eligibility and dynamic allocation rules.
 
-Token emission is tied to proven delivery. Points accumulate per-interaction and convert to ANTS via a Synthetix-style reward-per-point distribution (O(1) per interaction, no epoch batching).
-
-### Seller Points
-
-```
-sellerPoints = V(P) * feedbackMultiplier
-```
-
-Where:
-- `V(P)` = USDC volume settled in the session
-- `feedbackMultiplier` = feedback-derived multiplier (0.5x to 1.5x)
-
-### Buyer Points
-
-```
-buyerPoints = usagePoints + feedbackPoints + diversityBonus
-```
-
-- `usagePoints`: proportional to USDC spent in qualified sessions
-- `feedbackPoints`: awarded for submitting feedback (incentivizes signal)
-- `diversityBonus`: bonus for transacting with more unique sellers
-
-### Distribution Split
-
-| Recipient | Share |
-|---|---|
-| Seller / Provider Pool | 50% |
-| Buyer | 20% |
-| Protocol reserve | 15% |
-| Contributors / team | 15% |
-
-Seller rewards are capped at 50% of the seller bucket per seller per epoch. Buyer rewards are capped at 5% of the buyer bucket per buyer per epoch. Cap overages are redirected to the Protocol Reserve.
-
-ANTS tokens are non-transferable until network maturity. This prevents early speculation from distorting incentives.
+See [Recognized Usage and ANTS Rewards](./recognized-usage.md) for the standard
+reward model. **Looking for pre-migration emissions?** The [legacy guide](./legacy-emissions.md)
+covers the 65% seller / 5% buyer split and historical claims.
 
 ## Buyer Route Scoring
 

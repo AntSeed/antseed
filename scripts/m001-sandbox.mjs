@@ -11,7 +11,7 @@ import {
   BASE_MAINNET_DIEM_PROXY,
   BASE_MAINNET_DIEM_STAKER,
   BASE_MAINNET_FORK_BLOCK,
-  deployForkWashTradingStub,
+  deployForkVerifierStub,
   migration,
   prepareForkOwners,
   prepareForkStaker,
@@ -75,9 +75,13 @@ function processIsRunning(pid) {
   catch { return false; }
 }
 
-function forkEnvironment(washTradingRegistry) {
+function forkEnvironment(verifier) {
   return {
-    WASH_TRADING_REGISTRY: washTradingRegistry,
+    SP1_VERIFIER: verifier,
+    SP1_VERIFIER_HASH: process.env.SP1_VERIFIER ? process.env.SP1_VERIFIER_HASH : `0x${'0'.repeat(63)}1`,
+    WASH_TRADING_SELLER_PROGRAM_VKEY: process.env.WASH_TRADING_SELLER_PROGRAM_VKEY ?? `0x${'0'.repeat(63)}1`,
+    HISTORICAL_PERIOD_START_BLOCK: process.env.HISTORICAL_PERIOD_START_BLOCK ?? '1',
+    HISTORICAL_PERIOD_END_BLOCK: process.env.HISTORICAL_PERIOD_END_BLOCK ?? String(BASE_MAINNET_FORK_BLOCK),
     VERIFICATION_WALLET: ANVIL_ACCOUNT_1,
     DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY,
     ANTSEED_DEPLOY_CONFIRM: 'base-mainnet',
@@ -125,12 +129,12 @@ async function up(options) {
     try {
       const context = await loadContext(migration, 'base-mainnet', { rpcUrl, outputRoot: options.out, forkTest: true });
       prepareForkOwners(context);
-      const washTradingRegistry = process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl);
+      const verifier = process.env.SP1_VERIFIER ?? deployForkVerifierStub(rpcUrl);
       const overrides = {
         rpcUrl,
         outputRoot: options.out,
         forkTest: true,
-        environment: forkEnvironment(washTradingRegistry),
+        environment: forkEnvironment(verifier),
         signers: forkSigners(),
       };
       const observation = await runMigration(migration, { network: 'base-mainnet', mode: 'broadcast', signers: {} }, overrides);
@@ -141,7 +145,7 @@ async function up(options) {
         rpcUrl,
         port: options.port,
         outputRoot: options.out,
-        washTradingRegistry,
+        verifier,
         cutoverTimestamp: observation.deployment.checkpoint.cutoverTimestamp,
         startedAt: new Date().toISOString(),
       });
@@ -167,7 +171,7 @@ async function cutover(options) {
       rpcUrl: state.rpcUrl,
       outputRoot: options.out,
       forkTest: true,
-      environment: forkEnvironment(state.washTradingRegistry),
+      environment: forkEnvironment(state.verifier),
       signers: forkSigners(),
     },
   );

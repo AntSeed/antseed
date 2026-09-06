@@ -3,6 +3,7 @@ import { assertCheckpointBytecode, loadContext, validateArtifacts } from './ledg
 import { assertCleanForBroadcast, confirmBroadcast } from './preflight.mjs';
 import { buildPlan, clearPlan, writePlan } from './plan.mjs';
 import { addresses, resolveSigners } from './signers.mjs';
+import { runRehearsal } from './rehearsal.mjs';
 
 /**
  * Generic driver shared by every migration.
@@ -13,7 +14,10 @@ import { addresses, resolveSigners } from './signers.mjs';
  * enforcement, phase dispatch, record writing, and artifact validation.
  */
 export async function runMigration(migration, options, overrides = {}) {
-  if (options.mode === 'fork-test') return migration.forkTest(options, { runMigration });
+  if (options.mode === 'fork-test') {
+    const { deploymentMigrations } = await import('../index.mjs');
+    return runRehearsal(migration, options, { registry: deploymentMigrations, runMigration });
+  }
   await loadDotEnv();
   const context = await loadContext(migration, options.network, overrides);
   return executePhases(migration, options, overrides, context);

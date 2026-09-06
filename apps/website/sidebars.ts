@@ -40,6 +40,8 @@ const sidebars: SidebarsConfig = {
         'protocol/transport',
         'protocol/metering',
         'protocol/payments',
+        'protocol/recognized-usage',
+        'protocol/legacy-emissions',
         'protocol/reputation',
         'protocol/security',
       ],
