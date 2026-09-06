@@ -24,6 +24,7 @@ import {
 } from './deployments/m001.mjs';
 import {
   classifyM002,
+  DEFAULT_RELEASE_BPS,
   migration as m002,
   validateM002Baseline,
   validateM002Options,
@@ -1296,6 +1297,10 @@ test('M002 supports the same networks and modes as M001', () => {
   assert.throws(() => validateM002Options({ network: 'base-local', mode: 'dry-run' }), /M002 supports/);
 });
 
+test('M002 defaults to ten percent of cumulative locked rewards', () => {
+  assert.equal(DEFAULT_RELEASE_BPS, 1000);
+});
+
 test('M002 requires an activated M001 baseline', () => {
   const contract = (address) => ({ address });
   const activated = {
@@ -1305,17 +1310,57 @@ test('M002 requires an activated M001 baseline', () => {
       antsToken: contract(ADDRESS.ants),
       emissions: contract(ADDRESS.usageAccounting),
       usageAccounting: contract(ADDRESS.usageAccounting),
-      positionInit: contract(ADDRESS.channels),
+      washTradingRegistry: contract(ADDRESS.channels),
       legacyEmissionsEscrow: contract(ADDRESS.sellerRegistry),
     },
   };
   assert.doesNotThrow(() => validateM002Baseline(activated));
+  assert.equal(m002.expectedState(activated).washTradingRegistry, ADDRESS.channels);
   assert.throws(
     () => validateM002Baseline({ ...activated, contracts: { ...activated.contracts, emissions: contract(ADDRESS.legacyEmissions) } }),
     /run M001 first/,
   );
-  const { positionInit, ...withoutPositionInit } = activated.contracts;
-  assert.throws(() => validateM002Baseline({ ...activated, contracts: withoutPositionInit }), /missing: positionInit/);
+  const { washTradingRegistry, ...withoutWashTradingRegistry } = activated.contracts;
+  assert.throws(() => validateM002Baseline({ ...activated, contracts: withoutWashTradingRegistry }), /missing: washTradingRegistry/);
+});
+
+test('M002 observes the ledger wash registry without a PositionInit getter', async (t) => {
+  const responses = {
+    'legacyEmissions()(address)': ADDRESS.legacyEmissions,
+    'sellerRewardsPool()(address)': M002_ADDRESS.pool,
+    'owner()(address)': ADDRESS.ants,
+    'sellerClaimPolicy()(address)': M002_ADDRESS.zero,
+    'totalLockedRewards()(uint256)': '1000',
+    'emissionsGate()(address)': ADDRESS.channels,
+    'effectiveEpoch()(uint256)': '22',
+    'MIGRATION_EPOCH()(uint256)': '4',
+    'antsToken()(address)': ADDRESS.ants,
+    'emissions()(address)': ADDRESS.usageAccounting,
+    'transfersEnabled()(bool)': 'false',
+    'transferWhitelist(address)(bool)': 'false',
+  };
+  mockCast(t, (args) => {
+    if (args[0] === 'chain-id') return '8453';
+    if (args[0] === 'code') return '0x01';
+    assert.equal(args[0], 'call');
+    assert.ok(Object.hasOwn(responses, args[2]), `unexpected getter: ${args[2]}`);
+    return responses[args[2]];
+  });
+  const observation = await m002.observe({
+    rpcUrl: 'http://127.0.0.1:0',
+    network: 'base-mainnet',
+    canonical: { chainId: 8453 },
+    expected: {
+      registry: ADDRESS.registry,
+      antsToken: ADDRESS.ants,
+      usageAccounting: ADDRESS.usageAccounting,
+      legacyEmissionsEscrow: ADDRESS.sellerRegistry,
+      washTradingRegistry: ADDRESS.channels,
+      recordedPolicy: null,
+    },
+  });
+  assert.equal(observation.state, 'ready');
+  assert.equal(observation.washTradingRegistry, ADDRESS.channels);
 });
 
 test('enforces M002 release invariants', () => {
@@ -1325,7 +1370,7 @@ test('enforces M002 release invariants', () => {
     sellerClaimPolicy: M002_ADDRESS.policy,
     poolCanTransfer: true,
     lastLockedEpoch: 41,
-    releaseBps: 1538,
+    releaseBps: 1000,
     vestStart: 0,
     vestEpochs: 0,
     washTradingRegistry: ADDRESS.channels,

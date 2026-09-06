@@ -34,7 +34,7 @@ contract MockDepositsForClaimPolicy {
 contract AntseedLegacySellerClaimPolicyTest is Test {
     uint256 constant INITIAL_EMISSION = 1000 ether;
     uint256 constant EPOCH_DURATION = 1 weeks;
-    uint256 constant RELEASE_BPS = 1538; // ~10/65
+    uint256 constant RELEASE_BPS = 1000; // 10%
 
     ANTSToken token;
     AntseedRegistry registry;
@@ -139,11 +139,12 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
 
     function test_claimReleasesConfiguredShareOnce() public {
         AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        assertEq(policy.entitledOf(1000 ether), 100 ether);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(4, 5));
         uint256 locked = pool.lockedRewards(seller1);
-        uint256 expected = (locked * RELEASE_BPS) / 10_000;
+        uint256 expected = locked / 10;
 
         assertEq(policy.claimableSellerRewards(seller1, locked), expected);
 
@@ -468,7 +469,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function policyDerivesV1() internal returns (address) {
-        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1538, 0, 0, address(0)).v1());
+        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, 0, 0, address(0)).v1());
     }
 
     function test_constructorValidation() public {
@@ -477,9 +478,9 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
         new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_001, 0, 0, address(0));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), 3, 1538, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 3, 1000, 0, 0, address(0));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidAddress.selector);
-        new AntseedLegacySellerClaimPolicy(address(0), 10, 1538, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(0), 10, 1000, 0, 0, address(0));
     }
 }
 

@@ -45,7 +45,7 @@ interface IEmissionsV1View {
  *         `cumulative - locked` as what has already been released.
  *
  *         Release rule:
- *           entitled  = cumulative * releaseBps / BPS      (e.g. 10/65 of legacy seller share)
+ *           entitled  = cumulative * releaseBps / BPS      (10% of cumulative locked rewards)
  *           entitled *= min(1, (now - vestStart) / vestEpochs)   (optional linear vest)
  *           claimable = entitled - released
  *
@@ -68,7 +68,7 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
     IEmissionsV1View public immutable v1; // = v2.legacyEmissions(); only contributes points for epochs <= migrationEpoch
     uint256 public immutable migrationEpoch; // V1 points are merged for epochs <= migrationEpoch
     uint256 public immutable lastEpoch; // last epoch that could have been locked into the pool
-    uint256 public immutable releaseBps; // e.g. 1538 = 10/65
+    uint256 public immutable releaseBps; // 1000 = 10% of cumulative locked rewards
     uint256 public immutable vestStart; // epoch at which vesting begins
     uint256 public immutable vestEpochs; // linear vesting length; 0 = immediate
 

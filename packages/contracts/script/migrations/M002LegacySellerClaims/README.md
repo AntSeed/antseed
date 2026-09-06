@@ -34,12 +34,11 @@ flip, but leaves both blockers in place on purpose; this migration removes them.
   migration epoch.
 - `lastEpoch = gate.effectiveEpoch() − 1` — the last epoch legacy V2 could ever
   lock. Immutable; that is why M002 must wait for M001 to activate.
-- `releaseBps` — `RELEASE_BPS`, default 1538 (≈ 10/65 of the legacy seller
-  share).
+- `releaseBps` — `RELEASE_BPS`, default 1000 (10% of each seller's cumulative locked rewards).
 - `vestStart`, `vestEpochs` — `VEST_START_EPOCH` / `VEST_EPOCHS`, default 0
   (immediate).
 - `washTradingRegistry` — `WASH_TRADING_REGISTRY`; the CLI defaults it to the
-  registry M001 pinned into `AntseedPositionInit`. Proven wash traders
+  `washTradingRegistry` address recorded in the activated M001 deployment ledger. Proven wash traders
   (`isProvenWashTrader`) can claim nothing. The policy owner (pool owner) can
   also flag sellers manually (`setSellerFlagged`) or swap the source
   (`setWashTradingRegistry`).
@@ -77,8 +76,10 @@ Before mainnet broadcast:
 - Run the M001 → M002 fork rehearsal, then a dry run against the actual active
   M001 deployment. Check the real wash registry (the default fork uses a stub),
   signer ownership, token transfer permission, and release/vesting parameters.
-- Obtain agreement on `1538 / 10000`: approximately `10 / 65` of the locked
-  seller allocation, not 10% of each seller's locked balance.
+- Verify `RELEASE_BPS=1000`: exactly 10% of each seller's cumulative locked
+  rewards, less prior withdrawals. This is not a 10/65 rescaling of the legacy
+  emission bucket. For example, 1,000 ANTS cumulatively locked permits 100 ANTS
+  in total releases; repeating a claim cannot release another 10%.
 
 These checks establish the deployment preconditions; they are not an audit
 guarantee. Recheck them immediately before broadcast because owners can change

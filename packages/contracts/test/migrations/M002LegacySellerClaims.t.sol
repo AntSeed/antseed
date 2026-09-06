@@ -131,7 +131,7 @@ contract M002LegacySellerClaimsTest is Test {
             usageAccounting: address(usageAccounting),
             washTradingRegistry: address(washRegistry),
             lastEpochOverride: 0,
-            releaseBps: 1538,
+            releaseBps: 1000,
             vestStart: 0,
             vestEpochs: 0
         });
@@ -151,7 +151,7 @@ contract M002LegacySellerClaimsTest is Test {
 
         // Policy alone is not enough: the pool cannot send ANTS while transfers are disabled.
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1538, 0, 0, address(washRegistry));
+            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, 0, 0, address(washRegistry));
         vm.prank(poolOwner);
         pool.setSellerClaimPolicy(address(policy));
         vm.prank(seller);
@@ -160,6 +160,7 @@ contract M002LegacySellerClaimsTest is Test {
     }
 
     function test_installsPolicyAndWhitelistsPool() public {
+        assertEq(script.DEFAULT_RELEASE_BPS(), 1000);
         address policyAddress = script.runWith(_cfg());
 
         AntseedLegacySellerClaimPolicy policy = _policy();
@@ -169,7 +170,7 @@ contract M002LegacySellerClaimsTest is Test {
         assertEq(address(policy.v1()), address(legacy), "v1 derived from v2");
         assertEq(policy.migrationEpoch(), 4);
         assertEq(policy.lastEpoch(), EFFECTIVE_EPOCH - 1, "last epoch = effective - 1");
-        assertEq(policy.releaseBps(), 1538);
+        assertEq(policy.releaseBps(), 1000);
         assertEq(policy.vestStart(), 0);
         assertEq(policy.vestEpochs(), 0);
         assertEq(address(policy.washTradingRegistry()), address(washRegistry));
@@ -180,7 +181,7 @@ contract M002LegacySellerClaimsTest is Test {
         script.runWith(_cfg());
 
         uint256 locked = pool.lockedRewards(seller);
-        uint256 expected = (locked * 1538) / 10_000;
+        uint256 expected = locked / 10;
         vm.prank(seller);
         pool.claim(seller);
         assertEq(token.balanceOf(seller), expected, "released share paid out");
@@ -213,7 +214,7 @@ contract M002LegacySellerClaimsTest is Test {
 
     function test_resumesWhenOnlyPolicyLanded() public {
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1538, 0, 0, address(washRegistry));
+            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, 0, 0, address(washRegistry));
         vm.prank(poolOwner);
         pool.setSellerClaimPolicy(address(policy));
 

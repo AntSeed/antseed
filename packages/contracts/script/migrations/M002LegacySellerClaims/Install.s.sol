@@ -85,13 +85,13 @@ interface IEmissionsGateView {
  *   USAGE_ACCOUNTING             AntseedUsageAccounting from M001 (reads the
  *                                gate's effective epoch).
  *   WASH_TRADING_REGISTRY        Deployed AntseedWashTradingRegistry. The CLI
- *                                defaults it to the registry M001 pinned into
- *                                AntseedPositionInit.
+ *                                defaults it to the activated M001 ledger's
+ *                                washTradingRegistry address.
  *
  * Optional env:
  *   LAST_LOCKED_EPOCH            If set, must equal `effectiveEpoch - 1`.
  *   RELEASE_BPS                  Share of cumulative locked rewards released.
- *                                Default 1538 (~10/65).
+ *                                Default 1000 (10%).
  *   VEST_START_EPOCH             Epoch at which linear vesting begins. Default 0.
  *   VEST_EPOCHS                  Linear vesting length. Default 0 (immediate).
  *
@@ -105,7 +105,7 @@ interface IEmissionsGateView {
  *     --via-ir
  */
 contract M002InstallLegacySellerClaims is Script {
-    uint256 public constant DEFAULT_RELEASE_BPS = 1538;
+    uint256 public constant DEFAULT_RELEASE_BPS = 1000;
 
     struct Config {
         address tokenOwner;

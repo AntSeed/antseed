@@ -26,7 +26,7 @@ const M002_TESTNET = 'base-sepolia';
 const M002_ANVIL_FORK = 'base-mainnet';
 
 export const RELEASE = '002-legacy-seller-claims';
-export const DEFAULT_RELEASE_BPS = 1538;
+export const DEFAULT_RELEASE_BPS = 1000;
 export const SIGNERS = ['deployer', 'sellerRewardsPoolOwner'];
 
 const SIGNER_ENV = {
@@ -80,7 +80,7 @@ export function validateM002Options(options) {
  * on chain from the M001 escrow (`legacyEmissionsEscrow.legacyEmissions()`).
  */
 export function validateM002Baseline(canonical) {
-  const required = ['registry', 'antsToken', 'emissions', 'usageAccounting', 'positionInit', 'legacyEmissionsEscrow'];
+  const required = ['registry', 'antsToken', 'emissions', 'usageAccounting', 'washTradingRegistry', 'legacyEmissionsEscrow'];
   const missing = required.filter((name) => !canonical.contracts?.[name]?.address);
   if (missing.length) {
     throw new Error(`M002 ${canonical.network} deployment baseline is missing: ${missing.join(', ')}`);
@@ -125,7 +125,7 @@ function expectedState(canonical) {
     antsToken: contracts.antsToken.address,
     usageAccounting: contracts.usageAccounting.address,
     legacyEmissionsEscrow: contracts.legacyEmissionsEscrow.address,
-    positionInit: contracts.positionInit.address,
+    washTradingRegistry: contracts.washTradingRegistry.address,
     recordedPolicy: contracts.legacySellerClaimPolicy?.address ?? null,
   };
 }
@@ -196,7 +196,7 @@ async function observeM002(context) {
     migrationEpoch,
     lastLockedEpoch,
     lastLockedEpochValid: effectiveEpoch > 0 && migrationEpoch !== null && lastLockedEpoch >= migrationEpoch,
-    washTradingRegistry: call(rpcUrl, expected.positionInit, 'washTradingRegistry()(address)'),
+    washTradingRegistry: expected.washTradingRegistry,
   };
   observation.state = classifyM002(observation);
   return observation;
@@ -242,8 +242,8 @@ function expectedSigner(role, context, observation) {
 
 /**
  * Environment handed to Install.s.sol. Signer roles arrive as addresses only.
- * The wash-trading registry defaults to the one M001 pinned into PositionInit
- * so both gates read the same source; `WASH_TRADING_REGISTRY` overrides it.
+ * The wash-trading registry defaults to the activated M001 deployment ledger;
+ * `WASH_TRADING_REGISTRY` overrides it.
  */
 function migrationEnvironment(context, observation, signerAddresses = {}, extra = {}) {
   return {

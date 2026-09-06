@@ -397,12 +397,12 @@ idempotent broadcast, after M001 has activated:
 each seller's *cumulative* locked amount from EmissionsV2/V1 state (epochs
 `0 … effectiveEpoch − 1`, mirroring `claimSellerEmissions`), treats
 `cumulative − locked` as already released, and pays out `RELEASE_BPS`
-(default 1538 ≈ 10/65) of the cumulative amount, optionally linearly vested
+(default 1000 = 10%) of the cumulative amount, optionally linearly vested
 (`VEST_START_EPOCH`, `VEST_EPOCHS`). Sellers the wash-trading registry has
 proven (`isProvenWashTrader`) — or that the policy owner flags manually — can
 claim nothing; their ANTS stays in the pool. The CLI defaults
-`WASH_TRADING_REGISTRY` to the registry M001 pinned into `AntseedPositionInit`
-so both gates read the same source.
+`WASH_TRADING_REGISTRY` to `washTradingRegistry` in the activated M001 deployment
+ledger, without calling `AntseedPositionInit`.
 
 ```bash
 pnpm contracts:deploy -- M002 --network base-mainnet --fork-test   # M001 + M002 rehearsal
