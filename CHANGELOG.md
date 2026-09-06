@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Contracts: `AntseedPositionInit.initPosition(seller)` lets a seller's authorized operator initialize its starter pool position. Seller eligibility, wash status, and the one-time grant remain seller-based; the calling operator owns the position and its staker reward/withdrawal rights, allowing existing seller proxies to bootstrap without receiving NFTs. Self-initialization remains available.
 - Contracts: M001 now deploys the historical wash-trading registry in its first broadcast and pins it into `AntseedPositionInit`, which refuses starter positions to proven wash traders; the deploy records provenance and validates the wiring on restart. Operators provide the verifier, proof program, and historical block range instead of a separately deployed registry; fork rehearsals use the real registry with a test-only verifier.
 - Contracts: migrated the historical wash-trading registry to schema 1 direct seller proofs. Deployments now pin one `sellerProgramVKey`; journals no longer carry closed-loop or reciprocal child vkeys, while receipt/transaction/storage proof verification, settlement deduplication, evidence digests, and Chainlink `BlockhashStore` authentication remain enforced inside the direct seller proof flow.
 - Contracts: added a historical SP1 wash-trading registry that accepts authenticated seller proofs independently, records each seller's strongest proven wash-volume lower bound, and does not implement historical claims or ongoing epoch penalties.

@@ -571,7 +571,14 @@ location for inspection; remove that directory manually when no longer needed.
 The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
 faucet for eligible legacy sellers. Fund it conservatively and have sellers call
 `initPosition()` before the first rewarded epoch if their usage must count from
-that epoch. Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
+that epoch. For a seller contract such as the DIEM proxy, an authorized operator
+can call `initPosition(seller)`: the seller must return true from
+`isOperator(msg.sender)`. Eligibility and the one-time grant are checked against
+the seller, and the stake supports its agent pool, but the calling operator owns
+the lANTS position, its staker rewards, and its withdrawal rights. Revoking the
+operator later does not revoke position ownership. The proxy does not need to
+receive an NFT or call the faucet itself.
+Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
 claiming later never gives a seller more power than an earlier claimant. The
 same M001 broadcast first deploys `AntseedWashTradingRegistry`, then pins it
 into the faucet. Configure `SP1_VERIFIER`, `SP1_VERIFIER_HASH`,

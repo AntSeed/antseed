@@ -44,6 +44,14 @@ contract MockLegacySellerStaking {
     }
 }
 
+contract MockSellerOperatorsForInit {
+    mapping(address => bool) public isOperator;
+
+    function setOperator(address operator, bool enabled) external {
+        isOperator[operator] = enabled;
+    }
+}
+
 contract AntseedPositionInitTest is Test {
     uint256 constant EPOCH_DURATION = 1 weeks;
     uint256 constant INIT_AMOUNT = 1 ether;
@@ -135,6 +143,123 @@ contract AntseedPositionInitTest is Test {
         assertEq(pools.positionWeightAtEpoch(positionId, 1), INIT_AMOUNT * (INIT_END_EPOCH - 1));
         assertEq(pools.poolWeightAtEpoch(agentId, 1), INIT_AMOUNT * (INIT_END_EPOCH - 1));
         assertEq(pools.poolActiveStakeAtEpoch(agentId, 1), INIT_AMOUNT);
+    }
+
+    function test_explicitSellerCanInitItself() public {
+        vm.prank(seller);
+        uint256 positionId = positionInit.initPosition(seller);
+        assertEq(pools.ownerOf(positionId), seller);
+        assertTrue(positionInit.agentInitialized(agentId));
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.AlreadyInitialized.selector);
+        positionInit.initPosition();
+    }
+
+    function test_operatorOwnsPositionInContractSellersPool() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        proxy.setOperator(outsider, true);
+        washRegistry.set(outsider, true);
+
+        vm.expectEmit(true, true, false, true, address(positionInit));
+        emit AntseedPositionInit.PositionInitialized(
+            address(proxy), proxyAgentId, pools.nextPositionId(), INIT_AMOUNT, 104
+        );
+        vm.prank(outsider);
+        uint256 positionId = positionInit.initPosition(address(proxy));
+
+        assertFalse(token.transfersEnabled());
+        assertEq(pools.ownerOf(positionId), outsider);
+        (, uint256 positionAgentId, uint256 amount,,,,,) = pools.positions(positionId);
+        assertEq(positionAgentId, proxyAgentId);
+        assertEq(amount, INIT_AMOUNT);
+        assertTrue(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 9);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        assertEq(pools.poolActiveStakeAtEpoch(proxyAgentId, 1), INIT_AMOUNT);
+        assertEq(pools.poolWeightAtEpoch(proxyAgentId, 1), INIT_AMOUNT * 104);
+    }
+
+    function test_differentOperatorsCannotClaimSameSellerTwice() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        _registerLegacySeller(address(proxy));
+        proxy.setOperator(outsider, true);
+        proxy.setOperator(otherSeller, true);
+        vm.prank(outsider);
+        positionInit.initPosition(address(proxy));
+
+        vm.prank(otherSeller);
+        vm.expectRevert(AntseedPositionInit.AlreadyInitialized.selector);
+        positionInit.initPosition(address(proxy));
+    }
+
+    function test_unauthorizedAndRevokedOperatorsCannotInit() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+
+        proxy.setOperator(outsider, true);
+        proxy.setOperator(outsider, false);
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        assertFalse(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 10);
+    }
+
+    function test_operatorCannotBypassSellerEligibilityOrWashStatus() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        proxy.setOperator(seller, true);
+        legacyStaking.setStakedAboveMin(address(proxy), false);
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.NotLegacySeller.selector);
+        positionInit.initPosition(address(proxy));
+
+        legacyStaking.setStakedAboveMin(address(proxy), true);
+        washRegistry.set(address(proxy), true);
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.WashTrader.selector);
+        positionInit.initPosition(address(proxy));
+        assertFalse(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 10);
+    }
+
+    function test_otherEoaAndContractWithoutOperatorGetterReject() public {
+        vm.startPrank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(seller);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(legacyStaking));
+        vm.stopPrank();
+    }
+
+    function test_revertingOrMalformedOperatorGetterRejects() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        bytes memory query = abi.encodeWithSignature("isOperator(address)", outsider);
+        vm.mockCallRevert(address(proxy), query, abi.encode("unavailable"));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        vm.clearMockedCalls();
+
+        vm.mockCall(address(proxy), query, hex"01");
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        vm.mockCall(address(proxy), query, abi.encode(uint256(2)));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+    }
+
+    function test_zeroSellerRejects() public {
+        vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
+        positionInit.initPosition(address(0));
     }
 
     function test_latePositionNeverOutweighsEarlyPosition() public {
