@@ -2,15 +2,35 @@
 
 Solidity contracts implementing the streaming payment, staking, stats, and emission system.
 
+**Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
+Recognized usage combines service delivery, ANTS pool positions, and epoch-based
+rewards. See the [protocol guide](../../apps/website/docs/protocol/recognized-usage.md)
+and [contract addresses](#deployed-contracts).
+
+Looking for the pre-migration system? See
+[Legacy emissions and claims](../../apps/website/docs/protocol/legacy-emissions.md).
+Deployment/cutover procedures are in the M001 operator runbook.
+
 ## Contract Architecture
 
 ```
-ANTSToken (ERC-20)          ── phase-locked transfers, mint restricted to AntseedEmissions
+ANTSToken (ERC-20)          ── phase-locked transfers, mint controlled by AntseedEmissionsGate
 AntseedDeposits             ── buyer USDC deposits, holds ALL buyer USDC
 AntseedChannels             ── Reserve→Settle/Close lifecycle, EIP-712 (swappable, holds NO USDC)
-AntseedStaking              ── seller stake bound to ERC-8004 agentId
+AntseedStaking              ── legacy USDC stake bound to ERC-8004 agentId
 AntseedStats                ── optional external metadata sink (buyer/agent token + request stats)
-AntseedEmissions            ── USDC volume-based epoch emissions
+AntseedEmissionsV2          ── legacy usage ledger and claims, now paid from escrow
+AntseedEmissionsGate        ── emission schedule and mint authority
+AntseedSellerPools          ── locked ANTS positions and epoch pool power
+AntseedSellerRegistry       ── new eligibility endpoint, activated at cutover
+AntseedUsageAccounting      ── recognized usage ledger, activated at cutover
+AntseedPointsPolicyRegistry ── ordered seller/buyer point transformations
+AntseedWashTradingRegistry  ── authenticated historical seller proof status
+AntseedWashTradingPointsPolicy ── zeros future points for flagged sellers
+AntseedPositionInit         ── separately funded starter-position faucet
+AntseedSellerPoolsRewards   ── staker rewards and restaking
+AntseedUsageRewards         ── buyer and seller/operator usage rewards
+AntseedLegacyEmissionsEscrow ── pre-minted pot for legacy claims and flushes
 MockERC8004Registry         ── mock ERC-8004 IdentityRegistry (local testing only)
 ```
 
@@ -627,7 +647,9 @@ archive-capable RPC to pin the check to a specific block.
 
 ## Configuration
 
-All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
+Administrative parameters use their contract's dedicated setters where available.
+The emissions gate's schedule constants are immutable; do not treat legacy
+owner-configurable emissions parameters as configuration for the standard gate.
 
 ### AntseedDeposits / AntseedChannels / AntseedStaking
 
@@ -639,35 +661,70 @@ All constants are configurable by the contract owner via dedicated setter functi
 | `PLATFORM_FEE_BPS` | 500 (5%) | Platform fee in basis points |
 | `MAX_PLATFORM_FEE_BPS` | 1000 (10%) | Maximum platform fee |
 
-### AntseedEmissions
+### Legacy Emissions Configuration
 
-| Constant | Default | Description |
+Pre-migration V2 settings (historical epochs use their own snapshots):
+
+| Constant | Pre-migration value | Description |
 |---|---|---|
 | `EPOCH_DURATION` | 1 week | Duration of each emission epoch |
 | `HALVING_INTERVAL` | 104 epochs (~2 years) | Epochs between emission halvings |
 | `INITIAL_EMISSION` | Set at deployment | Total ANTS emitted in epoch 0 |
 | `SELLER_SHARE_PCT` | 65% | Seller share of epoch emissions |
-| `BUYER_SHARE_PCT` | 25% | Buyer share of epoch emissions |
-| `RESERVE_SHARE_PCT` | 10% | Reserve share of epoch emissions |
-| `MAX_SELLER_SHARE_PCT` | 15% | Per-seller cap of seller pool |
+| `BUYER_SHARE_PCT` | 5% | Buyer share of epoch emissions |
+| `RESERVE_SHARE_PCT` | 15% | Reserve share of epoch emissions |
+| `TEAM_SHARE_PCT` | 15% | Team share of epoch emissions |
+| `MAX_SELLER_SHARE_PCT` | 50% | Per-seller cap within the seller bucket |
+| `MAX_BUYER_SHARE_PCT` | 5% | Per-buyer cap within the buyer bucket |
 
 ### Deployed Contracts
 
 #### Base Mainnet (Production)
+
+Protocol addresses for the **September 10, 2026** start date are listed below.
+See [legacy addresses](../../apps/website/docs/protocol/legacy-emissions.md#legacy-contract-addresses)
+for pre-migration staking and claims.
 
 | Contract | Address |
 |---|---|
 | **USDC (Circle)** | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | **ANTSToken** | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 | **AntseedRegistry** | `0xf33fC901BFa97326379A369401F4490E231B69B0` |
-| **AntseedStaking** | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| **AntseedSellerRegistry** | `0x99c533BCc6Ca646E543dbA835Fdbb9C2ee02Cb60` |
 | **AntseedDeposits** | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | **AntseedChannels** | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | **AntseedStats** | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
-| **AntseedEmissionsV2** | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
+| **AntseedUsageAccounting** | `0xAdd2D85316153D7bfaF7921EE9Bf1Bb6c7A1cBc9` |
 | **ERC-8004 IdentityRegistry** | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (external) |
 
 All verified on [BaseScan](https://basescan.org). Contract addresses are built into `@antseed/node` chain-config — no manual configuration needed when `chainId: "base-mainnet"` is set.
+
+##### M001 deployed stack
+
+All 11 contracts below were deployed in phase 1 and verified. Their canonical
+provenance is in `deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
+The protocol starts at epoch 22; use the operator runbook for the activation procedure.
+
+| Contract | Address |
+|---|---|
+| AntseedWashTradingRegistry | `0xc02a111CB94332Cc31C08E079cbe781880b2121C` |
+| AntseedEmissionsGate | `0xE60a31E6CD2F8455503cA0B3f6545Dd3DDF543BD` |
+| AntseedSellerPools | `0x8Bf4d39AA13F3CB03F87D9500767fBc4D0940652` |
+| AntseedSellerRegistry | `0x99c533BCc6Ca646E543dbA835Fdbb9C2ee02Cb60` |
+| AntseedPositionInit | `0xB68AD13b681319fcEB6b0A640c2fd96C0138CBc8` |
+| AntseedUsageAccounting | `0xAdd2D85316153D7bfaF7921EE9Bf1Bb6c7A1cBc9` |
+| AntseedPointsPolicyRegistry | `0x212D2C1058b84507de248a147aaFeB08fb19E3b6` |
+| AntseedWashTradingPointsPolicy | `0x7a605aaa3c725aa25012dfDeD6B5dddcC561D6e5` |
+| AntseedSellerPoolsRewards | `0x83cc5B9AA0c8cB8683F35462c385a5BAAa755EE5` |
+| AntseedUsageRewards | `0x78330bF154172F1137219Bb559d4F3A270B3201F` |
+| AntseedLegacyEmissionsEscrow | `0x4d0fC3C0BBb5233Af6c4Ce33223e5330c34db9ab` |
+
+`getChainConfig('base-mainnet').recognizedUsage` exposes these addresses and
+the recorded deployment status without changing the active legacy aliases.
+The metadata is generated from the history record and `current.json`, not
+inferred from wall-clock time. Update the active record and regenerate only
+after a successful cutover. Existing legacy client methods are not adapters
+for the new pool and reward interfaces.
 
 #### Base Sepolia (Testnet)
 

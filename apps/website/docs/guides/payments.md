@@ -113,44 +113,46 @@ For a one-off run, use `antseed seller start --base-rpc-url <url>`. For durable 
 
 Sellers relay buyer deposit sweeps by default: the node verifies and simulates each incoming sweep request, submits it on-chain, and earns the fixed relay fee (minus gas). Opt out with `relayer.enabled: false` in your config, or tune the profitability floor with `relayer.minProfitBaseUnits`.
 
-### Staking
+### Staking and ANTS Rewards {#ants-token-emissions}
 
-Providers must stake a minimum of $10 USDC to participate:
+**Starting September 10, 2026 at 09:54:21 UTC (epoch 22)**, ANTS rewards use
+recognized service usage and locked seller-pool stake. Participants hold
+lANTS staking-position NFTs; pool power activates in the following epoch.
+Eligible sellers can initialize a starter position, including contract sellers
+whose authorized operator initializes on their behalf.
 
-```bash
-antseed seller stake 10
-```
+Weekly allocation ceilings are:
+- 40% for seller-pool rewards.
+- 20% for buyer and seller/operator usage rewards.
+- 15% for the emissions reserve.
+- 15% for the team.
+- 10% for verification.
 
-Staking binds your wallet to an on-chain agent identity (ERC-8004). To withdraw your stake:
+Actual rewards depend on eligibility, pool power, usage, and the reward
+contracts' allocation rules. USDC payments can still settle even when no
+usage points are earned. Enabling ANTS trading is a separate action.
 
-```bash
-antseed seller unstake
-```
+See [Recognized Usage and ANTS Rewards](../protocol/recognized-usage.md) for
+starter positions, pool staking, policies, and contract addresses.
 
-### ANTS Token Emissions
-
-Providers and buyers earn ANTS tokens based on eligible USDC volume. Emissions are distributed per epoch (1 week):
-- 50% to providers (proportional to USDC earned, capped at 50% of the seller bucket per seller per epoch)
-- 20% to buyers (proportional to USDC spent, capped at 5% of the buyer bucket per buyer per epoch)
-- 15% to protocol reserve, plus seller and buyer cap overages
-- 15% to contributors/team
-
-Check your pending emissions:
-
-```bash
-antseed seller emissions info
-```
+**Looking for rewards or USDC staking from before migration?** See
+[Legacy emissions and claims](../protocol/legacy-emissions.md).
 
 ## Contract Addresses (Base Mainnet)
+
+These are the settlement and accounting endpoints for the protocol starting
+**September 10, 2026**. The [full ANTS contract list](../protocol/recognized-usage.md#mainnet-contracts)
+includes pools, reward contracts, and starter positions. Historical claims use
+[legacy addresses](../protocol/legacy-emissions.md#legacy-contract-addresses).
 
 | Contract | Address |
 |---|---|
 | USDC (Circle) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | AntseedDeposits | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
-| AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| AntseedSellerRegistry | `0x99c533BCc6Ca646E543dbA835Fdbb9C2ee02Cb60` |
 | AntseedDepositRelay | `0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD` |
-| AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
+| AntseedUsageAccounting | `0xAdd2D85316153D7bfaF7921EE9Bf1Bb6c7A1cBc9` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 
 All contracts verified on [BaseScan](https://basescan.org). For testnet (Base Sepolia), set `payments.crypto.chainId` to `base-sepolia` in your config.

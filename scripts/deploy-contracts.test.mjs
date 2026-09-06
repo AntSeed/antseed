@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { broadcastPath, mergeBroadcast, parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
+import { renderNetwork } from './generate-contract-chain-config.mjs';
 
 import {
   buildMigrationRegistry,
@@ -1733,4 +1734,59 @@ test('a dry run before the epoch boundary simulates instead of waiting', async (
   assert.equal(forkRequests[0].timestamp, 1001, 'only the disposable fork advances past the boundary');
   assert.deepEqual(scriptRpcs, ['http://127.0.0.1:9998']);
   assert.equal(result.endStateVerified, false);
+});
+
+test('chain config exposes deployed M001 addresses without activating legacy aliases', async () => {
+  const current = {
+    chainId: 8453,
+    status: 'active',
+    contracts: {
+      emissions: { address: '0x0000000000000000000000000000000000000001' },
+      staking: { address: '0x0000000000000000000000000000000000000002' },
+    },
+  };
+  const deployed = JSON.parse(await readFile('packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json', 'utf8'));
+  const config = renderNetwork(current, deployed);
+  assert.equal(config.stakingContractAddress, current.contracts.staking.address);
+  assert.equal(config.emissionsContractAddress, current.contracts.emissions.address);
+  assert.equal(config.recognizedUsage.status, 'deployed');
+  assert.equal(config.recognizedUsage.effectiveEpoch, deployed.effectiveEpoch);
+  assert.equal(Object.keys(config.recognizedUsage.contracts).length, 11);
+  for (const [name, contract] of Object.entries(deployed.contracts)) {
+    assert.equal(config.recognizedUsage.contracts[name], contract.address);
+  }
+});
+
+test('chain config activates M001 metadata only after both active aliases match', async () => {
+  const current = {
+    chainId: 8453,
+    status: 'active',
+    contracts: {
+      emissions: { address: '0x0000000000000000000000000000000000000001' },
+      staking: { address: '0x0000000000000000000000000000000000000002' },
+    },
+  };
+  const deployed = JSON.parse(await readFile('packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json', 'utf8'));
+  current.contracts.emissions = deployed.contracts.usageAccounting;
+  assert.equal(renderNetwork(current, deployed).recognizedUsage.status, 'deployed');
+  current.contracts.staking = deployed.contracts.sellerRegistry;
+  const config = renderNetwork(current, deployed);
+  assert.equal(config.recognizedUsage.status, 'active');
+  assert.equal(config.emissionsContractAddress, deployed.contracts.usageAccounting.address);
+  assert.equal(config.stakingContractAddress, deployed.contracts.sellerRegistry.address);
+});
+
+test('chain config does not invent an M001 deployment on another network', async () => {
+  const current = JSON.parse(await readFile('packages/contracts/deployments/base-sepolia/current.json', 'utf8'));
+  assert.equal(renderNetwork(current).recognizedUsage, undefined);
+});
+
+test('published M001 address inventories match the immutable deployment record', async () => {
+  const deployed = JSON.parse(await readFile('packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json', 'utf8'));
+  for (const file of ['packages/contracts/README.md', 'apps/website/docs/protocol/recognized-usage.md']) {
+    const document = (await readFile(file, 'utf8')).toLowerCase();
+    for (const [name, contract] of Object.entries(deployed.contracts)) {
+      assert.ok(document.includes(contract.address.toLowerCase()), `${file} is missing ${name}`);
+    }
+  }
 });

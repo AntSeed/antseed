@@ -1,5 +1,31 @@
 # M001 — Recognized usage cutover
 
+## Recorded Base mainnet deployment
+
+Phase 1 completed on September 6, 2026: 30 transactions in blocks
+50,955,026–50,955,055 and 11 verified contracts. The append-only record is
+`deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
+The token now points to the gate and legacy emissions to its funded escrow.
+The main registry's staking/emissions pointers are still legacy.
+
+The next operation on this deployment is **cutover**, not another deployment.
+Effective epoch 22 begins September 10, 2026 at 09:54:21 UTC; run the waiting
+cutover process before 09:53:21 UTC and leave signing available. Initialization
+and historical proof submission must be prepared before that boundary.
+See the [full contract inventory](../../../README.md#m001-deployed-stack).
+
+The deployment key `0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a` held all five
+M001 signer roles at the phase-1 preflight. Recheck owners before cutover and
+after any ownership handoff. DIEM staking is not proxy operator authorization:
+starter initialization requires an operator and is a separate transaction.
+
+The phase-1 runner's RPC `codehash` read failed after all transactions and
+explorer verifications completed. Its history was recovered from confirmed
+receipts using hashes of fetched runtime bytecode, then checked against the
+local build. Do not repeat deployment to repair a local recording failure.
+
+## General workflow
+
 Two CLI broadcast runs: deploy during the current epoch, then activate at the
 next epoch boundary. They are not necessarily a full epoch apart. For the
 step-by-step operator walkthrough, see
@@ -125,15 +151,16 @@ Roles are never defaulted from one another. Required for the cutover:
 | `diemStaker` | address with DIEM staked on the proxy (mainnet, or when `DIEM_STAKING_PROXY` is set) |
 | `sellerRewardsPoolOwner` | `AntseedSellerRewardsPool.owner()` (same condition) |
 
-On Base mainnet today every role is one of two EOAs, so the full command is:
+For the recorded mainnet deployment, the same keystore can supply all five
+roles while ownership and DIEM stake remain unchanged:
 
 ```bash
 pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
-  --signer deployer=account:antseed-owner \
-  --signer registryOwner=account:antseed-owner \
-  --signer channelsOwner=account:antseed-ops \
-  --signer sellerRewardsPoolOwner=account:antseed-ops \
-  --signer diemStaker=account:antseed-ops
+  --signer deployer=account:antseed-deployer \
+  --signer registryOwner=account:antseed-deployer \
+  --signer channelsOwner=account:antseed-deployer \
+  --signer sellerRewardsPoolOwner=account:antseed-deployer \
+  --signer diemStaker=account:antseed-deployer
 ```
 
 `USAGE_ACCOUNTING`, `SELLER_REGISTRY`, and the `EXPECTED_*` legacy addresses

@@ -3,6 +3,7 @@
 export const DEPLOYED_CONTRACT_ADDRESSES = {
   'base-mainnet': {
     evmChainId: 8453,
+    registryContractAddress: '0xf33fC901BFa97326379A369401F4490E231B69B0',
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
@@ -16,9 +17,27 @@ export const DEPLOYED_CONTRACT_ADDRESSES = {
     depositRelayAddress: '0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD',
     channelsDeployBlock: 44469557,
     statsDeployBlock: 44469557,
+    recognizedUsage: {
+      "status": "deployed",
+      "effectiveEpoch": 22,
+      "contracts": {
+        "washTradingRegistry": "0xc02a111cb94332cc31c08e079cbe781880b2121c",
+        "emissionsGate": "0xe60a31e6cd2f8455503ca0b3f6545dd3ddf543bd",
+        "sellerPools": "0x8bf4d39aa13f3cb03f87d9500767fbc4d0940652",
+        "sellerRegistry": "0x99c533bcc6ca646e543dba835fdbb9c2ee02cb60",
+        "positionInit": "0xb68ad13b681319fceb6b0a640c2fd96c0138cbc8",
+        "usageAccounting": "0xadd2d85316153d7bfaf7921ee9bf1bb6c7a1cbc9",
+        "pointsPolicyRegistry": "0x212d2c1058b84507de248a147aafeb08fb19e3b6",
+        "washTradingPointsPolicy": "0x7a605aaa3c725aa25012dfded6b5dddcc561d6e5",
+        "sellerPoolsRewards": "0x83cc5b9aa0c8cb8683f35462c385a5baaa755ee5",
+        "usageRewards": "0x78330bf154172f1137219bb559d4f3a270b3201f",
+        "legacyEmissionsEscrow": "0x4d0fc3c0bbb5233af6c4ce33223e5330c34db9ab"
+      }
+    },
   },
   'base-sepolia': {
     evmChainId: 84532,
+    registryContractAddress: '0x81562e904D228Ee05DB473f5c9453F0f0D65ad5A',
     usdcContractAddress: '0xcA04797CaB6B412Cee6798B7314a05AdFDc3Cf23',
     depositsContractAddress: '0x96f083A9801AFdcE7D764651954A1A9Fbd489FEA',
     channelsContractAddress: '0x3b0b94AC27C042CAC17103A897Fb5cEb7D8b4cf7',
