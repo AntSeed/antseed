@@ -22,6 +22,13 @@ import {
   validateM001Baseline,
   validateM001Options,
 } from './deployments/m001.mjs';
+import {
+  classifyM002,
+  DEFAULT_RELEASE_BPS,
+  migration as m002,
+  validateM002Baseline,
+  validateM002Options,
+} from './deployments/m002.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.mjs';
 import { currentRelease, historyRecordExists, loadContext, readCheckpoint, validateArtifacts } from './deployments/runtime/ledger.mjs';
 import { executePhases, runMigration } from './deployments/runtime/runner.mjs';
@@ -376,8 +383,8 @@ test('rejects missing and conflicting modes', () => {
     /Choose exactly one/,
   );
   assert.throws(
-    () => parseDeployArgs(['M002', '--network', 'base-mainnet', '--dry-run']),
-    /Unknown deployment migration M002; available: M001/,
+    () => parseDeployArgs(['M009', '--network', 'base-mainnet', '--dry-run']),
+    /Unknown deployment migration M009; available: M001, M002/,
   );
 });
 
@@ -433,7 +440,8 @@ test('reports incomplete network baselines before deployment', () => {
 
 test('registers migrations explicitly', () => {
   assert.equal(getDeploymentMigration('M001').id, 'M001');
-  assert.deepEqual([...deploymentMigrations.keys()], ['M001']);
+  assert.deepEqual([...deploymentMigrations.keys()], ['M001', 'M002']);
+  assert.equal(getDeploymentMigration('M002').id, 'M002');
 });
 
 test('rejects invalid and duplicate migration registrations', () => {
@@ -1215,4 +1223,216 @@ test('a dry run before the epoch boundary simulates instead of waiting', async (
   assert.equal(forkRequests[0].timestamp, 1001, 'only the disposable fork advances past the boundary');
   assert.deepEqual(scriptRpcs, ['http://127.0.0.1:9998']);
   assert.equal(result.endStateVerified, false);
+});
+
+// ---------------------------------------------------------------------------
+// M002 — legacy seller claims
+// ---------------------------------------------------------------------------
+
+const M002_ADDRESS = {
+  pool: '0x0000000000000000000000000000000000000010',
+  policy: '0x0000000000000000000000000000000000000011',
+  foreignPolicy: '0x0000000000000000000000000000000000000012',
+  zero: '0x0000000000000000000000000000000000000000',
+};
+
+function m002Observation(overrides = {}) {
+  return {
+    expected: {
+      registry: ADDRESS.registry,
+      antsToken: ADDRESS.ants,
+      usageAccounting: ADDRESS.usageAccounting,
+      recordedPolicy: null,
+    },
+    registry: { antsToken: ADDRESS.ants, emissions: ADDRESS.usageAccounting },
+    legacyEmissionsV2: ADDRESS.legacyEmissions,
+    token: { owner: ADDRESS.ants, transfersEnabled: false, poolWhitelisted: false },
+    pool: {
+      address: M002_ADDRESS.pool,
+      owner: ADDRESS.channels,
+      sellerClaimPolicy: M002_ADDRESS.zero,
+      policyMatchesRecord: true,
+    },
+    lastLockedEpochValid: true,
+    ...overrides,
+  };
+}
+
+test('classifies the M002 lifecycle', () => {
+  assert.equal(classifyM002(m002Observation()), 'ready');
+  // Half-applied installs stay `ready` so the idempotent script finishes them.
+  assert.equal(classifyM002(m002Observation({
+    token: { transfersEnabled: false, poolWhitelisted: true },
+  })), 'ready');
+  assert.equal(classifyM002(m002Observation({
+    pool: { ...m002Observation().pool, sellerClaimPolicy: M002_ADDRESS.policy },
+  })), 'ready');
+  assert.equal(classifyM002(m002Observation({
+    token: { transfersEnabled: false, poolWhitelisted: true },
+    pool: { ...m002Observation().pool, sellerClaimPolicy: M002_ADDRESS.policy },
+  })), 'active');
+  // Globally enabled transfers make the whitelist unnecessary.
+  assert.equal(classifyM002(m002Observation({
+    token: { transfersEnabled: true, poolWhitelisted: false },
+    pool: { ...m002Observation().pool, sellerClaimPolicy: M002_ADDRESS.policy },
+  })), 'active');
+});
+
+test('M002 refuses to run before M001 activates or over a foreign policy', () => {
+  assert.equal(classifyM002(m002Observation({
+    registry: { antsToken: ADDRESS.ants, emissions: ADDRESS.legacyEmissions },
+  })), 'invalid', 'registry.emissions() still legacy');
+  assert.equal(classifyM002(m002Observation({ pool: null })), 'not-applicable', 'V1-only legacy emissions, no pool');
+  assert.equal(classifyM002(m002Observation({ legacyEmissionsV2: null })), 'invalid', 'escrow points at nothing');
+  assert.equal(classifyM002(m002Observation({ lastLockedEpochValid: false })), 'invalid', 'effective epoch <= migration');
+  assert.equal(classifyM002(m002Observation({
+    pool: { ...m002Observation().pool, sellerClaimPolicy: M002_ADDRESS.foreignPolicy, policyMatchesRecord: false },
+  })), 'invalid', 'a policy this ledger did not install');
+});
+
+test('M002 supports the same networks and modes as M001', () => {
+  assert.doesNotThrow(() => validateM002Options({ network: 'base-sepolia', mode: 'dry-run' }));
+  assert.doesNotThrow(() => validateM002Options({ network: 'base-mainnet', mode: 'fork-test' }));
+  assert.throws(() => validateM002Options({ network: 'base-sepolia', mode: 'fork-test' }), /M002 supports/);
+  assert.throws(() => validateM002Options({ network: 'base-local', mode: 'dry-run' }), /M002 supports/);
+});
+
+test('M002 defaults to ten percent of cumulative locked rewards', () => {
+  assert.equal(DEFAULT_RELEASE_BPS, 1000);
+});
+
+test('M002 requires an activated M001 baseline', () => {
+  const contract = (address) => ({ address });
+  const activated = {
+    network: 'base-mainnet',
+    contracts: {
+      registry: contract(ADDRESS.registry),
+      antsToken: contract(ADDRESS.ants),
+      emissions: contract(ADDRESS.usageAccounting),
+      usageAccounting: contract(ADDRESS.usageAccounting),
+      washTradingRegistry: contract(ADDRESS.channels),
+      legacyEmissionsEscrow: contract(ADDRESS.sellerRegistry),
+    },
+  };
+  assert.doesNotThrow(() => validateM002Baseline(activated));
+  assert.equal(m002.expectedState(activated).washTradingRegistry, ADDRESS.channels);
+  assert.throws(
+    () => validateM002Baseline({ ...activated, contracts: { ...activated.contracts, emissions: contract(ADDRESS.legacyEmissions) } }),
+    /run M001 first/,
+  );
+  const { washTradingRegistry, ...withoutWashTradingRegistry } = activated.contracts;
+  assert.throws(() => validateM002Baseline({ ...activated, contracts: withoutWashTradingRegistry }), /missing: washTradingRegistry/);
+});
+
+test('M002 observes the ledger wash registry without a PositionInit getter', async (t) => {
+  const responses = {
+    'legacyEmissions()(address)': ADDRESS.legacyEmissions,
+    'sellerRewardsPool()(address)': M002_ADDRESS.pool,
+    'owner()(address)': ADDRESS.ants,
+    'sellerClaimPolicy()(address)': M002_ADDRESS.zero,
+    'totalLockedRewards()(uint256)': '1000',
+    'emissionsGate()(address)': ADDRESS.channels,
+    'effectiveEpoch()(uint256)': '22',
+    'MIGRATION_EPOCH()(uint256)': '4',
+    'antsToken()(address)': ADDRESS.ants,
+    'emissions()(address)': ADDRESS.usageAccounting,
+    'transfersEnabled()(bool)': 'false',
+    'transferWhitelist(address)(bool)': 'false',
+  };
+  mockCast(t, (args) => {
+    if (args[0] === 'chain-id') return '8453';
+    if (args[0] === 'code') return '0x01';
+    assert.equal(args[0], 'call');
+    assert.ok(Object.hasOwn(responses, args[2]), `unexpected getter: ${args[2]}`);
+    return responses[args[2]];
+  });
+  const observation = await m002.observe({
+    rpcUrl: 'http://127.0.0.1:0',
+    network: 'base-mainnet',
+    canonical: { chainId: 8453 },
+    expected: {
+      registry: ADDRESS.registry,
+      antsToken: ADDRESS.ants,
+      usageAccounting: ADDRESS.usageAccounting,
+      legacyEmissionsEscrow: ADDRESS.sellerRegistry,
+      washTradingRegistry: ADDRESS.channels,
+      recordedPolicy: null,
+    },
+  });
+  assert.equal(observation.state, 'ready');
+  assert.equal(observation.washTradingRegistry, ADDRESS.channels);
+});
+
+test('enforces M002 release invariants', () => {
+  const validate = (record) => m002.recordErrors(record).length === 0;
+  const verificationConfiguration = {
+    sellerRewardsPool: M002_ADDRESS.pool,
+    sellerClaimPolicy: M002_ADDRESS.policy,
+    poolCanTransfer: true,
+    lastLockedEpoch: 41,
+    releaseBps: 1000,
+    vestStart: 0,
+    vestEpochs: 0,
+    washTradingRegistry: ADDRESS.channels,
+    policyOwner: ADDRESS.channels,
+  };
+  const contracts = { legacySellerClaimPolicy: { address: M002_ADDRESS.policy } };
+
+  assert.equal(validate({ verificationConfiguration, contracts }), true);
+  assert.equal(validate({}), false, 'verificationConfiguration is required');
+  assert.equal(validate({ verificationConfiguration }), false, 'the deployed policy must be recorded');
+  assert.equal(
+    validate({ verificationConfiguration: { ...verificationConfiguration, poolCanTransfer: false }, contracts }),
+    false,
+    'the pool must be able to send ANTS',
+  );
+  assert.equal(
+    validate({ verificationConfiguration: { ...verificationConfiguration, releaseBps: 0 }, contracts }),
+    false,
+    'a zero release is a frozen pool',
+  );
+  assert.equal(
+    validate({
+      verificationConfiguration,
+      contracts: { legacySellerClaimPolicy: { address: M002_ADDRESS.foreignPolicy } },
+    }),
+    false,
+    'the recorded contract must be the installed policy',
+  );
+});
+
+test('M002 has a single idempotent install phase owned by two signers', () => {
+  assert.deepEqual(m002.releases, ['002-legacy-seller-claims']);
+  assert.deepEqual(m002.phases.map((phase) => phase.id), ['install']);
+  assert.deepEqual(m002.phases[0].signers(), ['deployer', 'sellerRewardsPoolOwner']);
+  assert.equal(m002.phases[0].guard({ state: 'ready' }), true);
+  assert.equal(m002.phases[0].guard({ state: 'active' }), false);
+  assert.deepEqual(m002.allowedDirtyReleases({ state: 'ready' }), []);
+  assert.deepEqual(buildReleaseOwners().get('002-legacy-seller-claims'), m002);
+});
+
+test('M002 rehearses through the framework with M001 as its prerequisite', () => {
+  assert.deepEqual(m002.rehearsal.prerequisites, ['M001']);
+  assert.equal(m002.rehearsal.fork, undefined);
+  const result = resolveRehearsal(m002, { ...REHEARSAL_OPTIONS, migration: 'M002' }, deploymentMigrations);
+  assert.deepEqual(result.migrations.map((entry) => entry.id), ['M001', 'M002']);
+  assert.deepEqual(result.fork, migration.rehearsal.fork);
+});
+
+test('M002 rehearsal checks activation and an idempotent second apply', async () => {
+  for (const states of [['active', 'active'], ['ready'], ['active', 'ready']]) {
+    const driven = [];
+    const run = m002.rehearsal.run({
+      network: 'base-mainnet',
+      async runMigration(overrides) {
+        driven.push(overrides);
+        return { state: states[driven.length - 1] };
+      },
+    });
+    if (states.every((state) => state === 'active')) await run;
+    else await assert.rejects(run, /Expected M002 active|not an active no-op/);
+    assert.equal(driven.length, states.length);
+    assert.deepEqual(Object.keys(driven[0].signers), ['deployer', 'sellerRewardsPoolOwner']);
+    assert.ok(Object.values(driven[0].signers).every((signer) => signer.startsWith('unlocked:')));
+  }
 });
