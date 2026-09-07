@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Docs: documented the epoch-22 stake and recognized-volume targets and their dynamic reward-share curve, the shared 30% epoch-emission burn cap, routing of excess unallocated rewards to the emissions reserve, explicit remainder settlement, and the separate dead-address transfer of early-withdrawal penalties.
+
 - Docs: added a dedicated reward-policy guide covering composition, configuration, failure handling, and the historical wash-trading rule with SP1 and canonical block authentication. Consolidated reward explanations and corrected stale legacy-reward, wallet-custody, routing-filter, and staking guidance without changing the network's presentation.
 
 - Docs: documented ANTS stake-move and early-withdrawal penalties, preserved reward claims, owner-configurable settings, and the legacy-USDC eligibility and expiry requirements for starter positions.

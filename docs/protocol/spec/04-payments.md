@@ -233,6 +233,21 @@ Allocation ceilings are 40% seller-pool rewards, 20% usage rewards, 15% team,
 allocation and eligibility rules rather than paying their ceiling unconditionally.
 The gate uses weekly epochs and a 104-epoch halving interval.
 
+For epoch 22, the dynamic stake target is 400 million active ANTS and the usage
+target is 1 million USDC of recognized volume per epoch. These are curve
+reference points, not maximum-share thresholds: reaching them produces a 21%
+staker share and 7.5% each for buyer and seller/operator usage. See
+[stake and usage targets](../../../apps/website/docs/protocol/recognized-usage.md#stake-and-usage-targets)
+for the formula, post-policy volume measure, and emission-scaled stake target.
+
+Unallocated seller-pool and usage budgets are settled through the gate: burns
+take priority up to a shared cap of 30% of the epoch's scheduled emissions, with
+excess sent to the emissions reserve. This does not sweep earned but unclaimed
+rewards. Burns require remainder settlement and mint ANTS to the dead address;
+they do not reduce ERC-20 `totalSupply()`. See the
+[burn and reserve rule](../../../apps/website/docs/protocol/recognized-usage.md#unallocated-emissions-and-burns)
+for the calculation and the separate early-withdrawal burn.
+
 Accounting tracks raw and pool-weighted points and applies sequential policies.
 The public policy returns remain `(sellerPoints, buyerPoints)`. A zeroed side
 cannot be restored and evaluation stops when both sides are zero. Historical
