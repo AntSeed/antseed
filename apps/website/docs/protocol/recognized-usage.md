@@ -57,6 +57,10 @@ in the contract. **At or after lock expiry, the slash is zero.** Withdrawal
 does not slash previously earned rewards, but it removes the position's power
 from the withdrawal epoch onward.
 
+The slashed ANTS is sent to `0x000000000000000000000000000000000000dEaD`,
+not to the team or reserve. This principal burn is separate from the epoch
+emission burn described below and does not consume its 30% cap.
+
 These percentages are owner-configurable settings, not immutable guarantees.
 Check the pool contract's current values before moving or withdrawing stake.
 
@@ -115,7 +119,59 @@ Allocation ceilings from epoch 22 are:
 - **10% verification**.
 
 These are not a promise that every bucket is fully paid to users. Reward
-eligibility, pool power, utilization, and the contracts' remainder rules apply.
+eligibility, pool power, and utilization determine the allocation. Unallocated
+reward budgets follow the [burn and reserve rule](#unallocated-emissions-and-burns).
+
+### Stake and usage targets
+
+The dynamic shares tie reward allocation to two measures: ANTS committed to
+seller pools and recognized service usage. More active stake increases the
+staker allocation; more recognized volume increases the buyer and seller/operator
+usage allocations. The unused portion of each reward ceiling follows the burn
+and reserve rule rather than being paid out regardless of participation.
+
+The mainnet configuration for epoch 22, checked on **September 7, 2026**, is:
+
+- **Stake target: 400 million active ANTS across the network.** The staker share
+  rises from a 2% baseline toward a 40% ceiling. The input is active staked
+  principal, not lock-duration-weighted pool power. Pool power and recognized
+  usage determine how allocated rewards are distributed.
+- **Usage target: 1 million USDC of recognized volume per weekly epoch.** Buyer
+  and seller/operator shares each rise from a 5% baseline toward a 10% ceiling.
+  This is a network-wide epoch measure, not a per-seller or lifetime target.
+
+For a positive input, each share follows the same curve:
+
+```text
+share = minimum + (maximum - minimum) × input / (input + target)
+```
+
+A zero input gives a zero share. At the target, the share is halfway between
+its minimum and maximum—not at the maximum:
+
+- At **400 million active ANTS**, the staker share is **21%** of epoch emissions.
+- At **1 million USDC recognized volume**, buyer and seller/operator shares are
+  **7.5% each**, or **15% combined**.
+
+These are allocation shares, not an individual staker's yield or a guaranteed
+payment. A reward side with no qualifying weighted usage has no claimant and
+its budget becomes remainder. The targets are not minimum requirements for
+participating; allocation increases smoothly as the inputs grow.
+
+The usage input is the larger of the epoch's total buyer points and total seller
+points, after points policies. With the deployed pass-through/wash-filter
+behavior, it represents recognized USDC volume without counting buyer and seller
+sides twice. It is not all raw Channels volume, and a different points modifier
+can change how it relates to USDC.
+
+The effective stake target scales with scheduled emissions:
+`400 million ANTS × epoch emission / initial emission`. At the initial 5 million
+ANTS per epoch, it is 400 million; after the first emission halving, it is
+200 million under the same configuration. The usage target does not automatically
+halve. Epoch-specific settings are available through `dynamicStakerConfigAt(epoch)`
+and `dynamicUsageConfigAt(epoch)` on the reward contracts.
+
+### Destinations
 
 The configured destinations are:
 
@@ -133,6 +189,38 @@ one-way action; M001 does not enable it.
 
 For pre-migration claims and reserve/team flushes, see
 [Legacy emissions and claims](./legacy-emissions.md#escrow-and-flushes).
+
+### Unallocated emissions and burns
+
+Seller-pool and usage rewards have dynamic budgets. The portion of their
+allocation ceilings that is not allocated to rewards becomes an epoch remainder.
+A reward side with no qualifying weighted usage also has no allocation. This is
+different from rewards that someone has earned but has not claimed yet: those
+are not swept into the remainder simply because they are unclaimed.
+
+The gate routes settled remainders as follows:
+
+- **Burn first, up to 30% of the epoch's total scheduled emissions.** This is one
+  shared cap across remainder claims, not 30% per pool or 30% of each remainder.
+- **Send any excess to the emissions reserve**, in addition to its regular
+  allocation.
+
+For example, if an epoch schedules 1,000 ANTS and has 400 ANTS of combined
+unallocated rewards, settling those remainders burns 300 ANTS and sends 100 ANTS
+to the emissions reserve. If the remainder is only 100 ANTS, all 100 is burned;
+30% is a ceiling, not a guaranteed burn every epoch.
+
+Settlement is explicit: after the epoch ends, anyone can call
+`settleEpochRemainder(epoch)` on each reward controller with a remainder. An epoch
+ending does not itself execute a burn transaction. The gate's
+`epochBurnedAmount(epoch)` records the emission amount burned for that epoch;
+remainder-settlement events report both the burned and reserve amounts.
+
+Emission burns are implemented by minting the remainder to
+`0x000000000000000000000000000000000000dEaD`. Early-withdrawal burns instead
+transfer already-staked ANTS there. Neither path calls the token's ERC-20 burn
+operation or reduces `totalSupply()`; the dead-address balance should not be
+treated as circulating rewards.
 
 ## Deployed M001 contracts — Base mainnet {#mainnet-contracts}
 
