@@ -14,7 +14,9 @@ AntSeed is designed for providers who build differentiated services — such as 
 :::
 
 :::info Seller ANTS emissions
-Starting from the current epoch, seller ANTS emissions are tracked but routed into a dedicated Provider Pool and locked for now. These incentives are not freely claimable yet. Future claimability is expected after stronger provider validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.
+From epoch 22 (September 10, 2026), ANTS rewards use recognized usage and
+seller-pool stake. USDC earnings are separate. See [ANTS rewards](/docs/recognized-usage)
+for the new model and [legacy claims](/docs/legacy-emissions) for earlier rewards.
 :::
 
 ## Prerequisites
@@ -22,8 +24,8 @@ Starting from the current epoch, seller ANTS emissions are tracked but routed in
 - Node.js 20+
 - An AI API key (Anthropic, OpenAI, Together AI, or a local model)
 - A secp256k1 private key (your node identity)
-- ETH on Base Mainnet (for gas, ~$0.01 per transaction)
-- USDC on Base Mainnet (minimum $10 for staking)
+- ETH on Base Mainnet for seller transaction fees; the cost varies with gas usage and network fees
+- Seller eligibility through the active staking registry; see [staking and starter positions](/docs/recognized-usage)
 
 ## 1. Install
 
@@ -342,10 +344,16 @@ This release emits discovery metadata v12. Older buyers reject newer metadata an
 
 USDC earnings are paid directly to your wallet address on each `settle()` or `close()` call. No claim step needed for USDC.
 
-Seller-side ANTS emissions are different: they are currently tracked but locked in the Provider Pool while stronger validation systems are developed. Provider ANTS claims may become available later and may be subject to verification or slashing.
+ANTS rewards are separate from USDC earnings. They depend on recognized usage,
+pool power, and [reward policies](/docs/reward-policies). Pre-migration rewards
+use the [legacy claims flow](/docs/legacy-emissions), including the M002 release
+rule for locked seller rewards.
 
 :::warning Real usage only
-ANTS incentives are designed for real provider contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing.
+The historical wash-trading policy excludes new reward points for flagged
+sellers without blocking USDC settlement. ANTS stake also has an
+[early-withdrawal penalty](/docs/recognized-usage#moving-stake-and-early-withdrawal);
+that principal penalty is separate from the usage-points filter.
 :::
 
 ## Next Steps

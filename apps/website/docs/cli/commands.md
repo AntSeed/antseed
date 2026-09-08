@@ -24,10 +24,23 @@ antseed seller start                  Start providing AI services
 antseed seller start --base-rpc-url <url>
                                       Use a custom Base RPC URL for this run
 antseed seller register               Register peer identity on-chain (ERC-8004)
-antseed seller stake <amount>         Stake USDC as a provider (min $10)
-antseed seller unstake                Withdraw staked USDC
-antseed seller emissions claim        Claim accumulated seller payouts
 ```
+
+### Legacy staking and emissions
+
+These commands use the legacy USDC staking and emissions interfaces, not ANTS
+pool positions. Check which CLI version and contract endpoints you are using
+before a migration. USDC service payouts are automatic; `emissions claim` is
+for ANTS rewards, not seller USDC earnings.
+
+```bash
+antseed seller stake <amount>         Stake legacy USDC (min $10)
+antseed seller unstake                Withdraw legacy USDC stake
+antseed seller emissions claim        Claim legacy seller ANTS emissions
+```
+
+See [legacy claims](/docs/legacy-emissions) for pre-migration rewards and
+[recognized usage](/docs/recognized-usage) for ANTS positions and starter grants.
 
 ### Buying (consuming)
 

@@ -26,13 +26,16 @@ export interface PeerInfo {
 
 - Type: `number | undefined`
 - Range: 0-100
-- Optional: peers without a score receive a fallback value of **0** during selection and are not blocked unless the buyer explicitly configures a higher minimum reputation
+- Optional: the generic scorer uses **0** for an unknown score. Model-only routing separately applies a default minimum trust score of **60**, excluding unscored offers unless the buyer lowers that threshold.
 
 ### Router Plugin Peer Scoring
 
 **Source:** `@antseed/router-core/src/peer-scorer.ts`
 
-Buyer-side peer selection is implemented in **router plugins**, not in the core node. Each router plugin is free to define its own scoring logic. The official `@antseed/router-local` plugin delegates composite candidate scoring to `@antseed/router-core`:
+Router plugins can define their own scoring logic. The generic composite scorer
+in `@antseed/router-core` uses the weights below. They are not the full selection
+algorithm for the buyer proxy and desktop's model-only routing, which use
+`@antseed/node/model-routing` and shared Price + Trust preferences.
 
 | Factor      | Weight | Description                                              |
 |-------------|--------|----------------------------------------------------------|
@@ -59,6 +62,12 @@ Router plugins apply a minimum reputation filter before scoring. In `@antseed/ro
 - Default value: **0** (no reputation gate)
 - Passed to the router as `minReputation` in the plugin config
 - Behavior: when a buyer explicitly raises `minReputation`, any peer whose effective reputation is below that threshold is excluded from the candidate pool before scoring
+
+Model-only requests also apply `buyer.routingPreferences.minTrustScore`, default
+**60**, plus allow/block lists and price limits. The filters are distinct:
+`minPeerReputation: 0` does not disable the model-routing trust gate. See the
+[routing reference](../../../apps/website/docs/protocol/reputation.md#buyer-route-scoring)
+for the ranking rules. Routing preferences are not on-chain reward policies.
 
 ## Local Runtime Signals
 
@@ -141,6 +150,6 @@ A peer's DHT-published reputation is computed by aggregating all attestations ab
 | Trust model             | Buyer-verifiable settlement history          | Transitive trust with decay             |
 | Sybil resistance        | Seller staking + settlement cost             | Staking-weighted attestations           |
 | Score range             | 0-100                                        | 0-100                                   |
-| Selection weight        | 10% of composite score                       | Router-defined                          |
-| Minimum threshold       | Configurable (default: 0)                    | Configurable (default: 0)               |
+| Selection weight        | Model-route ranking; generic scorer uses 10% | Router-defined                          |
+| Minimum threshold       | Model routing: 60; lower-level filter: 0     | Not specified                           |
 | Central authority       | None                                         | None                                    |

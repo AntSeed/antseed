@@ -13,6 +13,7 @@ export const generatedChainConfigFile = path.join(
 );
 
 const contractFields = {
+  registry: 'registryContractAddress',
   usdc: 'usdcContractAddress',
   deposits: 'depositsContractAddress',
   channels: 'channelsContractAddress',
@@ -30,7 +31,18 @@ async function readDeployment(network) {
   return JSON.parse(await readFile(path.join(deploymentsRoot, network, 'current.json'), 'utf8'));
 }
 
-function renderNetwork(record) {
+async function readRecognizedUsageDeployment(network) {
+  try {
+    return JSON.parse(await readFile(path.join(
+      deploymentsRoot, network, 'history', '001-recognized-usage-deployed.json',
+    ), 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export function renderNetwork(record, recognizedUsageDeployment = null) {
   const values = { evmChainId: record.chainId };
   for (const [contractName, field] of Object.entries(contractFields)) {
     const contract = record.contracts[contractName];
@@ -42,6 +54,19 @@ function renderNetwork(record) {
   if (record.contracts.stats?.deploymentBlock != null) {
     values.statsDeployBlock = record.contracts.stats.deploymentBlock;
   }
+  if (recognizedUsageDeployment) {
+    const contracts = Object.fromEntries(Object.entries(recognizedUsageDeployment.contracts)
+      .map(([name, contract]) => [name, contract.address]));
+    const sameAddress = (left, right) => Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+    const active = record.status === 'active'
+      && sameAddress(record.contracts.emissions?.address, contracts.usageAccounting)
+      && sameAddress(record.contracts.staking?.address, contracts.sellerRegistry);
+    values.recognizedUsage = {
+      status: active ? 'active' : 'deployed',
+      effectiveEpoch: recognizedUsageDeployment.effectiveEpoch,
+      contracts,
+    };
+  }
   return values;
 }
 
@@ -49,9 +74,12 @@ export async function renderContractChainConfig() {
   const networks = ['base-mainnet', 'base-sepolia'];
   const entries = [];
   for (const network of networks) {
-    const values = renderNetwork(await readDeployment(network));
+    const values = renderNetwork(await readDeployment(network), await readRecognizedUsageDeployment(network));
     const properties = Object.entries(values)
-      .map(([key, value]) => `    ${key}: ${typeof value === 'number' ? value : `'${value}'`},`)
+      .map(([key, value]) => {
+        const rendered = typeof value === 'string' ? `'${value}'` : JSON.stringify(value, null, 2).replaceAll('\n', '\n    ');
+        return `    ${key}: ${rendered},`;
+      })
       .join('\n');
     entries.push(`  '${network}': {\n${properties}\n  },`);
   }

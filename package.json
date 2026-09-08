@@ -17,6 +17,9 @@
     }
   },
   "packageManager": "pnpm@9.15.4",
+  "devDependencies": {
+    "ethers": "~6.16.0"
+  },
   "scripts": {
     "build": "pnpm run build:tier0 && pnpm run build:tier1 && pnpm run build:tier2 && pnpm run build:tier3 && pnpm run build:tier4 && pnpm run build:standalone",
     "build:tier0": "pnpm --filter=@antseed/protocol run build && pnpm --filter=@antseed/ui run build && pnpm --filter=@antseed/api-adapter run build && pnpm --filter=@antseed/buyer-core run build && pnpm --filter=@antseed/node run build",

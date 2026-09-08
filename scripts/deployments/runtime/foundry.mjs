@@ -75,6 +75,13 @@ export async function parseBroadcast(file, rpcUrl, contractNames) {
   return { transactions, contracts };
 }
 
+export function mergeBroadcast(previous, parsed) {
+  const transactions = new Map(
+    [...(previous.transactions ?? []), ...parsed.transactions].map((transaction) => [transaction.hash.toLowerCase(), transaction]),
+  );
+  return { transactions: [...transactions.values()], contracts: { ...previous.contracts, ...parsed.contracts } };
+}
+
 /** True when every hashed transaction in the broadcast file is confirmed on chain. */
 export async function broadcastIsLive(file, rpcUrl) {
   if (!(await fileExists(file))) return false;
