@@ -98,22 +98,22 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy {
     ///         reconstructed from V2 claim flags and V2/V1 points.
     function cumulativeLocked(address seller) public view returns (uint256 total) {
         uint256 migration = migrationEpoch;
-        for (uint256 e = 0; e <= lastEpoch; e++) {
+        for (uint256 epoch = 0; epoch <= lastEpoch; epoch++) {
             // Not claimed, or claimed via V1 before migration -> never entered the pool.
-            if (!v2.sellerEpochClaimed(seller, e)) continue;
+            if (!v2.sellerEpochClaimed(seller, epoch)) continue;
 
-            uint256 userSP = v2.userSellerPoints(seller, e);
-            uint256 totalSP = v2.epochTotalSellerPoints(e);
-            if (e <= migration) {
-                userSP += v1.userSellerPoints(seller, e);
-                totalSP += v1.epochTotalSellerPoints(e);
+            uint256 sellerPoints = v2.userSellerPoints(seller, epoch);
+            uint256 totalSellerPoints = v2.epochTotalSellerPoints(epoch);
+            if (epoch <= migration) {
+                sellerPoints += v1.userSellerPoints(seller, epoch);
+                totalSellerPoints += v1.epochTotalSellerPoints(epoch);
             }
-            if (userSP == 0 || totalSP == 0) continue;
+            if (sellerPoints == 0 || totalSellerPoints == 0) continue;
 
-            (uint256 sellerSharePct,,,, uint256 maxSellerSharePct,,) = v2.epochParams(e);
-            uint256 sBudget = (v2.getEpochEmission(e) * sellerSharePct) / 100;
-            uint256 reward = (userSP * sBudget) / totalSP;
-            uint256 maxReward = (sBudget * maxSellerSharePct) / 100;
+            (uint256 sellerSharePct,,,, uint256 maxSellerSharePct,,) = v2.epochParams(epoch);
+            uint256 sellerBudget = (v2.getEpochEmission(epoch) * sellerSharePct) / 100;
+            uint256 reward = (sellerPoints * sellerBudget) / totalSellerPoints;
+            uint256 maxReward = (sellerBudget * maxSellerSharePct) / 100;
             total += reward > maxReward ? maxReward : reward;
         }
     }

@@ -46,7 +46,6 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
 
     address seller1 = address(0x10);
     address seller2 = address(0x20);
-    address unlocked = address(0x30);
 
     function setUp() public {
         vm.warp(1_700_000_000);
@@ -90,15 +89,15 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         vm.warp(legacy.genesis() + EPOCH_DURATION * epoch + 1);
     }
 
-    function _epochs(uint256 a) internal pure returns (uint256[] memory e) {
-        e = new uint256[](1);
-        e[0] = a;
+    function _epochs(uint256 epoch) internal pure returns (uint256[] memory epochs) {
+        epochs = new uint256[](1);
+        epochs[0] = epoch;
     }
 
-    function _epochs(uint256 a, uint256 b) internal pure returns (uint256[] memory e) {
-        e = new uint256[](2);
-        e[0] = a;
-        e[1] = b;
+    function _epochs(uint256 firstEpoch, uint256 secondEpoch) internal pure returns (uint256[] memory epochs) {
+        epochs = new uint256[](2);
+        epochs[0] = firstEpoch;
+        epochs[1] = secondEpoch;
     }
 
     function _deployPolicy(uint256 lastEpoch) internal returns (AntseedLegacySellerClaimPolicy policy) {
@@ -106,11 +105,15 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         pool.setSellerClaimPolicy(address(policy));
     }
 
-    function _expectedReward(uint256 epoch, uint256 userSP, uint256 totalSP) internal view returns (uint256) {
+    function _expectedReward(uint256 epoch, uint256 sellerPoints, uint256 totalSellerPoints)
+        internal
+        view
+        returns (uint256)
+    {
         (uint256 sellerShare,,,, uint256 maxSellerShare,,) = v2.epochParams(epoch);
-        uint256 sBudget = (v2.getEpochEmission(epoch) * sellerShare) / 100;
-        uint256 reward = (userSP * sBudget) / totalSP;
-        uint256 maxReward = (sBudget * maxSellerShare) / 100;
+        uint256 sellerBudget = (v2.getEpochEmission(epoch) * sellerShare) / 100;
+        uint256 reward = (sellerPoints * sellerBudget) / totalSellerPoints;
+        uint256 maxReward = (sellerBudget * maxSellerShare) / 100;
         return reward > maxReward ? maxReward : reward;
     }
 
@@ -380,10 +383,6 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         uint256 locked = pool.lockedRewards(seller1);
         assertEq(policy.claimableSellerRewards(seller1, locked), locked);
         assertEq(policy.claimableSellerRewards(seller1, locked / 3), locked / 3);
-    }
-
-    function policyDerivesV1() internal returns (address) {
-        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, address(washRegistry)).v1());
     }
 
     function test_constructorValidation() public {
