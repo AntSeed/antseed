@@ -103,7 +103,19 @@ Every settlement updates per-agent counters: channel count, ghost count (channel
 
 ### Buyer Safety
 
-The buyer never needs gas. All on-chain actions are either seller-initiated (reserve, settle, close) or operator-initiated (requestClose, withdraw). The buyer's hot wallet only signs EIP-712 messages — it never holds ETH, receives USDC, or submits transactions.
+The normal buyer funding and payment flow does not require the buyer to hold
+ETH: sellers submit payment authorizations, and relayers can sweep incoming USDC
+from the buyer's hot wallet into deposits. Direct on-chain actions, such as
+manual deposits or withdrawals by an operator, require gas from their sender.
+
+### ANTS Rewards and Policies
+
+USDC pays for service; ANTS rewards are separate. From epoch 22 (September 10,
+2026), rewards depend on recognized usage and seller-pool stake. Configured
+policies can exclude usage from rewards without reversing its payment. The
+historical wash-trading policy relies on SP1 proofs whose block references are
+authenticated against Base history.
+See [Reward Policies](/docs/reward-policies) for how the rule works.
 
 ## Who Buys
 

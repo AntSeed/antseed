@@ -350,6 +350,8 @@ Payments run on **Base Mainnet** by default. Contract addresses are resolved aut
 See [Recognized Usage and ANTS Rewards](../website/docs/protocol/recognized-usage.md)
 for ANTS pool positions, seller eligibility, and usage rewards. The SDK exposes
 the contract inventory as `getChainConfig('base-mainnet').recognizedUsage`.
+See [Reward Policies](../website/docs/protocol/reward-policies.md) for how usage
+points are adjusted and historical wash-trading evidence affects rewards.
 
 Looking for pre-migration USDC staking or rewards? See
 [Legacy emissions and claims](../website/docs/protocol/legacy-emissions.md).

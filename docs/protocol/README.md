@@ -17,6 +17,14 @@ AntSeed is a peer-to-peer AI services network that enables direct connections be
 
 ## Getting Started
 
+For protocol behavior from epoch 22, start with [Recognized Usage and ANTS
+Rewards](../../apps/website/docs/protocol/recognized-usage.md), [Reward
+Policies](../../apps/website/docs/protocol/reward-policies.md), and the separate
+[legacy claims reference](../../apps/website/docs/protocol/legacy-emissions.md).
+Deployment procedures belong in the contract migration runbooks; the model
+verification and fingerprint-swarm specifications describe proposed work rather
+than additional active reward policies.
+
 Install the CLI globally:
 
 ```bash

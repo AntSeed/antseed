@@ -174,14 +174,19 @@ Stats are factual counters with no reputation scoring logic. They feed into emis
 | Layer | Mechanism | Default |
 |---|---|---|
 | Minimum deposit | Buyers must deposit at least N USDC to participate | 10 USDC |
-| Minimum stake | Sellers must stake USDC bound to ERC-8004 agentId | 10 USDC |
+| Seller eligibility | Checked through the registry's active staking contract | Legacy USDC fallback while enabled; ANTS pool rules after cutover |
 | Budget binding | ReserveAuth binds maxAmount and deadline to buyer signature | Per-session |
 | Cumulative auth | SpendingAuth cumulativeAmount is monotonically increasing | Per-request |
 | Gasless buyer | Buyer never submits transactions — cannot be griefed for gas | Always |
 
 ## 6. Staking
 
-Sellers must stake USDC via `stake(agentId, amount)` on `AntseedStaking`, binding their stake to an ERC-8004 agentId. Minimum stake: `MIN_SELLER_STAKE` (default: 10 USDC). An unstaked seller cannot have `reserve()` called — the transaction reverts.
+Before the epoch-22 cutover, `AntseedStaking` uses USDC stake bound to an ERC-8004
+agent ID, with a 10 USDC minimum. After cutover, `AntseedSellerRegistry` supplies
+seller eligibility, with legacy USDC stake accepted while its fallback is enabled.
+New reward points additionally require sufficient ANTS pool power. See
+[staking and exit terms](../../../apps/website/docs/protocol/recognized-usage.md)
+and [legacy USDC staking](../../../apps/website/docs/protocol/legacy-emissions.md#legacy-usdc-staking).
 
 ## 7. Stats and Identity
 
@@ -228,11 +233,30 @@ Allocation ceilings are 40% seller-pool rewards, 20% usage rewards, 15% team,
 allocation and eligibility rules rather than paying their ceiling unconditionally.
 The gate uses weekly epochs and a 104-epoch halving interval.
 
+For epoch 22, the dynamic stake target is 400 million active ANTS and the usage
+target is 1 million USDC of recognized volume per epoch. These are curve
+reference points, not maximum-share thresholds: reaching them produces a 21%
+staker share and 7.5% each for buyer and seller/operator usage. See
+[stake and usage targets](../../../apps/website/docs/protocol/recognized-usage.md#stake-and-usage-targets)
+for the formula, post-policy volume measure, and emission-scaled stake target.
+
+Unallocated seller-pool and usage budgets are settled through the gate: burns
+take priority up to a shared cap of 30% of the epoch's scheduled emissions, with
+excess sent to the emissions reserve. This does not sweep earned but unclaimed
+rewards. Burns require remainder settlement and mint ANTS to the dead address;
+they do not reduce ERC-20 `totalSupply()`. See the
+[burn and reserve rule](../../../apps/website/docs/protocol/recognized-usage.md#unallocated-emissions-and-burns)
+for the calculation and the separate early-withdrawal burn.
+
 Accounting tracks raw and pool-weighted points and applies sequential policies.
 The public policy returns remain `(sellerPoints, buyerPoints)`. A zeroed side
 cannot be restored and evaluation stops when both sides are zero. Historical
 wash flags zero future records involving the seller, not previously credited
 points, and do not prevent starter-position initialization or USDC settlement.
+
+See [Reward Policies](../../../apps/website/docs/protocol/reward-policies.md)
+for modifier composition, failure handling, and the distinction
+between proof verification and canonical block authentication.
 
 Locked ANTS positions are lANTS NFTs. Power activates in the next epoch. For a
 contract seller, an authorized operator may call `initPosition(seller)`; the

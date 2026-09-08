@@ -95,7 +95,8 @@ the recorded total. Zero totals and mismatched replacement totals are rejected.
 `isProvenWashTrader(seller)` is true only when finalized proven wash volume is
 at least 25% of the authenticated total (`WASH_TRADING_THRESHOLD_BPS = 2500`).
 Proofs below that threshold are still recorded and can be replaced by stronger
-proofs. This status controls the starter-position faucet; the threshold does not
+proofs. This status is read by the registered wash-trading points policy, not
+the starter-position faucet; the threshold does not
 change the proof journal, guest vkey, or proof bytes, and is separate from the
 guest's return-coverage rule. Existing deployments need a new registry to apply
 this policy; runtime bytecode checks must use the new build.
@@ -107,7 +108,8 @@ Missing hashes must be backfilled on the local fork before finalization can pass
 The RPC remains restricted to loopback URLs; this mode is not a live deployment
 or a test of real Groth16 proof verification.
 
-The updated seller guest uses a fixed 50% return-coverage floor for closed-loop
+The seller guest pinned by the recorded M001 deployment uses a fixed 30%
+return-coverage floor for transfer-return closed-loop
 evidence (`returnedCredit / provenWashVolume`), distinct from the registry's
 `provenWashShareBps` ratio (`provenWashVolume / totalSellerVolume`). The floor is
 pinned by the guest vkey, not a mutable registry setting. Each seller input contains
@@ -175,6 +177,18 @@ After deployment, call `stageSellerProof`, submit each artifact chunk with
 `authenticateBlockReferences(proofId, ...)`, then call
 `finalizeSellerProof(proofId)`. The contract never adds claims onchain and never
 accepts a lower or equal result.
+
+The ZK proof authenticates evidence against supplied block headers; the separate
+block-reference checks anchor those headers to canonical Base history. Each
+authentication call verifies a chunk against Chainlink and a Merkle path against
+the root committed by the proof. Completion is tracked per proof ID and chunk
+index; duplicate chunks are rejected, and finalization requires every committed
+reference. Authentication reads the store; backfilling missing hashes is a
+separate operation.
+
+For the distinction between proof verification, historical block authentication,
+and reward enforcement, see
+[Reward Policies](../../apps/website/docs/protocol/reward-policies.md).
 
 ### Backfill historical Base block hashes
 
