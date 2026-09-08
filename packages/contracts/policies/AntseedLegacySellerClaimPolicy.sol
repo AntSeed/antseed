@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable2Step.sol";
-
 import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPolicy.sol";
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
 interface IEmissionsV2View {
     function legacyEmissions() external view returns (address);
     function MIGRATION_EPOCH() external view returns (uint256);
-    function currentEpoch() external view returns (uint256);
     function getEpochEmission(uint256 epoch) external view returns (uint256);
     function epochParams(uint256 epoch)
         external
@@ -46,11 +43,10 @@ interface IEmissionsV1View {
  *
  *         Release rule:
  *           entitled  = cumulative * releaseBps / BPS      (10% of cumulative locked rewards)
- *           entitled *= min(1, (now - vestStart) / vestEpochs)   (optional linear vest)
  *           claimable = entitled - released
  *
  *         Wash trading: a seller flagged by the configured on-chain wash-trading
- *         source (`isProvenWashTrader`) or explicitly by the owner can claim
+ *         source (`isProvenWashTrader`) can claim
  *         nothing. Their rewards stay locked in the pool.
  *
  *         Limitations (documented, conservative):
@@ -61,7 +57,7 @@ interface IEmissionsV1View {
  *           - Epochs are scanned from 0 through `lastEpoch`; pre-migration
  *             epochs claimed through V2 also landed in the pool and must count.
  */
-contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2Step {
+contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy {
     uint256 public constant BPS = 10_000;
 
     IEmissionsV2View public immutable v2;
@@ -69,27 +65,14 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
     uint256 public immutable migrationEpoch; // V1 points are merged for epochs <= migrationEpoch
     uint256 public immutable lastEpoch; // last epoch that could have been locked into the pool
     uint256 public immutable releaseBps; // 1000 = 10% of cumulative locked rewards
-    uint256 public immutable vestStart; // epoch at which vesting begins
-    uint256 public immutable vestEpochs; // linear vesting length; 0 = immediate
-
-    IAntseedWashTradingStatus public washTradingRegistry;
-    mapping(address => bool) public flaggedSeller;
-
-    event WashTradingRegistrySet(address indexed registry);
-    event SellerFlagged(address indexed seller, bool flagged);
+    IAntseedWashTradingStatus public immutable washTradingRegistry;
 
     error InvalidAddress();
     error InvalidValue();
 
-    constructor(
-        address v2_,
-        uint256 lastEpoch_,
-        uint256 releaseBps_,
-        uint256 vestStart_,
-        uint256 vestEpochs_,
-        address washTradingRegistry_
-    ) Ownable(msg.sender) {
+    constructor(address v2_, uint256 lastEpoch_, uint256 releaseBps_, address washTradingRegistry_) {
         if (v2_ == address(0)) revert InvalidAddress();
+        if (washTradingRegistry_ == address(0) || washTradingRegistry_.code.length == 0) revert InvalidAddress();
         if (releaseBps_ == 0 || releaseBps_ > BPS) revert InvalidValue();
         address v1_ = IEmissionsV2View(v2_).legacyEmissions();
         if (v1_ == address(0)) revert InvalidAddress();
@@ -99,8 +82,6 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
         if (lastEpoch_ < migrationEpoch) revert InvalidValue();
         lastEpoch = lastEpoch_;
         releaseBps = releaseBps_;
-        vestStart = vestStart_;
-        vestEpochs = vestEpochs_;
         washTradingRegistry = IAntseedWashTradingStatus(washTradingRegistry_);
     }
 
@@ -110,10 +91,7 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
 
     /// @notice True when the seller must not receive any locked rewards.
     function isWashTrader(address seller) public view returns (bool) {
-        if (flaggedSeller[seller]) return true;
-        IAntseedWashTradingStatus source = washTradingRegistry;
-        if (address(source) == address(0)) return false;
-        return source.isProvenWashTrader(seller);
+        return washTradingRegistry.isProvenWashTrader(seller);
     }
 
     /// @notice Total ANTS ever routed to the rewards pool for `seller`,
@@ -140,14 +118,9 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
         }
     }
 
-    /// @notice Share of `cumulative` the seller is entitled to at the current epoch.
+    /// @notice Share of `cumulative` the seller is entitled to.
     function entitledOf(uint256 cumulative) public view returns (uint256 entitled) {
         entitled = (cumulative * releaseBps) / BPS;
-        if (vestEpochs == 0) return entitled;
-        uint256 now_ = v2.currentEpoch();
-        if (now_ < vestStart) return 0;
-        uint256 elapsed = now_ - vestStart;
-        if (elapsed < vestEpochs) entitled = (entitled * elapsed) / vestEpochs;
     }
 
     /// @inheritdoc IAntseedSellerClaimPolicy
@@ -162,20 +135,5 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
         uint256 entitled = entitledOf(cumulative);
         uint256 claimable = entitled > released ? entitled - released : 0;
         return claimable > locked ? locked : claimable;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        ADMIN
-    // ═══════════════════════════════════════════════════════════════════
-
-    function setWashTradingRegistry(address registry) external onlyOwner {
-        washTradingRegistry = IAntseedWashTradingStatus(registry);
-        emit WashTradingRegistrySet(registry);
-    }
-
-    function setSellerFlagged(address seller, bool flagged) external onlyOwner {
-        if (seller == address(0)) revert InvalidAddress();
-        flaggedSeller[seller] = flagged;
-        emit SellerFlagged(seller, flagged);
     }
 }

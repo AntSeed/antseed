@@ -1371,10 +1371,7 @@ test('enforces M002 release invariants', () => {
     poolCanTransfer: true,
     lastLockedEpoch: 41,
     releaseBps: 1000,
-    vestStart: 0,
-    vestEpochs: 0,
     washTradingRegistry: ADDRESS.channels,
-    policyOwner: ADDRESS.channels,
   };
   const contracts = { legacySellerClaimPolicy: { address: M002_ADDRESS.policy } };
 

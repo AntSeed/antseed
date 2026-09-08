@@ -397,10 +397,9 @@ idempotent broadcast, after M001 has activated:
 each seller's *cumulative* locked amount from EmissionsV2/V1 state (epochs
 `0 … effectiveEpoch − 1`, mirroring `claimSellerEmissions`), treats
 `cumulative − locked` as already released, and pays out `RELEASE_BPS`
-(default 1000 = 10%) of the cumulative amount, optionally linearly vested
-(`VEST_START_EPOCH`, `VEST_EPOCHS`). Sellers the wash-trading registry has
-proven (`isProvenWashTrader`) — or that the policy owner flags manually — can
-claim nothing; their ANTS stays in the pool. The CLI defaults
+(default 1000 = 10%) of the cumulative amount immediately. Sellers the immutable
+wash-trading registry has proven (`isProvenWashTrader`) can claim nothing;
+their ANTS stays in the pool. The policy has no owner or administrative setters. The CLI defaults
 `WASH_TRADING_REGISTRY` to `washTradingRegistry` in the activated M001 deployment
 ledger, without calling `AntseedPositionInit`.
 

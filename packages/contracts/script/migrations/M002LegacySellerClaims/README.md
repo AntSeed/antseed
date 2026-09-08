@@ -26,7 +26,7 @@ flip, but leaves both blockers in place on purpose; this migration removes them.
 
 ## What gets deployed
 
-`AntseedLegacySellerClaimPolicy(v2, lastEpoch, releaseBps, vestStart, vestEpochs, washTradingRegistry)`
+`AntseedLegacySellerClaimPolicy(v2, lastEpoch, releaseBps, washTradingRegistry)`
 
 - `v2` — the legacy EmissionsV2 that locked into the pool (read from
   `AntseedLegacyEmissionsEscrow.legacyEmissions()`); `v1` is derived from
@@ -35,13 +35,10 @@ flip, but leaves both blockers in place on purpose; this migration removes them.
 - `lastEpoch = gate.effectiveEpoch() − 1` — the last epoch legacy V2 could ever
   lock. Immutable; that is why M002 must wait for M001 to activate.
 - `releaseBps` — `RELEASE_BPS`, default 1000 (10% of each seller's cumulative locked rewards).
-- `vestStart`, `vestEpochs` — `VEST_START_EPOCH` / `VEST_EPOCHS`, default 0
-  (immediate).
 - `washTradingRegistry` — `WASH_TRADING_REGISTRY`; the CLI defaults it to the
   `washTradingRegistry` address recorded in the activated M001 deployment ledger. Proven wash traders
-  (`isProvenWashTrader`) can claim nothing. The policy owner (pool owner) can
-  also flag sellers manually (`setSellerFlagged`) or swap the source
-  (`setWashTradingRegistry`).
+  (`isProvenWashTrader`) can claim nothing. The registry address is immutable;
+  the policy has no owner, manual seller flags, or administrative setters.
 
 The policy is a pure view from the pool's perspective. It reconstructs a
 seller's cumulative locked amount from V2 claim flags and V2/V1 points, so
@@ -75,7 +72,7 @@ Before mainnet broadcast:
   prove there were no withdrawals in the past.
 - Run the M001 → M002 fork rehearsal, then a dry run against the actual active
   M001 deployment. Check the real wash registry (the default fork uses a stub),
-  signer ownership, token transfer permission, and release/vesting parameters.
+  signer ownership, token transfer permission, and release parameters.
 - Verify `RELEASE_BPS=1000`: exactly 10% of each seller's cumulative locked
   rewards, less prior withdrawals. This is not a 10/65 rescaling of the legacy
   emission bucket. For example, 1,000 ANTS cumulatively locked permits 100 ANTS
@@ -138,13 +135,15 @@ broadcasts still require M001 to have been activated separately.
 
 The 2026-09-03 rehearsal at fork block `50,571,469` passed M001 deploy/cutover,
 M002 dry-run/install, and idempotent reruns. A real pool seller's forked claim
-paid the configured share once; repeat and manually flagged claims reverted.
+paid the configured share once; repeat claims reverted.
 The wash-registry stub does not validate production wash-trading data.
+That rehearsal predates removal of vesting and owner controls; rerun it with
+the current policy before broadcasting.
 
 ## After
 
 - Sellers call `AntseedSellerRewardsPool.claim(recipient)`; `NothingToClaim`
-  means either nothing is released yet or the seller is a proven wash trader.
-- To change the release share or vesting later, deploy a new policy and
-  `pool.setSellerClaimPolicy` it (pool owner). The policy's own state is only
-  the wash-trading source and manual flags.
+  means no additional rewards are claimable or the seller is a proven wash trader.
+- The configured release share is available immediately, less prior withdrawals.
+  The policy itself cannot be reconfigured. The existing pool owner retains
+  the pool's `setSellerClaimPolicy` authority to replace the entire policy.

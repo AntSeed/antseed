@@ -295,10 +295,7 @@ function verificationConfiguration(context, observation, policy) {
       || booleanValue(call(rpcUrl, context.expected.antsToken, 'transferWhitelist(address)(bool)', [pool])),
     lastLockedEpoch: numberValue(call(rpcUrl, policy, 'lastEpoch()(uint256)')),
     releaseBps: numberValue(call(rpcUrl, policy, 'releaseBps()(uint256)')),
-    vestStart: numberValue(call(rpcUrl, policy, 'vestStart()(uint256)')),
-    vestEpochs: numberValue(call(rpcUrl, policy, 'vestEpochs()(uint256)')),
     washTradingRegistry: call(rpcUrl, policy, 'washTradingRegistry()(address)'),
-    policyOwner: call(rpcUrl, policy, 'owner()(address)'),
   };
 }
 

@@ -131,9 +131,7 @@ contract M002LegacySellerClaimsTest is Test {
             usageAccounting: address(usageAccounting),
             washTradingRegistry: address(washRegistry),
             lastEpochOverride: 0,
-            releaseBps: 1000,
-            vestStart: 0,
-            vestEpochs: 0
+            releaseBps: 1000
         });
     }
 
@@ -151,7 +149,7 @@ contract M002LegacySellerClaimsTest is Test {
 
         // Policy alone is not enough: the pool cannot send ANTS while transfers are disabled.
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, 0, 0, address(washRegistry));
+            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, address(washRegistry));
         vm.prank(poolOwner);
         pool.setSellerClaimPolicy(address(policy));
         vm.prank(seller);
@@ -165,14 +163,11 @@ contract M002LegacySellerClaimsTest is Test {
 
         AntseedLegacySellerClaimPolicy policy = _policy();
         assertEq(address(policy), policyAddress);
-        assertEq(policy.owner(), poolOwner, "pool owner owns the policy");
         assertEq(address(policy.v2()), address(v2));
         assertEq(address(policy.v1()), address(legacy), "v1 derived from v2");
         assertEq(policy.migrationEpoch(), 4);
         assertEq(policy.lastEpoch(), EFFECTIVE_EPOCH - 1, "last epoch = effective - 1");
         assertEq(policy.releaseBps(), 1000);
-        assertEq(policy.vestStart(), 0);
-        assertEq(policy.vestEpochs(), 0);
         assertEq(address(policy.washTradingRegistry()), address(washRegistry));
         assertTrue(token.transferWhitelist(address(pool)), "pool whitelisted on ANTS");
     }
@@ -214,7 +209,7 @@ contract M002LegacySellerClaimsTest is Test {
 
     function test_resumesWhenOnlyPolicyLanded() public {
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, 0, 0, address(washRegistry));
+            new AntseedLegacySellerClaimPolicy(address(v2), 5, 1000, address(washRegistry));
         vm.prank(poolOwner);
         pool.setSellerClaimPolicy(address(policy));
 
@@ -302,17 +297,13 @@ contract M002LegacySellerClaimsTest is Test {
         assertEq(_policy().lastEpoch(), EFFECTIVE_EPOCH - 1);
     }
 
-    function test_optionalVestAndReleaseOverrides() public {
+    function test_optionalReleaseOverride() public {
         M002InstallLegacySellerClaims.Config memory cfg = _cfg();
         cfg.releaseBps = 5000;
-        cfg.vestStart = EFFECTIVE_EPOCH;
-        cfg.vestEpochs = 10;
         cfg.lastEpochOverride = EFFECTIVE_EPOCH - 1;
         script.runWith(cfg);
         AntseedLegacySellerClaimPolicy policy = _policy();
         assertEq(policy.releaseBps(), 5000);
-        assertEq(policy.vestStart(), EFFECTIVE_EPOCH);
-        assertEq(policy.vestEpochs(), 10);
         assertEq(policy.lastEpoch(), EFFECTIVE_EPOCH - 1);
     }
 }

@@ -64,7 +64,7 @@ interface IEmissionsGateView {
  *
  *         The policy is stateless: it re-derives every seller's cumulative
  *         locked amount from EmissionsV2/V1 state, releases `RELEASE_BPS` of
- *         it (optionally linearly vested) and returns zero for sellers the
+ *         it immediately and returns zero for sellers the
  *         wash-trading registry has proven to be wash traders.
  *
  *         Idempotent: every step checks chain state and skips what already
@@ -76,8 +76,7 @@ interface IEmissionsGateView {
  * Required env:
  *   DEPLOYER                     ANTSToken owner address (whitelists the pool).
  *   SELLER_REWARDS_POOL_OWNER    Owner address of the deployed
- *                                AntseedSellerRewardsPool; also becomes the
- *                                policy owner.
+ *                                AntseedSellerRewardsPool.
  *   ANTSEED_REGISTRY             Legacy AntseedRegistry address.
  *   EXPECTED_ANTS_TOKEN          Deployed ANTSToken.
  *   LEGACY_EMISSIONS_V2          Deployed legacy AntseedEmissionsV2 (the
@@ -92,8 +91,6 @@ interface IEmissionsGateView {
  *   LAST_LOCKED_EPOCH            If set, must equal `effectiveEpoch - 1`.
  *   RELEASE_BPS                  Share of cumulative locked rewards released.
  *                                Default 1000 (10%).
- *   VEST_START_EPOCH             Epoch at which linear vesting begins. Default 0.
- *   VEST_EPOCHS                  Linear vesting length. Default 0 (immediate).
  *
  * Usage (prefer `pnpm contracts:deploy -- M002 ...`):
  *   cd packages/contracts
@@ -117,8 +114,6 @@ contract M002InstallLegacySellerClaims is Script {
         address washTradingRegistry;
         uint256 lastEpochOverride; // 0 = derive from gate.effectiveEpoch() - 1
         uint256 releaseBps;
-        uint256 vestStart;
-        uint256 vestEpochs;
     }
 
     function run() external returns (address) {
@@ -132,9 +127,7 @@ contract M002InstallLegacySellerClaims is Script {
                 usageAccounting: vm.envAddress("USAGE_ACCOUNTING"),
                 washTradingRegistry: vm.envAddress("WASH_TRADING_REGISTRY"),
                 lastEpochOverride: vm.envOr("LAST_LOCKED_EPOCH", uint256(0)),
-                releaseBps: vm.envOr("RELEASE_BPS", DEFAULT_RELEASE_BPS),
-                vestStart: vm.envOr("VEST_START_EPOCH", uint256(0)),
-                vestEpochs: vm.envOr("VEST_EPOCHS", uint256(0))
+                releaseBps: vm.envOr("RELEASE_BPS", DEFAULT_RELEASE_BPS)
             })
         );
     }
@@ -146,7 +139,10 @@ contract M002InstallLegacySellerClaims is Script {
 
         // ── Starting-state guards (all view; nothing is sent if any fails) ──
         require(registry.antsToken() == address(token), "EXPECTED_ANTS_TOKEN is not the registry's ANTS token");
-        require(registry.emissions() == cfg.usageAccounting, "M001 has not activated: registry.emissions() is not UsageAccounting");
+        require(
+            registry.emissions() == cfg.usageAccounting,
+            "M001 has not activated: registry.emissions() is not UsageAccounting"
+        );
         require(registry.emissions() != address(v2), "registry.emissions() still resolves to legacy EmissionsV2");
 
         address v1 = v2.legacyEmissions();
@@ -178,7 +174,6 @@ contract M002InstallLegacySellerClaims is Script {
         console.log("Migration epoch:        ", v2.MIGRATION_EPOCH());
         console.log("Last locked epoch:      ", lastEpoch);
         console.log("Release bps:            ", cfg.releaseBps);
-        console.log("Vest start / epochs:    ", cfg.vestStart, cfg.vestEpochs);
         console.log("Wash-trading registry:  ", cfg.washTradingRegistry);
 
         if (!needsWhitelist && existingPolicy != address(0)) {
@@ -201,13 +196,11 @@ contract M002InstallLegacySellerClaims is Script {
         address policyAddress = existingPolicy;
         if (existingPolicy == address(0)) {
             vm.startBroadcast(cfg.poolOwner);
-            AntseedLegacySellerClaimPolicy policy = new AntseedLegacySellerClaimPolicy(
-                address(v2), lastEpoch, cfg.releaseBps, cfg.vestStart, cfg.vestEpochs, cfg.washTradingRegistry
-            );
+            AntseedLegacySellerClaimPolicy policy =
+                new AntseedLegacySellerClaimPolicy(address(v2), lastEpoch, cfg.releaseBps, cfg.washTradingRegistry);
             pool.setSellerClaimPolicy(address(policy));
             vm.stopBroadcast();
             policyAddress = address(policy);
-            require(policy.owner() == cfg.poolOwner, "post-check failed: unexpected policy owner");
             require(address(policy.v1()) == v1, "post-check failed: policy v1 mismatch");
         } else {
             console.log("");

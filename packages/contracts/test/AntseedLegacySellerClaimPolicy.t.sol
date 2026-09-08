@@ -101,13 +101,8 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         e[1] = b;
     }
 
-    function _deployPolicy(uint256 lastEpoch, uint256 vestStart, uint256 vestEpochs)
-        internal
-        returns (AntseedLegacySellerClaimPolicy policy)
-    {
-        policy = new AntseedLegacySellerClaimPolicy(
-            address(v2), lastEpoch, RELEASE_BPS, vestStart, vestEpochs, address(washRegistry)
-        );
+    function _deployPolicy(uint256 lastEpoch) internal returns (AntseedLegacySellerClaimPolicy policy) {
+        policy = new AntseedLegacySellerClaimPolicy(address(v2), lastEpoch, RELEASE_BPS, address(washRegistry));
         pool.setSellerClaimPolicy(address(policy));
     }
 
@@ -122,7 +117,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     function test_cumulativeLockedMirrorsV2Claim() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(4, 5));
@@ -138,7 +133,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_claimReleasesConfiguredShareOnce() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
         assertEq(policy.entitledOf(1000 ether), 100 ether);
 
         vm.prank(seller1);
@@ -161,7 +156,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_claimTracksNewlyLockedEpochs() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(4));
@@ -180,7 +175,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_provenWashTraderCannotClaim() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(4, 5));
@@ -199,67 +194,8 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         assertEq(pool.lockedRewards(seller1), locked);
     }
 
-    function test_ownerFlagBlocksClaimWithoutRegistry() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
-        policy.setWashTradingRegistry(address(0));
-
-        vm.prank(seller1);
-        v2.claimSellerEmissions(_epochs(4));
-        uint256 locked = pool.lockedRewards(seller1);
-        assertGt(policy.claimableSellerRewards(seller1, locked), 0);
-
-        policy.setSellerFlagged(seller1, true);
-        assertEq(policy.claimableSellerRewards(seller1, locked), 0);
-
-        policy.setSellerFlagged(seller1, false);
-        assertGt(policy.claimableSellerRewards(seller1, locked), 0);
-    }
-
-    function test_onlyOwnerCanFlagOrSetRegistry() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
-        vm.prank(seller2);
-        vm.expectRevert();
-        policy.setSellerFlagged(seller1, true);
-        vm.prank(seller2);
-        vm.expectRevert();
-        policy.setWashTradingRegistry(address(0));
-    }
-
-    function test_linearVesting() public {
-        // vest over 10 epochs starting at epoch 6 (now)
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 6, 10);
-
-        vm.prank(seller1);
-        v2.claimSellerEmissions(_epochs(4, 5));
-        uint256 locked = pool.lockedRewards(seller1);
-        uint256 full = (locked * RELEASE_BPS) / 10_000;
-
-        assertEq(policy.claimableSellerRewards(seller1, locked), 0, "nothing at vest start");
-
-        _warpToEpoch(11);
-        assertEq(policy.claimableSellerRewards(seller1, locked), full / 2, "half vested");
-
-        vm.prank(seller1);
-        pool.claim(seller1);
-        assertEq(token.balanceOf(seller1), full / 2);
-
-        _warpToEpoch(16);
-        uint256 remaining = pool.lockedRewards(seller1);
-        assertEq(policy.claimableSellerRewards(seller1, remaining), full - full / 2, "fully vested");
-
-        _warpToEpoch(40);
-        assertEq(policy.claimableSellerRewards(seller1, remaining), full - full / 2, "no over-release after vest");
-    }
-
-    function test_vestingBeforeStartReturnsZero() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 20, 10);
-        vm.prank(seller1);
-        v2.claimSellerEmissions(_epochs(4));
-        assertEq(policy.claimableSellerRewards(seller1, pool.lockedRewards(seller1)), 0);
-    }
-
     function test_preMigrationEpochClaimedThroughV2Counts() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(0));
@@ -269,7 +205,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_preMigrationOnlyRewardsCanBeWithdrawnExactlyOnce() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
         uint256 deposited = _lockEpochAndMeasureDeposit(0);
         uint256 entitlement = (deposited * RELEASE_BPS) / 10_000;
 
@@ -290,7 +226,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_preMigrationAndNewEpochBatchCannotBeWithdrawnTwice() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
 
         vm.prank(seller1);
         v2.claimSellerEmissions(_epochs(0, 5));
@@ -321,7 +257,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function test_oldEpochClaimedAfterWithdrawalReleasesOnlyItsAdditionalShare() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
         uint256 firstDeposit = _lockEpochAndMeasureDeposit(5);
         uint256 firstEntitlement = (firstDeposit * RELEASE_BPS) / 10_000;
 
@@ -341,28 +277,6 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         vm.prank(seller1);
         pool.claim(seller1);
         _assertPoolPayout(totalDeposited, totalEntitlement);
-        _assertNothingMoreToWithdraw(policy, seller1);
-    }
-
-    function test_preMigrationVestingDoesNotReleaseTwiceAtSameVestingStep() public {
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5, 6, 10);
-        uint256 deposited = _lockEpochAndMeasureDeposit(0);
-        uint256 fullEntitlement = (deposited * RELEASE_BPS) / 10_000;
-
-        _assertNothingMoreToWithdraw(policy, seller1);
-        _warpToEpoch(11);
-        vm.prank(seller1);
-        pool.claim(seller1);
-        _assertPoolPayout(deposited, fullEntitlement / 2);
-        _assertNothingMoreToWithdraw(policy, seller1);
-
-        _warpToEpoch(16);
-        vm.prank(seller1);
-        pool.claim(seller1);
-        _assertPoolPayout(deposited, fullEntitlement);
-        _assertNothingMoreToWithdraw(policy, seller1);
-
-        _warpToEpoch(40);
         _assertNothingMoreToWithdraw(policy, seller1);
     }
 
@@ -416,7 +330,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function _assertMigrationStartSketchOverpays(bool includeNewEpoch) internal {
-        MigrationStartClaimPolicyFixture sketch = new MigrationStartClaimPolicyFixture(v2, legacy, 5, RELEASE_BPS, 0, 0);
+        MigrationStartClaimPolicyFixture sketch = new MigrationStartClaimPolicyFixture(v2, legacy, 5, RELEASE_BPS);
         pool.setSellerClaimPolicy(address(sketch));
         uint256 deposited = _lockEpochAndMeasureDeposit(0);
         uint256 newEpochDeposit = includeNewEpoch ? _lockEpochAndMeasureDeposit(5) : 0;
@@ -439,7 +353,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     function test_unlockedSellerNeverUnderCounts() public {
         // A seller eligible for direct mint has sellerEpochClaimed set but nothing in the pool.
         unlockPolicy.setSellerEligibility(seller2, true);
-        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10, 0, 0);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
 
         vm.prank(seller2);
         v2.claimSellerEmissions(_epochs(4));
@@ -458,7 +372,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
 
     function test_claimableNeverExceedsLocked() public {
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_000, 0, 0, address(0));
+            new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_000, address(washRegistry));
         pool.setSellerClaimPolicy(address(policy));
 
         vm.prank(seller1);
@@ -469,18 +383,68 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
     }
 
     function policyDerivesV1() internal returns (address) {
-        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, 0, 0, address(0)).v1());
+        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, address(washRegistry)).v1());
     }
 
     function test_constructorValidation() public {
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), 10, 0, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 0, address(washRegistry));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_001, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_001, address(washRegistry));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), 3, 1000, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 3, 1000, address(washRegistry));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidAddress.selector);
-        new AntseedLegacySellerClaimPolicy(address(0), 10, 1000, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(0), 10, 1000, address(washRegistry));
+        vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidAddress.selector);
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, address(0));
+        vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidAddress.selector);
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 1000, address(0xDEAD));
+    }
+
+    function test_releaseDoesNotIncreaseWithTime() public {
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
+        uint256 deposited = _lockEpochAndMeasureDeposit(4);
+        uint256 entitled = deposited / 10;
+        assertEq(policy.claimableSellerRewards(seller1, deposited), entitled);
+
+        _warpToEpoch(100);
+        assertEq(policy.claimableSellerRewards(seller1, deposited), entitled);
+        vm.prank(seller1);
+        pool.claim(seller1);
+        _assertPoolPayout(deposited, entitled);
+
+        _warpToEpoch(200);
+        _assertNothingMoreToWithdraw(policy, seller1);
+    }
+
+    function test_policyHasNoAdministrativeSetters() public {
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
+        (bool flagSucceeded,) =
+            address(policy).call(abi.encodeWithSignature("setSellerFlagged(address,bool)", seller1, true));
+        (bool registrySucceeded,) =
+            address(policy).call(abi.encodeWithSignature("setWashTradingRegistry(address)", address(0)));
+        (bool ownershipSucceeded,) =
+            address(policy).call(abi.encodeWithSignature("transferOwnership(address)", seller1));
+        assertFalse(flagSucceeded);
+        assertFalse(registrySucceeded);
+        assertFalse(ownershipSucceeded);
+        assertEq(address(policy.washTradingRegistry()), address(washRegistry));
+        assertFalse(policy.isWashTrader(seller1));
+    }
+
+    function test_registryFailureBlocksClaims() public {
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(5);
+        uint256 deposited = _lockEpochAndMeasureDeposit(4);
+        vm.mockCallRevert(
+            address(washRegistry),
+            abi.encodeCall(IAntseedWashTradingStatus.isProvenWashTrader, (seller1)),
+            abi.encodeWithSignature("Error(string)", "registry unavailable")
+        );
+        vm.prank(seller1);
+        vm.expectRevert("registry unavailable");
+        pool.claim(seller1);
+        assertEq(address(policy.washTradingRegistry()), address(washRegistry));
+        _assertPoolPayout(deposited, 0);
     }
 }
 
@@ -492,24 +456,13 @@ contract MigrationStartClaimPolicyFixture is IAntseedSellerClaimPolicy {
     uint256 public immutable firstEpoch;
     uint256 public immutable lastEpoch;
     uint256 public immutable releaseBps;
-    uint256 public immutable vestStart;
-    uint256 public immutable vestEpochs;
 
-    constructor(
-        AntseedEmissionsV2 emissionsV2,
-        AntseedEmissions emissionsV1,
-        uint256 lastEpoch_,
-        uint256 releaseBps_,
-        uint256 vestStart_,
-        uint256 vestEpochs_
-    ) {
+    constructor(AntseedEmissionsV2 emissionsV2, AntseedEmissions emissionsV1, uint256 lastEpoch_, uint256 releaseBps_) {
         v2 = emissionsV2;
         v1 = emissionsV1;
         firstEpoch = v2.MIGRATION_EPOCH();
         lastEpoch = lastEpoch_;
         releaseBps = releaseBps_;
-        vestStart = vestStart_;
-        vestEpochs = vestEpochs_;
     }
 
     function cumulativeLocked(address seller) public view returns (uint256 total) {
@@ -537,12 +490,6 @@ contract MigrationStartClaimPolicyFixture is IAntseedSellerClaimPolicy {
         uint256 released = cumulative - locked;
 
         uint256 entitled = (cumulative * releaseBps) / BPS;
-        if (vestEpochs > 0) {
-            uint256 epochNow = v2.currentEpoch();
-            if (epochNow < vestStart) return 0;
-            uint256 elapsed = epochNow - vestStart;
-            if (elapsed < vestEpochs) entitled = (entitled * elapsed) / vestEpochs;
-        }
         return entitled > released ? entitled - released : 0;
     }
 }
