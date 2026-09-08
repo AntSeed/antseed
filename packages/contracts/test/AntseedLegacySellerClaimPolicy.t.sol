@@ -373,6 +373,62 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         _assertNothingMoreToWithdraw(policy, seller1);
     }
 
+    function test_mixedHistorySubtractsDirectRewardsFromAllowance() public {
+        v2.accrueSellerPoints(seller1, 1);
+        v2.accrueSellerPoints(seller2, 9999);
+        _warpToEpoch(7);
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
+        unlockPolicy.setSellerEligibility(seller1, true);
+
+        vm.prank(seller1);
+        v2.claimSellerEmissions(_epochs(6));
+        uint256 directReward = _expectedReward(6, 1, 10_000);
+        assertGt(directReward, 0);
+        assertEq(token.balanceOf(seller1), directReward);
+        assertEq(pool.lockedRewards(seller1), 0);
+
+        uint256 deposited = _lockEpochAndMeasureDeposit(5);
+        uint256 cumulative = directReward + deposited;
+        uint256 entitlement = (cumulative * RELEASE_BPS) / 10_000;
+        assertGt(entitlement, directReward);
+        uint256 expected = entitlement - directReward;
+        assertTrue(v2.sellerEpochClaimed(seller1, 5));
+        assertTrue(v2.sellerEpochClaimed(seller1, 6));
+        assertEq(policy.cumulativeLocked(seller1), cumulative);
+        assertEq(policy.claimableSellerRewards(seller1, deposited), expected);
+        assertLt(expected, (deposited * RELEASE_BPS) / 10_000);
+
+        vm.prank(seller1);
+        pool.claim(seller1);
+        assertEq(token.balanceOf(seller1), directReward + expected);
+        assertEq(pool.lockedRewards(seller1), deposited - expected);
+        assertEq(pool.totalLockedRewards(), deposited - expected);
+        assertEq(token.balanceOf(address(pool)), deposited - expected);
+        _assertNothingMoreToWithdraw(policy, seller1);
+        _warpToEpoch(8);
+        _assertNothingMoreToWithdraw(policy, seller2);
+    }
+
+    function test_mixedHistoryReturnsZeroWhenDirectRewardsExceedAllowance() public {
+        AntseedLegacySellerClaimPolicy policy = _deployPolicy(10);
+        unlockPolicy.setSellerEligibility(seller1, true);
+        vm.prank(seller1);
+        v2.claimSellerEmissions(_epochs(4));
+        uint256 directReward = _expectedReward(4, 200, 400);
+        assertEq(token.balanceOf(seller1), directReward);
+        assertEq(pool.lockedRewards(seller1), 0);
+
+        uint256 deposited = _lockEpochAndMeasureDeposit(5);
+        uint256 cumulative = directReward + deposited;
+        assertGt(directReward, (cumulative * RELEASE_BPS) / 10_000);
+        assertEq(policy.cumulativeLocked(seller1), cumulative);
+        _assertNothingMoreToWithdraw(policy, seller1);
+        assertEq(token.balanceOf(seller1), directReward);
+        assertEq(pool.lockedRewards(seller1), deposited);
+        assertEq(pool.totalLockedRewards(), deposited);
+        assertEq(token.balanceOf(address(pool)), deposited);
+    }
+
     function test_claimableNeverExceedsLocked() public {
         AntseedLegacySellerClaimPolicy policy =
             new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_000, address(washRegistry));
