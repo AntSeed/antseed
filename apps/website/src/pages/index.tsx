@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
+import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties, type JSX} from 'react';
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';

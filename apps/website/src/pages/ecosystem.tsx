@@ -1,4 +1,4 @@
-import type {CSSProperties} from 'react';
+import type {CSSProperties, JSX} from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './ecosystem.module.css';
