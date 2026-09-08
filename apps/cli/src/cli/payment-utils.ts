@@ -7,6 +7,7 @@ import {
   loadOrCreateIdentity,
   resolveChainConfig,
   resolveContractStack,
+  resolveLegacyContractAddresses,
   type ContractStackResolution,
 } from '@antseed/node';
 import {
@@ -373,13 +374,15 @@ export function createAntsTokenClient(config: AntseedConfig): ANTSTokenClient {
 
 export function createLegacyEmissionsClient(config: AntseedConfig): EmissionsClient {
   const crypto = requireCryptoConfig(config);
-  return new EmissionsClient(contractClientConfig(crypto, requireContractAddress(crypto, 'legacyEmissionsContractAddress', 'legacyEmissions')));
+  const legacy = { ...crypto, ...resolveLegacyContractAddresses(crypto) };
+  return new EmissionsClient(contractClientConfig(legacy, requireContractAddress(legacy, 'legacyEmissionsContractAddress', 'legacyEmissions')));
 }
 
 export function createLegacyStakingClient(config: AntseedConfig): StakingClient {
   const crypto = requireCryptoConfig(config);
+  const legacy = { ...crypto, ...resolveLegacyContractAddresses(crypto) };
   return new StakingClient({
-    ...contractClientConfig(crypto, requireContractAddress(crypto, 'legacyStakingContractAddress', 'legacyStaking')),
+    ...contractClientConfig(legacy, requireContractAddress(legacy, 'legacyStakingContractAddress', 'legacyStaking')),
     usdcAddress: crypto.usdcContractAddress,
   });
 }

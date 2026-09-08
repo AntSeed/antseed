@@ -18,6 +18,7 @@ import {
   UsageAccountingClient,
   UsageRewardsClient,
   WashTradingRegistryClient,
+  resolveLegacyContractAddresses,
 } from '@antseed/node/payments';
 import type { ProtocolPhase } from '../api-types.js';
 
@@ -313,14 +314,10 @@ export class AntsContext {
     let legacyStaking: string | null;
     let legacyEmissionsV1: string | null;
     if (phase === 'active') {
-      // Before the ledger is regenerated for the activated release, `emissions`
-      // and `staking` still name the legacy V2/USDC contracts; afterwards they
-      // alias the new stack and the `legacy*` fields carry the old ones.
-      const emissionsIsLegacy = !!this.chain.emissionsContractAddress && !sameAddress(this.chain.emissionsContractAddress, this.chain.usageAccountingAddress);
-      const stakingIsLegacy = !!this.chain.stakingContractAddress && !sameAddress(this.chain.stakingContractAddress, this.chain.sellerRegistryAddress);
-      legacyEmissions = emissionsIsLegacy ? this.chain.emissionsContractAddress! : this.chain.legacyEmissionsContractAddress ?? null;
-      legacyStaking = stakingIsLegacy ? this.chain.stakingContractAddress! : this.chain.legacyStakingContractAddress ?? null;
-      legacyEmissionsV1 = emissionsIsLegacy ? this.chain.legacyEmissionsContractAddress ?? null : this.chain.legacyEmissionsV1ContractAddress ?? null;
+      const legacy = resolveLegacyContractAddresses(this.chain);
+      legacyEmissions = legacy.legacyEmissionsContractAddress ?? null;
+      legacyStaking = legacy.legacyStakingContractAddress ?? null;
+      legacyEmissionsV1 = legacy.legacyEmissionsV1ContractAddress ?? null;
     } else {
       legacyEmissions = this.chain.emissionsContractAddress ?? emissions;
       legacyStaking = this.chain.stakingContractAddress ?? staking;
@@ -404,4 +401,3 @@ export async function probeRpcEndpoint(url: string): Promise<number | null> {
     provider.destroy();
   }
 }
-

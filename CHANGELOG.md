@@ -6,6 +6,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Fixed
+
+- CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
+- Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
+
 ### Added
 
 - CLI: `antseed ants` opens a local, wallet-signed ANTS staking dashboard (payments-checkout look, three tabs: Stake, Rewards, Seller, with Network and Addresses in the footer; Uniswap-style pending indicator, activity drawer, and confirmation toasts) served from `127.0.0.1` with a per-session token; every dashboard action is also a CLI command under `antseed ants ...` so the dashboard stays optional. Covers lANTS positions (stake into any registered seller pool, move, split, merge, extend, max lock on/off, withdraw with slashing preview and explicit consent), rewards across all buckets (staker pool rewards with claim and compounding restake, a one-shot `rewards compound [--to <agentId>]` that restakes every restakable bucket with the bonus and can move the new positions into one pool, seller and buyer usage rewards with claim-to-stake, legacy V2 emissions, the locked legacy pool once the M002 policy is installed), pool comparison with power and network share, settled USDC volume per epoch, staker ANTS per 1,000 power (last epoch and projected), your power and pool share, and explorer (Antscan) seller profiles — reads batched through Multicall3, per-epoch usage points, the emissions gate schedule and buckets, seller state with registry binding and starter-grant claims, and wash-trading verification (registry facts, per-seller status, resumable stage → authenticate → finalize submission of loop-proof seller artifacts, proof progress). Works in the `deployed` phase before cutover (reads plus staking) and in the `active` phase; read-only paths degrade cleanly on legacy-only chains.

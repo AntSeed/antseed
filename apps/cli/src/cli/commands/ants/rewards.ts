@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { parsePositiveInteger } from '../parse-positive-integer.js';
 import chalk from 'chalk';
 import { rewards, claim, restake, stakeUsageRewards, compound, formatAnts, type RewardBucket, type CompoundResult } from '@antseed/ants';
 import { ants, parseIds, printJson, runAction, runRead } from './shared.js';
@@ -70,7 +71,7 @@ export function registerAntsRewardsCommand(antsCmd: Command): void {
   rewardsCmd
     .command('restake [ids...]')
     .description('Compound staker rewards into a new locked position (earns the restake weight bonus)')
-    .requiredOption('--epochs <n>', 'lock length for the new position', parseInt)
+    .requiredOption('--epochs <n>', 'lock length for the new position', parsePositiveInteger)
     .action(async (ids: string[], options: { epochs: number }) => runAction(antsCmd, 'Restaking rewards...', async ({ ctx }, report) => {
       const result = await restake(ctx, { positionIds: ids.length ? parseIds(ids) : undefined, epochs: options.epochs }, report);
       return `Restaked rewards from position(s) ${result.positionIds.join(', ')} for ${result.epochs} epoch(s)`;
@@ -79,8 +80,8 @@ export function registerAntsRewardsCommand(antsCmd: Command): void {
   rewardsCmd
     .command('compound')
     .description('Restake every restakable reward (staker pool, seller usage, buyer usage when operator) into new locked positions')
-    .requiredOption('--epochs <n>', 'lock length for the new positions', parseInt)
-    .option('--to <agentId>', 'pool to hold the new positions (restaked in place, then moved; default: each reward\'s own pool)', parseInt)
+    .requiredOption('--epochs <n>', 'lock length for the new positions', parsePositiveInteger)
+    .option('--to <agentId>', 'pool to hold the new positions (restaked in place, then moved; default: each reward\'s own pool)', parsePositiveInteger)
     .action(async (options: { epochs: number; to?: number }) => runAction(antsCmd, 'Compounding rewards...', async ({ ctx }, report) => {
       const result = await compound(ctx, { epochs: options.epochs, targetAgentId: options.to }, report);
       return compoundSummary(result);
@@ -90,8 +91,8 @@ export function registerAntsRewardsCommand(antsCmd: Command): void {
     .command('stake-usage')
     .description('Claim usage rewards straight into a new locked position instead of the wallet')
     .requiredOption('--side <seller|buyer>', 'which usage rewards to stake')
-    .requiredOption('--epochs <n>', 'lock length for the new position', parseInt)
-    .option('--agent <agentId>', 'destination pool for buyer rewards (sellers stake into their own agent)', parseInt)
+    .requiredOption('--epochs <n>', 'lock length for the new position', parsePositiveInteger)
+    .option('--agent <agentId>', 'destination pool for buyer rewards (sellers stake into their own agent)', parsePositiveInteger)
     .action(async (options: { side: string; epochs: number; agent?: number }) => runAction(antsCmd, 'Staking usage rewards...', async ({ ctx }, report) => {
       const result = await stakeUsageRewards(ctx, { side: parseUsageSide(options.side), epochs: options.epochs, stakeAgentId: options.agent }, report);
       return `Staked usage rewards for epoch(s) ${result.epochsStaked.join(', ')}`;

@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { parsePositiveInteger } from '../parse-positive-integer.js';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
@@ -109,7 +110,7 @@ export function registerSellerStakeCommand(sellerCmd: Command): void {
   sellerCmd
     .command('stake <amount>')
     .description('Stake ANTS into your seller pool')
-    .option('--epochs <n>', 'required ANTS lock duration in epochs', (value) => Number(value))
+    .option('--epochs <n>', 'required ANTS lock duration in epochs', parsePositiveInteger)
     .action(async (amount: string, options: { epochs?: number }) => {
       const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
@@ -134,7 +135,7 @@ export function registerSellerStakeCommand(sellerCmd: Command): void {
   legacy
     .command('stake <amount>')
     .description('Stake USDC before the recognized-usage upgrade (e.g. "10" = 10 USDC)')
-    .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed seller register output)', parseInt)
+    .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed seller register output)', parsePositiveInteger)
     .action(async (amount: string, options: { agentId?: number }) => {
       await runLegacyStake(getGlobalOptions(legacy), amount, options);
     });

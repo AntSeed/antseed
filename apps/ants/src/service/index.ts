@@ -1,7 +1,7 @@
 export { AntsContext, MissingContractError } from './context.js';
 export type { AntsChainConfig, AntsContextOptions, ResolvedStack } from './context.js';
 export { overview, epochInfo } from './overview.js';
-export { positions, stake, move, split, merge, extend, maxLock, previewWithdraw, withdraw } from './positions.js';
+export { positions, closedPositionIds, stake, move, split, merge, extend, maxLock, previewWithdraw, withdraw } from './positions.js';
 export type { WithdrawPreview } from './positions.js';
 export { rewards, claim, restake, stakeUsageRewards, compound } from './rewards.js';
 export type { ClaimResult, RestakeResult, StakeUsageResult, CompoundRequest, CompoundResult } from './rewards.js';

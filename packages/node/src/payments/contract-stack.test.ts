@@ -5,6 +5,7 @@ import {
   legacyEpochs,
   newEpochs,
   resolveContractStack,
+  resolveLegacyContractAddresses,
 } from './contract-stack.js';
 
 const legacyEmissions = '0x0000000000000000000000000000000000000011';
@@ -42,6 +43,39 @@ describe('resolveContractStack', () => {
     });
     expect(result).toMatchObject({ mode: 'recognized-usage', currentEpoch: 12, firstRewardedEpoch: 9 });
     expect(result.addresses.usageAccountingAddress).toBe(usageAccounting);
+    expect(result.addresses.legacyEmissionsContractAddress).toBe(legacyEmissions);
+    expect(result.addresses.legacyStakingContractAddress).toBe(legacyStaking);
+  });
+
+  it('resolves legacy mode while recognized contracts are deployed but inactive', async () => {
+    const result = await resolveContractStack(config({ usageAccountingAddress: usageAccounting, sellerRegistryAddress: sellerRegistry }), {
+      registryClient: { emissions: async () => legacyEmissions, staking: async () => legacyStaking },
+      legacyEmissionsClient: { getEpochInfo: async () => ({ epoch: 7 }) },
+    });
+    expect(result.mode).toBe('legacy');
+    expect(result.currentEpoch).toBe(7);
+  });
+
+  it('keeps V1 separate from V2 before the deployment ledger is regenerated', () => {
+    const oldest = '0x0000000000000000000000000000000000000031';
+    expect(resolveLegacyContractAddresses(config({ usageAccountingAddress: usageAccounting, sellerRegistryAddress: sellerRegistry, legacyEmissionsContractAddress: oldest })))
+      .toEqual({ legacyEmissionsContractAddress: legacyEmissions, legacyStakingContractAddress: legacyStaking, legacyEmissionsV1ContractAddress: oldest });
+  });
+
+  it('preserves explicit legacy addresses after the active ledger is regenerated', async () => {
+    const active = config({
+      emissionsContractAddress: usageAccounting, stakingContractAddress: sellerRegistry,
+      usageAccountingAddress: usageAccounting, sellerRegistryAddress: sellerRegistry,
+      legacyEmissionsContractAddress: legacyEmissions, legacyStakingContractAddress: legacyStaking,
+      legacyEmissionsV1ContractAddress: '0x0000000000000000000000000000000000000031',
+    });
+    const result = await resolveContractStack(active, {
+      registryClient: { emissions: async () => usageAccounting, staking: async () => sellerRegistry },
+      usageAccountingClient: { currentEpoch: async () => 12, firstRewardedEpoch: async () => 9 },
+    });
+    expect(result.addresses.legacyEmissionsContractAddress).toBe(legacyEmissions);
+    expect(result.addresses.legacyStakingContractAddress).toBe(legacyStaking);
+    expect(result.addresses.legacyEmissionsV1ContractAddress).toBe(active.legacyEmissionsV1ContractAddress);
   });
 
   it.each([

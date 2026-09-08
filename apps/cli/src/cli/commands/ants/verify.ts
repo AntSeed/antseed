@@ -54,7 +54,7 @@ export function registerAntsVerifyCommand(antsCmd: Command): void {
     .option('--json', 'output as JSON', false)
     .action(async (proofId: string, options: { json: boolean }) => runRead(antsCmd, 'Loading proof...', async ({ ctx }) => {
       const status = await proofStatus(ctx, proofId);
-      if (options.json) return printJson(status);
+      if (options.json || verify.opts<{ json: boolean }>().json) return printJson(status);
       console.log(`Proof ${status.proofId}: ${status.finalized ? 'finalized' : status.staged ? 'staged' : 'not staged'}; ${status.authenticatedBlockChunkCount} chunk(s) / ${status.authenticatedBlockReferenceCount} block reference(s) authenticated.`);
     }));
 }

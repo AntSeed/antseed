@@ -69,8 +69,9 @@ export async function claimPoolRewards(
   record: RewardTransactionRecorder,
   preparing: () => void,
   positionId?: number,
+  options: { includeIds?: number[] } = {},
 ): Promise<void> {
-  const pending = await previewPoolRewards(pools, rewards, address, positionId);
+  const pending = await previewPoolRewards(pools, rewards, address, positionId, options);
   const rewardedPositions = pending.filter((position) => position.amount > 0n);
   if (rewardedPositions.length === 0) return;
   const currentEpoch = await pools.currentEpoch();

@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { parsePositiveInteger } from '../parse-positive-integer.js';
 import Table from 'cli-table3';
 import { seller, registerBinding, claimStarter, formatUsdc, formatAntsExact } from '@antseed/ants';
 import { ants, printJson, runAction, runRead } from './shared.js';
@@ -24,7 +25,7 @@ export function registerAntsSellerCommand(antsCmd: Command): void {
 
   sellerCmd.command('register')
     .description('Bind your agent ID in the seller registry (same as: antseed seller register)')
-    .option('--agent-id <id>', 'agent ID to bind (default: legacy staking binding)', parseInt)
+    .option('--agent-id <id>', 'agent ID to bind (default: legacy staking binding)', parsePositiveInteger)
     .action(async (options: { agentId?: number }) => runAction(antsCmd, 'Registering...', async ({ ctx }, report) => {
       const result = await registerBinding(ctx, options.agentId, report);
       return result.sent ? `Agent ${result.agentId} bound to this wallet` : `Agent ${result.agentId} was already bound`;

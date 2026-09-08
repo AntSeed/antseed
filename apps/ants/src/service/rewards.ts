@@ -183,7 +183,8 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
     const pools = ctx.pools();
     const poolRewards = ctx.poolRewards();
     if (pools && poolRewards) {
-      const pending = (await previewPoolRewards(pools, poolRewards, ctx.address)).filter((position) => position.amount > 0n);
+      const closed = await closedPositionIds(ctx);
+      const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })).filter((position) => position.amount > 0n);
       if (pending.length > 0) {
         await preparePoolIndexes(pools, poolRewards, signer, pending, report);
         const ids: number[] = [];
@@ -262,7 +263,8 @@ export async function restake(ctx: AntsContext, request: RestakeRequest, report:
   const config = await pools.poolConfig();
   const epochs = assertEpochs(request.epochs, config.minStakeEpochs, config.maxStakeEpochs);
   const requested = request.positionIds && request.positionIds.length > 0 ? assertPositiveIds(request.positionIds) : null;
-  const pending = (await previewPoolRewards(pools, poolRewards, ctx.address))
+  const includeIds = requested ?? (await closedPositionIds(ctx)).ids;
+  const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds }))
     .filter((position) => position.amount > 0n && (!requested || requested.includes(position.id)));
   if (pending.length === 0) throw new Error('No staker rewards to restake.');
   await preparePoolIndexes(pools, poolRewards, signer, pending, report);

@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { parsePositiveInteger } from '../parse-positive-integer.js';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import { usage } from '@antseed/ants';
@@ -10,7 +11,7 @@ export function registerAntsUsageCommand(antsCmd: Command): void {
   antsCmd
     .command('usage')
     .description('Your buyer/seller usage points per epoch and network totals')
-    .option('--epochs <n>', 'number of recent epochs', parseInt, DEFAULT_USAGE_EPOCHS)
+    .option('--epochs <n>', 'number of recent epochs', parsePositiveInteger, DEFAULT_USAGE_EPOCHS)
     .option('--json', 'output as JSON', false)
     .action(async (options: { epochs: number; json: boolean }) => runRead(antsCmd, 'Loading usage...', async ({ ctx }) => {
       const view = await usage(ctx, { epochs: options.epochs });

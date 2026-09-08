@@ -13,6 +13,7 @@ export interface ContractStackAddresses {
   stakingContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   legacyStakingContractAddress?: string;
+  legacyEmissionsV1ContractAddress?: string;
   usageAccountingAddress?: string;
   sellerRegistryAddress?: string;
   channelsContractAddress: string;
@@ -55,6 +56,19 @@ function sameAddress(left: string | undefined, right: string | undefined): boole
 
 function isZero(address: string | undefined): boolean {
   return !address || sameAddress(address, ZERO_ADDRESS);
+}
+
+export function resolveLegacyContractAddresses(config: Pick<ChainConfig,
+  'emissionsContractAddress' | 'stakingContractAddress' | 'usageAccountingAddress' | 'sellerRegistryAddress' |
+  'legacyEmissionsContractAddress' | 'legacyStakingContractAddress' | 'legacyEmissionsV1ContractAddress'
+>): Pick<ContractStackAddresses, 'legacyEmissionsContractAddress' | 'legacyStakingContractAddress' | 'legacyEmissionsV1ContractAddress'> {
+  const emissionsIsLegacy = !!config.emissionsContractAddress && !sameAddress(config.emissionsContractAddress, config.usageAccountingAddress);
+  const stakingIsLegacy = !!config.stakingContractAddress && !sameAddress(config.stakingContractAddress, config.sellerRegistryAddress);
+  return {
+    legacyEmissionsContractAddress: emissionsIsLegacy ? config.emissionsContractAddress : config.legacyEmissionsContractAddress,
+    legacyStakingContractAddress: stakingIsLegacy ? config.stakingContractAddress : config.legacyStakingContractAddress,
+    legacyEmissionsV1ContractAddress: emissionsIsLegacy ? config.legacyEmissionsContractAddress : config.legacyEmissionsV1ContractAddress,
+  };
 }
 
 export function legacyEpochs(currentEpoch: number, firstRewardedEpoch: number): number[] {
@@ -112,12 +126,13 @@ export async function resolveContractStack(
         evmChainId: chainConfig.evmChainId,
       });
       const [currentEpoch, firstRewardedEpoch] = await Promise.all([usage.currentEpoch(), usage.firstRewardedEpoch()]);
-      return { mode: 'recognized-usage', currentEpoch, firstRewardedEpoch, addresses, registryPointers };
+      return { mode: 'recognized-usage', currentEpoch, firstRewardedEpoch, addresses: { ...addresses, ...resolveLegacyContractAddresses(chainConfig) }, registryPointers };
     }
 
-    const legacyMatch = !recognizedConfigured
-      && sameAddress(registryEmissions, chainConfig.emissionsContractAddress)
-      && sameAddress(registryStaking, chainConfig.stakingContractAddress);
+    const legacyMatch = sameAddress(registryEmissions, chainConfig.emissionsContractAddress)
+      && sameAddress(registryStaking, chainConfig.stakingContractAddress)
+      && !sameAddress(registryEmissions, chainConfig.usageAccountingAddress)
+      && !sameAddress(registryStaking, chainConfig.sellerRegistryAddress);
     if (legacyMatch) {
       const emissions = rpcOptions.legacyEmissionsClient ?? new EmissionsClient({
         rpcUrl: chainConfig.rpcUrl,

@@ -172,6 +172,7 @@ export {
   legacyEpochs,
   newEpochs,
   resolveContractStack,
+  resolveLegacyContractAddresses,
   type ContractStackAddresses,
   type ContractStackMode,
   type ContractStackResolution,

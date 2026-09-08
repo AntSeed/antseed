@@ -88,7 +88,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     if (header !== `Bearer ${token}`) return reply.status(401).send({ ok: false, error: 'Unauthorized' });
   });
 
-  const webDir = path.resolve(__dirname, 'web');
+  const webDir = path.resolve(__dirname, 'ants-web');
   try {
     await app.register(fastifyStatic, { root: webDir, prefix: '/' });
     app.setNotFoundHandler((request, reply) => {

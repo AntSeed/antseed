@@ -136,6 +136,14 @@ test('withdrawn positions only prepare accounting through their closing epoch', 
   assert.deepEqual(writes, ['index', 'claim']);
 });
 
+test('claims include indexed closed positions absent from the live enumeration', async () => {
+  const { pools, rewards, writes } = poolFixture(3);
+  pools.allStakerPositionIds = async () => [];
+  pools.positionsBatch = async (ids?: number[]) => ids?.includes(1) ? [{ ...position, closedAtEpoch: 3, withdrawn: true }] : [];
+  await claimPoolRewards(pools, rewards, {} as AbstractSigner, 'seller', 'seller', async () => {}, () => {}, undefined, { includeIds: [1] });
+  assert.deepEqual(writes, ['index', 'claim']);
+});
+
 test('pool preview requests all position amounts in one snapshot operation', async () => {
   const { pools, rewards } = poolFixture();
   pools.allStakerPositionIds = async () => [1, 2];

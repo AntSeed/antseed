@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
+import { AntsContext, closedPositionIds } from '@antseed/ants';
 import { legacyEpochs, newEpochs } from '@antseed/node/payments';
 import { loadConfig } from '../../../config/loader.js';
 import { getGlobalOptions } from '../types.js';
@@ -14,6 +15,7 @@ import {
   formatAnts,
   loadCryptoContext,
   resolveCliContractStack,
+  requireCryptoConfig,
 } from '../../payment-utils.js';
 import { pastEpochs } from '../emissions.js';
 import { claimEpochRewards, claimPoolRewards, pendingEpochRewards, previewPoolRewards } from '@antseed/node/payments';
@@ -28,6 +30,11 @@ export interface SellerRewardSummary {
 
 export function totalSellerRewards(summary: SellerRewardSummary): bigint {
   return summary.legacy + summary.usage + summary.pool;
+}
+
+async function closedRewardIds(config: Awaited<ReturnType<typeof loadConfig>>, address: string): Promise<number[]> {
+  const ctx = new AntsContext({ chain: requireCryptoConfig(config), address });
+  return (await closedPositionIds(ctx)).ids;
 }
 
 export function registerSellerRewardsCommand(sellerCmd: Command): void {
@@ -56,7 +63,7 @@ export function registerSellerRewardsCommand(sellerCmd: Command): void {
         usage = await pendingEpochRewards(recognizedIds, async (epochs) => (await usageClient.pendingEmissions(address, epochs)).seller);
         const pools = createSellerPoolsClient(config);
         const poolRewards = createSellerPoolsRewardsClient(config);
-        poolPositions = await previewPoolRewards(pools, poolRewards, address);
+        poolPositions = await previewPoolRewards(pools, poolRewards, address, undefined, { includeIds: await closedRewardIds(config, address) });
       }
       const pool = poolPositions.reduce((total, position) => total + position.amount, 0n);
       const summary = { legacy, usage, pool, poolPositions };
@@ -118,9 +125,10 @@ export function registerSellerRewardsCommand(sellerCmd: Command): void {
           (epochs) => usageClient.claimSellerEmissions(wallet, epochs), progress.record);
         const pools = createSellerPoolsClient(config);
         const poolRewards = createSellerPoolsRewardsClient(config);
+        const includeIds = await closedRewardIds(config, address);
         await claimPoolRewards(pools, poolRewards, wallet, address, address, progress.record, () => {
           spinner.text = 'Updating pool rewards (preparation transactions require gas)...';
-        });
+        }, undefined, { includeIds });
       }
       if (progress.claimed === 0n) {
         spinner.succeed(chalk.yellow('No pending seller rewards to claim.'));

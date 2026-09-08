@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { parsePositiveInteger } from '../parse-positive-integer.js';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
@@ -18,7 +19,7 @@ export function registerSellerRegisterCommand(sellerCmd: Command): void {
     .command('register')
     .description('Register your peer identity on-chain')
     .option('--metadata <uri>', 'metadata URI (optional)', '')
-    .option('--agent-id <id>', 'existing ERC-8004 agent ID', parseInt)
+    .option('--agent-id <id>', 'existing ERC-8004 agent ID', parsePositiveInteger)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);

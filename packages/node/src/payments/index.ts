@@ -118,6 +118,7 @@ export {
   legacyEpochs,
   newEpochs,
   resolveContractStack,
+  resolveLegacyContractAddresses,
 } from './contract-stack.js';
 export type {
   ContractStackAddresses,
