@@ -32,6 +32,10 @@ export interface ChainCryptoOverrides {
   usageRewardsAddress?: string;
   sellerPoolsRewardsAddress?: string;
   legacyEmissionsEscrowAddress?: string;
+  washTradingRegistryAddress?: string;
+  pointsPolicyRegistryAddress?: string;
+  /** Explorer REST base for seller profiles in `antseed ants`; empty string disables the lookup. */
+  explorerApiUrl?: string;
 }
 
 /**

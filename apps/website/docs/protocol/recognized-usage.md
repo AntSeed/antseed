@@ -87,7 +87,7 @@ lock's end epoch. The faucet must also hold at least `initAmount` ANTS for each
 grant.
 
 With the recognized-usage CLI, use `antseed seller legacy claim-starter`
-for starter-position initialization. It creates a staking position;
+(or `antseed ants seller claim-starter`) for starter-position initialization. It creates a staking position;
 it does not withdraw locked legacy rewards. That separate release is described
 in [Locked seller rewards: M002](./legacy-emissions.md#locked-seller-rewards-m002).
 

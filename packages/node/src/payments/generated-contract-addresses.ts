@@ -20,6 +20,7 @@ export const DEPLOYED_CONTRACT_ADDRESSES = {
     recognizedUsage: {
       "status": "deployed",
       "effectiveEpoch": 22,
+      "deploymentBlock": 50955026,
       "contracts": {
         "washTradingRegistry": "0xc02a111cb94332cc31c08e079cbe781880b2121c",
         "emissionsGate": "0xe60a31e6cd2f8455503ca0b3f6545dd3ddf543bd",

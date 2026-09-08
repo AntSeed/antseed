@@ -158,12 +158,15 @@ export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams 
 export { RegistryClient, type RegistryClientConfig } from './payments/evm/registry-client.js';
 export { UsageAccountingClient, type UsageAccountingClientConfig } from './payments/evm/usage-accounting-client.js';
 export { UsageRewardsClient, type UsageRewardsClientConfig } from './payments/evm/usage-rewards-client.js';
-export { SellerPoolsClient, estimateEarlyExit, type SellerPoolsClientConfig, type SellerPoolPosition, type EarlyExitEstimate } from './payments/evm/seller-pools-client.js';
+export { SellerPoolsClient, estimateEarlyExit, positionState, projectedEarlyExitSlashBps, type SellerPoolsClientConfig, type SellerPoolPosition, type EarlyExitEstimate, type SellerPoolConfig, type PositionPowerSegment, type PositionState } from './payments/evm/seller-pools-client.js';
 export { SellerPoolsRewardsClient, type SellerPoolsRewardsClientConfig } from './payments/evm/seller-pools-rewards-client.js';
 export { SellerRegistryClient, SellerRegistrationVerificationError, type SellerRegistryClientConfig } from './payments/evm/seller-registry-client.js';
 export { pendingEpochRewards, claimEpochRewards, claimBuyerEpochRewards, previewPoolRewards, claimPoolRewards, type RewardTransactionRecorder } from './payments/reward-claims.js';
 export { PositionInitClient, type PositionInitClientConfig } from './payments/evm/position-init-client.js';
-export { EmissionsGateClient, type EmissionsGateClientConfig } from './payments/evm/emissions-gate-client.js';
+export { EmissionsGateClient, GATE_MINTERS, gateMinterId, type EmissionsGateClientConfig, type GateMinter } from './payments/evm/emissions-gate-client.js';
+export { WashTradingRegistryClient, validateSellerProofArtifact, sellerProofId, type WashTradingRegistryClientConfig, type WashTradingSellerStatus, type WashTradingProofStatus, type WashTradingRegistryConfig, type SellerProofArtifact, type SellerProofSubmissionStep, type BlockAuthenticationChunk, type BlockReference } from './payments/evm/wash-trading-registry-client.js';
+export { PointsPolicyRegistryClient, type PointsPolicyRegistryClientConfig } from './payments/evm/points-policy-registry-client.js';
+export { SellerRewardsPoolClient, type SellerRewardsPoolClientConfig } from './payments/evm/seller-rewards-pool-client.js';
 export {
   ContractStackMismatchError,
   legacyEpochs,

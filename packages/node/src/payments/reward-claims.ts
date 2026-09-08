@@ -37,14 +37,22 @@ export async function claimBuyerEpochRewards(
   }
 }
 
-type PoolReader = Pick<SellerPoolsClient, 'rewardPositions' | 'position' | 'currentEpoch'>;
+type PoolReader = Pick<SellerPoolsClient, 'allStakerPositionIds' | 'positionsBatch' | 'position' | 'currentEpoch'>;
 type PoolRewards = Pick<SellerPoolsRewardsClient,
   'previewStakerRewards' | 'pendingIndexedStakerReward' | 'poolRewardIndexNextEpoch' |
   'initialIndexEpoch' | 'indexPoolRewards' | 'claimStakerRewardsBatch'>;
 type RewardSigner = Parameters<SellerPoolsRewardsClient['claimStakerRewardsBatch']>[0];
 
-export async function previewPoolRewards(pools: PoolReader, rewards: PoolRewards, address: string, positionId?: number) {
-  const positions = positionId === undefined ? await pools.rewardPositions(address) : [await pools.position(positionId)];
+/**
+ * Pending staker rewards for the wallet's open positions (the on-chain
+ * `stakerPositionIds` enumeration) plus any `includeIds` the caller knows
+ * about, typically positions closed by split, merge, or move that an indexer
+ * reported; those keep their earned rewards but leave the enumeration.
+ */
+export async function previewPoolRewards(pools: PoolReader, rewards: PoolRewards, address: string, positionId?: number, options: { includeIds?: number[] } = {}) {
+  const positions = positionId === undefined
+    ? await pools.positionsBatch([...new Set([...await pools.allStakerPositionIds(address), ...(options.includeIds ?? [])])])
+    : [await pools.position(positionId)];
   for (const position of positions) {
     if (position.owner.toLowerCase() !== address.toLowerCase()) throw new Error(`Position ${position.id} is not owned by this wallet.`);
   }

@@ -20,6 +20,20 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed seller pool positions` | List seller-pool positions and lifecycle state |
 | `antseed seller pool withdraw <id...> [--accept-slashing]` | Withdraw positions, with a slashing estimate and confirmation for early exits |
 | `antseed seller rewards [claim]` | View or claim all seller rewards |
+| **ANTS staking** | |
+| `antseed ants` | Open the local ANTS staking dashboard (wallet-signed, `--port`, `--no-open`) |
+| `antseed ants status` | Protocol phase, epoch countdown, balances, stake, claimable rewards |
+| `antseed ants stake <ants> --agent <id> --epochs <n>` | Stake ANTS into any registered seller pool |
+| `antseed ants positions` | List open lANTS positions with state, pending rewards, and exit slash |
+| `antseed ants move <id...> --to <agent>` | Move positions to another pool (terms preserved, effective next epoch) |
+| `antseed ants split <id> <ants>` / `merge <id...>` | Split a position or merge same-pool positions |
+| `antseed ants extend <id> --epochs <n>` / `max-lock <id> [--off]` | Extend a lock or toggle max lock |
+| `antseed ants withdraw <id...> [--preview] [--accept-slashing]` | Withdraw with a slashing estimate and explicit consent for early exits |
+| `antseed ants rewards [claim\|compound\|restake\|stake-usage]` | View, claim, or restake rewards; `compound` restakes every restakable bucket in one go |
+| `antseed ants pools` / `pool <agent>` | Compare pools: power and share of network, settled volume per epoch, staker ANTS per 1k power (last and projected), your power and share; explorer names via Antscan |
+| `antseed ants usage` / `emissions` / `addresses` | Usage points per epoch, emission schedule and buckets, contract addresses |
+| `antseed ants seller [register\|claim-starter]` | Seller binding, eligibility, and starter grant |
+| `antseed ants verify [seller]` / `verify submit <artifact.json>` / `verify proof <id>` | Wash-trading status, resumable proof submission, proof progress |
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
@@ -341,6 +355,43 @@ Looking for pre-migration USDC staking or rewards? See
 [Legacy emissions and claims](../website/docs/protocol/legacy-emissions.md).
 The setup commands below use that legacy USDC interface; they do not create
 ANTS pool positions.
+
+### ANTS Staking Dashboard and Commands
+
+`antseed ants` starts a local dashboard on `http://127.0.0.1:3119` and opens it
+in your browser. It signs with the node wallet in `--data-dir`, binds to
+localhost only, and requires the one-time session token embedded in the URL
+it prints, so no other page can act with your wallet. Pass `--no-open` to
+print the URL only, or `--port` to change the port.
+
+Pool statistics, volume history, and closed positions come from the Antscan
+indexer (`payments.crypto.explorerApiUrl`); the chain is read only for your
+wallet's live state and when sending transactions.
+
+Everything the dashboard does is also a command under `antseed ants`, so the
+dashboard is optional:
+
+```bash
+antseed ants status                                   # phase, epoch countdown, balances, claimable rewards
+antseed ants stake 250 --agent 84990 --epochs 12      # stake into a registered seller pool
+antseed ants positions --json                         # positions, pending rewards, exit slash
+antseed ants split 7 100 && antseed ants merge 8 9    # restructure (effective next epoch)
+antseed ants move 7 --to 84991                        # move stake to another pool
+antseed ants withdraw 7 --preview                     # slashing estimate before an early exit
+antseed ants rewards && antseed ants rewards claim    # all buckets: staker, seller, buyer, legacy, locked
+antseed ants rewards compound --epochs 8 --to 59096   # restake all rewards (bonus kept), move them into pool 59096
+antseed ants verify submit seller-proof.json          # stage → authenticate chunks → finalize
+```
+
+Before the cutover (phase `deployed`) the commands read the deployed contracts
+and can stake once ANTS transfers are enabled for your wallet; reward accounting
+starts at the effective epoch. Buyer usage rewards are paid to the deposits
+operator, so they are claimable here only when the node wallet is its own
+operator. Loop-proof artifacts come from the `antseed-loop-proof` host
+(`kind: antseed-wash-trading-seller-proof`); submission is resumable, so a
+partially authenticated proof can be re-submitted with the same file.
+The [staking guide](../website/docs/guides/staking.md) walks through the
+dashboard tabs and how to read the pool table.
 
 ### Legacy USDC Provider Setup (Pre-Migration)
 

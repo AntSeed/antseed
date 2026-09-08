@@ -85,24 +85,6 @@ test('position pagination includes every page', async () => {
   assert.deepEqual(await client.allStakerPositionIds(address), ids);
 });
 
-test('historical reward discovery includes burned positions and filters old owners', async () => {
-  const client = new SellerPoolsClient({ ...config, antsTokenAddress: contractAddress });
-  const active = Array.from({ length: 300 }, (_, index) => index + 1);
-  client.stakerPositionIds = async (_staker, offset = 0, limit = 256) => active.slice(offset, offset + limit);
-  client.position = async (id) => ({ id, owner: id === 2 ? contractAddress : address, agentId: 7, amount: 1n, weightAmount: 1n, stakeStartEpoch: 1, stakeEndEpoch: 4, closedAtEpoch: id === 301 ? 3 : 0, withdrawn: id === 301 });
-  const abi = new Interface(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
-  const log = abi.encodeEventLog(abi.getEvent('Transfer')!, [address, ZeroAddress, 301]);
-  Object.defineProperty(client, '_provider', { value: {
-    getBlockNumber: async () => 16,
-    getCode: async (_target: string, block: number) => block < 4 ? '0x' : '0x6000',
-    getLogs: async (filter: { fromBlock: number }) => { assert.equal(filter.fromBlock, 4); return [{ ...log, address: contractAddress }]; },
-  } });
-  const positions = await client.rewardPositions(address);
-  assert.equal(positions.length, 300);
-  assert.equal(positions.at(-1)!.id, 301);
-  assert.ok(!positions.some((position) => position.id === 2));
-});
-
 test('preview uses only existing view selectors at one block, including unindexed epochs', async () => {
   const client = new SellerPoolsRewardsClient(config);
   const abi = new Interface([

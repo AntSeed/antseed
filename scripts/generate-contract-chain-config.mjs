@@ -71,9 +71,12 @@ export function renderNetwork(record, recognizedUsageDeployment = null) {
     const active = record.status === 'active'
       && sameAddress(record.contracts.emissions?.address, contracts.usageAccounting)
       && sameAddress(record.contracts.staking?.address, contracts.sellerRegistry);
+    const deploymentBlocks = Object.values(recognizedUsageDeployment.contracts)
+      .map((contract) => contract.deploymentBlock).filter((block) => Number.isInteger(block));
     values.recognizedUsage = {
       status: active ? 'active' : 'deployed',
       effectiveEpoch: recognizedUsageDeployment.effectiveEpoch,
+      ...(deploymentBlocks.length ? { deploymentBlock: Math.min(...deploymentBlocks) } : {}),
       contracts,
     };
   }

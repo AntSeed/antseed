@@ -289,6 +289,10 @@ export interface PaymentsCLIConfig {
     usageRewardsAddress?: string;
     sellerPoolsRewardsAddress?: string;
     legacyEmissionsEscrowAddress?: string;
+    washTradingRegistryAddress?: string;
+    pointsPolicyRegistryAddress?: string;
+    /** Explorer REST base for seller profiles in `antseed ants`; empty string disables the lookup. */
+    explorerApiUrl?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */

@@ -17,6 +17,10 @@ const ABI = [
   'function pendingIndexedStakerReward(uint256 positionId) external view returns (uint256)',
   'function claimStakerRewards(uint256 positionId, address recipient) external',
   'function claimStakerRewardsBatch(uint256[] positionIds, address recipient) external',
+  'function restakeStakerRewards(uint256 positionId, uint256 stakeEpochs) external returns (uint256 newPositionId)',
+  'function restakeStakerRewardsBatch(uint256[] positionIds, uint256 stakeEpochs) external returns (uint256[] newPositionIds)',
+  'function dynamicStakerConfigAt(uint256 epoch) view returns (tuple(uint32 minShareBps, uint32 maxShareBps, uint256 stakeShareTarget))',
+  'function paused() view returns (bool)',
 ] as const;
 const POOLS_ABI = [
   'function positionPowerSegmentAt(uint256 positionId, uint256 epoch) view returns (uint256, uint256, uint256)',
@@ -29,11 +33,27 @@ const ACCOUNTING_ABI = [
   'function totalWeightedPoolPointsByEpoch(uint256 epoch) view returns (uint256)',
 ];
 
+export interface DynamicStakerConfig { minShareBps: number; maxShareBps: number; stakeShareTarget: bigint; }
+
 export class SellerPoolsRewardsClient extends BaseEvmClient {
   constructor(config: SellerPoolsRewardsClientConfig) { super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId); }
   pendingIndexedStakerReward(positionId: number): Promise<bigint> { return new Contract(this._contractAddress, ABI, this._provider).getFunction('pendingIndexedStakerReward')(positionId); }
   claimStakerRewards(signer: AbstractSigner, positionId: number, recipient: string): Promise<string> { return this._execWrite(signer, ABI, 'claimStakerRewards', positionId, recipient); }
   claimStakerRewardsBatch(signer: AbstractSigner, positionIds: number[], recipient: string): Promise<string> { return this._execWrite(signer, ABI, 'claimStakerRewardsBatch', positionIds, recipient); }
+  /** Compound indexed staker rewards into a fresh locked position (earns the restake weight bonus). */
+  restakeStakerRewards(signer: AbstractSigner, positionId: number, stakeEpochs: number): Promise<string> { return this._execWrite(signer, ABI, 'restakeStakerRewards', positionId, stakeEpochs); }
+  restakeStakerRewardsBatch(signer: AbstractSigner, positionIds: number[], stakeEpochs: number): Promise<string> { return this._execWrite(signer, ABI, 'restakeStakerRewardsBatch', positionIds, stakeEpochs); }
+  stakerEpochBudget(epoch: number): Promise<bigint> { return new Contract(this._contractAddress, ABI, this._provider).getFunction('stakerEpochBudget')(epoch); }
+  async poolEpochEmissions(epoch: number, agentId: number): Promise<{ settled: boolean; amount: bigint }> {
+    const [settled, amount] = await new Contract(this._contractAddress, ABI, this._provider).getFunction('poolEpochEmissions')(epoch, agentId) as [boolean, bigint];
+    return { settled, amount };
+  }
+  async dynamicStakerConfigAt(epoch: number): Promise<DynamicStakerConfig> {
+    const result = await new Contract(this._contractAddress, ABI, this._provider).getFunction('dynamicStakerConfigAt')(epoch);
+    return { minShareBps: Number(result[0]), maxShareBps: Number(result[1]), stakeShareTarget: result[2] };
+  }
+  paused(): Promise<boolean> { return new Contract(this._contractAddress, ABI, this._provider).getFunction('paused')(); }
+  async positionClaimCursor(positionId: number): Promise<number> { return Number(await new Contract(this._contractAddress, ABI, this._provider).getFunction('positionClaimCursor')(positionId)); }
   async previewStakerReward(positionId: number): Promise<bigint> {
     return (await this.previewStakerRewards([positionId]))[0]!;
   }

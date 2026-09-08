@@ -3,6 +3,10 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface SellerRegistryClientConfig { rpcUrl: string; fallbackRpcUrls?: string[]; contractAddress: string; evmChainId?: number; }
 const ABI = [
+  'event SellerRegistered(address indexed seller, uint256 indexed agentId)',
+  'function owner() external view returns (address)',
+  'function sellerPools() external view returns (address)',
+  'function legacyStaking() external view returns (address)',
   'function agentSeller(uint256 agentId) external view returns (address)',
   'function registerSeller(uint256 agentId) external',
   'function getAgentId(address seller) external view returns (uint256)',
@@ -45,6 +49,9 @@ export class SellerRegistryClient extends BaseEvmClient {
     }
     return true;
   }
+  agentSeller(agentId: number): Promise<string> { return this.contract().getFunction('agentSeller')(agentId); }
+  sellerPools(): Promise<string> { return this.contract().getFunction('sellerPools')(); }
+  legacyStaking(): Promise<string> { return this.contract().getFunction('legacyStaking')(); }
 }
 
 export class SellerRegistrationVerificationError extends Error {

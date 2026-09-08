@@ -82,7 +82,12 @@ function poolFixture(closedAtEpoch = 0) {
   let wasClaimed = false;
   const writes: string[] = [];
   const targetEpoch = closedAtEpoch || 35;
-  const pools = { rewardPositions: async () => [{ ...position, withdrawn: closedAtEpoch !== 0, closedAtEpoch }], position: async () => position, currentEpoch: async () => 35 };
+  const pools = {
+    allStakerPositionIds: async () => [position.id],
+    positionsBatch: async () => [{ ...position, withdrawn: closedAtEpoch !== 0, closedAtEpoch }],
+    position: async () => position,
+    currentEpoch: async () => 35,
+  };
   const rewards = {
     previewStakerRewards: async (ids: number[]) => ids.map(() => wasClaimed ? 0n : 12n),
     pendingIndexedStakerReward: async () => cursor === targetEpoch && !wasClaimed ? 12n : 0n,
@@ -133,7 +138,8 @@ test('withdrawn positions only prepare accounting through their closing epoch', 
 
 test('pool preview requests all position amounts in one snapshot operation', async () => {
   const { pools, rewards } = poolFixture();
-  pools.rewardPositions = async () => [position, { ...position, id: 2 }];
+  pools.allStakerPositionIds = async () => [1, 2];
+  pools.positionsBatch = async () => [position, { ...position, id: 2 }];
   let calls = 0;
   rewards.previewStakerRewards = async (ids) => {
     calls++;

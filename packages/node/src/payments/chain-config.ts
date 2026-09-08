@@ -4,6 +4,8 @@ import { DEPLOYED_CONTRACT_ADDRESSES } from './generated-contract-addresses.js';
 export interface RecognizedUsageDeployment {
   status: 'deployed' | 'active';
   effectiveEpoch: number;
+  /** First block of the recognized-usage deployment; floor for event scans. */
+  deploymentBlock?: number;
   contracts: {
     washTradingRegistry: string;
     emissionsGate: string;
@@ -51,6 +53,8 @@ export interface ChainConfig {
   usageRewardsAddress?: string;
   sellerPoolsRewardsAddress?: string;
   legacyEmissionsEscrowAddress?: string;
+  washTradingRegistryAddress?: string;
+  pointsPolicyRegistryAddress?: string;
   recognizedUsage?: RecognizedUsageDeployment;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
@@ -124,9 +128,33 @@ const DEFAULT_CHAIN_ID: ChainId = 'base-mainnet';
  * Falls back to base-sepolia if not found.
  */
 export function getChainConfig(chainId?: ChainId | string): ChainConfig {
-  if (!chainId) return CHAIN_CONFIGS[DEFAULT_CHAIN_ID];
+  if (!chainId) return withRecognizedUsageDefaults(CHAIN_CONFIGS[DEFAULT_CHAIN_ID]);
   const config = CHAIN_CONFIGS[chainId as ChainId];
-  return config ?? CHAIN_CONFIGS[DEFAULT_CHAIN_ID];
+  return withRecognizedUsageDefaults(config ?? CHAIN_CONFIGS[DEFAULT_CHAIN_ID]);
+}
+
+/**
+ * The recognized-usage stack is recorded in the deployment ledger as soon as
+ * it is deployed (before cutover). Expose those addresses through the
+ * individual `*Address` fields so clients can read the new contracts in both
+ * the `deployed` and `active` phases; explicit fields always win.
+ */
+export function withRecognizedUsageDefaults(config: ChainConfig): ChainConfig {
+  const deployed = config.recognizedUsage?.contracts;
+  if (!deployed) return config;
+  return {
+    ...config,
+    emissionsGateAddress: config.emissionsGateAddress ?? deployed.emissionsGate,
+    sellerPoolsAddress: config.sellerPoolsAddress ?? deployed.sellerPools,
+    sellerRegistryAddress: config.sellerRegistryAddress ?? deployed.sellerRegistry,
+    positionInitAddress: config.positionInitAddress ?? deployed.positionInit,
+    usageAccountingAddress: config.usageAccountingAddress ?? deployed.usageAccounting,
+    usageRewardsAddress: config.usageRewardsAddress ?? deployed.usageRewards,
+    sellerPoolsRewardsAddress: config.sellerPoolsRewardsAddress ?? deployed.sellerPoolsRewards,
+    legacyEmissionsEscrowAddress: config.legacyEmissionsEscrowAddress ?? deployed.legacyEmissionsEscrow,
+    washTradingRegistryAddress: config.washTradingRegistryAddress ?? deployed.washTradingRegistry,
+    pointsPolicyRegistryAddress: config.pointsPolicyRegistryAddress ?? deployed.pointsPolicyRegistry,
+  };
 }
 
 /**
@@ -157,6 +185,8 @@ export function resolveChainConfig(overrides?: {
   usageRewardsAddress?: string;
   sellerPoolsRewardsAddress?: string;
   legacyEmissionsEscrowAddress?: string;
+  washTradingRegistryAddress?: string;
+  pointsPolicyRegistryAddress?: string;
   depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -190,6 +220,8 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.usageRewardsAddress ? { usageRewardsAddress: overrides.usageRewardsAddress } : {}),
     ...(overrides?.sellerPoolsRewardsAddress ? { sellerPoolsRewardsAddress: overrides.sellerPoolsRewardsAddress } : {}),
     ...(overrides?.legacyEmissionsEscrowAddress ? { legacyEmissionsEscrowAddress: overrides.legacyEmissionsEscrowAddress } : {}),
+    ...(overrides?.washTradingRegistryAddress ? { washTradingRegistryAddress: overrides.washTradingRegistryAddress } : {}),
+    ...(overrides?.pointsPolicyRegistryAddress ? { pointsPolicyRegistryAddress: overrides.pointsPolicyRegistryAddress } : {}),
     ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }
