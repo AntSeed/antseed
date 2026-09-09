@@ -121,6 +121,27 @@ lANTS staking-position NFTs; pool power activates in the following epoch.
 Eligible sellers can initialize a starter position, including contract sellers
 whose authorized operator initializes on their behalf.
 
+```bash
+antseed seller legacy stake 10
+```
+
+After the configured network completes the recognized-usage upgrade, the CLI rejects new legacy USDC stakes and directs sellers to ANTS positions instead:
+
+```bash
+antseed seller register
+antseed seller legacy claim-starter
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+```
+
+`seller stake` always stakes ANTS and never falls back to USDC. The CLI verifies `AntseedRegistry.emissions()` and `staking()` before commands that depend on the upgrade state. A mismatch between the registry and `payments.crypto` address overrides fails loudly instead of silently selecting the wrong contracts.
+
+After the upgrade, `antseed seller register` explicitly binds your wallet to its on-chain agent identity (ERC-8004); staking requires this registration and never performs it silently. To withdraw your legacy USDC stake:
+
+```bash
+antseed seller legacy unstake
+```
+
 Rewards depend on eligibility, pool power, usage, and the configured
 [reward policies](../protocol/reward-policies.md). USDC payments can still settle
 when no usage points are earned. Enabling ANTS transfers is a separate action.
@@ -130,6 +151,8 @@ starter positions, staking exit terms, emission allocations, and contract addres
 
 **Looking for rewards or USDC staking from before migration?** See
 [Legacy emissions and claims](../protocol/legacy-emissions.md).
+
+After cutover, `seller rewards` includes finalized legacy, recognized-usage, and pool-staking rewards. Reading rewards does not send transactions; `seller rewards claim` collects all eligible seller rewards into the current wallet. Buyer emissions commands retain their `--legacy-only` and `--new-only` filters.
 
 ## Contract Addresses (Base Mainnet)
 

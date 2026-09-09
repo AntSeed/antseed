@@ -25,7 +25,7 @@ export function parseHexNumber(value) {
  * Runs a Foundry script. `contractNames` maps Solidity contract names to
  * ledger keys so a migration never has to parse broadcast files itself.
  */
-export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }) {
+export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [], slow = false }) {
   const args = ['script', target, '--rpc-url', rpcUrl, '--via-ir', ...walletArgs];
   if (broadcast) {
     args.push('--broadcast', '--slow');

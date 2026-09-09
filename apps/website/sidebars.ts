@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         'guides/tee-provider',
         'guides/verify-tee',
         'guides/payments',
+        'guides/staking',
         'guides/pricing',
         'guides/metrics',
         'guides/metadata-v12-upgrade',

@@ -24,23 +24,49 @@ antseed seller start                  Start providing AI services
 antseed seller start --base-rpc-url <url>
                                       Use a custom Base RPC URL for this run
 antseed seller register               Register peer identity on-chain (ERC-8004)
+antseed seller stake <ants> --epochs <n>
+                                      Stake ANTS only (requires the upgrade)
+antseed seller legacy stake <amount>  Stake USDC as a provider (pre-cutover, min $10)
+antseed seller legacy unstake         Withdraw legacy USDC stake
+antseed seller legacy claim-starter   Claim the legacy-seller starter ANTS position
+antseed seller pool positions         List pool positions
+antseed seller pool withdraw <id...>  Withdraw positions (`--accept-slashing` for early exit)
+antseed seller rewards [claim]        View or claim all seller rewards
 ```
 
-### Legacy staking and emissions
+### ANTS staking
 
-These commands use the legacy USDC staking and emissions interfaces, not ANTS
-pool positions. Check which CLI version and contract endpoints you are using
-before a migration. USDC service payouts are automatic; `emissions claim` is
-for ANTS rewards, not seller USDC earnings.
-
-```bash
-antseed seller stake <amount>         Stake legacy USDC (min $10)
-antseed seller unstake                Withdraw legacy USDC stake
-antseed seller emissions claim        Claim legacy seller ANTS emissions
+```bash title="ants"
+antseed ants                          Open the local staking dashboard (wallet-signed; --port, --no-open)
+antseed ants status                   Phase, epoch countdown, balances, stake, claimable rewards
+antseed ants stake <ants> --agent <id> --epochs <n>
+                                      Stake ANTS into any registered seller pool
+antseed ants positions                Open lANTS positions with state, pending rewards, exit slash
+antseed ants move <id...> --to <id>   Move positions to another pool (terms preserved)
+antseed ants split <id> <ants>        Split a position; antseed ants merge <id...> merges same-pool positions
+antseed ants extend <id> --epochs <n> Extend a lock; antseed ants max-lock <id> [--off] toggles max lock
+antseed ants withdraw <id...> [--preview] [--accept-slashing]
+                                      Withdraw with a slashing estimate and explicit consent
+antseed ants rewards [claim]          View or claim staker, seller, buyer, legacy, and locked rewards
+antseed ants rewards compound --epochs <n> [--to <agentId>]
+                                      Restake every restakable reward into new positions (optionally moved into one pool)
+antseed ants rewards restake --epochs <n>
+                                      Restake staker pool rewards only
+antseed ants rewards stake-usage --side <seller|buyer> --epochs <n>
+                                      Claim usage rewards straight into a position
+antseed ants pools | pool <id>        Compare pools: power, share, volume per epoch, ANTS per 1k power, your share
+antseed ants usage | emissions | addresses
+                                      Usage points per epoch, emission schedule, contract addresses
+antseed ants seller [register|claim-starter]
+                                      Seller binding, eligibility, starter grant
+antseed ants verify [seller]          Wash-trading registry facts and per-seller status
+antseed ants verify submit <artifact.json>
+                                      Stage, authenticate, and finalize a seller proof (resumable)
+antseed ants verify proof <proofId>   Proof submission progress
 ```
 
-See [legacy claims](/docs/legacy-emissions) for pre-migration rewards and
-[recognized usage](/docs/recognized-usage) for ANTS positions and starter grants.
+Every dashboard action maps to one of these commands; the dashboard runs on
+`127.0.0.1` and signs with the node wallet.
 
 ### Buying (consuming)
 
@@ -67,7 +93,6 @@ antseed config                        Manage config file
 antseed peer <peerId>                 View a peer's profile
 antseed profile                       Manage your peer profile
 antseed buyer channels                List payment channels
-antseed seller emissions info         View epoch info and ANTS emissions
 antseed network bootstrap             Run a dedicated DHT bootstrap node
 antseed buyer connection              Manage connection settings
 antseed dev                           Run seller + buyer locally for testing
