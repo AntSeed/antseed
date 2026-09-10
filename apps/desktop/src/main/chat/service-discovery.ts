@@ -36,6 +36,7 @@ export type BuyerMaxPricingDefaults = {
 };
 
 export type DiscoverRowEntry = {
+  reputationBreakdown?: ReturnType<typeof import('@antseed/node').routingReputationBreakdown>;
   rowKey: string;
   serviceId: string;
   serviceLabel: string;
@@ -310,6 +311,7 @@ export function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[
 }
 
 export type BuyerStateDiscoveredPeer = {
+  reputationBreakdown?: ReturnType<typeof import('@antseed/node').routingReputationBreakdown>;
   onChainAgentId: number | null;
   onChainStakeUsdcMicros: number | null;
   onChainChannelCount: number | null;
@@ -405,6 +407,7 @@ export async function buildDiscoverRows(
       onChainTotalVolumeUsdc,
       onChainLastSettledAt,
       onChainReputationScore,
+      reputationBreakdown: peerBlob?.reputationBreakdown,
       onChainTrustScore,
       effectiveReputationScore: entry.effectiveReputationScore ?? null,
       onChainSybilRisk,

@@ -2,10 +2,11 @@ import type {
   CatalogServiceCapabilities,
   CatalogServiceProtocol,
   NetworkServiceCatalogPeer,
+  PeerInfo,
 } from '@antseed/node';
 import {
   buildNetworkServiceOffers,
-  normalizedModelReputationScore,
+  computeRoutingReputationScore,
   preferredModelDisplayName,
 } from '@antseed/node';
 
@@ -168,7 +169,7 @@ export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): Cha
   return buildNetworkServiceOffers(peers).flatMap((offer) => {
     if (!offer.protocol) return [];
     const peer = peersById.get(offer.peerId);
-    const effectiveReputationScore = peer ? normalizedModelReputationScore(peer) : null;
+    const effectiveReputationScore = peer ? computeRoutingReputationScore(peer as PeerInfo) : null;
     return [{
       id: offer.serviceId,
       label: preferredModelDisplayName(offer.serviceId),

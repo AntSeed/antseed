@@ -23,6 +23,7 @@ import type {
 } from '@antseed/protocol/peer-pricing';
 
 export interface PeerVerificationResults {
+  externalHistory?: import('../reputation/external-history.js').ExternalHistoryEvidence;
   /** True when every announced external claim verified successfully. */
   verified: boolean;
   /** Buyer-local time when the latest verification pass completed. */

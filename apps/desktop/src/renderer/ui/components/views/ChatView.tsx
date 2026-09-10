@@ -685,7 +685,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     )) ?? snap.discoverRows.find((row) => row.peerId === peerId) ?? null;
   }, [currentServiceOption, snap.chatSelectedPeerId, snap.chatRoutedPeerId, snap.discoverRows]);
   const lowReputationPeer = useMemo(() => {
-    const score = currentDiscoverRow?.onChainReputationScore;
+    const score = currentDiscoverRow?.effectiveReputationScore ?? currentDiscoverRow?.onChainReputationScore;
     const peerId = currentDiscoverRow?.peerId || currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
     if (!peerId || typeof score !== 'number' || !Number.isFinite(score) || score >= LOW_REPUTATION_SCORE_THRESHOLD) {
       return null;
