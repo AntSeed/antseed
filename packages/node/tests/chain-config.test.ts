@@ -11,6 +11,12 @@ describe('recognized-usage deployment configuration', () => {
     expect(config.registryContractAddress).toBe(generated.registryContractAddress);
     expect(config.emissionsContractAddress).toBe(generated.emissionsContractAddress);
     expect(config.stakingContractAddress).toBe(generated.stakingContractAddress);
+    expect(config.recognizedUsage?.status).toBe('active');
+    expect(config.emissionsContractAddress).toBe(config.recognizedUsage?.contracts.usageAccounting);
+    expect(config.stakingContractAddress).toBe(config.recognizedUsage?.contracts.sellerRegistry);
+    expect(config.legacyEmissionsContractAddress).toBe('0xF13bE52c4A3afC6AE29536f073588d01A0564088');
+    expect(config.legacyStakingContractAddress).toBe('0x3652E6B22919bd322A25723B94BB207602E5c8e6');
+    expect(config.legacyEmissionsV1ContractAddress).toBe('0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5');
   });
 
   it('preserves inventory when overriding an RPC endpoint', () => {

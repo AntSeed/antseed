@@ -753,11 +753,13 @@ for pre-migration staking and claims.
 
 All verified on [BaseScan](https://basescan.org). Contract addresses are built into `@antseed/node` chain-config — no manual configuration needed when `chainId: "base-mainnet"` is set.
 
-##### M001 deployed stack
+##### M001 active stack
 
-All 11 contracts below were deployed in phase 1 and verified. Their canonical
-provenance is in `deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
-The protocol starts at epoch 22; use the operator runbook for the activation procedure.
+The first 11 contracts were deployed in phase 1 and verified; the legacy rewards
+registry adapter was deployed and verified on September 9, 2026. M001 activation
+completed on September 10, 2026, in epoch 22. Provenance is preserved in
+`deployments/base-mainnet/history/001-recognized-usage-deployed.json` and
+`deployments/base-mainnet/history/001-recognized-usage-activated.json`.
 
 | Contract | Address |
 |---|---|
@@ -772,13 +774,14 @@ The protocol starts at epoch 22; use the operator runbook for the activation pro
 | AntseedSellerPoolsRewards | `0x83cc5B9AA0c8cB8683F35462c385a5BAAa755EE5` |
 | AntseedUsageRewards | `0x78330bF154172F1137219Bb559d4F3A270B3201F` |
 | AntseedLegacyEmissionsEscrow | `0x4d0fC3C0BBb5233Af6c4Ce33223e5330c34db9ab` |
+| AntseedLegacyRewardsPoolRegistry | `0xF76590430d9fCe0E871107Aa1f1AE796B0d03a11` |
 
-`getChainConfig('base-mainnet').recognizedUsage` exposes these addresses and
-the recorded deployment status without changing the active legacy aliases.
-The metadata is generated from the history record and `current.json`, not
-inferred from wall-clock time. Update the active record and regenerate only
-after a successful cutover. Existing legacy client methods are not adapters
-for the new pool and reward interfaces.
+`getChainConfig('base-mainnet').recognizedUsage` exposes the 11 phase-1 addresses
+and the recorded `active` status. The adapter's address and provenance are
+recorded in the activation history and `current.json`. The emissions and staking aliases now resolve to
+UsageAccounting and SellerRegistry. Metadata is generated from the deployment
+history and `current.json`, not inferred from wall-clock time. Existing legacy
+client methods are not adapters for the new pool and reward interfaces.
 
 #### Base Sepolia (Testnet)
 

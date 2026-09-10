@@ -224,8 +224,9 @@ treated as circulating rewards.
 
 ## Deployed M001 contracts — Base mainnet {#mainnet-contracts}
 
-These are the Base mainnet contracts for the protocol starting at epoch 22.
-All 11 were deployed on September 6, 2026 and verified on Basescan.
+These are the Base mainnet contracts activated in epoch 22 on September 10, 2026.
+The first 11 were deployed on September 6; the legacy rewards registry adapter
+was deployed on September 9. All were verified on Basescan.
 
 | Contract | Address |
 |---|---|
@@ -240,6 +241,7 @@ All 11 were deployed on September 6, 2026 and verified on Basescan.
 | AntseedSellerPoolsRewards | `0x83cc5B9AA0c8cB8683F35462c385a5BAAa755EE5` |
 | AntseedUsageRewards | `0x78330bF154172F1137219Bb559d4F3A270B3201F` |
 | AntseedLegacyEmissionsEscrow | `0x4d0fC3C0BBb5233Af6c4Ce33223e5330c34db9ab` |
+| AntseedLegacyRewardsPoolRegistry | `0xF76590430d9fCe0E871107Aa1f1AE796B0d03a11` |
 
 The [payments address list](./payments.md#base-mainnet-contract-addresses)
 contains the settlement contracts. Pre-migration endpoints are listed in the
@@ -247,9 +249,11 @@ contains the settlement contracts. Pre-migration endpoints are listed in the
 
 ## SDK configuration
 
-`getChainConfig('base-mainnet').recognizedUsage` exposes all 11 addresses under
-`contracts`, plus `effectiveEpoch` and a recorded `status` of `deployed` or
-`active`. This metadata is generated from the deployment ledger, not a live
+`getChainConfig('base-mainnet').recognizedUsage` exposes the 11 phase-1 addresses
+under `contracts`, plus `effectiveEpoch: 22` and the recorded `status: 'active'`.
+The adapter's address and provenance are recorded in the activation history and
+`current.json`.
+This metadata is generated from the deployment ledger, not a live
 RPC query. A scheduled epoch passing does not automatically change its status.
 
 `emissionsContractAddress` and `stakingContractAddress` follow the committed
@@ -259,8 +263,10 @@ starter-position initialization commands.
 
 ## Deployment and activation
 
-The start date is scheduled; activation is a separate operator transaction,
-not an automatic timestamp switch. The mainnet deployment record is
-`packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
+Activation completed through operator transactions on September 10, 2026,
+not an automatic timestamp switch. The original mainnet deployment record is
+`packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json`;
+the preparation and cutover receipts are recorded in
+`packages/contracts/deployments/base-mainnet/history/001-recognized-usage-activated.json`.
 For operational sequencing, proof submission, funding, and pointer checks, use
 `packages/contracts/script/migrations/M001RecognizedUsage/README.md` in the repository.
