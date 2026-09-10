@@ -1,5 +1,6 @@
 import {
   extractUsage,
+  looksLikeInterimProgress,
   mapFinishReasonToAnthropicStopReason,
   openAIResponsesFunctionCallId,
   openAIResponsesMessageId,
@@ -93,6 +94,7 @@ export interface CanonicalLlmResponse {
   model: string;
   output: CanonicalOutputItem[];
   stopReason: string | null;
+  endTurn?: boolean;
   usage: TokenUsage;
 }
 
@@ -594,7 +596,16 @@ export function normalizeOpenAIChatResponseBody(
 
   const usage = extractUsage(body);
   const stopReason = typeof firstChoice.finish_reason === 'string' ? firstChoice.finish_reason : null;
-  return { id, model, output, stopReason, usage };
+  return {
+    id,
+    model,
+    output,
+    stopReason,
+    endTurn: toolCalls.length > 0
+      ? true
+      : stopReason === 'stop' && !looksLikeInterimProgress(text),
+    usage,
+  };
 }
 
 export function normalizeOpenAIResponsesResponseBody(
@@ -752,6 +763,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     created_at: Math.floor(Date.now() / 1000),
     output,
     output_text: text,
+    ...(response.endTurn === false ? { end_turn: false } : {}),
     usage: openAIResponsesUsage(response.usage),
   };
 }

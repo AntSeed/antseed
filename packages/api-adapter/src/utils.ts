@@ -68,6 +68,20 @@ export interface TokenUsage {
   cachedInputTokens: number;
 }
 
+export function looksLikeInterimProgress(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized || normalized.length > 280) return false;
+
+  const patterns = [
+    /^(?:now i(?:'|’)?(?:ll| will)\b|i(?:'|’)?(?:ll| will| am going to)\b|let me\b|i'?m going to\b|i'?m checking\b|checking\b|next(?:,| i))/i,
+    /\b(?:first|next|then)\b.{0,120}\b(?:grab(?:bing)?|read(?:ing)?|inspect(?:ing)?|check(?:ing)?|open(?:ing)?|run(?:ning)?|find(?:ing)?|look(?:ing)?|scan(?:ning)?|collect(?:ing)?|add(?:ing)?|creat(?:ing)?|writ(?:ing)?|test(?:ing)?|make(?: a| the)?|set(?:ting)?|need to|want to|going to)\b/i,
+    /\b(?:i(?:'|’)?(?:ll| will)|let(?:'|’)?s)\b.{0,120}\b(?:grab|read|inspect|check|open|run|find|look|scan|collect|add|creat|writ|test|make|set)\b/i,
+    /\b(?:grab|read|inspect|check|open|run|find|look|scan|collect|add|creat|writ|test|make|set)\b\s+(?:the\s+)?(?:exact\s+|relevant\s+|corresponding\s+)?(?:anchor|file|line|lines|test|tests|source|code|context|details|output|result|path|paths|directory|repo|repository|module|package|schema|config|command|commands)\b/i,
+  ];
+
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
 /** Plain API-shape facts parsed from image generation requests. */
 export interface ImageRequestFacts {
   model?: string;

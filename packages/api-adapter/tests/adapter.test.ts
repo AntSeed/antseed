@@ -2106,6 +2106,64 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(JSON.parse(completed!.data).response.output[0].phase).toBe('commentary');
   });
 
+  it('tells Codex to continue when chat-only models stop with interim progress text', () => {
+    const interimText = "Now I'll grab exact anchor lines first.";
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'kimi-k3',
+        instructions: 'Continue working with tools until done.',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Add tests.' }] }],
+        tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }],
+      })),
+    });
+    const transformed = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' })!;
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-interim',
+        model: 'kimi-k3',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: interimText } }],
+        usage: { prompt_tokens: 20, completion_tokens: 7 },
+      })),
+    });
+    const adapted = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'kimi-k3' });
+    const body = JSON.parse(new TextDecoder().decode(adapted.body)) as Record<string, unknown>;
+
+    expect(JSON.parse(new TextDecoder().decode(transformed.request.body)).messages[0].content)
+      .toContain('include the next tool call');
+    expect(body.end_turn).toBe(false);
+  });
+
+  it('does not continue final text responses from chat-only models', () => {
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-final',
+        model: 'kimi-k3',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'The test suite now covers both cases.' } }],
+        usage: { prompt_tokens: 20, completion_tokens: 9 },
+      })),
+    });
+    const adapted = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse);
+    const body = JSON.parse(new TextDecoder().decode(adapted.body)) as Record<string, unknown>;
+
+    expect(body.end_turn).toBeUndefined();
+  });
+
+  it('continues interim progress text emitted through streaming chat responses', () => {
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-interim-stream',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-interim-stream","model":"kimi-k3","choices":[{"delta":{"content":"Let me grab exact anchor lines first."},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    expect(JSON.parse(completed!.data).response.end_turn).toBe(false);
+  });
+
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {
     const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({

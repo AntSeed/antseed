@@ -3,6 +3,7 @@ import {
   createChatStreamParser,
   encodeSseEvents,
   extractUsage,
+  looksLikeInterimProgress,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
   openAIResponsesFunctionCallId,
@@ -36,6 +37,7 @@ type CanonicalStreamEvent =
     id: string;
     model: string;
     finishReason: string | null;
+    endTurn?: boolean;
     usage: TokenUsage;
     toolCalls: CanonicalStreamToolCall[];
   };
@@ -94,6 +96,8 @@ export function createStreamingAdapter(
 function createChatStreamNormalizer(options: StreamTransformInternals): ProtocolStreamNormalizer {
   const emitted: CanonicalStreamEvent[] = [];
   let responseStarted = false;
+  let text = '';
+  let sawToolCall = false;
 
   const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
     if (responseStarted) return;
@@ -109,10 +113,12 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   const parser = createChatStreamParser({
     onText(delta) {
       emitStart(parser.getId(), parser.getModel());
+      text += delta;
       emitted.push({ type: 'text_delta', delta });
     },
     onToolCallStart(index, id, name) {
       emitStart(parser.getId(), parser.getModel());
+      sawToolCall = true;
       emitted.push({ type: 'tool_call_start', index, id, name });
     },
     onToolCallDelta(index, _id, argumentsDelta) {
@@ -125,6 +131,9 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
+        endTurn: sawToolCall
+          ? true
+          : info.finishReason === 'stop' && !looksLikeInterimProgress(text),
         usage: info.usage,
         toolCalls: info.toolCalls,
       });
@@ -813,6 +822,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                 })),
               ],
               output_text: textBuffer,
+              ...(event.endTurn === false ? { end_turn: false } : {}),
               usage: openAIResponsesUsage(event.usage),
             },
           });
