@@ -161,6 +161,7 @@ async function runCutoverOnRpc(options, deps, schedule) {
       etherscanApiKey,
       env: environment,
       walletArgs,
+      slow: forkTest,
     });
 
     if (simulation) {

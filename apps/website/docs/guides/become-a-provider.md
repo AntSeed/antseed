@@ -14,7 +14,11 @@ AntSeed is designed for providers who build differentiated services — such as 
 :::
 
 :::info Seller ANTS emissions
-Starting from the current epoch, seller ANTS emissions are tracked but routed into a dedicated Provider Pool and locked for now. These incentives are not freely claimable yet. Future claimability is expected after stronger provider validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.
+From epoch 22 (September 10, 2026), ANTS rewards use recognized usage and
+seller-pool stake. USDC earnings are separate. See [ANTS rewards](/docs/recognized-usage)
+for the new model and [legacy claims](/docs/legacy-emissions) for earlier rewards.
+
+The CLI checks `AntseedRegistry` to determine whether the recognized-usage upgrade is active. Before the upgrade, seller rewards follow the existing emissions path. After it, finalized earlier rewards remain claimable and new seller/operator plus pool-staker rewards use the recognized-usage contracts.
 :::
 
 ## Prerequisites
@@ -22,8 +26,8 @@ Starting from the current epoch, seller ANTS emissions are tracked but routed in
 - Node.js 20+
 - An AI API key (Anthropic, OpenAI, Together AI, or a local model)
 - A secp256k1 private key (your node identity)
-- ETH on Base Mainnet (for gas, ~$0.01 per transaction)
-- USDC on Base Mainnet (minimum $10 for staking)
+- ETH on Base Mainnet for seller transaction fees; the cost varies with gas usage and network fees
+- Seller eligibility through the active staking registry; see [staking and starter positions](/docs/recognized-usage)
 
 ## 1. Install
 
@@ -213,12 +217,25 @@ antseed seller status
 # Register your identity on-chain (ERC-8004)
 antseed seller register
 
-# Stake USDC (minimum $10)
-antseed seller stake 10
+# Stake USDC before the recognized-usage upgrade (minimum $10)
+antseed seller legacy stake 10
 
 # Verify everything is ready
 antseed seller status
 ```
+
+On networks that have completed the recognized-usage cutover, use an ANTS seller pool instead of creating new legacy USDC stake:
+
+```bash
+antseed seller register
+antseed seller legacy claim-starter
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+```
+
+`seller stake` always means ANTS; use `seller legacy stake` for USDC on networks that have not upgraded. The starter claim is only for eligible legacy sellers; new sellers register and stake ANTS without that step.
+
+Pool stake activates after the contract's activation delay. The CLI reports positions as pending, active, matured, closed, or withdrawn. For an early withdrawal, `--accept-slashing` first prints the estimated principal loss and then requires confirmation; add `--yes` only for non-interactive automation after reviewing that estimate. The rate can change before the transaction executes, so the estimate is not a guaranteed maximum loss.
 
 ## 7. Add Your Services
 
@@ -342,10 +359,18 @@ This release emits discovery metadata v12. Older buyers reject newer metadata an
 
 USDC earnings are paid directly to your wallet address on each `settle()` or `close()` call. No claim step needed for USDC.
 
-Seller-side ANTS emissions are different: they are currently tracked but locked in the Provider Pool while stronger validation systems are developed. Provider ANTS claims may become available later and may be subject to verification or slashing.
+ANTS rewards are separate from USDC earnings. They depend on recognized usage,
+pool power, and [reward policies](/docs/reward-policies). Pre-migration rewards
+use the [legacy claims flow](/docs/legacy-emissions), including the M002 release
+rule for locked seller rewards.
+
+Seller-side ANTS rewards are epoch-based. The CLI claims finalized legacy epochs from the legacy emissions contract and, after recognized-usage cutover, claims new operator rewards while exposing separately indexed seller-pool staker rewards.
 
 :::warning Real usage only
-ANTS incentives are designed for real provider contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing.
+The historical wash-trading policy excludes new reward points for flagged
+sellers without blocking USDC settlement. ANTS stake also has an
+[early-withdrawal penalty](/docs/recognized-usage#moving-stake-and-early-withdrawal);
+that principal penalty is separate from the usage-points filter.
 :::
 
 ## Next Steps

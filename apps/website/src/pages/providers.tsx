@@ -1,3 +1,4 @@
+import type {JSX} from 'react';
 import Layout from '@theme/Layout';
 import styles from './providers.module.css';
 import {

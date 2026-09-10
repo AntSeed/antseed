@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { capture } from './exec.mjs';
+import { call, sameAddress } from './chain.mjs';
+import { requireEnvironment } from './env.mjs';
 
 /**
  * Signers are resolved once, up front, into {address, forgeArgs, castArgs}.
@@ -100,4 +102,20 @@ export async function resolveSigners(specs, roles, { rpcUrl } = {}) {
 
 export function addresses(signers) {
   return Object.fromEntries(Object.entries(signers).map(([role, signer]) => [role, signer.address]));
+}
+
+export function signerEnvironment(names, signerAddresses) {
+  return Object.fromEntries(
+    Object.entries(signerAddresses).filter(([role]) => names[role]).map(([role, address]) => [names[role], address]),
+  );
+}
+
+export function assertSignerOwners(rpcUrl, environment, names, requirements) {
+  for (const [role, contract, label] of requirements) {
+    requireEnvironment([names[role]], environment);
+    const address = environment[names[role]];
+    if (!sameAddress(call(rpcUrl, contract, 'owner()(address)'), address)) {
+      throw new Error(`${role} (${address}) is not the ${label} owner`);
+    }
+  }
 }
