@@ -1,10 +1,8 @@
 {
-  "$schema": "../schema.json",
-  "network": "base-mainnet",
-  "chainId": 8453,
   "release": "001-recognized-usage-activated",
   "status": "active",
   "sourceCommit": null,
+  "effectiveEpoch": 22,
   "transactions": [
     {
       "action": "deploy AntseedLegacyRewardsPoolRegistry",
@@ -63,137 +61,25 @@
       "to": "0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d"
     }
   ],
-  "notes": "Completed through standalone commands. Adapter deployment, verification and pool wiring, and the staking switch occurred on September 9, 2026. Channels paused before epoch 22 on September 10; DIEM epoch 21 was funded before switching emissions; Channels unpaused at 2026-09-10T09:57:07.000Z. Source commit was not captured by the standalone scripts and is recorded as null; original M001 deployment provenance remains in 001-recognized-usage-deployed.json. All eight included transactions were verified successful on Base mainnet. Adapter source verification succeeded on Basescan; its runtime matches the local artifact.",
+  "registryBefore": {
+    "emissions": "0xF13bE52c4A3afC6AE29536f073588d01A0564088",
+    "staking": "0x3652E6B22919bd322A25723B94BB207602E5c8e6"
+  },
+  "registryAfter": {
+    "emissions": "0xadd2d85316153d7bfaf7921ee9bf1bb6c7a1cbc9",
+    "staking": "0x99c533bcc6ca646e543dba835fdbb9c2ee02cb60"
+  },
+  "verificationConfiguration": {
+    "washTradingRegistry": "0xc02a111CB94332Cc31C08E079cbe781880b2121C",
+    "washTradingPointsPolicy": "0x7a605aaa3c725aa25012dfDeD6B5dddcC561D6e5",
+    "verificationMinterController": "0x5B3A59088bD5BD5f722571420c09a9251a03AAdb",
+    "verificationMinterShareBps": 10000,
+    "verificationMinterEditable": true,
+    "pointsPolicyCount": 1,
+    "emissionsGateOwner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a",
+    "pointsPolicyRegistryOwner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a"
+  },
   "contracts": {
-    "usdc": {
-      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": null,
-      "external": true,
-      "deployedInRelease": false
-    },
-    "antsToken": {
-      "address": "0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "legacy",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "registry": {
-      "address": "0xf33fC901BFa97326379A369401F4490E231B69B0",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "legacy",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "staking": {
-      "address": "0x99c533bcc6ca646e543dba835fdbb9c2ee02cb60",
-      "deploymentBlock": 50955030,
-      "transactionHash": "0x30bb68fb86e94b75190edf54dcfc00c499b341e6e13e79369066d2d5b75580bb",
-      "runtimeCodeHash": "0xbdaad6c0cae85a32a97f5be14fc3e2e2ce508f91375d05f25bec5ec843d8e2b1",
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false,
-      "constructorArguments": [
-        "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-        "0x8Bf4d39AA13F3CB03F87D9500767fBc4D0940652",
-        "0x3652E6B22919bd322A25723B94BB207602E5c8e6"
-      ],
-      "owner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a"
-    },
-    "deposits": {
-      "address": "0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "legacy",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "channels": {
-      "address": "0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d",
-      "deploymentBlock": 44469557,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "7",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "freeUsage": {
-      "address": "0xB24DcDE777C4ad9AC385Ec9500b3Dc527a4F91Ad",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "stats": {
-      "address": "0x15649ff076BFa5e37e24EE3154a00503149954Fd",
-      "deploymentBlock": 44469557,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "emissions": {
-      "address": "0xadd2d85316153d7bfaf7921ee9bf1bb6c7a1cbc9",
-      "deploymentBlock": 50955034,
-      "transactionHash": "0xdd65cec51382558aa745f8f48b906a045b7df231af62a2a679d2f8457b65c31d",
-      "runtimeCodeHash": "0xcdf2de6c1d951523ba8bf500fabe12cd8f8d0dcebf8dbebde9ad1598542ec240",
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false,
-      "constructorArguments": [
-        "0x8Bf4d39AA13F3CB03F87D9500767fBc4D0940652",
-        "0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d",
-        "0xE60a31E6CD2F8455503cA0B3f6545Dd3DDF543BD"
-      ],
-      "owner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a"
-    },
-    "legacyEmissions": {
-      "address": "0xF13bE52c4A3afC6AE29536f073588d01A0564088",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "2",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "identityRegistry": {
-      "address": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": null,
-      "external": true,
-      "deployedInRelease": false
-    },
-    "depositRelay": {
-      "address": "0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false
-    },
-    "legacyStaking": {
-      "address": "0x3652E6B22919bd322A25723B94BB207602E5c8e6",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "legacy",
-      "external": false,
-      "deployedInRelease": false
-    },
     "washTradingRegistry": {
       "address": "0xc02a111cb94332cc31c08e079cbe781880b2121c",
       "deploymentBlock": 50955026,
@@ -374,34 +260,10 @@
         "0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263"
       ],
       "owner": null
-    },
-    "legacyEmissionsV1": {
-      "address": "0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5",
-      "deploymentBlock": null,
-      "transactionHash": null,
-      "runtimeCodeHash": null,
-      "version": "1",
-      "external": false,
-      "deployedInRelease": false
     }
   },
-  "effectiveEpoch": 22,
-  "registryAfter": {
-    "emissions": "0xadd2d85316153d7bfaf7921ee9bf1bb6c7a1cbc9",
-    "staking": "0x99c533bcc6ca646e543dba835fdbb9c2ee02cb60"
-  },
-  "verificationConfiguration": {
-    "washTradingRegistry": "0xc02a111CB94332Cc31C08E079cbe781880b2121C",
-    "washTradingPointsPolicy": "0x7a605aaa3c725aa25012dfDeD6B5dddcC561D6e5",
-    "verificationMinterController": "0x5B3A59088bD5BD5f722571420c09a9251a03AAdb",
-    "verificationMinterShareBps": 10000,
-    "verificationMinterEditable": true,
-    "pointsPolicyCount": 1,
-    "emissionsGateOwner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a",
-    "pointsPolicyRegistryOwner": "0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a"
-  },
-  "registryBefore": {
-    "emissions": "0xF13bE52c4A3afC6AE29536f073588d01A0564088",
-    "staking": "0x3652E6B22919bd322A25723B94BB207602E5c8e6"
-  }
+  "$schema": "../../schema.json",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "notes": "Completed through standalone commands. Adapter deployment, verification and pool wiring, and the staking switch occurred on September 9, 2026. Channels paused before epoch 22 on September 10; DIEM epoch 21 was funded before switching emissions; Channels unpaused at 2026-09-10T09:57:07.000Z. Source commit was not captured by the standalone scripts and is recorded as null; original M001 deployment provenance remains in 001-recognized-usage-deployed.json. All eight included transactions were verified successful on Base mainnet. Adapter source verification succeeded on Basescan; its runtime matches the local artifact."
 }
