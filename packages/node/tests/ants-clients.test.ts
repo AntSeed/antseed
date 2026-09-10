@@ -75,7 +75,7 @@ describe('seller proof artifacts', () => {
 describe('recognized-usage chain defaults', () => {
   it('fills the individual contract fields from the deployment record without overriding explicit values', () => {
     const base = getChainConfig('base-mainnet');
-    expect(base.recognizedUsage?.status).toBe('deployed');
+    expect(base.recognizedUsage?.status).toBe('active');
     expect(base.sellerPoolsAddress?.toLowerCase()).toBe(base.recognizedUsage?.contracts.sellerPools.toLowerCase());
     expect(base.washTradingRegistryAddress?.toLowerCase()).toBe(base.recognizedUsage?.contracts.washTradingRegistry.toLowerCase());
     const overridden = resolveChainConfig({ chainId: 'base-mainnet', sellerPoolsAddress: '0x0000000000000000000000000000000000000001' });
