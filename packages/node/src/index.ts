@@ -281,7 +281,9 @@ export { UptimeTracker } from './reputation/uptime-tracker.js';
 export { computeRawOnChainScore } from './reputation/on-chain-reputation.js';
 export { computeRoutingReputationScore, routingReputationBreakdown } from './reputation/routing-reputation.js';
 export { scoreExternalHistory, DEFAULT_EXTERNAL_HISTORY_POLICY, EXTERNAL_HISTORY_VERSION,
-  type ExternalHistoryEvidence, type ExternalHistoryPolicy } from './reputation/external-history.js';
+  ghfindProvider, trancoProvider, DEFAULT_THIRD_PARTY_RANKING_PROVIDERS, ExternalHistoryCollector,
+  type ExternalHistoryEvidence, type ExternalHistoryPolicy,
+  type ThirdPartyRank, type ThirdPartyRankingProvider, type ThirdPartyRankingConfig } from './reputation/external-history.js';
 export {
   MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER,
   compareEffectiveModelReputation,

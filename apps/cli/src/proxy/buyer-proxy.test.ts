@@ -2560,6 +2560,24 @@ test('parsePersistedPeers restores external verification claims and results', ()
   assert.equal(computeRoutingReputationScore(peer!, NOW + 8 * 86_400_000), 0)
 })
 
+test('parsePersistedPeers restores v2 followers but never trusts persisted score breakdowns', () => {
+  const stored = { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW - 1_000,
+    verifications: { github: [{ username: 'portfolio', repository: 'proof' }] },
+    reputationBreakdown: { externalFollowerScore: 100, effectiveReputationScore: 100 },
+    verificationResults: { verified: true, checkedAtMs: NOW - 500, domains: [],
+      github: [{ username: 'portfolio', repository: 'proof', peerId: validPeerId, verified: true, checkedAtMs: NOW - 500 }],
+      externalHistory: { version: 2, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',
+        fetchedAtMs: NOW - 500, createdAtMs: NOW - 2 * 365.25 * 86_400_000, projects: [],
+        followers: 1_000, followersFetchedAtMs: NOW - 500 }] } },
+  }] }
+  const [peer] = parsePersistedPeers(JSON.parse(JSON.stringify(stored)), NOW)
+  assert.ok(peer)
+  assert.equal(peer.verificationResults?.externalHistory?.version, 2)
+  assert.equal(peer.verificationResults?.externalHistory?.identities[0]?.followers, 1_000)
+  assert.equal(computeRoutingReputationScore(peer, NOW), 20)
+  assert.equal(computeRoutingReputationScore(peer, NOW + 8 * 86_400_000), 0)
+})
+
 test('parsePersistedPeers leaves metadata undefined when sellerContract is absent', () => {
   const [peer] = parsePersistedPeers(
     {

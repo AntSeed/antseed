@@ -10,7 +10,9 @@ function normalizeReputationBreakdown(raw: unknown): DiscoverRow['reputationBrea
   const score = (input: unknown) => typeof input === 'number' && Number.isFinite(input) && input >= 0 && input <= 100 ? input : null;
   const externalScore = score(value.externalScore);
   if (value.version !== 1 || externalScore === null) return undefined;
-  return { version: 1, rawChainScore: score(value.rawChainScore), legacyChainScore: score(value.legacyChainScore), externalScore };
+  return { version: 1, rawChainScore: score(value.rawChainScore), legacyChainScore: score(value.legacyChainScore), externalScore,
+    externalFollowerScore: Math.min(externalScore, 20, score(value.externalFollowerScore) ?? 0),
+  };
 }
 
 function toNullableBigintString(v: unknown): string | null {

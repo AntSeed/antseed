@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ExternalHistoryCollector } from './reputation/external-history.js';
+import { ExternalHistoryCollector, type ThirdPartyRankingConfig } from './reputation/external-history.js';
 
 import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
@@ -256,6 +256,8 @@ export interface NodeConfig {
   relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
   verification?: NodeVerificationConfig;
+  /** Buyer-local third-party ranking of verified external identities (opt-out per provider). */
+  externalHistory?: { ranking?: ThirdPartyRankingConfig };
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
@@ -385,7 +387,7 @@ export class AntseedNode extends EventEmitter {
   private _partialPeerEnrichmentChain: Promise<void> = Promise.resolve();
   /** Serializes non-blocking external claim verification for discovered peers. */
   private _externalVerificationChain: Promise<void> = Promise.resolve();
-  private _externalHistoryCollector = new ExternalHistoryCollector();
+  private _externalHistoryCollector: ExternalHistoryCollector | undefined;
   private _externalVerificationCache = new Map<PeerId, {
     claimsKey: string;
     checkedAtMs: number;
@@ -918,6 +920,7 @@ export class AntseedNode extends EventEmitter {
         domains,
         github,
       };
+      this._externalHistoryCollector ??= new ExternalHistoryCollector(undefined, undefined, this._config.externalHistory?.ranking);
       results.externalHistory = await this._externalHistoryCollector.collect(results);
       if (this._externalVerificationCache.size >= 512) {
         this._externalVerificationCache.delete(this._externalVerificationCache.keys().next().value!);
