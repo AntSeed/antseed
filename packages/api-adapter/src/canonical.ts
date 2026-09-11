@@ -1,10 +1,10 @@
 import {
   extractUsage,
-  looksLikeInterimProgress,
   mapFinishReasonToAnthropicStopReason,
   openAIResponsesFunctionCallId,
   openAIResponsesMessageId,
   parseJsonSafe,
+  RESPONSES_FINAL_ANSWER_TOOL,
   toStringContent,
   type TokenUsage,
 } from './utils.js';
@@ -183,7 +183,11 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
-  const tools = renderCanonicalToolsToOpenAIChat(request.tools);
+  const tools = renderCanonicalToolsToOpenAIChat(
+    options.preserveResponsesAgentSemantics && request.tools?.length
+      ? [...request.tools, { name: RESPONSES_FINAL_ANSWER_TOOL, parameters: { type: 'object', properties: {} } }]
+      : request.tools,
+  );
   const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice);
   assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata) body.metadata = request.metadata;
@@ -601,9 +605,7 @@ export function normalizeOpenAIChatResponseBody(
     model,
     output,
     stopReason,
-    endTurn: toolCalls.length > 0
-      ? true
-      : stopReason === 'stop' && !looksLikeInterimProgress(text),
+    endTurn: toolCalls.length > 0 ? true : undefined,
     usage,
   };
 }
@@ -763,7 +765,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     created_at: Math.floor(Date.now() / 1000),
     output,
     output_text: text,
-    ...(response.endTurn === false ? { end_turn: false } : {}),
+    ...(response.endTurn !== undefined ? { end_turn: response.endTurn } : {}),
     usage: openAIResponsesUsage(response.usage),
   };
 }

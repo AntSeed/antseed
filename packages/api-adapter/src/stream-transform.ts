@@ -3,7 +3,6 @@ import {
   createChatStreamParser,
   encodeSseEvents,
   extractUsage,
-  looksLikeInterimProgress,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
   openAIResponsesFunctionCallId,
@@ -96,7 +95,6 @@ export function createStreamingAdapter(
 function createChatStreamNormalizer(options: StreamTransformInternals): ProtocolStreamNormalizer {
   const emitted: CanonicalStreamEvent[] = [];
   let responseStarted = false;
-  let text = '';
   let sawToolCall = false;
 
   const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
@@ -113,7 +111,6 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   const parser = createChatStreamParser({
     onText(delta) {
       emitStart(parser.getId(), parser.getModel());
-      text += delta;
       emitted.push({ type: 'text_delta', delta });
     },
     onToolCallStart(index, id, name) {
@@ -131,9 +128,7 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        endTurn: sawToolCall
-          ? true
-          : info.finishReason === 'stop' && !looksLikeInterimProgress(text),
+        endTurn: sawToolCall ? true : undefined,
         usage: info.usage,
         toolCalls: info.toolCalls,
       });
@@ -822,7 +817,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                 })),
               ],
               output_text: textBuffer,
-              ...(event.endTurn === false ? { end_turn: false } : {}),
+              ...(event.endTurn !== undefined ? { end_turn: event.endTurn } : {}),
               usage: openAIResponsesUsage(event.usage),
             },
           });
