@@ -10,14 +10,19 @@
  *
  * The event catalog is fixed and every param is allowlisted, mirroring the
  * desktop telemetry rules: nothing arrives here that the app did not already
- * classify into a coarse bucket. Events without a valid token are still
- * delivered — under the app's random install id, flagged attributed=0 — so
- * the total count stays honest even where the stamp could not travel (macOS
- * installs, renamed files).
+ * classify into a coarse bucket.
+ *
+ * Attribution, in order of trust (sent as `attribution_method`):
+ *   token   the app read the stamp from its installer filename — exact
+ *   match   no token; the proxy matched the install to one recent download
+ *           from the same platform and IP hash (match.ts) — probabilistic
+ *   none    neither; delivered under the app's random install id so the
+ *           total count stays honest, flagged attributed=0
  */
 
 import {installTokenFromFilename, verifyInstallToken} from './attribution';
 import {deliverEvent, type DownloadEvent, type Ga4Delivery} from './events';
+import {appPlatformToProxy, matchInstall, type AttributionStore} from './match';
 
 export const APP_EVENT_NAMES: ReadonlySet<string> = new Set([
   'installer_started',
@@ -41,6 +46,8 @@ const APP_EVENT_PARAMS: ReadonlySet<string> = new Set([
   'days_since_first_open',
   'service_category',
 ]);
+
+export type AttributionMethod = 'token' | 'match' | 'none';
 
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_EVENTS = 10;
@@ -91,24 +98,43 @@ export interface AppEventsEnv {
   GA4_MEASUREMENT_ID?: string;
   GA4_API_SECRET?: string;
   ATTRIBUTION_SECRET?: string;
+  /** Workers KV for server-side install matching; unset disables the match path. */
+  ATTRIBUTION_KV?: AttributionStore;
 }
 
 type Deliver = (event: DownloadEvent, ga: Ga4Delivery) => Promise<void>;
 
+interface Resolved {
+  ids: Ga4Delivery['ids'];
+  method: AttributionMethod;
+  ref: string | null;
+}
+
 async function resolveIds(
-  token: string | null,
-  installId: string | null,
+  body: AppEventsBody,
   env: AppEventsEnv,
+  request: {ip: string | null; platform: unknown; arch: unknown},
   nowMs: number,
-): Promise<Ga4Delivery['ids']> {
-  const verified = token && env.ATTRIBUTION_SECRET
-    ? await verifyInstallToken(token, env.ATTRIBUTION_SECRET, nowMs)
-    : null;
-  if (verified) return {clientId: verified.clientId, sessionId: verified.sessionId};
-  // No usable token: keep the event countable under the app's own random
+): Promise<Resolved> {
+  const secret = env.ATTRIBUTION_SECRET;
+  const verified = body.token && secret ? await verifyInstallToken(body.token, secret, nowMs) : null;
+  if (verified) {
+    return {ids: {clientId: verified.clientId, sessionId: verified.sessionId}, method: 'token', ref: verified.ref};
+  }
+  if (secret && env.ATTRIBUTION_KV) {
+    const matched = await matchInstall(env.ATTRIBUTION_KV, secret, {
+      ip: request.ip,
+      platform: appPlatformToProxy(request.platform),
+      arch: typeof request.arch === 'string' ? request.arch : null,
+      installId: body.installId,
+      nowMs,
+    });
+    if (matched) return {ids: {clientId: matched.clientId, sessionId: matched.sessionId}, method: 'match', ref: matched.ref};
+  }
+  // Nothing usable: keep the event countable under the app's own random
   // install id. deliverEvent marks it attributed=0 because the id is not a
   // GA client id shape — GA4 still accepts any non-empty string.
-  return {clientId: null, sessionId: null, fallbackClientId: installId};
+  return {ids: {clientId: null, sessionId: null, fallbackClientId: body.installId}, method: 'none', ref: null};
 }
 
 /** POST /app-events */
@@ -134,9 +160,19 @@ export async function handleAppEvents(
   if (!body) return new Response('bad request', {status: 400});
 
   const deliver = options.deliver ?? deliverEvent;
-  const ids = await resolveIds(body.token, body.installId, env, options.nowMs ?? Date.now());
-  const ga: Ga4Delivery = {measurementId: env.GA4_MEASUREMENT_ID, apiSecret: env.GA4_API_SECRET, ids};
-  ctx.waitUntil(Promise.all(body.events.map(event => deliver(event, ga))));
+  const first = body.events[0]!.params;
+  const resolved = await resolveIds(
+    body,
+    env,
+    {ip: request.headers.get('cf-connecting-ip'), platform: first['platform'], arch: first['arch']},
+    options.nowMs ?? Date.now(),
+  );
+  const ga: Ga4Delivery = {measurementId: env.GA4_MEASUREMENT_ID, apiSecret: env.GA4_API_SECRET, ids: resolved.ids};
+  const events = body.events.map(event => ({
+    name: event.name,
+    params: {...event.params, attribution_method: resolved.method, ...(resolved.ref ? {ref: resolved.ref} : {})},
+  }));
+  ctx.waitUntil(Promise.all(events.map(event => deliver(event, ga))));
   return new Response(null, {status: 204});
 }
 
@@ -150,12 +186,24 @@ export async function handleInstallerBeacon(
   const filename = url.searchParams.get('f') ?? '';
   if (!FILENAME_RE.test(filename)) return new Response('bad request', {status: 400});
   const token = installTokenFromFilename(filename);
-  const ids = await resolveIds(token, null, env, options.nowMs ?? Date.now());
+  const nowMs = options.nowMs ?? Date.now();
+  const verified = token && env.ATTRIBUTION_SECRET ? await verifyInstallToken(token, env.ATTRIBUTION_SECRET, nowMs) : null;
+  const ids: Ga4Delivery['ids'] = verified
+    ? {clientId: verified.clientId, sessionId: verified.sessionId}
+    : {clientId: null, sessionId: null};
   const platform = /\.exe$/i.test(filename) ? 'win' : /\.dmg$/i.test(filename) ? 'mac' : 'linux';
   const deliver = options.deliver ?? deliverEvent;
   ctx.waitUntil(
     deliver(
-      {name: 'installer_started', params: {platform, install_source: platform === 'win' ? 'nsis' : platform}},
+      {
+        name: 'installer_started',
+        params: {
+          platform,
+          install_source: platform === 'win' ? 'nsis' : platform,
+          attribution_method: verified ? 'token' : 'none',
+          ...(verified?.ref ? {ref: verified.ref} : {}),
+        },
+      },
       {measurementId: env.GA4_MEASUREMENT_ID, apiSecret: env.GA4_API_SECRET, ids},
     ),
   );

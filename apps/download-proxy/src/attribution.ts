@@ -17,8 +17,9 @@
  * download session it came from, and the signature stops forged ids.
  *
  * Token shape: `1.<payload>.<sig>` — version, base64url of
- * `<client_id>|<session_id>|<issued_at_seconds>`, and the first 16 bytes of
- * HMAC-SHA256(secret, payload) as base64url. Only [A-Za-z0-9._-] appear, so
+ * `<client_id>|<session_id>|<issued_at_seconds>|<ref>` (ref is the optional
+ * affiliate code from the download URL and may be empty), and the first 16
+ * bytes of HMAC-SHA256(secret, payload) as base64url. Only [A-Za-z0-9._-] appear, so
  * the token is safe in filenames on every platform and in URL query strings
  * without encoding.
  */
@@ -37,6 +38,8 @@ export interface InstallAttribution {
   clientId: string;
   sessionId: string | null;
   issuedAtMs: number;
+  /** Affiliate / referral code carried from the download URL, if any. */
+  ref: string | null;
 }
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -83,9 +86,10 @@ export async function mintInstallToken(
   ids: GaIds,
   secret: string,
   nowMs: number = Date.now(),
+  ref: string | null = null,
 ): Promise<string | null> {
   if (!ids.clientId || !secret) return null;
-  const payload = `${ids.clientId}|${ids.sessionId ?? ''}|${Math.floor(nowMs / 1000)}`;
+  const payload = `${ids.clientId}|${ids.sessionId ?? ''}|${Math.floor(nowMs / 1000)}|${ref ?? ''}`;
   const encoded = toBase64Url(new TextEncoder().encode(payload));
   return `${INSTALL_TOKEN_VERSION}.${encoded}.${await sign(payload, secret)}`;
 }
@@ -104,14 +108,16 @@ export async function verifyInstallToken(
   const payload = new TextDecoder().decode(payloadBytes);
   if (!timingSafeEqual(await sign(payload, secret), match[2]!)) return null;
   const parts = payload.split('|');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3 && parts.length !== 4) return null;
   const [clientId, sessionId, issuedAt] = parts as [string, string, string];
+  const ref = parts[3] ?? '';
   if (!/^\d{5,15}\.\d{5,15}$/.test(clientId)) return null;
   if (sessionId && !/^\d{8,12}$/.test(sessionId)) return null;
   if (!/^\d{9,11}$/.test(issuedAt)) return null;
+  if (ref && !/^[A-Za-z0-9_-]{1,32}$/.test(ref)) return null;
   const issuedAtMs = Number(issuedAt) * 1000;
   if (issuedAtMs > nowMs + 60_000 || nowMs - issuedAtMs > INSTALL_TOKEN_MAX_AGE_MS) return null;
-  return {clientId, sessionId: sessionId || null, issuedAtMs};
+  return {clientId, sessionId: sessionId || null, issuedAtMs, ref: ref || null};
 }
 
 /** `AntSeed-VPR-Setup-0.2.38.exe` + token → `AntSeed-VPR-Setup-0.2.38.a-<token>.exe`. */

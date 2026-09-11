@@ -2,6 +2,7 @@ import {describe, expect, it} from 'vitest';
 import {handleAppEvents, handleInstallerBeacon, parseAppEventsBody} from './app-events';
 import {mintInstallToken, stampAssetName} from './attribution';
 import type {DownloadEvent, Ga4Delivery} from './events';
+import {recordDownload, type AttributionStore} from './match';
 
 const SECRET = 'test-secret';
 const NOW = 1_757_500_000_000;
@@ -18,12 +19,30 @@ function collector() {
   return {delivered, ctx, deliver, flush: () => Promise.all(pending)};
 }
 
-function post(body: unknown): Request {
+function post(body: unknown, ip = '203.0.113.7'): Request {
   return new Request('https://download.antseed.com/app-events', {
     method: 'POST',
-    headers: {'content-type': 'application/json'},
+    headers: {'content-type': 'application/json', 'cf-connecting-ip': ip},
     body: JSON.stringify(body),
   });
+}
+
+function memoryStore(): AttributionStore {
+  const data = new Map<string, string>();
+  return {
+    async get(key) {
+      return data.get(key) ?? null;
+    },
+    async put(key, value) {
+      data.set(key, value);
+    },
+    async list({prefix}) {
+      return {keys: [...data.keys()].filter(k => k.startsWith(prefix)).map(name => ({name}))};
+    },
+    async delete(key) {
+      data.delete(key);
+    },
+  };
 }
 
 describe('parseAppEventsBody', () => {
@@ -69,6 +88,43 @@ describe('POST /app-events', () => {
     await c.flush();
     expect(c.delivered.map(d => d.event.name)).toEqual(['app_first_opened', 'app_activated']);
     expect(c.delivered[0]!.ga.ids).toEqual({clientId: ids.clientId, sessionId: ids.sessionId});
+    expect(c.delivered[0]!.event.params).toEqual({platform: 'win32', attribution_method: 'token'});
+    expect(c.delivered[1]!.event.params['attribution_method']).toBe('token');
+  });
+
+  it('carries the affiliate ref from the token', async () => {
+    const token = await mintInstallToken(ids, SECRET, NOW, 'partner_42');
+    const c = collector();
+    await handleAppEvents(post({token, events: [{name: 'app_first_opened'}]}), env, c.ctx, {deliver: c.deliver, nowMs: NOW});
+    await c.flush();
+    expect(c.delivered[0]!.event.params).toEqual({attribution_method: 'token', ref: 'partner_42'});
+  });
+
+  it('matches a token-less macOS install to its download by platform and IP', async () => {
+    const store = memoryStore();
+    await recordDownload(store, SECRET, {ip: '203.0.113.7', platform: 'mac', arch: 'arm64', ids, ref: 'partner_42', nowMs: NOW - 60_000});
+    const c = collector();
+    const res = await handleAppEvents(
+      post({install_id: '9b2f4c1e-7a3d-4e5f-8a9b-0c1d2e3f4a5b', events: [{name: 'app_first_opened', params: {platform: 'darwin', arch: 'arm64'}}]}),
+      {...env, ATTRIBUTION_KV: store},
+      c.ctx,
+      {deliver: c.deliver, nowMs: NOW},
+    );
+    expect(res.status).toBe(204);
+    await c.flush();
+    expect(c.delivered[0]!.ga.ids).toEqual({clientId: ids.clientId, sessionId: ids.sessionId});
+    expect(c.delivered[0]!.event.params).toEqual({platform: 'darwin', arch: 'arm64', attribution_method: 'match', ref: 'partner_42'});
+    // later milestone from the same install id, different network: still attributed
+    const c2 = collector();
+    await handleAppEvents(
+      post({install_id: '9b2f4c1e-7a3d-4e5f-8a9b-0c1d2e3f4a5b', events: [{name: 'app_activated', params: {platform: 'darwin', arch: 'arm64', kind: 'first_chat'}}]}, '198.51.100.9'),
+      {...env, ATTRIBUTION_KV: store},
+      c2.ctx,
+      {deliver: c2.deliver, nowMs: NOW + 3_600_000},
+    );
+    await c2.flush();
+    expect(c2.delivered[0]!.ga.ids?.clientId).toBe(ids.clientId);
+    expect(c2.delivered[0]!.event.params['attribution_method']).toBe('match');
   });
 
   it('falls back to the install id when the token is missing or invalid', async () => {
@@ -82,6 +138,7 @@ describe('POST /app-events', () => {
     expect(res.status).toBe(204);
     await c.flush();
     expect(c.delivered[0]!.ga.ids).toEqual({clientId: null, sessionId: null, fallbackClientId: '9b2f4c1e-7a3d-4e5f-8a9b-0c1d2e3f4a5b'});
+    expect(c.delivered[0]!.event.params['attribution_method']).toBe('none');
   });
 
   it('answers 400 for bad JSON and 413 for oversized bodies', async () => {
@@ -102,7 +159,7 @@ describe('GET /i installer beacon', () => {
     const res = await handleInstallerBeacon(new URL(`https://download.antseed.com/i?f=${name}`), env, c.ctx, {deliver: c.deliver, nowMs: NOW});
     expect(res.status).toBe(204);
     await c.flush();
-    expect(c.delivered[0]!.event).toEqual({name: 'installer_started', params: {platform: 'win', install_source: 'nsis'}});
+    expect(c.delivered[0]!.event).toEqual({name: 'installer_started', params: {platform: 'win', install_source: 'nsis', attribution_method: 'token'}});
     expect(c.delivered[0]!.ga.ids?.clientId).toBe(ids.clientId);
   });
 

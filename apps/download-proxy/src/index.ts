@@ -30,6 +30,7 @@
 import {handleAppEvents, handleInstallerBeacon} from './app-events';
 import {mintInstallToken, stampAssetName} from './attribution';
 import {matchAsset, parseTarget} from './assets';
+import {parseRef, recordDownload, type AttributionStore} from './match';
 import {getLatestRelease} from './release';
 import {trackedStream} from './stream';
 import {
@@ -52,6 +53,8 @@ export interface Env {
   GA4_API_SECRET?: string;
   /** HMAC key for install attribution tokens; unset disables filename stamping and token verification. */
   ATTRIBUTION_SECRET?: string;
+  /** Workers KV namespace for server-side install matching (match.ts); unset disables it. */
+  ATTRIBUTION_KV?: AttributionStore;
 }
 
 const PASSTHROUGH_HEADERS = [
@@ -104,10 +107,13 @@ export default {
     // GA attribution ids appended by the website's click handler — joins the
     // proxy's server-side events to the visitor's GA session (see events.ts).
     const gaIds = parseGaIds(url.searchParams);
+    // Optional affiliate / referral code (?ref=...), carried in the token and
+    // the match record so post-install milestones can credit it.
+    const ref = parseRef(url.searchParams.get('ref'));
     // Signed token carrying those ids into the installer's filename, so the
     // app can report milestones back under the same GA4 user (attribution.ts).
     const installToken = env.ATTRIBUTION_SECRET
-      ? await mintInstallToken(gaIds, env.ATTRIBUTION_SECRET)
+      ? await mintInstallToken(gaIds, env.ATTRIBUTION_SECRET, Date.now(), ref)
       : null;
 
     const release = await getLatestRelease(env.GITHUB_REPO, env.GITHUB_TOKEN, ctx);
@@ -182,11 +188,24 @@ export default {
           console.log(JSON.stringify({event: segment.name, ...segment.params, attributed: gaIds.clientId ? 1 : 0}));
           return;
         }
-        return deliverEvent(endEvent(downloadCtx, result), {
+        const delivered = deliverEvent(endEvent(downloadCtx, result), {
           measurementId: env.GA4_MEASUREMENT_ID,
           apiSecret: env.GA4_API_SECRET,
           ids: gaIds,
         });
+        // Remember completed, attributed downloads for 48 h so an install that
+        // arrives without a token (macOS, renamed file) can still be matched
+        // to its download by platform and IP hash (match.ts).
+        const remembered = result.completed && env.ATTRIBUTION_SECRET && env.ATTRIBUTION_KV
+          ? recordDownload(env.ATTRIBUTION_KV, env.ATTRIBUTION_SECRET, {
+              ip: request.headers.get('cf-connecting-ip'),
+              platform: target.platform,
+              arch: target.arch,
+              ids: gaIds,
+              ref,
+            }).catch(() => {})
+          : Promise.resolve();
+        return Promise.all([delivered, remembered]).then(() => {});
       }),
     );
     return new Response(readable, {status: origin.status, headers});

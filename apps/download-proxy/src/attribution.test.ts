@@ -16,7 +16,15 @@ describe('install attribution tokens', () => {
     const token = await mintInstallToken(ids, SECRET, NOW);
     expect(token).toMatch(/^1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}$/);
     const verified = await verifyInstallToken(token!, SECRET, NOW + 5_000);
-    expect(verified).toEqual({clientId: ids.clientId, sessionId: ids.sessionId, issuedAtMs: 1_757_500_000_000});
+    expect(verified).toEqual({clientId: ids.clientId, sessionId: ids.sessionId, issuedAtMs: 1_757_500_000_000, ref: null});
+  });
+
+  it('carries an affiliate ref and rejects malformed ones', async () => {
+    const token = await mintInstallToken(ids, SECRET, NOW, 'partner_42');
+    expect((await verifyInstallToken(token!, SECRET, NOW))?.ref).toBe('partner_42');
+    // a pre-ref (three-field) payload still verifies
+    const legacy = (await mintInstallToken(ids, SECRET, NOW))!;
+    expect((await verifyInstallToken(legacy, SECRET, NOW))?.ref).toBeNull();
   });
 
   it('mints nothing without a client id or secret', async () => {
