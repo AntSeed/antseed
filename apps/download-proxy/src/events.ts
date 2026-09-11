@@ -145,6 +145,13 @@ const GA_SESSION_ID_RE = /^\d{8,12}$/;
 export interface GaIds {
   clientId: string | null;
   sessionId: string | null;
+  /**
+   * Used when no GA client id is available but the sender has a stable id
+   * of its own (the desktop app's random install id): keeps repeat
+   * milestones from one install under one GA4 user instead of a fresh UUID
+   * each time. Never counts as attributed.
+   */
+  fallbackClientId?: string | null;
 }
 
 /**
@@ -192,7 +199,7 @@ export async function deliverEvent(event: DownloadEvent, ga: Ga4Delivery): Promi
   await fetch(url, {
     method: 'POST',
     body: JSON.stringify({
-      client_id: ga.ids?.clientId ?? crypto.randomUUID(),
+      client_id: ga.ids?.clientId ?? ga.ids?.fallbackClientId ?? crypto.randomUUID(),
       events: [{name: event.name, params}],
     }),
   }).catch(() => {});
