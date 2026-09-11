@@ -23,7 +23,9 @@ GA4 event) and "user actually received the installer".
 
 | Route | Behavior |
 | --- | --- |
-| `GET /vpr/<platform>-<arch>` | Streams the latest matching installer. Platforms: `mac` (.dmg), `win` (.exe), `linux` (.AppImage); arch `arm64` \| `x64`. |
+| `GET /vpr/<platform>-<arch>` | Streams the latest matching installer. Platforms: `mac` (.dmg), `win` (.exe), `linux` (.AppImage); arch `arm64` \| `x64`. When the visitor's GA ids are present and `ATTRIBUTION_SECRET` is set, the served filename carries a signed attribution token (see below). |
+| `POST /app-events` | Desktop app milestones (`{token?, install_id?, events: [{name, params}]}`), forwarded to GA4 under the download's client id. Fixed event catalog and param allowlist; 8 KB / 10 events per request. |
+| `GET /i?f=<installer filename>` | `installer_started` beacon sent by the Windows installer itself. |
 | `GET /` and unresolvable targets | 302 to the GitHub releases page. |
 
 "Latest" is resolved from the GitHub API and cached at the edge for 5
@@ -68,12 +70,31 @@ event carries `attributed` (1/0) in both the console line and the GA4 params;
 is why the proxy's `download_started` is the reliable top of the download
 funnel and the click event is best read for page/section breakdowns only.
 
+## Install attribution
+
+Session attribution used to stop at the installer: the app's own telemetry
+reached GA4 under an unrelated id and could never be tied to a campaign.
+`attribution.ts` closes that without storing anything: the GA client id and
+session id are encoded into a short HMAC-signed token
+(`1.<payload>.<sig>`, filename-safe) and stamped into the served filename —
+`AntSeed-VPR-Setup-0.2.38.exe` becomes
+`AntSeed-VPR-Setup-0.2.38.a-<token>.exe`. The Windows installer writes its
+own filename next to the app and pings `GET /i?f=<name>`; AppImage exposes
+its path as `$APPIMAGE`; the desktop app reads the token and reports
+milestones to `POST /app-events` (`app-events.ts`), which verifies the token
+and forwards each event to GA4 under the original ids. Tokens expire after 30
+days. Events without a valid token are still delivered under the app's random
+install id with `attributed=0`, so totals stay honest for macOS and renamed
+files. The token proves origin only: holding one lets you attribute events to
+that download session and nothing else, and the signature stops forged ids.
+
 ## Deploy
 
 ```bash
 pnpm --filter @antseed/download-proxy deploy       # wrangler deploy
 wrangler secret put GA4_API_SECRET                 # GA4 MP API secret (Admin → Data Streams → Measurement Protocol)
 wrangler secret put GITHUB_TOKEN                   # optional: raises the release-lookup rate limit
+wrangler secret put ATTRIBUTION_SECRET             # HMAC key for install attribution tokens (any long random string)
 ```
 
 Also set `GA4_MEASUREMENT_ID` in `wrangler.toml` (`G-…`, not a secret).

@@ -14,12 +14,21 @@
  *
  * Routes:
  *   GET /vpr/<platform>-<arch>   stream the latest installer
- *                                (mac|win|linux × arm64|x64)
+ *                                (mac|win|linux × arm64|x64); when the
+ *                                visitor's GA ids are present the served
+ *                                filename carries a signed attribution
+ *                                token (see attribution.ts)
+ *   POST /app-events             desktop app milestones, forwarded to GA4
+ *                                under the download's client id
+ *   GET /i?f=<filename>          installer_started beacon from the Windows
+ *                                installer (see app-events.ts)
  *   anything unresolvable        302 to the GitHub releases page, so a stale
  *                                link or partial release still lands somewhere
  *                                useful
  */
 
+import {handleAppEvents, handleInstallerBeacon} from './app-events';
+import {mintInstallToken, stampAssetName} from './attribution';
 import {matchAsset, parseTarget} from './assets';
 import {getLatestRelease} from './release';
 import {trackedStream} from './stream';
@@ -41,6 +50,8 @@ export interface Env {
   GA4_MEASUREMENT_ID?: string;
   GITHUB_TOKEN?: string;
   GA4_API_SECRET?: string;
+  /** HMAC key for install attribution tokens; unset disables filename stamping and token verification. */
+  ATTRIBUTION_SECRET?: string;
 }
 
 const PASSTHROUGH_HEADERS = [
@@ -65,11 +76,20 @@ function emit(env: Env, ctx: ExecutionContext, event: DownloadEvent, ids?: GaIds
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const releasesUrl = `https://github.com/${env.GITHUB_REPO}/releases/latest`;
+    const url = new URL(request.url);
+    if (url.pathname === '/app-events') {
+      if (request.method !== 'POST') {
+        return new Response('method not allowed', {status: 405, headers: {allow: 'POST'}});
+      }
+      return handleAppEvents(request, env, ctx);
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('method not allowed', {status: 405, headers: {allow: 'GET, HEAD'}});
     }
+    if (url.pathname === '/i') {
+      return handleInstallerBeacon(url, env, ctx);
+    }
 
-    const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/vpr' || url.pathname === '/vpr/') {
       return Response.redirect(releasesUrl, 302);
     }
@@ -84,6 +104,11 @@ export default {
     // GA attribution ids appended by the website's click handler — joins the
     // proxy's server-side events to the visitor's GA session (see events.ts).
     const gaIds = parseGaIds(url.searchParams);
+    // Signed token carrying those ids into the installer's filename, so the
+    // app can report milestones back under the same GA4 user (attribution.ts).
+    const installToken = env.ATTRIBUTION_SECRET
+      ? await mintInstallToken(gaIds, env.ATTRIBUTION_SECRET)
+      : null;
 
     const release = await getLatestRelease(env.GITHUB_REPO, env.GITHUB_TOKEN, ctx);
     const asset = release ? matchAsset(release.assets, target) : null;
@@ -113,9 +138,12 @@ export default {
       const value = origin.headers.get(name);
       if (value) headers.set(name, value);
     }
+    const servedName = installToken ? stampAssetName(asset.name, installToken) : asset.name;
     headers.set(
       'content-disposition',
-      origin.headers.get('content-disposition') ?? `attachment; filename="${asset.name}"`,
+      installToken
+        ? `attachment; filename="${servedName}"`
+        : origin.headers.get('content-disposition') ?? `attachment; filename="${asset.name}"`,
     );
     // The installer bytes are versioned by release, but this URL always means
     // "latest" — don't let an intermediary pin an old installer to it.
