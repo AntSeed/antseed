@@ -50,7 +50,8 @@ data needed to decide where and for how long:
 
 | Column | What it tells you |
 |---|---|
-| Pool | Seller name from the explorer, or the agent id; rows marked not stakeable have no seller binding yet |
+| Pool | Seller name from the explorer, or the agent id; rows marked not stakeable have no seller binding the pool contract accepts (a direct registry binding or the legacy USDC-staking fallback) |
+| Status | Whether staking into this pool is live this epoch: *has power* (the pool is powered — staking earns rewards from your first active epoch), *no power yet* (registered seller — stakes are accepted now and take effect at the next epoch), or *not stakeable* |
 | Power | The pool's staking power this epoch and its share of all pools |
 | Volume | Settled USDC this epoch and last epoch |
 | Reward / 1k power | Staker ANTS paid per 1,000 power last epoch, and the projection for this epoch from usage so far (marked *est.* until the epoch settles) |
