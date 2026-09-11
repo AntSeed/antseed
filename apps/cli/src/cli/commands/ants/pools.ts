@@ -28,7 +28,11 @@ export function registerAntsPoolsCommand(antsCmd: Command): void {
       for (const pool of view.pools) {
         const name = poolLabel(pool);
         table.push([
-          pool.stakeable ? name : chalk.dim(`${name} (not stakeable)`),
+          pool.stakeable
+            ? pool.hasPool
+              ? name
+              : chalk.yellow(`${name} (no power yet)`)
+            : chalk.dim(`${name} (not stakeable)`),
           pool.agentId,
           formatAnts(pool.weight, 0),
           formatBps(pool.powerShareBps),

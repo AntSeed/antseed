@@ -191,8 +191,8 @@ export async function runPoolStake(
     const registry = createSellerRegistryClient(config);
     const [minEpochs, maxEpochs] = await Promise.all([pools.minStakeEpochs(), pools.maxStakeEpochs()]);
     validateStakeEpochs(options.epochs, minEpochs, maxEpochs);
-    const agentId = await registry.getRegisteredAgentId(address);
-    if (!agentId) throw new Error('Registration needs updating before you can stake. Run: antseed seller register. Your existing identity will be kept.');
+    const agentId = await registry.getAgentId(address);
+    if (!agentId) throw new Error('This wallet has no agent bound in the seller registry, so it has no pool to stake into. Run: antseed seller register.');
     const token = createAntsTokenClient(config);
     const balance = await token.balanceOf(address);
     if (balance < amountBaseUnits) throw new Error(`Insufficient ANTS balance: have ${formatAnts(balance)}, need ${formatAnts(amountBaseUnits)}.`);

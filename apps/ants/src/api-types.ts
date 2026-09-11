@@ -136,7 +136,7 @@ export interface PoolView {
   seller: string | null;
   profile: SellerProfile | null;
   hasPool: boolean;
-  /** Whether a seller binding exists so `stake` into this agent will succeed. */
+  /** Whether `stake` into this agent will succeed: the agent's owner resolves to it in the seller registry, directly or via the legacy USDC staking fallback. */
   stakeable: boolean;
   activeStake: string;
   /** Pool power (weight) this epoch. */
