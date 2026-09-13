@@ -15,6 +15,8 @@ import { getMainWindow } from '../ui/window.js';
 import { closeCheckoutWindows } from './checkout-window.js';
 import { focusMainWindow } from './portal.js';
 import { invalidateCreditsCache, loadCachedCryptoConfig } from './credits.js';
+import { getTelemetryService } from '../telemetry/runtime.js';
+import { classifyDepositFailure } from '../telemetry/classify.js';
 
 type DepositWatchStatus = {
   phase: 'deferred' | 'received' | 'sweeping' | 'credited' | 'error';
@@ -119,6 +121,7 @@ async function pollDaemonWatch(): Promise<void> {
     if (pendingDaemonMode) {
       pendingDaemonMode = null;
       sendDepositWatchStatus({ phase: 'error', error: watcherAbsenceBanner(current.reason) });
+      void getTelemetryService()?.recordDepositFailed(classifyDepositFailure('', current.reason));
     }
     return;
   }
@@ -145,7 +148,14 @@ async function pollDaemonWatch(): Promise<void> {
   const event = status?.lastEvent;
   if (!event || event.seq <= lastForwardedSeq) return;
   lastForwardedSeq = event.seq;
-  if (event.phase === 'credited') invalidateCreditsCache();
+  if (event.phase === 'credited') {
+    invalidateCreditsCache();
+    // Anonymous funnel telemetry: only coarse buckets leave the device —
+    // never the exact amount, wallet address, or tx hash.
+    void getTelemetryService()?.recordDepositCredited(event.amountBaseUnits ?? '0');
+  } else if (event.phase === 'error') {
+    void getTelemetryService()?.recordDepositFailed(classifyDepositFailure(event.error ?? ''));
+  }
   sendDepositWatchStatus({
     phase: event.phase,
     ...(event.amountBaseUnits ? { amountBaseUnits: event.amountBaseUnits } : {}),

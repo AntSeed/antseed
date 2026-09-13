@@ -143,7 +143,11 @@
               inherit pnpm;
               fetcherVersion = 3;
               pnpmWorkspaces = [ "@antseed/cli..." ];
-              hash = "sha256-EHNc17gKwWQSrrd/XVzxfnTpdG1IzJ0z2q+8exMYn6c=";
+              # NIX-PNPM-HASH: this fixed-output hash goes stale on every
+              # pnpm-lock.yaml change (the store no longer matches). After
+              # touching the lockfile, regenerate it with:
+              #   ./scripts/update-nix-hash.sh
+              hash = "sha256-KB45hE4jNhXvVnzy0N9wHY/ei/5ggKx591DbxvbHAV4=";
             };
 
             pnpmWorkspaces = [ "@antseed/cli..." ];
@@ -240,6 +244,7 @@
               # Web dashboard assets; @antseed/payments resolves ./web relative
               # to import.meta.url, which is the bundle's directory once built.
               cp -r apps/payments/dist/web "$out/libexec/antseed/web"
+              cp -r apps/ants/dist/ants-web "$out/libexec/antseed/ants-web"
 
               for pkg in ${lib.concatStringsSep " " runtimeNodeModules}; do
                 if [ -e "node_modules/$pkg" ]; then

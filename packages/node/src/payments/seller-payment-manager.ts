@@ -38,6 +38,8 @@ export interface SellerPaymentConfig {
    * the full amount so no dust is left behind. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
 }
 
 /** Default minimum budget per request: $0.50 USDC (base units). */
@@ -170,6 +172,8 @@ export class SellerPaymentManager {
 
   private readonly _minSettleDelta: bigint;
 
+  private readonly _serveWhileClosePending: boolean;
+
   /** Max close() retries before giving up (buyer must requestClose on-chain) */
   private static readonly MAX_CLOSE_RETRIES = 3;
 
@@ -199,6 +203,8 @@ export class SellerPaymentManager {
     this._minSettleDelta = config.minSettleDelta !== undefined
       ? BigInt(config.minSettleDelta)
       : DEFAULT_MIN_SETTLE_DELTA;
+
+    this._serveWhileClosePending = config.serveWhileClosePending ?? false;
 
     // Hydrate from persisted channels
     const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
@@ -250,6 +256,14 @@ export class SellerPaymentManager {
 
         if (!matchesChannelParties(onChainState.channel, channel.buyerEvmAddr, sellerEvmAddr)) {
           this._evictStaleChannel(channel.sessionId, channel.peerId, 'on-chain parties mismatch');
+          evicted++;
+          continue;
+        }
+
+        // Close requested while this seller was offline — the event poller
+        // starts at the current block and would miss it. Handle it as if live.
+        if (onChainState.channel.closeRequestedAt > 0n && !this._serveWhileClosePending) {
+          await this.handleCloseRequested(channel.sessionId);
           evicted++;
           continue;
         }
@@ -999,6 +1013,16 @@ export class SellerPaymentManager {
     if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
     const onChain = onChainState.channel;
 
+    // Active status hides a running withdraw timer that may already have matured.
+    if (onChain.closeRequestedAt > 0n && !this._serveWhileClosePending) {
+      debugWarn(
+        `[SellerPayment] Refusing to recover channel ${channelId.slice(0, 18)}... — ` +
+        `buyer requested close on-chain at ${onChain.closeRequestedAt}; funds served against it ` +
+        `may be unrecoverable. Set serveWhileClosePending to accept this risk.`,
+      );
+      return false;
+    }
+
     const metadataMsg = {
       channelId,
       cumulativeAmount,
@@ -1219,6 +1243,17 @@ export class SellerPaymentManager {
   /** Whether this buyer has requests still being served and billed. */
   hasInFlightRequests(buyerPeerId: string): boolean {
     return (this._inFlightRequests.get(buyerPeerId) ?? 0) > 0;
+  }
+
+  /**
+   * Whether a close transaction is in flight for this buyer's active channel.
+   * Request admission refuses new billable work while this is true: the close
+   * would remove the session mid-request and its spend would never be recorded.
+   */
+  hasClosingChannel(buyerPeerId: string): boolean {
+    if (this._closingChannels.size === 0) return false;
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
+    return session != null && this._closingChannels.has(session.sessionId);
   }
 
   // ── Disconnect handling ───────────────────────────────────────
@@ -1592,6 +1627,25 @@ export class SellerPaymentManager {
       onChainSettled = (await this._channelsClient.getSession(channelId)).settled;
     } catch (err) {
       return reject('close_failed', `could not read on-chain channel state: ${this._formatError(err)}`);
+    }
+
+    // Re-check after the awaits above: a request admitted while this handler
+    // was verifying and waiting must finish billing before the channel closes,
+    // and any spend it recorded must be signed for or the close settles short.
+    // Everything from here to the submission is synchronous, so nothing can
+    // land in between.
+    if (this.hasInFlightRequests(buyerPeerId)) {
+      return reject('busy', 'a request is still being served on this channel', {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+      });
+    }
+    spent = this._spent.get(channelId) ?? 0n;
+    best = this._getSettleParams(channelId);
+    if (spent > best.amount) {
+      return reject('pending_auth', `unsigned spend outstanding (spent=${spent} signed=${best.amount})`, {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+        requiredCumulativeAmount: spent.toString(),
+      });
     }
 
     const useSignedAuth = best.sig !== '0x' && best.amount > onChainSettled;

@@ -550,6 +550,28 @@ antseed seller start --base-rpc-url https://base-mainnet.infura.io/v3/<key>
 
 Precedence is: CLI flag, then `ANTSEED_BASE_RPC_URL`, then `payments.crypto.rpcUrl`, then built-in Base defaults.
 
+## ANTS Staking
+
+`antseed ants` and its subcommands use the same chain settings as the rest of
+the CLI. Contract addresses for the recognized-usage stack (seller registry,
+seller pools, usage accounting, usage rewards, emissions gate, wash-trading
+registry, points policy registry) come from the built-in deployment record for
+`payments.chainId` and from the on-chain `AntseedRegistry`, so nothing needs to
+be configured on Base Mainnet.
+
+Two optional settings under `payments.crypto`:
+
+| Key | Description |
+|---|---|
+| `explorerApiUrl` | Antscan base URL. `antseed ants` takes pool statistics, per-epoch volume and usage, seller profiles, and closed positions from it and reads the chain only for your wallet's live state. Defaults to `https://antscan.co`; set it to `""` to disable (for example on a local fork), which leaves only the pools you stake in listed. |
+| `<contract>Address` | Per-contract overrides for local or test deployments: `sellerRegistryAddress`, `sellerPoolsAddress`, `sellerPoolsRewardsAddress`, `usageAccountingAddress`, `usageRewardsAddress`, `emissionsGateAddress`, `positionInitAddress`, `washTradingRegistryAddress`, `pointsPolicyRegistryAddress`, `antsTokenAddress`, `legacyEmissionsContractAddress`, `legacyStakingContractAddress`. `positionInitAddress` has no on-chain pointer and must be set explicitly outside the built-in deployments. |
+
+```bash
+antseed config set payments.crypto.explorerApiUrl ""
+```
+
+See the [staking guide](/docs/guides/staking) for what the dashboard shows.
+
 ## Runtime Environment Variables
 
 Only secrets, global toggles, and deployment-specific runtime overrides are set via env vars — everything else is in `config.json`.

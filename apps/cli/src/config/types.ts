@@ -240,6 +240,8 @@ export interface PaymentsCLIConfig {
    * amount. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
   /** Optional seller-side slack for estimate-only reserve preflight checks. Unset disables estimate-only rejection. */
   reserveEstimateOverdraftUsdc?: string;
   /**
@@ -274,6 +276,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedRegistry contract address */
+    registryContractAddress?: string;
     /** Deployed AntseedFreeUsage contract address override */
     freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
@@ -286,6 +290,22 @@ export interface PaymentsCLIConfig {
     emissionsContractAddress?: string;
     /** Deployed AntseedVerification contract address */
     verificationContractAddress?: string;
+    legacyEmissionsContractAddress?: string;
+    legacyStakingContractAddress?: string;
+    legacyEmissionsV1ContractAddress?: string;
+    antsTokenAddress?: string;
+    emissionsGateAddress?: string;
+    sellerPoolsAddress?: string;
+    sellerRegistryAddress?: string;
+    positionInitAddress?: string;
+    usageAccountingAddress?: string;
+    usageRewardsAddress?: string;
+    sellerPoolsRewardsAddress?: string;
+    legacyEmissionsEscrowAddress?: string;
+    washTradingRegistryAddress?: string;
+    pointsPolicyRegistryAddress?: string;
+    /** Explorer REST base for seller profiles in `antseed ants`; empty string disables the lookup. */
+    explorerApiUrl?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
