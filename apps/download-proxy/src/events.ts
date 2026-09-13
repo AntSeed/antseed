@@ -22,6 +22,7 @@
  */
 
 import type {Target} from './assets';
+import type {UtmParams} from './referrer';
 import type {PumpResult} from './stream';
 
 export interface DownloadEvent {
@@ -40,6 +41,10 @@ export interface DownloadContext {
   userAgent: string;
   /** Cloudflare's verified-bot category (e.g. "Search Engine Crawler"), or null. */
   botCategory: string | null;
+  /** Public host the download link was clicked on (referrer.ts): none | <host> | other. */
+  referrerHost?: string;
+  /** Campaign tags carried onto the download link by the website (referrer.ts). */
+  utm?: UtmParams;
 }
 
 function baseParams(ctx: DownloadContext): Record<string, string | number> {
@@ -56,6 +61,14 @@ function baseParams(ctx: DownloadContext): Record<string, string | number> {
   };
   if (ctx.botCategory) {
     params['bot_category'] = ctx.botCategory;
+  }
+  if (ctx.referrerHost) {
+    params['referrer_host'] = ctx.referrerHost;
+  }
+  if (ctx.utm) {
+    for (const [key, value] of Object.entries(ctx.utm)) {
+      if (value) params[key] = value;
+    }
   }
   if (ctx.totalBytes !== null) {
     params['total_bytes'] = ctx.totalBytes;

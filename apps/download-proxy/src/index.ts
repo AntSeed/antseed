@@ -17,7 +17,9 @@
  *                                (mac|win|linux × arm64|x64); when the
  *                                visitor's GA ids are present the served
  *                                filename carries a signed attribution
- *                                token (see attribution.ts)
+ *                                token (see attribution.ts). Download events
+ *                                record the public referrer host and any
+ *                                utm_* tags on the link (see referrer.ts)
  *   POST /app-events             desktop app milestones, forwarded to GA4
  *                                under the download's client id
  *   GET /i?f=<filename>          installer_started beacon from the Windows
@@ -31,6 +33,7 @@ import {handleAppEvents, handleInstallerBeacon} from './app-events';
 import {mintInstallToken, stampAssetName} from './attribution';
 import {matchAsset, parseTarget} from './assets';
 import {parseRef, recordDownload, type AttributionStore} from './match';
+import {parseUtm, referrerHost} from './referrer';
 import {getLatestRelease} from './release';
 import {trackedStream} from './stream';
 import {
@@ -170,6 +173,10 @@ export default {
       totalBytes: contentLength ?? asset.size,
       userAgent: request.headers.get('user-agent') ?? '',
       botCategory: (request.cf?.verifiedBotCategory as string | undefined) || null,
+      // Source signals that survive a blocked GA: which public site the link
+      // was on, and any campaign tags the website carried onto the link.
+      referrerHost: referrerHost(request.headers.get('referer')),
+      utm: parseUtm(url.searchParams),
     };
 
     // One download can arrive as many Range requests (download managers,

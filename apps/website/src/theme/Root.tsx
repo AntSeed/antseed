@@ -8,6 +8,7 @@ import {
   isGetStartedUrl,
   isOutboundUrl,
   platformFromUrl,
+  rememberLandingUtm,
   sectionOf,
   visibleLabel,
   withGaAttribution,
@@ -64,6 +65,8 @@ function useScrollState() {
  */
 function useClickTracking() {
   useEffect(() => {
+    // Keep campaign tags from the landing URL for later download clicks.
+    rememberLandingUtm();
     const onClick = (e: MouseEvent) => {
       // Only real user input. Programmatic .click() calls are not user intent.
       // Ctrl/Cmd-click still arrives here as a normal `click` and does count —
@@ -95,7 +98,7 @@ function useClickTracking() {
       };
 
       if (isDownloadUrl(absolute)) {
-        // On phones (including "Desktop site" mode) the VPR CTAs keep their
+        // On phones (including "Desktop site" mode) the AI VPN CTAs keep their
         // download href but reroute to /get-started on tap
         // (useMobileGetStarted, which runs after this capture listener) —
         // count those as funnel entries, not download conversions.

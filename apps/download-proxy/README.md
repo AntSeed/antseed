@@ -70,6 +70,19 @@ event carries `attributed` (1/0) in both the console line and the GA4 params;
 is why the proxy's `download_started` is the reliable top of the download
 funnel and the click event is best read for page/section breakdowns only.
 
+## Where the link was clicked
+
+Every download event also carries `referrer_host` — the public site the
+download link was on, from the request's `Referer` header — and, when the
+website carried the landing page's campaign tags onto the link,
+`link_source` / `link_medium` / `link_campaign`. Both survive a blocked GA:
+they are read server-side, so the "no session" downloads (developers with ad
+blockers, the highest-converting group) get a source. Privacy: only the host
+is used, and only hosts on a short public allowlist in `referrer.ts` are
+named (GitHub, X, Reddit, Hacker News, Discord, the AI assistants, search
+engines, npm, …); anything else — a company wiki, a private Slack — is
+reported as `other`. No path, query, or fragment is ever read.
+
 ## Install attribution
 
 Session attribution used to stop at the installer: the app's own telemetry
