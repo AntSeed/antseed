@@ -11,6 +11,7 @@ import { ConversationState, pinnedToRouteCandidate, type PinnedDecision } from '
 import { RoutingLedger, type RoutingDecisionRow } from './ledger.js';
 import { buildDigest, periodKey } from './digest.js';
 import { RoutingContextTracker } from '@antseed/node';
+import { readRoutingJson } from './routing-response.js';
 
 export interface LevantoRouterConfig {
   retainPromptPreview?: boolean;
@@ -739,13 +740,6 @@ export class LevantoRouter {
       const actualPeer = peers.find((entry) => entry.peerId === routing.previousRoute!.peerId);
       const pinned = previous && actualPeer ? { ...previous, ...routing.previousRoute, peer: actualPeer } : null;
       if (pinned) {
-        // A reused dispatch still costs real money and still resolves via
-        // the normal onResult flow -- give it its own ledger row too,
-        // associated with THIS request's own requestId, reusing the pinned
-        // decision's predicted fields rather than requiring a fresh
-        // prediction it has no network call to derive one from.
-        // routingLatencyMs is null -- this pinned-decision reuse path never
-        // made its own routing call, so there is no latency to record.
         this.ledger.recordPending(req.requestId, {
           model: pinned.serviceId,
           predictedCostUsd: null,
@@ -767,8 +761,6 @@ export class LevantoRouter {
       }
     }
 
-    // Same daily cadence, its own request -- fire-and-forget, never blocks
-    // or fails the routing call itself.
     await this.sendDailyDigestIfNeeded(context?.signal, context?.settings?.shareUsageDigest !== undefined
       ? context.settings.shareUsageDigest === 'true' : this.config.shareUsageDigest === true);
 
@@ -781,9 +773,6 @@ export class LevantoRouter {
       })).filter((entry) => entry.tokens > 0)
       : [];
 
-    // CQT dial: one of the five discrete VPR positions {1,3,5,7,9}; 5
-    // ("Balanced") when the host hasn't wired VprRoutingPreferences.cqt
-    // through yet, or for a CLI-only caller with no preferences UI at all.
     const cqt = Number(context?.settings?.costQuality ?? routingPreferences?.cqt ?? 5);
     if (![1, 3, 5, 7, 9].includes(cqt)) throw new Error('Invalid Levanto costQuality setting');
     const body: RouteRequestBody = {
@@ -813,7 +802,7 @@ export class LevantoRouter {
     // buyer's very first request. Signing fresh per attempt (a local wallet
     // signature, no network cost) avoids this without needing any change
     // on the routing-peer side.
-    const attemptRoute = async (): Promise<Response> => {
+    const attemptRoute = async (): Promise<{ response: Response; body: unknown }> => {
       context?.signal.throwIfAborted();
       // Resolved fresh per attempt, not cached in a local above this closure --
       // if a prior attempt just cleared discoveredRoutingPeerHost after an
@@ -827,7 +816,8 @@ export class LevantoRouter {
       const timeoutController = new AbortController();
       const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
       try {
-        return await doFetch(`${routingPeerUrl}/_antseed/route`, {
+        const signal = context ? AbortSignal.any([context.signal, timeoutController.signal]) : timeoutController.signal;
+        const response = await doFetch(`${routingPeerUrl}/_antseed/route`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -835,8 +825,13 @@ export class LevantoRouter {
             ...routeAuthHeaders,
           },
           body: JSON.stringify(body),
-          signal: context ? AbortSignal.any([context.signal, timeoutController.signal]) : timeoutController.signal,
+          signal,
         });
+        const responseBody = await readRoutingJson(response, signal).catch((error: unknown) => {
+          if (!response.ok && error instanceof SyntaxError) return null;
+          throw error;
+        });
+        return { response, body: responseBody };
       } catch (err) {
         // Routing peer unreachable OR unresponsive -- the AbortController
         // above fires the same way for both, so both land here. Throws
@@ -857,22 +852,15 @@ export class LevantoRouter {
       }
     };
 
-    // Extracts the seller's error message exactly once per Response -- res.json()
-    // (and fetch Response bodies in general) can only be consumed a single time,
-    // so this must never be called twice on the same res.
-    const parseRejectionMessage = async (response: Response): Promise<string> => {
+    const parseRejectionMessage = (response: Response, body: unknown): string => {
       let message = `Routing peer rejected the request (status ${response.status}).`;
-      try {
-        const errBody = (await response.json()) as { error?: { message?: string } };
-        if (errBody?.error?.message) message = errBody.error.message;
-      } catch {
-        // Non-JSON or empty error body -- keep the generic message.
-      }
+      const errBody = body as { error?: { message?: unknown } } | null;
+      if (typeof errBody?.error?.message === 'string') message = errBody.error.message;
       return message;
     };
 
     const routingCallStartedAt = Date.now();
-    let res = await attemptRoute();
+    let result = await attemptRoute();
     context?.signal.throwIfAborted();
 
     // Fully reactive day-pass payment: the client keeps no clock of its own
@@ -887,13 +875,14 @@ export class LevantoRouter {
     // the seller blocks THAT one, not the one that revealed the charge. One
     // retry only: a second 402 after it just falls through to the throw
     // below like any other rejection.
-    if (res.status === 402 && this.config.signDailyIfNeeded) {
+    if (result.response.status === 402 && this.config.signDailyIfNeeded) {
       await this.signDayPassOnDemand();
       context?.signal.throwIfAborted();
-      res = await attemptRoute();
+      result = await attemptRoute();
     }
 
-    const rejectionMessage = res.ok ? null : await parseRejectionMessage(res);
+    const res = result.response;
+    const rejectionMessage = res.ok ? null : parseRejectionMessage(res, result.body);
 
     const routingLatencyMs = Date.now() - routingCallStartedAt;
     if (!res.ok) {
@@ -905,7 +894,7 @@ export class LevantoRouter {
       throw new RoutingPeerError('rejected', rejectionMessage!, res.status);
     }
 
-    const parsed = (await res.json()) as RouteResponseBody;
+    const parsed = result.body as RouteResponseBody;
     context?.signal.throwIfAborted();
     if (!Array.isArray(parsed?.ranked) || parsed.ranked.some((entry) => !entry?.price || !entry?.estimate)) {
       // Cheap: already resolved and cached by the attemptRoute() call above

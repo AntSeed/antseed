@@ -52,6 +52,26 @@ function peer(peerId: string): PeerInfo {
   return { peerId } as PeerInfo;
 }
 
+describe('routing HTTP operational limits', () => {
+  it('keeps the local deadline active until the response body is consumed', async () => {
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn(async () => new Response(new ReadableStream({ cancel })));
+    const router = new LevantoRouter({ routingPeerUrl: 'http://fixture', routeTimeoutMs: 5, fetchImpl });
+    await expect(router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null)).rejects.toThrow(/timed out/);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it.each([429, 503])('does not retry or buy a day pass for HTTP %s', async (status) => {
+    const signDailyIfNeeded = vi.fn();
+    const fetchImpl = vi.fn(async () => new Response('not JSON', { status }));
+    const router = new LevantoRouter({ routingPeerUrl: 'http://fixture', fetchImpl, signDailyIfNeeded });
+    await expect(router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, enabledPreferences())).rejects.toThrow(`status ${status}`);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(signDailyIfNeeded).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * A fetchImpl for the reactive-signing tests: the actual routing call
  * ('inputMessage' in the body -- distinguishes it from the separate digest
@@ -384,7 +404,7 @@ describe('LevantoRouter.selectRoute', () => {
   });
 
   it('falls back to a generic message when a non-OK response has no JSON error body', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => { throw new Error('not json'); } });
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('not json', { status: 500 }));
     const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl: fetchImpl as unknown as typeof fetch });
     await expect(router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null)).rejects.toMatchObject({
       kind: 'rejected',
