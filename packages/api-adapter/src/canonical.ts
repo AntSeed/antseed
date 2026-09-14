@@ -590,6 +590,7 @@ export function normalizeOpenAIChatResponseBody(
     const fn = toolCall.function && typeof toolCall.function === 'object'
       ? toolCall.function as Record<string, unknown>
       : {};
+    if (fn.name === RESPONSES_FINAL_ANSWER_TOOL) continue;
     output.push({
       type: 'function_call',
       id: typeof toolCall.id === 'string' && toolCall.id.length > 0 ? toolCall.id : `call_${index + 1}`,
@@ -605,7 +606,14 @@ export function normalizeOpenAIChatResponseBody(
     model,
     output,
     stopReason,
-    endTurn: toolCalls.length > 0 ? true : undefined,
+    endTurn: toolCalls.some((toolCall) => {
+      const fn = toolCall.function && typeof toolCall.function === 'object'
+        ? toolCall.function as Record<string, unknown>
+        : {};
+      return fn.name === RESPONSES_FINAL_ANSWER_TOOL;
+    })
+      ? true
+      : toolCalls.length > 0 ? false : undefined,
     usage,
   };
 }

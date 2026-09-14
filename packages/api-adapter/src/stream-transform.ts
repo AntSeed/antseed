@@ -3,6 +3,7 @@ import {
   createChatStreamParser,
   encodeSseEvents,
   extractUsage,
+  RESPONSES_FINAL_ANSWER_TOOL,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
   openAIResponsesFunctionCallId,
@@ -95,7 +96,7 @@ export function createStreamingAdapter(
 function createChatStreamNormalizer(options: StreamTransformInternals): ProtocolStreamNormalizer {
   const emitted: CanonicalStreamEvent[] = [];
   let responseStarted = false;
-  let sawToolCall = false;
+  let sawRealToolCall = false;
 
   const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
     if (responseStarted) return;
@@ -115,7 +116,8 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
     },
     onToolCallStart(index, id, name) {
       emitStart(parser.getId(), parser.getModel());
-      sawToolCall = true;
+      if (name === RESPONSES_FINAL_ANSWER_TOOL) return;
+      sawRealToolCall = true;
       emitted.push({ type: 'tool_call_start', index, id, name });
     },
     onToolCallDelta(index, _id, argumentsDelta) {
@@ -128,7 +130,7 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        endTurn: sawToolCall ? true : undefined,
+        endTurn: sawRealToolCall ? true : undefined,
         usage: info.usage,
         toolCalls: info.toolCalls,
       });
