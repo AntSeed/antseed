@@ -475,6 +475,97 @@ describe('SellerPaymentManager', () => {
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
+  describe.each([0n, 200_000n])('in-flight disconnect with prior spend %s', (priorSpend) => {
+    const channelId = makeChannelId(201);
+
+    beforeEach(async () => {
+      const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+        isReserve: true,
+        reserveMaxAmount: '1000000',
+      });
+      await manager.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+      if (priorSpend > 0n) {
+        manager.recordSpend(channelId, priorSpend);
+        const authorization = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+          cumulativeAmount: priorSpend,
+          reserveMaxAmount: '1000000',
+        });
+        expect(await manager.handleSpendingAuth(buyerIdentity.peerId, authorization, mux)).toBe('accepted');
+      }
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime((store.getChannel(channelId)!.deadline + 1) * 1000);
+      vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { deposit: 1_000_000n, settled: 0n }),
+      );
+    });
+
+    afterEach(() => vi.useRealTimers());
+
+    it('preserves accounting until every in-flight request finishes, then retries cleanup', async () => {
+      manager.beginBillableRequest(buyerIdentity.peerId);
+      manager.beginBillableRequest(buyerIdentity.peerId);
+      manager.onBuyerDisconnect(buyerIdentity.peerId);
+      await manager.checkTimeouts();
+
+      expect(manager.channelsClient.close).not.toHaveBeenCalled();
+      expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+      expect(store.getChannel(channelId)?.status).toBe(CHANNEL_STATUS.ACTIVE);
+
+      manager.recordSpend(channelId, 60_000n);
+      manager.endBillableRequest(buyerIdentity.peerId);
+      await manager.checkTimeouts();
+      expect(manager.channelsClient.close).not.toHaveBeenCalled();
+
+      manager.recordSpend(channelId, 40_000n);
+      manager.endBillableRequest(buyerIdentity.peerId);
+      expect(manager.getCumulativeSpend(channelId)).toBe(priorSpend + 100_000n);
+      await manager.checkTimeouts();
+
+      expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+      expect(vi.mocked(manager.channelsClient.close).mock.calls[0]![2]).toBe(priorSpend);
+      expect(store.getChannel(channelId)?.status).toBe(CHANNEL_STATUS.SETTLED);
+      expect(store.getChannel(channelId)?.tokensDelivered).toBe(String(priorSpend + 100_000n));
+    });
+
+    it('does not forget in-flight accounting through a direct final settlement', async () => {
+      manager.beginBillableRequest(buyerIdentity.peerId);
+      await manager.settleSession(buyerIdentity.peerId, { cleanupOnFailure: true });
+      expect(manager.channelsClient.close).not.toHaveBeenCalled();
+      manager.recordSpend(channelId, 100_000n);
+      expect(manager.getCumulativeSpend(channelId)).toBe(priorSpend + 100_000n);
+      manager.endBillableRequest(buyerIdentity.peerId);
+    });
+
+    it('rechecks in-flight requests after the timeout RPC lookup', async () => {
+      vi.mocked(manager.channelsClient.getSession).mockImplementationOnce(async () => {
+        manager.beginBillableRequest(buyerIdentity.peerId);
+        manager.onBuyerDisconnect(buyerIdentity.peerId);
+        return makeOnChainChannel(buyerIdentity, sellerIdentity, { deposit: 1_000_000n, settled: 0n });
+      });
+      await manager.checkTimeouts();
+      expect(manager.channelsClient.close).not.toHaveBeenCalled();
+      manager.recordSpend(channelId, 100_000n);
+      expect(manager.getCumulativeSpend(channelId)).toBe(priorSpend + 100_000n);
+      manager.endBillableRequest(buyerIdentity.peerId);
+    });
+
+    it('uses a catch-up authorization received before deferred cleanup', async () => {
+      manager.beginBillableRequest(buyerIdentity.peerId);
+      manager.onBuyerDisconnect(buyerIdentity.peerId);
+      manager.recordSpend(channelId, 100_000n);
+      manager.endBillableRequest(buyerIdentity.peerId);
+      const catchUp = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+        cumulativeAmount: priorSpend + 100_000n,
+        reserveMaxAmount: '1000000',
+      });
+      expect(await manager.handleSpendingAuth(buyerIdentity.peerId, catchUp, mux)).toBe('accepted');
+      await manager.checkTimeouts();
+      expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+      expect(vi.mocked(manager.channelsClient.close).mock.calls[0]![2]).toBe(priorSpend + 100_000n);
+      expect(store.getChannel(channelId)?.tokensDelivered).toBe(String(priorSpend + 100_000n));
+    });
+  });
+
   it('accepts first reserve with zero metadata', async () => {
     const channelId = makeChannelId(24);
 

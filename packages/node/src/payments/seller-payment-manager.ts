@@ -1144,6 +1144,10 @@ export class SellerPaymentManager {
    *   for future requests. No cleanup is performed so the session can resume.
    */
   async settleSession(buyerPeerId: string, { cleanupOnFailure = false, settleOnly = false } = {}): Promise<void> {
+    if (!settleOnly && this.hasInFlightRequests(buyerPeerId)) {
+      debugLog(`[SellerPayment] Deferring final settlement for ${buyerPeerId.slice(0, 12)}... — billable requests still in flight`);
+      return;
+    }
     const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
     if (!session) {
       debugWarn(`[SellerPayment] settleSession: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
@@ -1264,7 +1268,7 @@ export class SellerPaymentManager {
 
     const settleOnDisconnect = this._config.settleOnDisconnect ?? true;
 
-    if (settleOnDisconnect) {
+    if (settleOnDisconnect && !this.hasInFlightRequests(buyerPeerId)) {
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
       if (accepted > 0n) {
         debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — closing channel immediately`);
@@ -1299,6 +1303,7 @@ export class SellerPaymentManager {
     const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
 
     for (const channel of activeChannels) {
+      if (this.hasInFlightRequests(channel.peerId)) continue;
       let accepted = this._acceptedCumulative.get(channel.sessionId) ?? 0n;
       if (accepted === 0n) {
         accepted = this._restorePersistedSpendingAuth(channel) ?? accepted;
@@ -1309,6 +1314,7 @@ export class SellerPaymentManager {
         const onChainState = classifyOnChainChannel(
           await this._channelsClient.getSession(channel.sessionId),
         );
+        if (this.hasInFlightRequests(channel.peerId)) continue;
         if (!onChainState.exists || (onChainState.status !== 'active' && onChainState.status !== 'unknown')) {
           this._evictStaleChannel(channel.sessionId, channel.peerId, `periodic check: on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`);
           continue;

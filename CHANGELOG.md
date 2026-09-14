@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Seller disconnect cleanup now defers final settlement and timeout eviction while billable requests are in flight, preserving their recorded costs. Existing timeout cleanup resumes after requests finish; unsigned spend still cannot be collected without a buyer SpendingAuth.
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 
@@ -61,6 +62,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Sellers no longer serve paid requests for free with a channel-less response signature. Paid requests now fail closed (`503 payment_unavailable`) when the payment stack is not initialized, admission requires the in-memory session and the channel store to agree (returning `402` otherwise so the buyer renegotiates), and billing plus `ResponseAuth` are bound to the channel admitted before provider execution instead of re-reading state afterwards. Seller startup also no longer silently disables payments for the whole process after a single failed RPC probe; `ANTSEED_ENABLE_SETTLEMENT=false` remains the explicit opt-out.
 - Contracts: M002 rejects a `LAST_LOCKED_EPOCH` override that omits legacy deposits; documents the no-mixed-payouts-per-seller requirement and covers late pre-migration claims and repeated pool withdrawals.
 - Desktop no longer shows routing as on before it actually is. The Home power button, hero status, footer status strip, and floating pill lit up as soon as the buyer process was spawned — on first launch and when turning routing back on — even though the local proxy was not yet accepting connections. They now stay in a "Starting..." state until the proxy port answers a reachability probe (re-checked every second during startup), and only then switch to on/Running.
 - Desktop's footer status strip no longer reports the network as "Healthy" after routing is stopped — network stats kept their last DHT snapshot, so the strip read "Healthy | Stopped". It now shows "Offline" while the buyer runtime is stopped, and the "Stopped" state is shown in red like other error states.
