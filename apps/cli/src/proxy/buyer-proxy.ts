@@ -108,6 +108,8 @@ import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 import { loadConfig } from '../config/loader.js'
 import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js'
+import type { HierarchicalPricingConfig } from '../config/types.js'
+import { validateRouterCandidate } from './router-policy.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -135,6 +137,8 @@ export interface BuyerProxyConfig {
   configPath?: string
   /** Price + trust preferences used for model-only automatic routing. */
   routingPreferences?: ModelRoutingPreferences
+  maxPricing?: HierarchicalPricingConfig
+  minPeerReputation?: number
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -822,6 +826,8 @@ export class BuyerProxy {
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _routingPreferences: ModelRoutingPreferences | null
+  private _maxPricing: HierarchicalPricingConfig | undefined
+  private _minPeerReputation: number
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -868,6 +874,8 @@ export class BuyerProxy {
   private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
 
   constructor(config: BuyerProxyConfig) {
+    this._maxPricing = config.maxPricing
+    this._minPeerReputation = config.minPeerReputation ?? 0
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -1139,6 +1147,8 @@ export class BuyerProxy {
     try {
       const config = await loadConfig(this._configPath)
       const next = config.buyer.routingPreferences
+      this._maxPricing = config.buyer.maxPricing
+      this._minPeerReputation = config.buyer.minPeerReputation
       this._routingPreferences = {
         ...next,
         allowedPeerIds: [...next.allowedPeerIds],
@@ -2593,10 +2603,10 @@ export class BuyerProxy {
     // run twice for the same request.
     const routeSelected = requestedService
       ? await this._node.router?.selectRoute?.(
-          serializedReq,
-          peers,
-          conversationIdentity,
-          this._routingPreferences,
+          structuredClone(serializedReq),
+          structuredClone(peers),
+          structuredClone(conversationIdentity),
+          structuredClone(this._routingPreferences),
           this._defaultRoutedModel,
         ) ?? null
       : null
@@ -2635,12 +2645,21 @@ export class BuyerProxy {
         // The routing peer's returned order already *is* the score/quality/
         // cost decision -- walk it as given, no local re-ranking or
         // reputation re-sort.
-        candidates = routeSelected.map((candidate) => ({
-          ...candidate,
-          effectiveReputationScore: candidate.reputation,
-          peerCooldownUntil: null,
-          peerFailureStreak: 0,
-        }))
+        const currentPeers = await this._getPeers()
+        const seen = new Set<string>()
+        candidates = routeSelected.flatMap((recommendation) => {
+          const candidate = validateRouterCandidate({
+            recommendation, peers: currentPeers, request: serializedReq, protocol: requestProtocol,
+            provider: explicitProvider, requiredParameters, preferences: this._routingPreferences,
+            maxPricing: this._maxPricing, minPeerReputation: this._minPeerReputation, now: this._now(),
+          })
+          if (!candidate || !peerAllowedByPolicy(policyRouter, candidate.request, candidate.peer)) return []
+          const key = `${candidate.peerId}@${candidate.serviceId}`
+          if (seen.has(key) || isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())) return []
+          seen.add(key)
+          const health = this._peerHealth.get(candidate.peerId)
+          return [{ ...candidate, peerCooldownUntil: health?.cooldownUntil ?? null, peerFailureStreak: health?.failureStreak ?? 0 }]
+        })
         routeAlternatives = candidates.slice(0, MAX_DISCLOSED_ROUTE_ALTERNATIVES).map((candidate) => ({
           peerId: candidate.peerId,
           service: candidate.serviceId,
@@ -2758,7 +2777,8 @@ export class BuyerProxy {
 
       let lastRetry: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
       let lastVerificationError: string | null = null
-      for (const [index, selected] of candidates.entries()) {
+      for (const [index, initialCandidate] of candidates.entries()) {
+        let selected = initialCandidate
         if (this._verifier) {
           const makeReach = (chosenId: string): SellerReach =>
             makeVerifierReach(this._node, selected.peer, chosenId, clientAbortController.signal)
@@ -2771,6 +2791,17 @@ export class BuyerProxy {
         }
 
         for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
+          if (clientAbortController.signal.aborted) return
+          if (routeSelected) {
+            const current = validateRouterCandidate({
+              recommendation: selected, peers: await this._getPeers(), request: serializedReq,
+              protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+              preferences: this._routingPreferences, maxPricing: this._maxPricing,
+              minPeerReputation: this._minPeerReputation, now: this._now(),
+            })
+            if (!current || !peerAllowedByPolicy(policyRouter, current.request, current.peer)) break
+            selected = { ...selected, ...current }
+          }
           log(
             `Auto-selected peer ${selected.peer.peerId.slice(0, 12)}... for model="${requestedService}" `
             + `service="${selected.serviceId}" reputation=${selected.reputation} `

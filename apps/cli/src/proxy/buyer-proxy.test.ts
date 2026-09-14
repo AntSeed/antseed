@@ -160,6 +160,66 @@ function permissiveRouter() {
   return { allowsPeerForPolicy: () => true, onResult: () => {} }
 }
 
+function routerPeer(seed: string): PeerInfo {
+  return {
+    ...makePeer(seed, ['openai']),
+    reputationScore: 80,
+    providerPricing: { openai: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'test-model': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } },
+    providerServiceApiProtocols: { openai: { services: { 'test-model': ['openai-chat-completions'] } } },
+  }
+}
+
+test('selectRoute recommendations cannot replace the host request, prices, or peer', async () => {
+  const peer = routerPeer('a')
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async (request: any, peers: PeerInfo[]) => {
+      request.path = '/unsafe'
+      peers[0]!.providers = ['forged']
+      return [{ peerId: peer.peerId, serviceId: 'test-model', peer: peers[0], request, reputation: 100, inputUsdPerMillion: 0 }]
+    },
+  }, undefined, priceAndTrustPreferences)
+  let forwarded: any
+  ;(proxy as any)._node.sendRequest = async (selected: PeerInfo, request: any) => {
+    assert.equal(selected, peer)
+    forwarded = request
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [{ role: 'user', content: 'original' }] } }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(forwarded.path, '/v1/chat/completions')
+  assert.equal(parseJsonBody(forwarded.body).model, 'test-model')
+  assert.deepEqual(peer.providers, ['openai'])
+})
+
+for (const violation of ['unknown-peer', 'unknown-service', 'blocked', 'trust', 'input-price', 'output-price', 'capability', 'cooldown', 'changed-policy']) {
+  test(`selectRoute rejects ${violation} without inference dispatch`, async () => {
+    const peer = routerPeer('a')
+    const preferences = { ...priceAndTrustPreferences, blockedPeerIds: violation === 'blocked' ? [peer.peerId] : [] }
+    if (violation === 'trust') peer.reputationScore = 1
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(),
+      selectRoute: async () => {
+        if (violation === 'changed-policy') (proxy as any)._routingPreferences.blockedPeerIds = [peer.peerId]
+        return [{ peerId: violation === 'unknown-peer' ? 'f'.repeat(40) : peer.peerId, serviceId: violation === 'unknown-service' ? 'missing' : 'test-model' }]
+      },
+    }, undefined, preferences)
+    ;(proxy as any)._maxPricing = { defaults: {
+      inputUsdPerMillion: violation === 'input-price' ? 0 : 100,
+      outputUsdPerMillion: violation === 'output-price' ? 0 : 100,
+    } }
+    if (violation === 'cooldown') (proxy as any)._peerHealth.set(peer.peerId, { cooldownUntil: Date.now() + 30_000, failureStreak: 3 })
+    let dispatches = 0
+    ;(proxy as any)._node.sendRequest = async () => { dispatches += 1; throw new Error('must not dispatch') }
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      body: { model: 'router-test', messages: [] },
+      ...(violation === 'capability' ? { headers: { 'x-antseed-required-parameters': 'tools' } } : {}),
+    }))
+    assert.ok(response.statusCode >= 400)
+    assert.equal(dispatches, 0)
+  })
+}
+
 /** Drive `times` failed requests at a pinned peer, spaced past the coalesce window. */
 async function failRepeatedly(
   proxy: BuyerProxy,
@@ -3626,4 +3686,3 @@ test('getSweepReceipt returns cached relayer receipts case-insensitively', () =>
   assert.equal(proxy.getSweepReceipt(nonce.toLowerCase()), receipt)
   assert.equal(proxy.getSweepReceipt('0x' + '00'.repeat(32)), null)
 })
-

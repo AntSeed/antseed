@@ -591,6 +591,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         routingPreferences: effectiveBuyerConfig.routingPreferences,
+        maxPricing: effectiveBuyerConfig.maxPricing,
+        minPeerReputation: effectiveBuyerConfig.minPeerReputation,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         routerName: dashboardRouterName,
         getDayPassPriceIncreaseNotice: () => dayPassPriceIncreaseNotice,
