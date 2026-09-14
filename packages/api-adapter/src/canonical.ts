@@ -4,6 +4,7 @@ import {
   openAIResponsesFunctionCallId,
   openAIResponsesMessageId,
   parseJsonSafe,
+  RESPONSES_FINAL_ANSWER_TOOL,
   toStringContent,
   type TokenUsage,
 } from './utils.js';
@@ -181,7 +182,11 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
-  const tools = renderCanonicalToolsToOpenAIChat(request.tools);
+  const tools = renderCanonicalToolsToOpenAIChat(
+    options.preserveResponsesAgentSemantics && request.tools?.length
+      ? [...request.tools, { name: RESPONSES_FINAL_ANSWER_TOOL, parameters: { type: 'object', properties: {} } }]
+      : request.tools,
+  );
   const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice);
   assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata) body.metadata = request.metadata;
