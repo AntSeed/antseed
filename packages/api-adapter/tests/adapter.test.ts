@@ -2136,7 +2136,7 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(body.end_turn).toBe(true);
   });
 
-  it('does not emit end_turn for unmarked chat text responses', () => {
+  it('tells Codex to continue after unmarked chat text responses', () => {
     const chatResponse = makeOpenAIResponse({
       body: new TextEncoder().encode(JSON.stringify({
         id: 'chatcmpl-final',
@@ -2148,10 +2148,10 @@ describe('createStreamingAdapter chat to responses', () => {
     const adapted = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'kimi-k3' });
     const body = JSON.parse(new TextDecoder().decode(adapted.body)) as Record<string, unknown>;
 
-    expect(body.end_turn).toBeUndefined();
+    expect(body.end_turn).toBe(false);
   });
 
-  it('does not emit end_turn for unmarked streaming chat text responses', () => {
+  it('keeps streaming Codex turns active after unmarked chat text responses', () => {
     const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-interim-stream',
@@ -2164,7 +2164,7 @@ describe('createStreamingAdapter chat to responses', () => {
     const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
     const completed = events.find((event) => event.event === 'response.completed');
 
-    expect(JSON.parse(completed!.data).response.end_turn).toBeUndefined();
+    expect(JSON.parse(completed!.data).response.end_turn).toBe(false);
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

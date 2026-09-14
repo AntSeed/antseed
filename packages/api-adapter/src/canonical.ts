@@ -613,7 +613,7 @@ export function normalizeOpenAIChatResponseBody(
       return fn.name === RESPONSES_FINAL_ANSWER_TOOL;
     })
       ? true
-      : toolCalls.length > 0 ? false : undefined,
+      : false,
     usage,
   };
 }

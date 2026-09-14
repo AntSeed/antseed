@@ -130,7 +130,7 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        endTurn: sawRealToolCall ? true : undefined,
+        endTurn: sawRealToolCall,
         usage: info.usage,
         toolCalls: info.toolCalls,
       });
