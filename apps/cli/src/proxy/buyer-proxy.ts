@@ -110,6 +110,7 @@ import { loadConfig } from '../config/loader.js'
 import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js'
 import type { HierarchicalPricingConfig } from '../config/types.js'
 import { validateRouterCandidate } from './router-policy.js'
+import { executeRouter, RouterExecutionError } from './router-execution.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -139,6 +140,8 @@ export interface BuyerProxyConfig {
   routingPreferences?: ModelRoutingPreferences
   maxPricing?: HierarchicalPricingConfig
   minPeerReputation?: number
+  routerTimeoutMs?: number
+  routerFailureFallback?: 'none' | 'default'
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -828,6 +831,8 @@ export class BuyerProxy {
   private _routingPreferences: ModelRoutingPreferences | null
   private _maxPricing: HierarchicalPricingConfig | undefined
   private _minPeerReputation: number
+  private readonly _routerTimeoutMs: number
+  private readonly _routerFailureFallback: 'none' | 'default'
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -876,6 +881,8 @@ export class BuyerProxy {
   constructor(config: BuyerProxyConfig) {
     this._maxPricing = config.maxPricing
     this._minPeerReputation = config.minPeerReputation ?? 0
+    this._routerTimeoutMs = config.routerTimeoutMs ?? 10_000
+    this._routerFailureFallback = config.routerFailureFallback ?? 'none'
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -2601,15 +2608,35 @@ export class BuyerProxy {
     // business. Called at most once per request — selectRoute can have real
     // side effects (payment signing, ledger recording), so this must never
     // run twice for the same request.
-    const routeSelected = requestedService
-      ? await this._node.router?.selectRoute?.(
+    let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
+    try {
+      if (requestedService && this._node.router?.selectRoute) {
+        routeSelected = await executeRouter((context) => this._node.router!.selectRoute!(
           structuredClone(serializedReq),
           structuredClone(peers),
           structuredClone(conversationIdentity),
           structuredClone(this._routingPreferences),
-          this._defaultRoutedModel,
-        ) ?? null
-      : null
+          null,
+          context,
+        ), clientAbortController.signal, this._routerTimeoutMs)
+        if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
+        if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
+      }
+    } catch (error) {
+      if (clientAbortController.signal.aborted) return
+      const fallback = this._routerFailureFallback === 'default' ? this._defaultRoutedModel : null
+      const pin = fallback ? parsePeerPinnedService(fallback) : null
+      if (fallback && isValidRoutedModelTarget(fallback)) {
+        routeSelected = peers.filter((peer) => !pin || peer.peerId.toLowerCase() === pin.peerId.toLowerCase())
+          .map((peer) => ({ peerId: peer.peerId, serviceId: pin?.service ?? fallback }))
+      } else {
+        const code = error instanceof RouterExecutionError ? error.code : 'router_unavailable'
+        res.writeHead(code === 'router_timeout' ? 504 : 502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { type: code, code, message: 'The model router could not select a route. No inference request was sent.' } }))
+        return
+      }
+    }
+    if (clientAbortController.signal.aborted) return
 
     if ((!explicitPeerId || routeSelected) && requestedService) {
       const router = this._node.router

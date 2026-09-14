@@ -185,7 +185,7 @@ describe('LevantoRouter.selectRoute', () => {
     });
     const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl: fetchImpl as unknown as typeof fetch });
     const result = await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null);
-    expect(result).toBeNull();
+    expect(result).toEqual([]);
   });
 
   describe('routing peer URL discovery', () => {
@@ -1120,7 +1120,7 @@ describe('LevantoRouter.selectRoute', () => {
       expect(result?.[0]?.inputUsdPerMillion).toBeNull(); // no real price data for this synthesized pair
     });
 
-    it('gives up (null) when the walk exhausts the ranked list and no defaultRoutedModel is set', async () => {
+    it('returns an unavailable selection when no eligible ranked route exists', async () => {
       const fetchImpl = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => rankedResponse({
@@ -1136,7 +1136,7 @@ describe('LevantoRouter.selectRoute', () => {
       // No 5th arg -- no default route configured for this buyer.
       const result = await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), peers, null, { allowedPeerIds: ['0xCCC'] });
 
-      expect(result).toBeNull();
+      expect(result).toEqual([]);
     });
   });
 });

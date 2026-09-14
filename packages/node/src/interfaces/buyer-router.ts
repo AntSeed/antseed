@@ -129,6 +129,11 @@ export type RoutingDecisionRow = {
  * If you don't provide a router, the SDK uses a default that selects
  * the cheapest peer with reputation above a minimum threshold.
  */
+export type RouteSelectionContext = {
+  signal: AbortSignal;
+  deadlineMs: number;
+};
+
 export interface Router {
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null;
   onResult(peer: PeerInfo, result: {
@@ -164,6 +169,9 @@ export interface Router {
    * usual fixed-model peer narrowing. Called unconditionally by buyer-proxy
    * whenever the registered router implements it; returning `null` (or not
    * implementing it) falls through to the unmodified `selectPeer` pipeline.
+   * An empty array means the router claimed the request but has no route;
+   * it must not be treated as a decline. Throw for execution failures.
+   * Hosts enforce the context deadline even if a plugin ignores its signal.
    *
    * `req` is the same raw, unmodified request `selectPeer` gets, before any
    * model substitution — a router implementing this parses `req.body` itself
@@ -185,6 +193,7 @@ export interface Router {
      * argument are unaffected.
      */
     defaultRoutedModel?: string | null,
+    context?: RouteSelectionContext,
   ): Promise<RouteCandidate[] | null>;
 
   /**

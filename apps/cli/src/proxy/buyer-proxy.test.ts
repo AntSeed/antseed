@@ -169,6 +169,48 @@ function routerPeer(seed: string): PeerInfo {
   }
 }
 
+for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
+  test(`selectRoute fails closed on ${failure}`, async () => {
+    const peer = routerPeer('a')
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(),
+      selectRoute: async () => {
+        if (failure === 'throw') throw new Error('private upstream details')
+        if (failure === 'empty') return []
+        if (failure === 'malformed') return {}
+        return new Promise(() => {})
+      },
+    })
+    ;(proxy as any)._routerTimeoutMs = 5
+    ;(proxy as any)._defaultRoutedModel = 'test-model'
+    let calls = 0
+    ;(proxy as any)._node.sendRequest = async () => { calls++; throw new Error('must not send') }
+    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(response.statusCode, failure === 'timeout' ? 504 : 502)
+    assert.equal(calls, 0)
+    assert.doesNotMatch(response.body, /private upstream/)
+  })
+}
+
+for (const blocked of [false, true]) {
+  test(`selectRoute explicit default fallback respects policy (blocked=${blocked})`, async () => {
+    const peer = routerPeer('a')
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(), selectRoute: async () => { throw new Error('unavailable') },
+    }, undefined, { ...priceAndTrustPreferences, blockedPeerIds: blocked ? [peer.peerId] : [] })
+    ;(proxy as any)._routerFailureFallback = 'default'
+    ;(proxy as any)._defaultRoutedModel = `${peer.peerId}@test-model`
+    let calls = 0
+    ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+      calls++
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+    }
+    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(calls, blocked ? 0 : 1)
+    assert.equal(response.statusCode, blocked ? 502 : 200)
+  })
+}
+
 test('selectRoute recommendations cannot replace the host request, prices, or peer', async () => {
   const peer = routerPeer('a')
   const proxy = makeBuyerProxyWithPeers([peer], [peer], {

@@ -4,6 +4,7 @@ import type {
   PeerInfo,
   RouteAuthHeaders,
   RouteCandidate,
+  RouteSelectionContext,
   SerializedHttpRequest,
 } from '@antseed/node';
 import { ConversationState, pinnedToRouteCandidate, type PinnedDecision } from './conversation-state.js';
@@ -699,7 +700,9 @@ export class LevantoRouter {
     conversation: ConversationIdentity | null,
     routingPreferences: ModelRoutingPreferences | null,
     defaultRoutedModel?: string | null,
+    context?: RouteSelectionContext,
   ): Promise<RouteCandidate[] | null> {
+    context?.signal.throwIfAborted();
     // Kept fresh regardless of which model this particular call is for --
     // the day-pass-enable toggle is a standing preference, not tied to
     // the model happening to be selected on this one request.
@@ -792,6 +795,7 @@ export class LevantoRouter {
     // signature, no network cost) avoids this without needing any change
     // on the routing-peer side.
     const attemptRoute = async (): Promise<Response> => {
+      context?.signal.throwIfAborted();
       // Resolved fresh per attempt, not cached in a local above this closure --
       // if a prior attempt just cleared discoveredRoutingPeerHost after an
       // unreachable failure, this re-discovers rather than repeating the
@@ -800,6 +804,7 @@ export class LevantoRouter {
       const routingPeerUrl = await this.resolveEffectiveRoutingPeerUrl();
       const wasDiscovered = !this.config.routingPeerUrl;
       const routeAuthHeaders = await this.buildRouteAuthHeaders();
+      context?.signal.throwIfAborted();
       const timeoutController = new AbortController();
       const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
       try {
@@ -811,7 +816,7 @@ export class LevantoRouter {
             ...routeAuthHeaders,
           },
           body: JSON.stringify(body),
-          signal: timeoutController.signal,
+          signal: context ? AbortSignal.any([context.signal, timeoutController.signal]) : timeoutController.signal,
         });
       } catch (err) {
         // Routing peer unreachable OR unresponsive -- the AbortController
@@ -849,6 +854,7 @@ export class LevantoRouter {
 
     const routingCallStartedAt = Date.now();
     let res = await attemptRoute();
+    context?.signal.throwIfAborted();
 
     // Fully reactive day-pass payment: the client keeps no clock of its own
     // for this -- it signs only because the seller's response just said
@@ -864,6 +870,7 @@ export class LevantoRouter {
     // below like any other rejection.
     if (res.status === 402 && this.config.signDailyIfNeeded) {
       await this.signDayPassOnDemand();
+      context?.signal.throwIfAborted();
       res = await attemptRoute();
     }
 
@@ -880,6 +887,7 @@ export class LevantoRouter {
     }
 
     const parsed = (await res.json()) as RouteResponseBody;
+    context?.signal.throwIfAborted();
     if (!Array.isArray(parsed?.ranked) || parsed.ranked.some((entry) => !entry?.price || !entry?.estimate)) {
       // Cheap: already resolved and cached by the attemptRoute() call above
       // that produced this very response, just re-read here for the message.
@@ -972,7 +980,7 @@ export class LevantoRouter {
       }
     }
 
-    if (ranked.length === 0) return null;
+    if (ranked.length === 0) return [];
 
     const winner = ranked[0]!;
     if (convKey) {

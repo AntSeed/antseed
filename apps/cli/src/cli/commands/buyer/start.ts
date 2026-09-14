@@ -593,6 +593,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routingPreferences: effectiveBuyerConfig.routingPreferences,
         maxPricing: effectiveBuyerConfig.maxPricing,
         minPeerReputation: effectiveBuyerConfig.minPeerReputation,
+        routerTimeoutMs: Math.min(effectiveBuyerConfig.routerTimeoutMs ?? 10_000, effectiveBuyerConfig.requestTimeoutMs),
+        routerFailureFallback: effectiveBuyerConfig.routerFailureFallback,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         routerName: dashboardRouterName,
         getDayPassPriceIncreaseNotice: () => dayPassPriceIncreaseNotice,

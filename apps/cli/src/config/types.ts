@@ -197,6 +197,8 @@ export interface BuyerCLIConfig {
   metadataFetchTimeoutMs: number;
   /** Timeout in ms while waiting for a non-streaming response or initial stream response. */
   requestTimeoutMs: number;
+  routerTimeoutMs?: number;
+  routerFailureFallback?: 'none' | 'default';
   /** Maximum total duration in ms for a streaming response. Default: 30 minutes. */
   maxStreamDurationMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */

@@ -327,6 +327,12 @@ export function validateConfig(config: AntseedConfig): string[] {
   if (!Number.isInteger(config.buyer.requestTimeoutMs) || config.buyer.requestTimeoutMs < 1) {
     errors.push('buyer.requestTimeoutMs must be an integer >= 1');
   }
+  if (config.buyer.routerTimeoutMs !== undefined && (!Number.isInteger(config.buyer.routerTimeoutMs) || config.buyer.routerTimeoutMs < 1)) {
+    errors.push('buyer.routerTimeoutMs must be an integer >= 1');
+  }
+  if (config.buyer.routerFailureFallback !== undefined && !['none', 'default'].includes(config.buyer.routerFailureFallback)) {
+    errors.push('buyer.routerFailureFallback must be none or default');
+  }
 
   if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS) {
     errors.push('buyer.maxStreamDurationMs must be an integer >= 1');
