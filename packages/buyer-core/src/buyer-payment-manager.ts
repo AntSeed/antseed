@@ -174,7 +174,7 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
 export class BuyerPaymentManager {
   private readonly _routingPeers = new Set<string>();
   private readonly _routingGrants = new Map<string, {
-    requestId: string; parentRequestId: string; service: string; ceiling: bigint; signal: AbortSignal;
+    requestId: string; parentRequestId: string; service: string; remaining: bigint; signal: AbortSignal; maxPricing?: ServicePricing;
   }>();
   private readonly _routingLocks = new Map<string, Promise<unknown>>();
 
@@ -185,15 +185,14 @@ export class BuyerPaymentManager {
   beginRoutingRequest(options: {
     sellerPeerId: string; requestId: string; parentRequestId: string; service: string;
     maxAdditionalAuthorizationUsdc: bigint; signal: AbortSignal;
+    maxPricing?: ServicePricing;
   }): () => void {
     options.signal.throwIfAborted();
     if (options.maxAdditionalAuthorizationUsdc < 0n || this._routingGrants.has(options.sellerPeerId)) {
       throw buyerFault('Routing authorization is invalid or a routing operation is already active for this seller', 'buyer-session-state');
     }
-    const current = this._cumulativeAmount.get(options.sellerPeerId)
-      ?? BigInt(this.getActiveSession(options.sellerPeerId)?.authMax ?? '0');
     this._routingPeers.add(options.sellerPeerId);
-    const grant = { ...options, ceiling: current + options.maxAdditionalAuthorizationUsdc };
+    const grant = { ...options, remaining: options.maxAdditionalAuthorizationUsdc };
     this._routingGrants.set(options.sellerPeerId, grant);
     return () => {
       if (this._routingGrants.get(options.sellerPeerId) === grant) this._routingGrants.delete(options.sellerPeerId);
@@ -211,7 +210,8 @@ export class BuyerPaymentManager {
   private _assertRoutingAmount(sellerPeerId: string, amount: bigint): void {
     if (!this._routingPeers.has(sellerPeerId)) return;
     const grant = this._routingGrants.get(sellerPeerId);
-    if (!grant || grant.signal.aborted || amount > grant.ceiling) {
+    const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    if (!grant || grant.signal.aborted || amount > current + grant.remaining) {
       throw buyerFault('Routing authorization expired or exceeds the operation limit', 'buyer-session-state');
     }
   }
@@ -865,7 +865,11 @@ export class BuyerPaymentManager {
     channel: StoredChannel,
     metadata: SpendingAuthMetadata,
   ): Promise<void> {
-    if (BigInt(channel.authMax) > 0n) this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
+    this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
+    const grant = this._routingGrants.get(channel.peerId);
+    const increase = BigInt(channel.authMax) - (this._cumulativeAmount.get(channel.peerId) ?? 0n);
+    const reserved = increase > 0n ? increase : 0n;
+    if (grant) grant.remaining -= reserved;
     const sanitized = this._sanitizeMetadata(metadata);
     const services = sanitized.services;
     const snapshot: StoredChannel = {
@@ -875,13 +879,18 @@ export class BuyerPaymentManager {
       requestCount: Number(sanitized.cumulativeRequestCount),
       latestMetadata: channel.latestMetadata ?? encodeMetadata(sanitized),
     };
-    if (this._channelStore.commitAuthorization) {
-      await this._channelStore.commitAuthorization(snapshot, services);
-      return;
+    try {
+      if (this._channelStore.commitAuthorization) {
+        await this._channelStore.commitAuthorization(snapshot, services);
+        return;
+      }
+      this._channelStore.replaceMetadataServiceTotals(snapshot.sessionId, services);
+      this._channelStore.upsertChannel(snapshot);
+      await this._channelStore.flush?.();
+    } catch (error) {
+      if (grant) grant.remaining += reserved;
+      throw error;
     }
-    this._channelStore.replaceMetadataServiceTotals(snapshot.sessionId, services);
-    this._channelStore.upsertChannel(snapshot);
-    await this._channelStore.flush?.();
   }
 
   /**
@@ -1006,6 +1015,19 @@ export class BuyerPaymentManager {
     const pricing = typeof reserveAmountOrPricing === 'bigint'
       ? pricingArg
       : reserveAmountOrPricing;
+    this._assertRoutingAmount(sellerPeerId, this._cumulativeAmount.get(sellerPeerId) ?? 0n);
+    const routingMax = this._routingGrants.get(sellerPeerId)?.maxPricing;
+    if (routingMax) {
+      const offered = pricing ?? pricingMap?.services[this._routingGrants.get(sellerPeerId)!.service] ?? pricingMap?.defaults;
+      if (!offered || !Number.isFinite(offered.inputUsdPerMillion) || !Number.isFinite(offered.outputUsdPerMillion)
+        || offered.inputUsdPerMillion < 0 || offered.outputUsdPerMillion < 0
+        || offered.inputUsdPerMillion > routingMax.inputUsdPerMillion || offered.outputUsdPerMillion > routingMax.outputUsdPerMillion
+        || !Number.isFinite(offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion)
+        || (offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion) < 0
+        || (offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion) > (routingMax.cachedInputUsdPerMillion ?? routingMax.inputUsdPerMillion)) {
+        throw buyerFault('Routing seller changed prices above the approved snapshot', 'buyer-budget-too-low');
+      }
+    }
 
     // Budget validation: reject if seller demands more than buyer's overdraft limit
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
@@ -1241,7 +1263,8 @@ export class BuyerPaymentManager {
     const normal = maxSignable < ceiling ? maxSignable : ceiling;
     if (!this._routingPeers.has(sellerPeerId)) return normal;
     const grant = this._routingGrants.get(sellerPeerId);
-    const limit = grant && !grant.signal.aborted ? grant.ceiling : (this._cumulativeAmount.get(sellerPeerId) ?? 0n);
+    const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    const limit = grant && !grant.signal.aborted ? current + grant.remaining : current;
     return normal < limit ? normal : limit;
   }
 
@@ -1356,7 +1379,7 @@ export class BuyerPaymentManager {
         ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(cachedInputTokens)))
         : estimatedInputTokens;
       // Compute cost from reported tokens using service-specific pricing
-      const pricing = this.getSessionPricing(sellerPeerId, responseStats.service);
+      const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, responseStats.service);
       if (pricing) {
         const cost = computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(cachedInputTokens));
         buyerEstimatedRequestCost = cost;

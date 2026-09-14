@@ -99,6 +99,7 @@ export class BuyerRequestHandler {
     callbacks?: RequestStreamCallbacks,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
+    options?.signal?.throwIfAborted();
     if (!req.requestId || typeof req.requestId !== "string") {
       throw buyerFault("requestId must be a non-empty string", 'invalid-request');
     }
@@ -107,6 +108,7 @@ export class BuyerRequestHandler {
     debugLog(`[BuyerRequest] ${opName} ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
 
     const conn = await this._deps.getConnection(peer);
+    options?.signal?.throwIfAborted();
     debugLog(`[BuyerRequest] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._deps.getMux(peer.peerId, conn);
     const verificationMux = this._deps.getVerificationMux(peer.peerId, conn);

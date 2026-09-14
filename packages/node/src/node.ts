@@ -1476,11 +1476,15 @@ export class AntseedNode extends EventEmitter {
     const body = JSON.parse(new TextDecoder().decode(req.body)) as { model?: unknown; stream?: unknown };
     if (typeof body.model !== 'string' || body.stream === true) throw buyerFault('Invalid metered routing model or stream', 'invalid-request');
     const amount = BigInt(authorization.maxAdditionalAuthorizationUsdc);
+    const provider = req.headers['x-antseed-provider'];
+    const providerPricing = provider ? peer.providerPricing?.[provider] : undefined;
+    const maxPricing = providerPricing?.services?.[body.model] ?? providerPricing?.defaults;
+    if (!maxPricing) throw buyerFault('Metered routing requires an advertised price snapshot', 'invalid-request');
     if (amount > 0n && !this._buyerPaymentManager) throw buyerFault('Paid routing requires buyer payments', 'buyer-session-state');
     const signal = options.signal ?? new AbortController().signal;
     const finish = this._buyerPaymentManager?.beginRoutingRequest({
       sellerPeerId: peer.peerId, requestId: req.requestId, parentRequestId: authorization.parentRequestId,
-      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal,
+      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal, maxPricing,
     });
     try { return await this._buyerHandler.sendRequest(peer, req, undefined, options); }
     finally { finish?.(); }
