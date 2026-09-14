@@ -1536,7 +1536,7 @@ describe('transformResponse chat to responses', () => {
     expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
-    expect(output[0].phase).toBe('final_answer');
+    expect(output[0].phase).toBeUndefined();
 
     const content = output[0].content as Array<Record<string, unknown>>;
     expect(content[0]).toEqual({

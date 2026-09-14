@@ -738,7 +738,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
 
         if (event.type === 'response_done') {
           ensureResponseCreated(emitted, null);
-          const messagePhase = toolCalls.size > 0 ? 'commentary' : 'final_answer';
+          const messagePhase = toolCalls.size > 0 ? 'commentary' : undefined;
           if (!outputDone) {
             outputDone = true;
             const msgId = getMessageId();
@@ -764,7 +764,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                   role: 'assistant',
                   status: 'completed',
                   content: [{ type: 'output_text', text: textBuffer, annotations: [] }],
-                  phase: messagePhase,
+                  ...(messagePhase ? { phase: messagePhase } : {}),
                 },
               });
             }
@@ -807,7 +807,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                   role: 'assistant' as const,
                   status: 'completed' as const,
                   content: [{ type: 'output_text' as const, text: textBuffer, annotations: [] }],
-                  phase: messagePhase,
+                  ...(messagePhase ? { phase: messagePhase } : {}),
                 }] : []),
                 ...sortedToolCalls(toolCalls).map((toolCall) => ({
                   type: 'function_call' as const,

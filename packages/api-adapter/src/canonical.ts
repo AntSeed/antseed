@@ -582,7 +582,7 @@ export function normalizeOpenAIChatResponseBody(
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
   const output: CanonicalOutputItem[] = [];
   if (text.length > 0) {
-    output.push({ type: 'text', text, phase: toolCalls.length > 0 ? 'commentary' : 'final_answer' });
+    output.push({ type: 'text', text, phase: toolCalls.length > 0 ? 'commentary' : undefined });
   }
   for (const [index, rawToolCall] of toolCalls.entries()) {
     if (!rawToolCall || typeof rawToolCall !== 'object') continue;
