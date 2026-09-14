@@ -222,8 +222,11 @@ a free cache. Both desktop and standalone savings calculations exclude unknown
 costs and malformed usage/prices rather than manufacturing savings. The standalone
 dashboard labels costs as observed/estimated and bounds totals to retained history.
 
-Migration `002_optional_router_telemetry.ts` upgrades existing routing rows and
-indexes; migration 001 is unchanged. Reused inference requests get their own
+The unshipped routing migrations are consolidated into `001_create_tables.ts`,
+which creates the final nullable telemetry schema and indexes directly. There is
+no supported upgrade path between unpublished Levanto alpha schemas. See
+`levanto-release-baseline.md` for the published baseline and alpha database reset
+instructions. Reused inference requests get their own
 telemetry rows but no copied forecasts from the original request. Levanto's
 private successful classifier response still requires its own `estimate` shape;
 that private requirement no longer dictates the shared record contract.
@@ -278,7 +281,7 @@ not reserve collateral. This P2 work does not redesign either constraint.
 | Failed rewrite recovery, out-of-order completion, no stored prompts | SDK context regressions |
 | Actual failover reuse and buyer policy changes | Host session integration; Levanto `router.test.ts` |
 | Late success after timeout/disconnect never dispatches | Host integration; `proxy/router-execution.test.ts` |
-| Forecast-free and partial records, unknown vs zero, migration/reopen/index preservation | SDK `tests/routing-decisions-store.test.ts` |
+| Forecast-free and partial records, unknown vs zero, single-migration initialization/reopen/index preservation | SDK `tests/routing-decisions-store.test.ts` |
 | No stale reuse forecasts, unknown measured costs | Levanto `router.test.ts`, `ledger.test.ts` |
 | Free/unknown cache prices; missing costs do not create savings | Levanto router tests; SDK executable embedded-dashboard tests; desktop savings tests |
 | Rotation, oversized old logs, overload, disk-error recovery, permissions | CLI `proxy/routing-log.test.ts` |
@@ -351,7 +354,7 @@ part of this handoff.
 | Commit | Logical change |
 | --- | --- |
 | `c9b0ccaa1` | Plugin-owned settings, namespaced persistence, dynamic desktop controls |
-| `361019da7` | Optional shared forecasts, nullable observed costs, forward-only migration |
+| `361019da7` | Optional shared forecasts and nullable observed costs; its unshipped upgrade migration is subsequently consolidated into routing 001 |
 | `865ba6a97` | Structural context and plugin-selected routing cadence |
 | `e3b046f93` | Failed/cancelled reclassification invalidates obsolete reuse state |
 | `50378d6dc` | Bounded operational logs/history and explicit telemetry-sharing opt-in |

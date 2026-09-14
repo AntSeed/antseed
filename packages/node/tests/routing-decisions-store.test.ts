@@ -4,8 +4,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RoutingDecisionsStore, ROUTING_DECISIONS_DB_FILE } from '../src/routing/routing-decisions-store.js';
-import { runMigrations } from '../src/storage/migrate.js';
-import { migration as firstMigration } from '../src/storage/migrations/routing/001_create_tables.js';
 import type { RoutingDecisionRow } from '../src/interfaces/buyer-router.js';
 
 const row: RoutingDecisionRow = {
@@ -37,22 +35,27 @@ describe('vendor-neutral routing decision persistence', () => {
       actualUsdcPaid: 0, costSource: 'settled', routerMetadata: { category: 'coding', confidence: 0.8 } });
   });
 
-  it('upgrades existing v1 rows and indexes, and can reopen without rerunning migration', () => {
-    const db = new Database(join(directory, ROUTING_DECISIONS_DB_FILE));
-    runMigrations(db, [firstMigration]);
-    db.prepare(`INSERT INTO routing_decisions (
-      at_ms, actual_model, actual_peer, actual_prompt_tokens, actual_cached_tokens, actual_completion_tokens,
-      actual_usdc_paid, cqt, baseline_prices, considered_candidates
-    ) VALUES (123, 'old-model', 'old-peer', 100, 20, 10, 0.01, 7, '{}', '[]')`).run();
-    db.close();
+  it('creates the final schema in one migration and preserves rows and indexes on reopen', () => {
     store = new RoutingDecisionsStore(directory);
-    expect(store.recent(1)[0]).toMatchObject({ actualModel: 'old-model', actualUsdcPaid: 0.01, cqt: 7, costSource: 'estimate' });
+    store.insert({ ...row, actualModel: 'priced-model', actualUsdcPaid: 0.01, cqt: 7 });
     store.insert(row);
     store.close();
     store = new RoutingDecisionsStore(directory);
     expect(store.count()).toBe(2);
+    expect(store.recent(2)[0]).toMatchObject({ actualModel: 'priced-model', actualUsdcPaid: 0.01, cqt: 7, costSource: 'estimate' });
+    expect(store.recent(2)[1]).toMatchObject({ actualUsdcPaid: null, cqt: null, routerMetadata: {} });
     const check = new Database(join(directory, ROUTING_DECISIONS_DB_FILE));
-    expect(check.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 2 });
+    expect(check.prepare('SELECT version, name FROM schema_version').all()).toEqual([
+      { version: 1, name: 'create_routing_decisions_table' },
+    ]);
+    const columns = check.pragma('table_info(routing_decisions)') as Array<{ name: string; notnull: number; dflt_value: string | null }>;
+    expect(columns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'actual_usdc_paid', notnull: 0 }),
+      expect.objectContaining({ name: 'cqt', notnull: 0 }),
+      expect.objectContaining({ name: 'cost_source', notnull: 1, dflt_value: "'estimate'" }),
+      expect.objectContaining({ name: 'router_metadata', notnull: 1, dflt_value: "'{}'" }),
+    ]));
+    expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'routing_decisions_v2'").all()).toEqual([]);
     expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_routing_decisions_%'").all()).toHaveLength(2);
     check.close();
   });
