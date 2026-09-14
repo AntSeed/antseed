@@ -41,6 +41,21 @@ the same host validation, never another router call. No fallback on cancellation
 The host no longer passes its default to plugins for implicit fallback. Levanto
 honors the host cancellation signal and distinguishes unavailable from declined.
 
+## Activation is not billing consent
+
+`buyer.routingPreferences.routerEnabled` controls model-router activation.
+`selectedRouterPackage` identifies the plugin. `dayPassOnDemandEnabled` remains
+only day-pass consent. Legacy preferences inherit activation from their existing
+day-pass flag; explicit activation wins, and the existing `autoRouting: false`
+pause is preserved. Enabling a router never grants new day-pass consent.
+
+The desktop catalog, home/chat defaults and router selector use activation,
+not consent. Only plugins declaring `dailyPassServiceId` receive day-pass copy
+and confirmation. Granting day-pass consent requires an advertised price; generic
+plugins can be enabled without buying a day pass. The price lookup matches the
+active plugin's declared service instead of an arbitrary day-pass service.
+Token-priced routing still requires separate host authorization.
+
 ## Validation notes
 
 Use Node 20 for this snapshot's native dependencies. The machine's default Node

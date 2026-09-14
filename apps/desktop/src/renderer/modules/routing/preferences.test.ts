@@ -25,6 +25,20 @@ const fallbackPreferences: VprRoutingPreferences = {
   dayPassOnDemandEnabled: false,
 };
 
+test('legacy activation migrates without granting new day-pass consent', () => {
+  for (const consent of [true, false]) {
+    localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ dayPassOnDemandEnabled: consent, autoRouting: false }));
+    const loaded = loadVprRoutingPreferences(fallbackPreferences);
+    assert.equal(loaded.routerEnabled, consent);
+    assert.equal(loaded.dayPassOnDemandEnabled, consent);
+    assert.equal(loaded.autoRouting, false);
+  }
+  localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ routerEnabled: true }));
+  const loaded = loadVprRoutingPreferences(fallbackPreferences);
+  assert.equal(loaded.routerEnabled, true);
+  assert.equal(loaded.dayPassOnDemandEnabled, false);
+});
+
 test('migrates the previous zero default to the new 6.0 minimum', () => {
   localStorage.setItem(
     VPR_PREFERENCES_STORAGE_KEY,
@@ -99,7 +113,7 @@ test('valid VPR preferences and route selection save and load', () => {
   saveVprRoutingPreferences(preferences);
   saveVprRouteSelection(routeSelection);
 
-  assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences), preferences);
+  assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences), { ...preferences, routerEnabled: true });
   assert.deepEqual(loadVprRouteSelection(fallbackRouteSelection), routeSelection);
 });
 
@@ -139,6 +153,7 @@ test('buyer config projection includes every field an installed router plugin\'s
     blockedPeerIds: fallbackPreferences.blockedPeerIds,
     cqt: fallbackPreferences.cqt,
     dayPassOnDemandEnabled: fallbackPreferences.dayPassOnDemandEnabled,
+    routerEnabled: false,
     selectedRouterPackage: null,
     autoRouting: fallbackPreferences.autoRouting,
     agreedDayPassPricesUsdc: {},

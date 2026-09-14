@@ -82,6 +82,7 @@ test('loadConfig merges partial model routing preferences with defaults', async 
         blockedPeerIds: [],
         cqt: 5,
         dayPassOnDemandEnabled: false,
+        routerEnabled: false,
         autoRouting: undefined,
         selectedRouterPackage: null,
         agreedDayPassPricesUsdc: {},

@@ -536,6 +536,7 @@ export class LevantoRouter {
    * "limiting" this does; it never decides on its own that a sign is due.
    */
   private async signDayPassOnDemand(): Promise<void> {
+    if (this.cachedRoutingPreferences?.routerEnabled === false) return;
     if (!this.cachedRoutingPreferences?.dayPassOnDemandEnabled) return;
     if (this.cachedRoutingPreferences.autoRouting === false) return;
     if (!this.config.signDailyIfNeeded) return;
@@ -712,6 +713,7 @@ export class LevantoRouter {
     // levanto-auto sentinel check is host-agnostic: any concrete model name
     // declines immediately -- no sentinel knowledge lives in host code.
     if (model !== LEVANTO_AUTO_SERVICE_ID) return null;
+    if (routingPreferences?.routerEnabled === false || routingPreferences?.autoRouting === false) return [];
 
     const convKey = conversation ? conversationKey(conversation) : null;
 

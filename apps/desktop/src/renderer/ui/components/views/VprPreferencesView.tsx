@@ -104,13 +104,14 @@ export function VprPreferencesView({ onSelectView }: Props) {
   // explicit toggle, not a proxy for whatever model happens to be selected
   // at this moment.
   const dayPassOnDemandEnabled = snap.preferences.dayPassOnDemandEnabled ?? false;
+  const routerEnabled = snap.preferences.routerEnabled ?? dayPassOnDemandEnabled;
 
   const selectTheme = (mode: ThemeMode) => {
     applyThemeMode(mode);
     setThemeMode(mode);
   };
 
-  const selectedRouterPackage = dayPassOnDemandEnabled ? (snap.preferences.selectedRouterPackage ?? null) : null;
+  const selectedRouterPackage = routerEnabled ? (snap.preferences.selectedRouterPackage ?? null) : null;
   const routerDescription = useMemo(() => {
     if (!selectedRouterPackage) return GENERIC_ROUTER_DESCRIPTION;
     const plugin = availableRouters.find((router) => router.package === selectedRouterPackage);
@@ -146,15 +147,15 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <div className={styles.routerGroup}>
             <div className={styles.routerHead}>
               <span className={styles.routerTitle}>Select model router</span>
-              {dayPassOnDemandEnabled ? <VprBadge tone="green">Router enabled</VprBadge> : null}
+              {routerEnabled ? <VprBadge tone="green">Router enabled</VprBadge> : null}
             </div>
             <select
               className={styles.routerSelect}
-              value={dayPassOnDemandEnabled ? (snap.preferences.selectedRouterPackage ?? 'none') : 'none'}
+              value={routerEnabled ? (snap.preferences.selectedRouterPackage ?? 'none') : 'none'}
               onChange={(event) => {
                 const nextPackage = event.target.value;
                 if (nextPackage === 'none') {
-                  actions.updateVprRoutingPreferences({ dayPassOnDemandEnabled: false, selectedRouterPackage: null });
+                  actions.updateVprRoutingPreferences({ routerEnabled: false, dayPassOnDemandEnabled: false, selectedRouterPackage: null });
                   return;
                 }
                 const plugin = availableRouters.find((router) => router.package === nextPackage);
@@ -407,7 +408,8 @@ export function VprPreferencesView({ onSelectView }: Props) {
         onConfirm={(offer) => {
           if (!pendingRouterPlugin) return;
           actions.updateVprRoutingPreferences({
-            dayPassOnDemandEnabled: true,
+            routerEnabled: true,
+            dayPassOnDemandEnabled: !!pendingRouterPlugin.dailyPassServiceId && offer !== null,
             selectedRouterPackage: pendingRouterPlugin.package,
             ...(snap.preferences.minTrustScore < AUTO_DAY_PASS_MIN_TRUST_SCORE
               ? { minTrustScore: AUTO_DAY_PASS_MIN_TRUST_SCORE }

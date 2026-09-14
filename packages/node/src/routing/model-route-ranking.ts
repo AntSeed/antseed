@@ -22,6 +22,7 @@ export type ModelRoutingPreferences = {
    * unaffected.
    */
   dayPassOnDemandEnabled?: boolean;
+  routerEnabled?: boolean;
   /**
    * npm package name of the router plugin `dayPassOnDemandEnabled` applies
    * to (e.g. '@antseed/router-acme'), chosen from whichever router-type

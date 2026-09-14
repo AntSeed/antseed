@@ -425,6 +425,7 @@ function mergeBuyerRoutingPreferences(
     allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
     cqt: cqt === undefined ? fallback.cqt : toFiniteOrNaN(cqt),
+    routerEnabled: value['routerEnabled'] === undefined ? dayPassOnDemandEnabled === true : value['routerEnabled'] as boolean,
     dayPassOnDemandEnabled: dayPassOnDemandEnabled === undefined
       ? fallback.dayPassOnDemandEnabled
       : dayPassOnDemandEnabled as boolean,

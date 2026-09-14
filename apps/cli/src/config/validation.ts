@@ -311,6 +311,11 @@ export function validateConfig(config: AntseedConfig): string[] {
       errors.push(`buyer.routingPreferences.${key} must contain only 40-character hex peer IDs`);
     }
   }
+  for (const key of ['routerEnabled', 'dayPassOnDemandEnabled'] as const) {
+    if (routingPreferences[key] !== undefined && typeof routingPreferences[key] !== 'boolean') {
+      errors.push(`buyer.routingPreferences.${key} must be a boolean`);
+    }
+  }
 
   if (!Number.isInteger(config.buyer.proxyPort) || config.buyer.proxyPort < 1 || config.buyer.proxyPort > 65535) {
     errors.push('buyer.proxyPort must be an integer in range 1-65535');

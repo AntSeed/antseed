@@ -90,7 +90,7 @@ export function VprHomeView({ onSelectView }: Props) {
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
     showRoutedPeer: state.vprFloatShowRoutedPeer,
-    dayPassOnDemandEnabled: state.vprRoutingPreferences.dayPassOnDemandEnabled ?? false,
+    routerEnabled: state.vprRoutingPreferences.routerEnabled ?? state.vprRoutingPreferences.dayPassOnDemandEnabled ?? false,
   }), shallowEqual);
   const proxyResource = useCachedResource(systemProxyResource);
   const conversationsResource = useCachedResource(buyerConversationsResource);
@@ -131,17 +131,17 @@ export function VprHomeView({ onSelectView }: Props) {
     // controller.ts's own new-chat defaulting, so this card never shows
     // "nothing selected" while a real default is available.
     if (!rawSelectedModel) {
-      return snap.dayPassOnDemandEnabled
+      return snap.routerEnabled
         ? selectDefaultVprModel(snap.catalog, null, undefined, true)
         : selectDefaultVprModel(snap.catalog, null);
     }
     // A stale Auto selection left over from before the router was disabled --
     // fall back to a real model instead of showing a now-unusable sentinel.
-    if (isAutoRouterEntry(rawSelectedModel) && !snap.dayPassOnDemandEnabled) {
+    if (isAutoRouterEntry(rawSelectedModel) && !snap.routerEnabled) {
       return selectDefaultVprModel(snap.catalog, null);
     }
     return rawSelectedModel;
-  }, [rawSelectedModel, snap.catalog, snap.dayPassOnDemandEnabled]);
+  }, [rawSelectedModel, snap.catalog, snap.routerEnabled]);
   const selectedEntry = useMemo(
     () => (selectedModel
       ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId) ?? undefined

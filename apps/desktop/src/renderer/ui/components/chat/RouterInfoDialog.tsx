@@ -32,7 +32,8 @@ type Props = {
  * (yet) a member of the `Router` TS interface itself.
  */
 export function RouterInfoDialog({ isOpen, plugin, onClose, onConfirm }: Props) {
-  const { data: offer } = useCachedResource(dayPassPriceResource, isOpen);
+  const usesDayPass = !!plugin?.dailyPassServiceId;
+  const { data: offer } = useCachedResource(dayPassPriceResource, isOpen && usesDayPass);
   const dailyUsd = offer?.flatUsdPrice;
   const title = plugin?.autoRouteInfo?.title ?? plugin?.displayName ?? 'Model router';
   const body = plugin?.autoRouteInfo?.body ?? plugin?.description ?? '';
@@ -47,7 +48,7 @@ export function RouterInfoDialog({ isOpen, plugin, onClose, onConfirm }: Props) 
     >
       <p className={styles.paragraph}>{body}</p>
 
-      <div className={styles.priceLine}>
+      {usesDayPass && <div className={styles.priceLine}>
         {typeof dailyUsd === 'number'
           ? (
             <>
@@ -58,14 +59,18 @@ export function RouterInfoDialog({ isOpen, plugin, onClose, onConfirm }: Props) 
             </>
           )
           : <span className={styles.priceAmount}>Billed per day used</span>}
-      </div>
+      </div>}
       <p className={styles.paragraph}>
-        Only on the days you use it. Turn off any time from Preferences.
+        {usesDayPass
+          ? 'Only on the days you use it. Turn off any time from Preferences.'
+          : 'Enabling this router does not authorize a day pass or token charges for routing. Configure any paid routing service separately. Model inference is billed separately.'}
       </p>
 
       <div className={styles.actions}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => onConfirm(offer ?? null)}>Enable</Button>
+        <Button onClick={() => onConfirm(usesDayPass ? offer ?? null : null)}>
+          {usesDayPass && !offer ? 'Enable without day-pass consent' : 'Enable'}
+        </Button>
       </div>
     </Modal>
   );

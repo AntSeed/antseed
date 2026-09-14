@@ -203,6 +203,7 @@ export type RouterPluginMetadata = {
   displayName: string;
   description: string;
   autoRouteServiceId?: string;
+  dailyPassServiceId?: string;
   autoRouteInfo?: { title: string; body: string };
   preferencesSummary?: string;
   savingsBaselineModel?: string;
@@ -243,6 +244,7 @@ export async function listInstalledRouterPluginMetadata(): Promise<RouterPluginM
         displayName: plugin.displayName,
         description: plugin.description,
         autoRouteServiceId: plugin.autoRouteServiceId,
+        dailyPassServiceId: plugin.dailyPassServiceId,
         autoRouteInfo: plugin.autoRouteInfo,
         preferencesSummary: plugin.preferencesSummary,
         savingsBaselineModel: plugin.savingsBaselineModel,

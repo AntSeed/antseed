@@ -46,6 +46,20 @@ const CUSTOM_ROUTER: RouterPluginInfo = {
   autoRouteServiceId: 'custom-auto',
 };
 
+test('a model router can be enabled without day-pass consent', () => {
+  const catalog = withAutoRouterCatalogEntry([], {
+    routerEnabled: true, dayPassOnDemandEnabled: false, selectedRouterPackage: CUSTOM_ROUTER.package,
+  }, [CUSTOM_ROUTER]);
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.serviceId, CUSTOM_ROUTER.autoRouteServiceId);
+});
+
+test('explicit router disable overrides legacy day-pass consent', () => {
+  assert.deepEqual(withAutoRouterCatalogEntry([], {
+    routerEnabled: false, dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package,
+  }, [CUSTOM_ROUTER]), []);
+});
+
 test('withAutoRouterCatalogEntry shows no Auto entry when no router plugin is actually installed, even with the toggle on', () => {
   // A deployment with zero router plugins installed must never show a
   // pickable "Auto" entry that can't actually route through anything --

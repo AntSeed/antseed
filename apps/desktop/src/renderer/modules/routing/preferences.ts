@@ -133,6 +133,7 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
       : fallback.blockedPeerIds,
     cqt: readCqt(parsed.cqt, fallback.cqt ?? 5),
     dayPassOnDemandEnabled,
+    routerEnabled: readBoolean(parsed.routerEnabled, dayPassOnDemandEnabled),
     // Nothing is selected until the user explicitly picks a router, whether
     // the field is absent or explicitly `null` (VprPreferencesView writes
     // `null` for the user's "None" choice) -- both resolve the same way.
@@ -170,6 +171,7 @@ export function buyerModelRoutingPreferences(
     blockedPeerIds: validPeerIds(value.blockedPeerIds),
     cqt: value.cqt,
     dayPassOnDemandEnabled: value.dayPassOnDemandEnabled,
+    routerEnabled: value.routerEnabled ?? value.dayPassOnDemandEnabled ?? false,
     selectedRouterPackage: value.selectedRouterPackage ?? null,
     autoRouting: value.autoRouting,
     agreedDayPassPricesUsdc: value.agreedDayPassPricesUsdc ?? {},

@@ -167,13 +167,13 @@ export function currentAutoRouteEntry(): VprModelCatalogEntry | null {
  */
 export function withAutoRouterCatalogEntry(
   catalog: VprModelCatalogEntry[],
-  preferences: Pick<VprRoutingPreferences, 'dayPassOnDemandEnabled' | 'selectedRouterPackage'>,
+  preferences: Pick<VprRoutingPreferences, 'routerEnabled' | 'dayPassOnDemandEnabled' | 'selectedRouterPackage'>,
   availableRouters: RouterPluginInfo[],
 ): VprModelCatalogEntry[] {
   active = resolveActiveAutoRouterPlugin(preferences, availableRouters);
   AUTO_ROUTER_LABEL = active?.label ?? DEFAULT_AUTO_ROUTER_LABEL;
 
-  if (!preferences.dayPassOnDemandEnabled || !active) {
+  if (!(preferences.routerEnabled ?? preferences.dayPassOnDemandEnabled ?? false) || !active) {
     return catalog.some(isAutoRouterEntry) ? catalog.filter((entry) => !isAutoRouterEntry(entry)) : catalog;
   }
   if (catalog.some(isAutoRouterEntry)) return catalog;

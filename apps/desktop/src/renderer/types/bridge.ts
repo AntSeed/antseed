@@ -190,6 +190,7 @@ export type RouterPluginInfo = {
   displayName: string;
   description: string;
   autoRouteServiceId?: string;
+  dailyPassServiceId?: string;
   autoRouteInfo?: { title: string; body: string };
   preferencesSummary?: string;
   savingsBaselineModel?: string;

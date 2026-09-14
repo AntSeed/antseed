@@ -752,7 +752,7 @@ describe('LevantoRouter.selectRoute', () => {
         await expect(router.selectRoute(
           req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null,
           { ...enabledPreferences(), autoRouting: false },
-        )).rejects.toMatchObject({ statusCode: 402 });
+        )).resolves.toEqual([]);
 
         expect(signDailyIfNeeded).not.toHaveBeenCalled();
       });

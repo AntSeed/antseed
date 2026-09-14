@@ -740,7 +740,7 @@ registerActions({
     // so flipping it has to take effect immediately, not wait for the next
     // unrelated recompute. `!== undefined` (not truthy) because turning the
     // toggle off is `patch.dayPassOnDemandEnabled === false`.
-    if (patch.allowedPeerIds || patch.blockedPeerIds || patch.dayPassOnDemandEnabled !== undefined) {
+    if (patch.allowedPeerIds || patch.blockedPeerIds || patch.routerEnabled !== undefined || patch.dayPassOnDemandEnabled !== undefined) {
       chatApi.applyPeerAccessRules();
     }
     notifyUiStateChanged();

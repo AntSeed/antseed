@@ -238,6 +238,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       let router
       let toolHints: Array<{ name: string; envVar: string }> = []
       let dailyPassServiceId: string | undefined
+      let autoRouteServiceId: string | undefined
       // Set by day-pass-signing.ts's onPriceCappedChange below, read by
       // BuyerProxy's /_antseed/day-pass-price-increase admin route -- these
       // run on entirely independent cycles (a signing pass vs. an HTTP
@@ -272,6 +273,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
           dailyPassServiceId = plugin.dailyPassServiceId
+          autoRouteServiceId = plugin.autoRouteServiceId
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -293,6 +295,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
           dailyPassServiceId = plugin.dailyPassServiceId
+          autoRouteServiceId = plugin.autoRouteServiceId
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -597,6 +600,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routerFailureFallback: effectiveBuyerConfig.routerFailureFallback,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         routerName: dashboardRouterName,
+        autoRouteServiceId,
+        dailyPassServiceId,
         getDayPassPriceIncreaseNotice: () => dayPassPriceIncreaseNotice,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })

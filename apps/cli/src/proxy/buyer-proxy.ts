@@ -142,6 +142,8 @@ export interface BuyerProxyConfig {
   minPeerReputation?: number
   routerTimeoutMs?: number
   routerFailureFallback?: 'none' | 'default'
+  autoRouteServiceId?: string
+  dailyPassServiceId?: string
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -833,6 +835,8 @@ export class BuyerProxy {
   private _minPeerReputation: number
   private readonly _routerTimeoutMs: number
   private readonly _routerFailureFallback: 'none' | 'default'
+  private readonly _autoRouteServiceId: string | undefined
+  private readonly _dailyPassServiceId: string | undefined
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -883,6 +887,8 @@ export class BuyerProxy {
     this._minPeerReputation = config.minPeerReputation ?? 0
     this._routerTimeoutMs = config.routerTimeoutMs ?? 10_000
     this._routerFailureFallback = config.routerFailureFallback ?? 'none'
+    this._autoRouteServiceId = config.autoRouteServiceId
+    this._dailyPassServiceId = config.dailyPassServiceId
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -2022,7 +2028,9 @@ export class BuyerProxy {
       // network, or one advertising nothing, sees the generic copy rather
       // than a broken price.
       const peers = await this._getPeers()
-      const offer = buildNetworkServiceOffers(peers).find((o) => o.type === 'day-pass' && o.flatUsdPrice !== undefined) ?? null
+      const offer = this._dailyPassServiceId
+        ? buildNetworkServiceOffers(peers).find((offer) => offer.serviceId === this._dailyPassServiceId && offer.type === 'day-pass' && offer.flatUsdPrice !== undefined) ?? null
+        : null
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({
         ok: true,
@@ -2609,6 +2617,12 @@ export class BuyerProxy {
     // side effects (payment signing, ledger recording), so this must never
     // run twice for the same request.
     let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
+    if (requestedService === this._autoRouteServiceId
+      && (this._routingPreferences?.routerEnabled === false || this._routingPreferences?.autoRouting === false)) {
+      res.writeHead(503, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { type: 'router_disabled', code: 'router_disabled', message: 'The selected model router is disabled.' } }))
+      return
+    }
     try {
       if (requestedService && this._node.router?.selectRoute) {
         routeSelected = await executeRouter((context) => this._node.router!.selectRoute!(
