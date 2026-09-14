@@ -2,6 +2,7 @@ import type { ServiceApiProtocol } from './service-api.js';
 
 export const UNIT_BILLING_UNITS_V1 = [
   'output_images',
+  'successful_requests',
 ] as const;
 
 export const UNIT_BILLING_MATCH_KEYS_V1 = [
@@ -49,6 +50,19 @@ export interface UnitBillingContext {
 }
 
 export const GENERATED_IMAGE_OUTPUT_UNIT_V1 = 'output_images' satisfies UnitBillingUnitV1;
+export const PER_CALL_BILLING_UNIT_V1 = 'successful_requests' satisfies UnitBillingUnitV1;
+
+export function createPerCallBillingModel(amountMicroUsdc: string): UnitBillingModelV1 {
+  if (typeof amountMicroUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(amountMicroUsdc)
+    || BigInt(amountMicroUsdc) > 0xffff_ffffn) throw new Error('Per-call price must be a canonical uint32 micro-USDC amount');
+  return { version: 1, components: [{ unit: PER_CALL_BILLING_UNIT_V1, priceUsd: Number(amountMicroUsdc) / 1_000_000 }] };
+}
+
+export function perCallPriceMicroUsdc(model: UnitBillingModelV1 | undefined): bigint | null {
+  if (!model || validateUnitBillingModelV1(model).length > 0 || model.components.length !== 1
+    || model.components[0]!.unit !== PER_CALL_BILLING_UNIT_V1) return null;
+  return usdToMicroUsdc(model.components[0]!.priceUsd);
+}
 
 export const FREE_UNIT_BILLING_MODEL_V1: UnitBillingModelV1 = {
   version: 1,
@@ -100,6 +114,15 @@ export function validateUnitBillingModelV1(model: UnitBillingModelV1): string[] 
     }
     if (!Number.isFinite(component.priceUsd) || component.priceUsd < 0) {
       errors.push(`components[${index}].priceUsd must be a non-negative finite number`);
+    }
+    if (component.unit === PER_CALL_BILLING_UNIT_V1) {
+      const micros = Math.round(component.priceUsd * 1_000_000);
+      if (!Number.isSafeInteger(micros) || micros < 0 || micros > 0xffff_ffff || micros / 1_000_000 !== component.priceUsd) {
+        errors.push(`components[${index}].priceUsd must be an exact uint32 micro-USDC price`);
+      }
+      if (model.components.length !== 1 || (component.match && Object.keys(component.match).length > 0)) {
+        errors.push('Per-call billing requires one unconditional successful_requests component');
+      }
     }
     if (component.match !== undefined) {
       if (!component.match || typeof component.match !== 'object' || Array.isArray(component.match)) {
@@ -214,7 +237,8 @@ export function validateUnitBillingUsage(
     throw new Error('Positive unit billing cost recomputed to zero');
   }
 
-  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * costToleranceMultiplier));
+  const tolerance = perCallPriceMicroUsdc(model) !== null ? 1 : costToleranceMultiplier;
+  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * tolerance));
   if (sellerCost > maxAcceptable) {
     throw new Error(`Seller unit billing cost ${sellerCost} exceeds buyer estimate ${buyerEstimate}`);
   }
@@ -238,6 +262,7 @@ function parseUnitCount(value: string, unit: string): number {
 
 function normalizedUnitCount(usage: UnitBillingUsage, unit: UnitBillingUnitV1): number {
   const value = usage.units[unit] ?? 0;
+  if (unit === PER_CALL_BILLING_UNIT_V1 && value !== 0 && value !== 1) throw new Error('Per-call usage must be zero or one');
   if (!Number.isFinite(value) || value < 0) return 0;
   return value;
 }
@@ -253,6 +278,10 @@ function componentMatchesContext(component: UnitBillingComponentV1, context: Uni
 }
 
 function validateUsageWithinRequestLimits(usage: UnitBillingUsage, context: UnitBillingContext): void {
+  const calls = usage.units.successful_requests;
+  if (calls !== undefined && (!Number.isSafeInteger(calls) || calls < 0 || calls > 1)) {
+    throw new Error('Per-call usage must be zero or one');
+  }
   const outputImageLimit = context.unitLimits?.output_images;
   const outputImages = usage.units.output_images;
   if (outputImageLimit !== undefined && outputImages !== undefined && outputImages > outputImageLimit) {

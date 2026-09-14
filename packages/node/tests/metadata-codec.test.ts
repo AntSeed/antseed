@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createPerCallBillingModel, perCallPriceMicroUsdc } from '../src/types/billing.js';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
@@ -32,6 +33,19 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('encodeMetadata / decodeMetadata', () => {
+  it.each([7, 8, 9, 10])('rejects a per-call advertisement downgraded to metadata v%s', (version) => {
+    const metadata = makeMetadata({ version });
+    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel('5000') } };
+    expect(() => encodeMetadata(metadata)).toThrow('Service unit billing requires metadata v11 or newer');
+    expect(() => encodeMetadataForSigning(metadata)).toThrow('Service unit billing requires metadata v11 or newer');
+  });
+  it.each(['0', '1', '5000', '16777217', '4294967295'])('round-trips per-call pricing without float32 rounding: %s', (amount) => {
+    const original = makeMetadata();
+    original.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel(amount) } };
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(perCallPriceMicroUsdc(decoded.providers[0]!.serviceUnitBillingModels?.['claude-3-opus']?.['anthropic-messages'])).toBe(BigInt(amount));
+    expect(encodeMetadataForSigning(decoded)).toEqual(encodeMetadataForSigning(original));
+  });
   it('round-trips v12 catalogs with more than 255 service entries', () => {
     const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
     const servicePricing = Object.fromEntries(

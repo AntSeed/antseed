@@ -2,7 +2,7 @@ import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js"
 import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
-import { validateUnitBillingModelV1 } from "../billing/unit.js";
+import { perCallPriceMicroUsdc, validateUnitBillingModelV1 } from "../billing/unit.js";
 
 // Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
 // snapshot bounded while allowing large aggregator catalogs.
@@ -544,10 +544,11 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
-          } else if (protocol !== "openai-images") {
+          } else if (protocol !== "openai-images"
+            && !(protocol === "openai-chat-completions" && perCallPriceMicroUsdc(model) !== null)) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing models currently support openai-images only",
+              message: "Service unit billing supports openai-images or per-call openai-chat-completions",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({

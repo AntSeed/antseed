@@ -896,6 +896,7 @@ export class SellerRequestHandler {
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
     const usage: UnitBillingUsage = {
       units: {
+        ...(model.components.some((component) => component.unit === 'successful_requests') ? { successful_requests: 1 } : {}),
         output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
       },
     };

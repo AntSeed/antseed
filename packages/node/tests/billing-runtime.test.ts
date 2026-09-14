@@ -402,6 +402,6 @@ describe("unit billing runtime", () => {
       size: "auto",
       quality: "auto",
     });
-    expect(captured.context.unitLimits).toEqual({ output_images: 1 });
+    expect(captured.context.unitLimits).toEqual({ output_images: 1, successful_requests: 1 });
   });
 });
