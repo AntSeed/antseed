@@ -13,6 +13,8 @@ import { buildDigest, periodKey } from './digest.js';
 import { RoutingContextTracker } from '@antseed/node';
 
 export interface LevantoRouterConfig {
+  retainPromptPreview?: boolean;
+  shareUsageDigest?: boolean;
   /**
    * Base URL of the routing peer's HTTP surface, e.g. http://127.0.0.1:8787.
    * Optional: an explicit value here always wins (a real static override,
@@ -610,7 +612,8 @@ export class LevantoRouter {
    * ledger rows don't exist yet. Sent one day "late" relative to the
    * toggle -- yesterday's numbers, flushed at the start of today.
    */
-  private async sendDailyDigestIfNeeded(): Promise<void> {
+  private async sendDailyDigestIfNeeded(signal?: AbortSignal, enabled = this.config.shareUsageDigest === true): Promise<void> {
+    if (!enabled || signal?.aborted) return;
     // Deliberately keyed on the raw, EXPLICIT config field, not
     // effectiveSellerPeerId's default -- unlike signing/route-auth/URL
     // discovery, sending an unsolicited digest to Levanto's real seller is
@@ -626,6 +629,7 @@ export class LevantoRouter {
     const doFetch = this.config.fetchImpl ?? fetch;
     const timeoutMs = this.config.routeTimeoutMs ?? DEFAULT_ROUTE_TIMEOUT_MS;
     const routeAuthHeaders = await this.buildRouteAuthHeaders();
+    if (signal?.aborted) return;
     const timeoutController = new AbortController();
     const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
     try {
@@ -633,6 +637,7 @@ export class LevantoRouter {
       // "try again next call" as an unreachable fetch, no separate handling
       // needed.
       const routingPeerUrl = await this.resolveEffectiveRoutingPeerUrl();
+      signal?.throwIfAborted();
       // Explicit suffix path -- states intent via the URL rather than
       // relying on the routing peer to body-sniff for an absent
       // inputMessage field.
@@ -644,7 +649,7 @@ export class LevantoRouter {
           ...routeAuthHeaders,
         },
         body: JSON.stringify(digest),
-        signal: timeoutController.signal,
+        signal: signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal,
       });
       if (res.ok) this.lastDigestSentDayKey = todayKey;
     } catch {
@@ -718,6 +723,8 @@ export class LevantoRouter {
     if (routingPreferences?.routerEnabled === false || routingPreferences?.autoRouting === false) return [];
 
     const convKey = conversation ? conversationKey(conversation) : null;
+    const retainPromptPreview = context?.settings?.retainPromptPreview !== undefined
+      ? context.settings.retainPromptPreview === 'true' : this.config.retainPromptPreview === true;
 
     // New-user-message gate: a tool-loop continuation reuses the last
     // decision, no network call. Conversations we can't key (no
@@ -754,7 +761,7 @@ export class LevantoRouter {
           // response to draw candidates from -- honest empty, not a stale
           // copy of the original decision's list.
           consideredCandidates: [],
-          inputMessagePreview: trimForInputMessage(lastUserText) || null,
+          inputMessagePreview: retainPromptPreview ? trimForInputMessage(lastUserText) || null : null,
         });
         return [pinnedToRouteCandidate(pinned, substituteModel(req, pinned.serviceId))];
       }
@@ -762,7 +769,8 @@ export class LevantoRouter {
 
     // Same daily cadence, its own request -- fire-and-forget, never blocks
     // or fails the routing call itself.
-    await this.sendDailyDigestIfNeeded();
+    await this.sendDailyDigestIfNeeded(context?.signal, context?.settings?.shareUsageDigest !== undefined
+      ? context.settings.shareUsageDigest === 'true' : this.config.shareUsageDigest === true);
 
     const promptTokens = estimateTokens(lastUserText);
     const expectedCachedTokens = convKey
@@ -1015,7 +1023,7 @@ export class LevantoRouter {
       // "what else was considered" view isn't silently missing candidates
       // the buyer's own preferences excluded.
       consideredCandidates,
-      inputMessagePreview: trimForInputMessage(lastUserText) || null,
+      inputMessagePreview: retainPromptPreview ? trimForInputMessage(lastUserText) || null : null,
     });
 
     // Any renewal signing this response needed was already kicked off,

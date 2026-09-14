@@ -214,6 +214,7 @@ test('host supplies session cadence, rewrite signals, and eligible actual route 
   const seen: any[] = []
   const forwarded: any[] = []
   let classifications = 0
+  const audit: any[] = []
   const proxy = makeBuyerProxyWithPeers([peer], [peer], {
     ...permissiveRouter(),
     selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
@@ -223,6 +224,7 @@ test('host supplies session cadence, rewrite signals, and eligible actual route 
     },
   }, undefined, priceAndTrustPreferences)
   ;(proxy as any)._routingCadence = 'session'
+  ;(proxy as any)._recordRoutingOperation = async (record: any) => { audit.push(record) }
   ;(proxy as any)._node.sendRequest = async (_peer: any, request: any) => {
     forwarded.push({ request, classified: classifications })
     return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' },
@@ -248,6 +250,9 @@ test('host supplies session cadence, rewrite signals, and eligible actual route 
   assert.equal(seen[4].previousRoute, null)
   assert.equal(seen[4].shouldRoute, true)
   assert.equal(forwarded.length, 4)
+  assert.ok(audit.some((record) => record.kind === 'dispatch' && record.trigger === 'context-rewrite' && record.peerId === peer.peerId))
+  assert.ok(audit.some((record) => record.kind === 'selection' && record.reuseSuggested === true))
+  assert.doesNotMatch(JSON.stringify(audit), /repeat|summary/)
 })
 
 for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {

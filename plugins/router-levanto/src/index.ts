@@ -14,7 +14,8 @@ const plugin: AntseedRouterPlugin = {
     title: 'Levanto Router',
     body: 'Levanto Router picks the best model and seller for every message you send, weighing cost '
       + 'against quality according to your Cost / quality tradeoff preference. No need to switch '
-      + 'models by hand as prices and availability change.',
+      + 'models by hand as prices and availability change. Routing sends the latest user message '
+      + 'to the Levanto routing peer. Local prompt previews and usage-digest sharing are off unless you enable them.',
   },
   preferencesSummary: 'The router picks the best model and seller for every message, balancing '
     + 'cost against quality.',
@@ -23,7 +24,11 @@ const plugin: AntseedRouterPlugin = {
   routingCadence: 'turn',
   routingSettingsSchema: [{ key: 'costQuality', label: 'Levanto cost / quality tradeoff', type: 'number',
     default: '5', options: ['1', '3', '5', '7', '9'], min: 1, max: 9,
-    description: 'Levanto-specific preference: 1 favours cost, 9 favours quality.' }],
+    description: 'Levanto-specific preference: 1 favours cost, 9 favours quality.' },
+    { key: 'retainPromptPreview', label: 'Retain local prompt previews', type: 'boolean', default: 'false',
+      description: 'Store the routed user-message excerpt in local history. Off by default.' },
+    { key: 'shareUsageDigest', label: 'Share a daily usage digest', type: 'boolean', default: 'false',
+      description: 'Send aggregate usage, model and cost statistics to the configured routing peer. Off by default.' }],
   configSchema: [
     {
       key: 'LEVANTO_ROUTING_PEER_URL',

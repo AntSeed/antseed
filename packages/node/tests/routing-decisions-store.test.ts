@@ -62,4 +62,12 @@ describe('vendor-neutral routing decision persistence', () => {
     store.insert({ ...row, predictedCostUsd: NaN, predictedInputTokens: -1 });
     expect(store.recent(1)[0]).toMatchObject({ predictedCostUsd: null, predictedInputTokens: null });
   });
+
+  it('bounds persisted history and rejects unbounded query limits', () => {
+    store = new RoutingDecisionsStore(directory, 2);
+    store.insertMany([1, 2, 3, 4].map((atMs) => ({ ...row, atMs })));
+    expect(store.count()).toBe(2);
+    expect(store.recent(100).map((entry) => entry.atMs)).toEqual([3, 4]);
+    expect(() => store!.recent(-1)).toThrow();
+  });
 });

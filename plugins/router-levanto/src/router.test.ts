@@ -829,6 +829,12 @@ describe('LevantoRouter.selectRoute', () => {
   });
 
   describe('daily digest', () => {
+    it('does not disclose usage merely because a seller was configured', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
+      const router = new LevantoRouter({ routingPeerUrl: 'http://x', sellerPeerId: '0xSELLER', fetchImpl });
+      await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null);
+      expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual(['http://x/_antseed/route']);
+    });
     function digestAwareFetch(routeHandler: () => unknown) {
       return vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
         const parsedBody = JSON.parse(init.body);
@@ -842,6 +848,7 @@ describe('LevantoRouter.selectRoute', () => {
     it('sends a digest as its own request, once per calendar day, alongside signing', async () => {
       const fetchImpl = digestAwareFetch(rankedResponse);
       const router = new LevantoRouter({
+        shareUsageDigest: true,
         routingPeerUrl: 'http://x', sellerPeerId: '0xSELLER', fetchImpl: fetchImpl as unknown as typeof fetch,
       });
 
@@ -855,6 +862,7 @@ describe('LevantoRouter.selectRoute', () => {
     it('sends the digest to the explicit /_antseed/route/digest suffix path, not the routing path', async () => {
       const fetchImpl = digestAwareFetch(rankedResponse);
       const router = new LevantoRouter({
+        shareUsageDigest: true,
         routingPeerUrl: 'http://x', sellerPeerId: '0xSELLER', fetchImpl: fetchImpl as unknown as typeof fetch,
       });
       await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], conversation('a'), null);
@@ -878,6 +886,7 @@ describe('LevantoRouter.selectRoute', () => {
         throw new Error('digest endpoint unreachable');
       });
       const router = new LevantoRouter({
+        shareUsageDigest: true,
         routingPeerUrl: 'http://x', sellerPeerId: '0xSELLER', fetchImpl: fetchImpl as unknown as typeof fetch,
       });
       const result = await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null);
@@ -895,6 +904,7 @@ describe('LevantoRouter.selectRoute', () => {
         return { ok: true, json: async () => ({ accepted: true }) };
       });
       const router = new LevantoRouter({
+        shareUsageDigest: true,
         routingPeerUrl: 'http://x', sellerPeerId: '0xSELLER', fetchImpl: fetchImpl as unknown as typeof fetch,
       });
       await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID, 'first'), [peer('0xAAA')], conversation('a'), null);
@@ -904,6 +914,15 @@ describe('LevantoRouter.selectRoute', () => {
   });
 
   describe('routing_decisions ledger', () => {
+    it('retains prompt previews only with an explicit plugin setting', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
+      const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl });
+      await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID, 'consented preview'), [peer('0xAAA')], null, null, null, {
+        signal: new AbortController().signal, deadlineMs: Date.now() + 1000, settings: { retainPromptPreview: 'true' },
+      });
+      router.onResult(peer('0xAAA'), { success: true, latencyMs: 1, tokens: 1, requestId: 'r1' });
+      expect(router.getLedgerRows()[0]?.inputMessagePreview).toBe('consented preview');
+    });
     it('writes a row once onResult reports the resolved decision, joining predicted and actual', async () => {
       const fetchImpl = vi.fn().mockResolvedValue({
         ok: true,
@@ -998,7 +1017,7 @@ describe('LevantoRouter.selectRoute', () => {
         { model: 'gpt-5.6-luna', peer: '0xAAA', inUsdPerM: 5, outUsdPerM: 20, cachedInUsdPerM: 1.25 },
         { model: 'kimi-k3', peer: '0xBBB', inUsdPerM: 0.6, outUsdPerM: 2.5, cachedInUsdPerM: null }, // 0 -> null
       ]);
-      expect(row?.inputMessagePreview).toBe('what is the capital of France?');
+      expect(row?.inputMessagePreview).toBeNull();
     });
 
     it('does not write a row for a failed dispatch', async () => {
@@ -1105,7 +1124,7 @@ describe('LevantoRouter.selectRoute', () => {
       expect(pinnedRow?.consideredCandidates).toEqual([]);
       // The prompt itself is still known (same last user message, no network
       // call needed to read it), so the preview is still recorded.
-      expect(pinnedRow?.inputMessagePreview).toBe('hello');
+      expect(pinnedRow?.inputMessagePreview).toBeNull();
     });
   });
 

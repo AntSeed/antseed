@@ -106,3 +106,28 @@ test('cancellation stops an invocation before seller dispatch', async () => {
   await assert.rejects(pending)
   assert.equal(state.sent.length, 0)
 })
+
+for (const statusCode of [429, 503]) {
+  test(`upstream ${statusCode} is recorded and not retried or charged as a second operation`, async () => {
+    const state = setup()
+    let calls = 0
+    ;(state.executor as any).host.node.sendRequest = async (_peer: any, request: any) => {
+      calls++
+      return { requestId: request.requestId, statusCode, headers: {}, body: Buffer.from('busy') }
+    }
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /rejected/)
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /rejected/)
+    assert.equal(calls, 1)
+    assert.equal(state.records[0]?.statusCode, statusCode)
+    assert.equal(state.records[0]?.outcome, 'failed')
+  })
+}
+
+test('oversized classifier responses are rejected rather than parsed or forwarded', async () => {
+  const state = setup()
+  ;(state.executor as any).host.node.sendRequest = async (_peer: any, request: any) => ({
+    requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.alloc(256 * 1024 + 1),
+  })
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /response limit/)
+  assert.equal(state.records[0]?.outcome, 'failed')
+})

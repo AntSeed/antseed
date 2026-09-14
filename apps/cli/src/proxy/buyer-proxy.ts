@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
-import { readFile, writeFile, rename, mkdir, readdir, stat, unlink, appendFile } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
@@ -113,6 +113,7 @@ import { validateRouterCandidate } from './router-policy.js'
 import { executeRouter, RouterExecutionError } from './router-execution.js'
 import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
 import { RoutingContextTracker, type RoutingCadence } from '@antseed/node'
+import { RoutingLog } from './routing-log.js'
 import { RoutingServiceExecutor } from './routing-service.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
@@ -849,6 +850,7 @@ export class BuyerProxy {
   private readonly _routerKey: string
   private readonly _routingContext = new RoutingContextTracker()
   private readonly _routingCadence: RoutingCadence
+  private readonly _routingLog: RoutingLog
   private readonly _routingServiceExecutor: RoutingServiceExecutor
   private readonly _routingPeerIds = new Set<string>()
 
@@ -913,6 +915,7 @@ export class BuyerProxy {
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
+    this._routingLog = new RoutingLog(config.dataDir)
     this._routingServiceExecutor = new RoutingServiceExecutor({
       node: this._node, routerKey: config.routerKey ?? '',
       getConfig: () => this._routingServiceConfig,
@@ -992,8 +995,7 @@ export class BuyerProxy {
   }
 
   private async _recordRoutingOperation(event: Record<string, unknown>): Promise<void> {
-    await mkdir(this._stateDir, { recursive: true })
-    await appendFile(join(this._stateDir, 'routing-operations.jsonl'), `${JSON.stringify(event)}\n`, { mode: 0o600 })
+    await this._routingLog.record(event).catch((error) => log('Routing audit write failed', error))
   }
 
   private _attributeSpend(event: BuyerSpendEvent): void {
@@ -1132,6 +1134,7 @@ export class BuyerProxy {
     }
     await this._writeStateFile('stopped')
     await this._conversations.flush()
+    await this._routingLog.flush()
     return new Promise((resolve) => {
       this._server.close(() => resolve())
     })
@@ -2661,6 +2664,7 @@ export class BuyerProxy {
     // run twice for the same request.
     let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
     const routingSettings = this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}
+    const routingStartedAt = Date.now()
     const routingContext = this._routingContext.observe(serializedReq, conversationIdentity, {
       cadence: this._routingCadence, settings: routingSettings,
       isRouteAvailable: (recommendation) => {
@@ -2707,8 +2711,15 @@ export class BuyerProxy {
         ), clientAbortController.signal, this._routerTimeoutMs)
         if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
         if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
+        void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,
+          routerKey: this._routerKey, trigger: routingContext.trigger, contextRewritten: routingContext.contextRewritten,
+          reuseSuggested: !routingContext.shouldRoute, latencyMs: Date.now() - routingStartedAt,
+          outcome: routeSelected === null ? 'declined' : 'selected', candidates: routeSelected?.length ?? 0 })
       }
     } catch (error) {
+      void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,
+        routerKey: this._routerKey, trigger: routingContext.trigger, latencyMs: Date.now() - routingStartedAt,
+        outcome: 'failed', code: error instanceof RouterExecutionError ? error.code : 'router_unavailable' })
       if (clientAbortController.signal.aborted) return
       const fallback = this._routerFailureFallback === 'default' ? this._defaultRoutedModel : null
       const pin = fallback ? parsePeerPinnedService(fallback) : null
@@ -2941,6 +2952,9 @@ export class BuyerProxy {
           if (result.done) {
             if (routeSelected && !clientAbortController.signal.aborted && res.statusCode < 400 && result.latencyMs !== undefined) {
               this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, selected)
+              void this._recordRoutingOperation({ kind: 'dispatch', purpose: 'routing-decision', requestId: serializedReq.requestId,
+                routerKey: this._routerKey, trigger: routingContext.trigger, peerId: selected.peerId, serviceId: selected.serviceId,
+                outcome: 'succeeded', inferenceLatencyMs: result.latencyMs })
             }
             if (trackedConversationId) {
               this._conversations.recordRoutedModel(

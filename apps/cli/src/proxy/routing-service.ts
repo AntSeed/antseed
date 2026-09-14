@@ -80,6 +80,7 @@ export class RoutingServiceExecutor {
       })
       signal.throwIfAborted()
       statusCode = response.statusCode
+      if (response.body.byteLength > 256 * 1024) throw new Error('Routing service response limit exceeded')
       if (response.statusCode >= 400) throw new Error('Routing service rejected the operation')
       outcome = 'succeeded'
       return response

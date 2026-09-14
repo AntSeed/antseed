@@ -69,8 +69,10 @@ export class RoutingDecisionsStore {
   private readonly _insertStmt: Database.Statement;
   private readonly _recentStmt: Database.Statement;
   private readonly _countStmt: Database.Statement;
+  private readonly _pruneStmt: Database.Statement;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, private readonly retention = 5000) {
+    if (!Number.isSafeInteger(retention) || retention < 1 || retention > 100_000) throw new Error('Invalid routing history retention');
     mkdirSync(dataDir, { recursive: true });
     this._db = new Database(join(dataDir, ROUTING_DECISIONS_DB_FILE));
     this._db.pragma('journal_mode = WAL');
@@ -91,6 +93,8 @@ export class RoutingDecisionsStore {
     `);
     this._recentStmt = this._db.prepare('SELECT * FROM routing_decisions ORDER BY id DESC LIMIT ?');
     this._countStmt = this._db.prepare('SELECT COUNT(*) as c FROM routing_decisions');
+    this._pruneStmt = this._db.prepare('DELETE FROM routing_decisions WHERE id < (SELECT id FROM routing_decisions ORDER BY id DESC LIMIT 1 OFFSET ?)');
+    this._pruneStmt.run(this.retention - 1);
   }
 
   insert(row: RoutingDecisionRow): void {
@@ -116,6 +120,7 @@ export class RoutingDecisionsStore {
       consideredCandidates: JSON.stringify(row.consideredCandidates),
       inputMessagePreview: row.inputMessagePreview ?? null,
     });
+    this._pruneStmt.run(this.retention - 1);
   }
 
   /** Bulk-imports rows (e.g. a one-time migration from a legacy JSONL file) in a single transaction. */
@@ -128,6 +133,8 @@ export class RoutingDecisionsStore {
 
   /** Most recent `limit` rows, oldest first. */
   recent(limit: number): RoutingDecisionRow[] {
+    if (!Number.isSafeInteger(limit) || limit < 0) throw new Error('Invalid routing history limit');
+    limit = Math.min(limit, this.retention);
     const records = this._recentStmt.all(limit) as RoutingDecisionRecord[];
     return records.reverse().map(toRow);
   }
