@@ -120,15 +120,15 @@ try {
   nodes.push(buyer);
   const fakeRouter = {
     selectPeer() { return null; }, onResult() {},
-    async selectRoute(request, available, _conversation, _preferences, _default, context) {
+    async selectRoute(request, _available, _conversation, _preferences, _default, context) {
       if (JSON.parse(new TextDecoder().decode(request.body)).model !== 'fixture-auto') return null;
       assert.equal(context.candidates.length, 1);
+      if (!context.routing.shouldRoute && context.routing.previousRoute) return [context.routing.previousRoute];
       const response = await context.invokeService([{ role: 'user', content: 'Choose a model for this fixture' }]);
       const model = JSON.parse(new TextDecoder().decode(response.body)).choices[0].message.content;
       const choice = context.candidates.find((candidate) => candidate.serviceId === model);
       assert.ok(choice);
-      return [{ ...choice, peer: available.find((peer) => peer.peerId === choice.peerId), request,
-        reputation: 0, hasCachedInputPricing: false, minImageUsdPerImage: null }];
+      return [{ peerId: choice.peerId, serviceId: choice.serviceId }];
     },
   };
   buyer.setRouter(fakeRouter);
@@ -136,37 +136,60 @@ try {
   const events = [];
   buyer.on('payment:spend', (event) => events.push(event));
   proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:fixture', autoRouteServiceId: 'fixture-auto',
-    routerTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
+    routerTimeoutMs: 60_000, routingCadence: 'session', routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
       allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true, dayPassOnDemandEnabled: false },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
     routingService: { routerKey: 'plugin:fixture', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
       allowPromptSharing: true, maxInputUsdPerMillion: 1, maxOutputUsdPerMillion: 2, maxCachedInputUsdPerMillion: 1,
-      maxAdditionalAuthorizationUsdc: '1000', maxRequestsPerMinute: 2, maxInputBytes: 4096, maxOutputTokens: 32 } });
+      maxAdditionalAuthorizationUsdc: '1000', maxRequestsPerMinute: 6, maxInputBytes: 4096, maxOutputTokens: 32 } });
   proxy._getPeers = async () => peers;
   await proxy.start();
   console.log('[routing-flow] requesting router selection and downstream inference through the buyer proxy');
-  const response = await fetch(`http://127.0.0.1:${proxy._server.address().port}/v1/chat/completions`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'fixture-auto', messages: [{ role: 'user', content: 'fixture prompt' }], max_tokens: 32 }),
-    signal: AbortSignal.timeout(90_000),
-  });
-  const responseText = await response.text();
-  assert.equal(response.status, 200, responseText);
-  assert.equal(JSON.parse(responseText).choices[0].message.content, 'fixture answer');
+  const sendInference = async (messages, headers = {}) => {
+    const response = await fetch(`http://127.0.0.1:${proxy._server.address().port}/v1/chat/completions`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-vpr-session-id': 'routing-fixture', ...headers },
+      body: JSON.stringify({ model: 'fixture-auto', messages, max_tokens: 32 }), signal: AbortSignal.timeout(90_000),
+    });
+    const responseText = await response.text();
+    assert.equal(response.status, 200, responseText);
+    assert.equal(JSON.parse(responseText).choices[0].message.content, 'fixture answer');
+  };
+  const initial = [{ role: 'user', content: 'fixture prompt' }];
+  await sendInference(initial);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 1]);
   await waitFor(() => events.some((event) => event.purpose === 'routing' && event.amountUsdc === '140'), 'routing authorization of 140 micro-USDC');
   const routeEvent = events.find((event) => event.purpose === 'routing' && event.amountUsdc === '140');
   assert.notEqual(routeEvent.requestId, routeEvent.parentRequestId);
   const routingChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
   assert.equal(routingChannel.authMax, '140');
+  await sendInference([...initial, { role: 'assistant', content: 'fixture answer' }, { role: 'user', content: 'fixture continuation' }]);
+  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 2]);
+  assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '140');
+  const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture continuation' }];
+  await sendInference(rewritten, { 'x-antseed-context-revision': '2' });
+  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 3]);
+  await sendInference(rewritten, { 'x-antseed-context-revision': '2', 'x-antseed-route-refresh': 'true' });
+  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [3, 4]);
+  await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === '420', 'three routing authorizations');
+  const finalChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
+  await proxy._routingLog.flush();
   const records = (await readFile(join(buyerDir, 'routing-operations.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.ok(records.some((record) => record.parentRequestId === routeEvent.parentRequestId && record.outcome === 'succeeded'));
+  const decisions = records.filter((record) => record.kind === 'selection');
+  assert.deepEqual(decisions.map((record) => record.trigger), ['new-session', 'new-turn', 'context-rewrite', 'explicit']);
+  assert.deepEqual(decisions.map((record) => record.reuseSuggested), [false, true, false, false]);
+  const operations = records.filter((record) => record.purpose === 'routing' && record.outcome === 'succeeded');
+  assert.equal(operations.length, 3);
+  assert.equal(new Set(operations.map((record) => record.requestId)).size, 3);
+  assert.equal(new Set(operations.map((record) => record.parentRequestId)).size, 3);
+  assert.ok(operations.every((record) => record.requestId !== record.parentRequestId));
+  assert.doesNotMatch(JSON.stringify(records), /fixture prompt|compacted summary|fixture continuation/);
   const channels = new ChannelsClient({ rpcUrl, contractAddress: addresses.channels, evmChainId: 31337 });
   await waitFor(async () => (await channels.getSession(routingChannel.sessionId)).deposit > 0n, 'on-chain routing reserve');
-  await channels.settle(sellerIdentities[0].wallet, routingChannel.sessionId, BigInt(routingChannel.authMax),
-    routingChannel.latestMetadata, routingChannel.latestSpendingAuthSig);
+  await channels.settle(sellerIdentities[0].wallet, routingChannel.sessionId, BigInt(finalChannel.authMax),
+    finalChannel.latestMetadata, finalChannel.latestSpendingAuthSig);
   const settled = await channels.getSession(routingChannel.sessionId);
-  assert.equal(settled.settled, 140n);
+  assert.equal(settled.settled, 420n);
   console.log(JSON.stringify({ routingTokens: { input: 100, output: 20 }, routingSettledMicroUsdc: settled.settled.toString(),
     routingRequestId: routeEvent.requestId, inferenceRequestId: routeEvent.parentRequestId,
     providerCalls: fixtureProviders.map((fixture) => fixture.calls) }, null, 2));
