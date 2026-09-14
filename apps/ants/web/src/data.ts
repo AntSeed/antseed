@@ -58,6 +58,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   const keyRef = useRef(key);
   keyRef.current = key;
   const mountedRef = useRef(true);
+  const retryCount = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -120,6 +121,23 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   const refresh = useCallback(() => {
     if (keyRef.current !== null) load(keyRef.current);
   }, [load]);
+
+  useEffect(() => {
+    retryCount.current = 0;
+  }, [key]);
+
+  useEffect(() => {
+    if (!state.error) {
+      if (!state.loading) retryCount.current = 0;
+      return;
+    }
+    if (key === null || retryCount.current >= 2 || !/rate limit|network error|HTTP 5\d\d|timeout/i.test(state.error)) return;
+    const timer = window.setTimeout(() => {
+      retryCount.current += 1;
+      load(key);
+    }, 25_000 * (retryCount.current + 1));
+    return () => window.clearTimeout(timer);
+  }, [key, state.error, state.loading, load]);
 
   const view = state.key === key ? state : readCache<T>(key);
   return { data: view.data, error: view.error, loading: view.loading, updatedAt: view.updatedAt, refresh };

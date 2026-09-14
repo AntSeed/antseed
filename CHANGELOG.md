@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- ANTS dashboard: open staking in a centered modal from the main button or a seller row, with stacked fields, a separate review/confirmation step, keyboard focus handling, and a scrollable layout on small screens.
+- ANTS dashboard: complete new-seller identity creation and binding, distinguish legacy identity lookup from explicit seller binding, display locked rewards even with zero claimable, correct lock dates and seller units, and report failed financial reads instead of zero balances. Add paced RPC reads, transaction readiness checks, stakeable-pool filtering, read-only withdrawal previews, and saved activity with interrupted-action recovery guidance.
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 

@@ -39,6 +39,9 @@ importers:
         specifier: ^5.7.4
         version: 5.7.4
     devDependencies:
+      '@antseed/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.33

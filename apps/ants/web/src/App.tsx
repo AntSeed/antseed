@@ -87,8 +87,8 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
   }, [refreshOverview]);
 
   const value = useMemo<AppValue | null>(
-    () => (config.data ? { config: config.data, overview: overview.data, theme, toggleTheme } : null),
-    [config.data, overview.data, theme, toggleTheme],
+    () => (config.data ? { config: config.data, overview: overview.data, overviewError: overview.error, theme, toggleTheme } : null),
+    [config.data, overview.data, overview.error, theme, toggleTheme],
   );
 
   if (!value) {

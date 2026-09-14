@@ -100,7 +100,8 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   }
 
   const views = new ViewCache();
-  registerRoutes(app, { ctx: context, jobs: new JobRunner({ onFinish: () => views.invalidate() }), views, readOnly, dataDir });
+  const journalPath = path.join(dataDir, 'ants-activity', `${chain.evmChainId}-${context.address.toLowerCase()}.json`);
+  registerRoutes(app, { ctx: context, jobs: new JobRunner({ onFinish: () => views.invalidate(), ...(!readOnly ? { journalPath } : {}) }), views, readOnly, dataDir });
 
   const url = `${origin}/#token=${token}`;
   return {

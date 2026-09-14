@@ -12,7 +12,7 @@ import { Pill } from '../components/Pill';
 import { StatTile, Tiles } from '../components/StatTile';
 import { OwnSellerStatus, ProofLookup, ProofSubmit, SellerLookup } from '../components/Verification';
 import { usePageData } from '../data';
-import { formatAnts, isPositiveInt } from '../format';
+import { formatAnts, formatUsdc, formatInt, isPositiveInt } from '../format';
 
 export function SellerPage() {
   const page = usePageData('seller', api.seller);
@@ -29,7 +29,7 @@ export function SellerPage() {
       </Panel>
 
       <Panel className="panel-collapsible">
-        <Details summary="Submit a seller proof">
+        <Details summary="Advanced: submit a seller proof">
           <div className="stack-lg">
             <ProofSubmit />
             <div>
@@ -69,7 +69,7 @@ function SellerBody({ data }: { data: SellerView }) {
           items={[
             ['ERC-8004 identity', <YesNo value={data.identityRegistered} />],
             ['Seller registry binding', <YesNo value={data.registryBound} />],
-            ['Legacy stake', `${formatAnts(data.legacyStake, 4)} ANTS`],
+            ['Legacy stake', `${formatUsdc(data.legacyStake)} USDC`],
             ['Legacy eligibility path', <YesNo value={data.legacyEligibilityEnabled} />],
           ]}
         />
@@ -101,7 +101,7 @@ function SellerBody({ data }: { data: SellerView }) {
           <>
             <Facts
               items={[
-                ['Remaining', `${formatAnts(starter.remaining, 4)} ANTS`],
+                ['Grants remaining', formatInt(starter.remaining)],
                 ['Grant amount', `${formatAnts(starter.amount, 4)} ANTS`],
                 ['Claim window ends', <EpochCell epoch={starter.endEpoch} />],
                 ['Legacy eligible', <YesNo value={starter.legacyEligible} />],
@@ -109,16 +109,16 @@ function SellerBody({ data }: { data: SellerView }) {
             />
             <div className="mt">
               <ActionButton
-                label="Claim starter"
+                label={starter.initialized ? 'Grant already claimed' : 'Claim starter'}
                 variant="primary"
                 title="Claim starter grant"
                 path="/api/seller/claim-starter"
                 body={{}}
-                disabled={!starter.claimable}
-                disabledReason={starter.expired ? 'The starter grant window has expired.' : 'The starter grant is not claimable for this wallet.'}
+                disabled={starter.initialized || !starter.claimable}
+                disabledReason={starter.initialized ? 'This starter grant has already been claimed.' : starter.expired ? 'The starter grant window has expired.' : 'The starter grant is not claimable for this wallet.'}
                 summary={[
                   ['Wallet', <span className="mono">{data.address}</span>],
-                  ['Amount', <span className="mono">{formatAnts(starter.remaining, 4)} ANTS</span>],
+                  ['Amount', <span className="mono">{formatAnts(starter.amount, 4)} ANTS</span>],
                   ['Contract', <span className="mono">{starter.contract ?? '—'}</span>],
                 ]}
               />
@@ -149,7 +149,7 @@ function RegisterAction({ data }: { data: SellerView }) {
   const body: { agentId?: number } = agentId.trim() ? { agentId: Number(agentId) } : {};
   return (
     <div className="form-row">
-      <Input label="Agent id (optional)" hint="Leave empty to register a new ERC-8004 identity" width="md" inputMode="numeric" value={agentId} onChange={(e) => setAgentId(e.target.value)} />
+      <Input label="Agent id (optional)" hint="Use an existing ID, or leave empty to create an identity if this wallet has none." width="md" inputMode="numeric" value={agentId} onChange={(e) => setAgentId(e.target.value)} />
       <ActionButton
         label={data.registryBound ? 'Re-register binding' : 'Register binding'}
         variant="primary"
@@ -159,11 +159,11 @@ function RegisterAction({ data }: { data: SellerView }) {
         validate={() => (agentId.trim() && !isPositiveInt(agentId) ? 'Agent id must be a positive integer.' : null)}
         summary={[
           ['Wallet', <span className="mono">{data.address}</span>],
-          ['Agent id', <span className="mono">{agentId.trim() || 'new identity'}</span>],
+          ['Agent id', <span className="mono">{agentId.trim() || 'Detect existing identity or create one'}</span>],
           ['Currently bound', data.registryBound ? 'yes' : 'no'],
         ]}
       >
-        <p className="hint mt">Binds this wallet to the agent id in the seller registry (registering an ERC-8004 identity first when none is given).</p>
+        <p className="hint mt">Binds this wallet to its agent id in the seller registry. Without an id, it reuses a known identity or creates one if this wallet has none. Creating and binding can require separate transactions.</p>
       </ActionButton>
     </div>
   );

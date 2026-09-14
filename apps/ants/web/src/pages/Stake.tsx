@@ -1,5 +1,6 @@
 import { Alert, Button } from '../components/ui';
-import { useMemo, useState } from 'react';
+import { Modal } from '@antseed/ui';
+import { useMemo, useRef, useState } from 'react';
 import type { OverviewView, PoolView } from '../../../src/api-types';
 import { api } from '../api';
 import { ErrorBox, Skeleton } from '../components/Feedback';
@@ -24,12 +25,23 @@ export function StakePage() {
 
   /** undefined = form closed; null = open with no preselected pool; number = preselected pool. */
   const [stakeTarget, setStakeTarget] = useState<number | null | undefined>(undefined);
+  const [stakeBusy, setStakeBusy] = useState(false);
+  const stakeTrigger = useRef<HTMLElement | null>(null);
   const [openPoolId, setOpenPoolId] = useState<number | null>(null);
   const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
   const openPool = openPoolId !== null ? (sortedPools.find((p) => p.agentId === openPoolId) ?? null) : null;
   const stakeInto = (pool: PoolView) => {
+    stakeTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpenPoolId(null);
     setStakeTarget(pool.agentId);
+  };
+  const closeStake = () => {
+    setStakeTarget(undefined);
+    requestAnimationFrame(() => {
+      const trigger = stakeTrigger.current;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      else document.querySelector<HTMLButtonElement>('[data-stake-trigger]')?.focus({ preventScroll: true });
+    });
   };
 
   return (
@@ -57,7 +69,7 @@ export function StakePage() {
           sub={data ? (data.wallet.transfersEnabled ? 'transfers enabled' : data.wallet.whitelisted ? 'transfers off · whitelisted' : 'transfers off') : undefined}
         />
         <StatTile
-          label="Your active stake"
+          label="Your total staked"
           value={data ? formatAnts(data.wallet.totalActiveStake) : '…'}
           unit="ANTS"
           loading={!data}
@@ -91,31 +103,19 @@ export function StakePage() {
         />
       </Tiles>
 
+      <PositionsCard pools={sortedPools} />
+
       <Panel
         title="Pools"
         className="pools-card"
         actions={
-          <Button variant="primary" size="sm" onClick={() => setStakeTarget((cur) => (cur === undefined ? null : undefined))} disabled={!pools.data}>
-            {stakeTarget === undefined ? 'Stake ANTS' : 'Close'}
+          <Button data-stake-trigger variant="primary" size="sm" onClick={(event) => { stakeTrigger.current = event.currentTarget; setStakeTarget(null); }} disabled={!pools.data}>
+            Stake ANTS
           </Button>
         }
       >
         {pools.error && !pools.data ? <ErrorBox error={pools.error} onRetry={pools.refresh} /> : null}
         {pools.error && pools.data ? <div className="status-line">Refresh failed: {pools.error}</div> : null}
-        {stakeTarget !== undefined && pools.data ? (
-          <Panel tone="accent" className="panel-inset" title="Stake ANTS">
-            {positions.error && !positions.data ? <ErrorBox error={positions.error} onRetry={positions.refresh} /> : null}
-            <StakeForm
-              key={stakeTarget ?? 'any'}
-              config={positions.data?.config ?? null}
-              pools={sortedPools.filter((p) => p.stakeable)}
-              balance={data?.wallet.ants}
-              defaultAgentId={stakeTarget}
-              onStarted={() => setStakeTarget(undefined)}
-              onClose={() => setStakeTarget(undefined)}
-            />
-          </Panel>
-        ) : null}
         {!pools.data && pools.loading ? <div className="muted small mb">Loading pool statistics from the explorer…</div> : null}
         {pools.data?.source === 'chain' ? (
           <div className="status-line">
@@ -126,7 +126,28 @@ export function StakePage() {
         <div className="hint">Sorted by reward per 1k power (last epoch), then by power. Click a row for the seller profile and volume history.</div>
       </Panel>
 
-      <PositionsCard pools={sortedPools} />
+      {stakeTarget !== undefined && pools.data ? (
+        <Modal
+          isOpen
+          title="Stake ANTS"
+          size="lg"
+          overlayClassName="ants-stake-overlay"
+          onClose={() => { if (!stakeBusy) closeStake(); }}
+        >
+          {positions.error && !positions.data ? <ErrorBox error={positions.error} onRetry={positions.refresh} /> : null}
+          <StakeForm
+            key={stakeTarget ?? 'any'}
+            config={positions.data?.config ?? null}
+            pools={sortedPools.filter((p) => p.stakeable)}
+            balance={data?.wallet.ants}
+            defaultAgentId={stakeTarget}
+            onStarted={closeStake}
+            onClose={closeStake}
+            onBusyChange={setStakeBusy}
+          />
+        </Modal>
+      ) : null}
+
       {openPool && pools.data ? <PoolDrawer pool={openPool} view={pools.data} onClose={() => setOpenPoolId(null)} onStake={stakeInto} /> : null}
     </>
   );

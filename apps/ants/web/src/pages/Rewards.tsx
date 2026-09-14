@@ -2,7 +2,7 @@ import { Card } from '../components/ui';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ClaimRequest, CompoundRequest, PoolView, RestakeRequest, RewardBucket, RewardsView, StakeUsageRequest } from '../../../src/api-types';
 import { api } from '../api';
-import { useConfig } from '../app-context';
+import { useConfig, useEpochInfo } from '../app-context';
 import { AddressLink } from '../components/AddressLink';
 import { ActionButton } from '../components/Confirm';
 import { ErrorBox, Skeleton } from '../components/Feedback';
@@ -21,7 +21,7 @@ export function RewardsPage() {
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
       {!data && page.loading ? (
         <>
-          <div className="muted small mb">Scanning reward logs on chain; this can take ~10 s on a public RPC.</div>
+          <div className="muted small mb">Loading rewards from the blockchain and indexer…</div>
           <Skeleton rows={6} />
         </>
       ) : null}
@@ -50,6 +50,7 @@ function RewardsBody({ data }: { data: RewardsView }) {
   return (
     <>
       <Card className="hero">
+        {data.historySource === 'chain' ? <p className="status-line">No indexer is configured. These are known rewards; rewards from closed positions may be missing.</p> : null}
         <div className="tile-label">Claimable</div>
         <div className="hero-value">
           {formatAnts(data.total, 4)}
@@ -70,7 +71,7 @@ function RewardsBody({ data }: { data: RewardsView }) {
         )}
       </Card>
 
-      {nothing ? null : (
+      {nothing && isZero(data.locked.locked) ? null : (
         <Card className="buckets">
           <BucketRow
             visible={!isZero(data.staker.total)}
@@ -202,11 +203,13 @@ function ClaimButton({ bucket, amount, label, disabled, reason, primary }: { buc
 
 /** Slider shared by every restake confirm; defaults to the maximum lock once the pool config is known. */
 function useLock(maxEpochs: number | null) {
+  const info = useEpochInfo();
+  const positions = usePageData('positions:current', api.positions);
   const [epochs, setEpochs] = useState(maxEpochs ?? 1);
   useEffect(() => {
     if (maxEpochs !== null) setEpochs(maxEpochs);
   }, [maxEpochs]);
-  return { epochs, setEpochs, slider: <LockSlider value={epochs} max={maxEpochs ?? 1} onChange={setEpochs} disabled={maxEpochs === null} /> };
+  return { epochs, setEpochs, slider: <LockSlider value={epochs} min={positions.data?.config.minStakeEpochs ?? 1} max={maxEpochs ?? 1} startEpoch={info && positions.data ? info.current + positions.data.config.stakeActivationDelay : null} onChange={setEpochs} disabled={maxEpochs === null} /> };
 }
 
 /** Default compound target: the stakeable pool where you already hold the most power, else your seller's pool. */

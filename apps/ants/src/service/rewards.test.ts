@@ -44,6 +44,17 @@ function fixture(indexed = true) {
 }
 
 describe('closed-position rewards', () => {
+  it('does not report zero rewards when the reward preview fails', async () => {
+    const { ctx, poolRewards } = fixture();
+    poolRewards.previewStakerRewards = async () => { throw new Error('RPC unavailable'); };
+    await expect(rewards(ctx)).rejects.toThrow('RPC unavailable');
+  });
+
+  it('retains a locked balance when nothing is claimable', async () => {
+    const { ctx } = fixture();
+    ctx.lockedPoolAt = () => ({ claimable: async () => ({ locked: 246820n * 10n ** 18n, claimable: 0n, policy: '0x0000000000000000000000000000000000000000' }) }) as never;
+    expect((await rewards(ctx)).locked).toMatchObject({ locked: '246820000000000000000000', claimable: '0', policy: null });
+  });
   it('claims the same closed-position rewards shown in the view', async () => {
     const { ctx, poolRewards } = fixture();
     expect((await rewards(ctx)).staker.total).toBe('10');

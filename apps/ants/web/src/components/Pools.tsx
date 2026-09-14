@@ -79,8 +79,9 @@ interface TableProps {
 export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [stakeableOnly, setStakeableOnly] = useState(true);
   const needle = filter.trim();
-  const filtered = useMemo(() => pools.filter((p) => matchesFilter(p, needle)), [pools, needle]);
+  const filtered = useMemo(() => pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), [pools, needle, stakeableOnly]);
   const capped = !showAll && filtered.length > POOL_ROW_CAP;
   const visible = capped ? filtered.slice(0, POOL_ROW_CAP) : filtered;
   const columns: Array<Column<PoolView>> = [
@@ -147,14 +148,17 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   ];
   return (
     <>
-      {pools.length > 5 ? (
-        <div className="pools-toolbar">
+      <div className="pools-toolbar">
+        {pools.length > 5 ? (
           <Input label="" mono={false} width="md" placeholder="Filter by name or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
+        ) : null}
+        <label className="check"><input type="checkbox" checked={stakeableOnly} onChange={(event) => setStakeableOnly(event.target.checked)} /> Only show pools ready for staking</label>
+        {pools.length > 5 ? (
           <span className="muted small">
             {formatInt(filtered.length)} of {formatInt(pools.length)} sellers · {formatInt(pools.filter((p) => p.stakeable).length)} stakeable
           </span>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <Table
         columns={columns}
         rows={visible}
@@ -162,7 +166,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
         loading={loading}
         onRowClick={onOpen}
         rowClass={(p) => (!p.stakeable ? 'row-muted' : undefined)}
-        empty={needle ? `No seller matches "${needle}".` : 'No pools have been staked yet.'}
+        empty={needle ? `No seller matches "${needle}" in this view.` : stakeableOnly ? 'No stakeable pools. Turn off the filter to see sellers awaiting binding.' : 'No pools have been staked yet.'}
       />
       {filtered.length > POOL_ROW_CAP ? (
         <div className="pools-more">
@@ -300,7 +304,7 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
                   ['Unique buyers', profile.uniqueBuyers !== null ? formatInt(profile.uniqueBuyers) : '—'],
                   ['Requests', profile.requestCount !== null ? formatInt(profile.requestCount) : '—'],
                   ['Lifetime volume', profile.lifetimeVolumeUsdc !== null ? `${formatUsdc(profile.lifetimeVolumeUsdc)} USDC` : '—'],
-                  ['Ghost rate', profile.ghostRate !== null ? `${(profile.ghostRate * 100).toFixed(1)}%` : '—'],
+                  ['Ghost rate', profile.ghostRate !== null && Number.isFinite(profile.ghostRate) && profile.ghostRate >= 0 && profile.ghostRate <= 100 ? `${profile.ghostRate.toFixed(1)}%` : 'Unavailable'],
                   ['Last settled', profile.lastSettledAt !== null ? formatUtc(profile.lastSettledAt) : '—'],
                 ]}
               />

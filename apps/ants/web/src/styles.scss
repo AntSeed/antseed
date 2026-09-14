@@ -543,6 +543,7 @@ select.field__input { cursor: pointer; padding-right: 8px; }
 /* ── Tables ── */
 
 .table-wrap {
+  &:focus-visible { outline: 2px solid var(--pc-sub); outline-offset: 2px; }
   overflow-x: auto;
   background: var(--pc-bg);
   border: 1px solid var(--pc-line);
@@ -744,6 +745,67 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 .full-page-inner p:first-of-type { color: var(--pc-ink); font-size: 14px; }
 
 /* ── Drawer ── */
+
+.ants-stake-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--pc-backdrop);
+
+  .as-modal__scroll-lock { display: flex; width: min(var(--as-modal-width), 100%); max-height: calc(100dvh - 48px); }
+  .as-modal__focus-lock { display: flex; width: 100%; min-height: 0; }
+  .as-modal {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--pc-bg);
+    border: 1px solid var(--pc-line);
+    border-radius: 20px;
+    box-shadow: var(--pc-shadow-float);
+  }
+  .as-modal__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px; border-bottom: 1px solid var(--pc-line); }
+  .as-modal__title { margin: 0; font-size: 20px; line-height: 1.3; font-weight: 650; }
+  .as-modal__close {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--pc-line);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--pc-sub);
+    cursor: pointer;
+    &:hover { background: var(--pc-panel); color: var(--pc-ink); }
+    &:focus-visible { outline: 2px solid var(--pc-sub); outline-offset: 2px; }
+  }
+  .as-modal__body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px; }
+  .stake-form .form-row { flex-direction: column; align-items: stretch; gap: 20px; }
+  .stake-form .field { width: 100%; max-width: none; }
+  .stake-form .hint { margin-top: 20px; }
+  .stake-form-actions { display: flex; gap: 12px; margin-top: 24px; }
+  .stake-form-actions > .btn:first-child { flex: 1; }
+  .stake-review:focus { outline: none; }
+  .confirm { margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+  .confirm-actions { margin-top: 24px; }
+  .confirm-actions > .btn:first-child { flex: 1; }
+  .facts dd { overflow-wrap: anywhere; }
+}
+
+@media (max-width: 600px) {
+  .ants-stake-overlay {
+    padding: 12px;
+    .as-modal__scroll-lock { max-height: calc(100dvh - 24px); }
+    .as-modal__header { padding: 16px 20px; }
+    .as-modal__body { padding: 20px; }
+  }
+}
 
 .drawer-backdrop {
   position: fixed;

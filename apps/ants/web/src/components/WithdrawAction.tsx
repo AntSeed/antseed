@@ -48,7 +48,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
     void loadPreview();
   };
 
-  const disabled = block.blocked || positionIds.length === 0;
+  const disabled = positionIds.length === 0;
 
   useEffect(() => {
     if (autoOpen && !disabled) onOpen();
@@ -77,7 +77,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
   };
 
   const reason = block.reason ?? (positionIds.length === 0 ? 'Select at least one position.' : undefined);
-  const canConfirm = preview !== null && (!preview.earlyExit || accepted);
+  const canConfirm = !block.blocked && preview !== null && (!preview.earlyExit || accepted);
 
   return (
     <div className="action">
@@ -104,6 +104,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
             onCancel?.();
           }}
         >
+          {block.reason ? <div className="hint">{block.reason} You can still review this estimate.</div> : null}
           {loadingPreview ? (
             <div className="muted small">
               <Spinner /> Computing slashing preview…

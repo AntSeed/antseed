@@ -30,7 +30,7 @@ export function Table<T>({ columns, rows, rowKey, empty, loading, onRowClick, is
   const cellClass = (column: Column<T>) =>
     [column.align === 'right' ? 'num' : '', column.mono ? 'mono' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" tabIndex={0} role="region" aria-label="Data table; scroll horizontally to see all columns">
       <table className="table">
         <thead>
           <tr>

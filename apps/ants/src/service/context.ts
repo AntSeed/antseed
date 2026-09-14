@@ -342,12 +342,8 @@ export class AntsContext {
     let lockedRewardsPool: string | null = null;
     const legacy = this.legacyEmissionsAt(legacyEmissions);
     if (legacy) {
-      try {
-        const pool = await legacy.sellerRewardsPool();
-        lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
-      } catch {
-        lockedRewardsPool = null;
-      }
+      const pool = await legacy.sellerRewardsPool();
+      lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
     }
     this.stackCache = {
       phase, currentEpoch, effectiveEpoch, genesis, epochDuration, registryPointers,

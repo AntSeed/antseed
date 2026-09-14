@@ -106,6 +106,7 @@ export interface PositionsView {
 export interface EpochAmount { epoch: number; amount: string; claimed?: boolean; }
 
 export interface RewardsView {
+  historySource?: DataSource;
   currentEpoch: number;
   firstRewardedEpoch: number | null;
   staker: { total: string; positions: Array<{ id: number; agentId: number; amount: string; closed: boolean }>; };

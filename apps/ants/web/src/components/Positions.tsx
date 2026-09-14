@@ -138,6 +138,7 @@ export function PositionsCard({ pools }: { pools: PoolView[] }) {
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
+      {data?.historySource === 'chain' ? <div className="status-line">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
       {selected.size > 0 ? (
         <div className="bulk-bar">
           <span className="muted small">
@@ -357,8 +358,11 @@ interface RowActionProps {
 }
 
 function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
+  const info = useEpochInfo();
   const [amount, setAmount] = useState('');
-  const maxAdd = Math.max(config.maxStakeEpochs - position.epochsRemaining, 0);
+  const effectiveEpoch = info ? info.current + 1 : null;
+  const extensionStart = effectiveEpoch === null ? null : Math.max(position.stakeEndEpoch, effectiveEpoch);
+  const maxAdd = extensionStart === null || effectiveEpoch === null ? 0 : Math.max(config.maxStakeEpochs - (extensionStart - effectiveEpoch), 0);
   const [epochs, setEpochs] = useState(Math.min(1, maxAdd) || 1);
   const title =
     kind === 'split'
@@ -418,7 +422,7 @@ function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
       ) : null}
       {kind === 'extend' ? (
         <div className="form-row">
-          <LockSlider label="Add" value={epochs} min={1} max={Math.max(maxAdd, 1)} onChange={setEpochs} disabled={maxAdd <= 0} />
+          <LockSlider label="Add" value={epochs} min={1} max={Math.max(maxAdd, 1)} startEpoch={extensionStart} onChange={setEpochs} disabled={maxAdd <= 0} />
           <ActionButton
             label="Extend"
             variant="primary"
@@ -430,7 +434,7 @@ function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
             summary={[
               ['Position', <span className="mono">#{position.id}</span>],
               ['Add', <span className="mono">{epochs} epochs</span>],
-              ['New end epoch', <span className="mono">{position.stakeEndEpoch + epochs}</span>],
+              ['New end epoch', <span className="mono">{extensionStart === null ? 'Unavailable' : extensionStart + epochs}</span>],
             ]}
           />
         </div>

@@ -24,11 +24,17 @@ antseed ants --port 4000    # use another port
 ```
 
 The dashboard signs with the node wallet in your data directory. It binds to
-localhost only and the URL carries a one-time session token, so no other page
-or process can act with your wallet. Read-only data refreshes on its own; any
+localhost only and the URL carries a per-session authorization token. Keep
+that URL private: possession of the token allows access to the local API.
+Read-only data refreshes on its own; any
 action that sends transactions shows up as a pending indicator in the header,
 with progress and transaction links in the **Activity** drawer and a toast when
-it confirms. One signing action runs at a time.
+it confirms. One signing action runs at a time. Activity is saved for 30 days
+under `ants-activity` in the data directory, separately for each chain and
+wallet. Run only one signing dashboard for a given wallet and data directory.
+After a restart, interrupted actions are marked for manual review. Check the
+recorded transaction links and wallet state before retrying; the dashboard
+does not automatically resubmit them.
 
 The header shows the chain and protocol phase:
 
@@ -42,11 +48,15 @@ The header shows the chain and protocol phase:
 
 Four tiles summarise your wallet: ANTS balance (with whether transfers are
 enabled for this wallet), active stake, your power, and claimable rewards.
+Your positions appear first. A failed wallet read is shown as an error;
+actions wait until wallet data is available. Staking controls explain when
+insufficient gas or transfer restrictions prevent an action.
 
 ### Choosing a pool
 
-The **Pools** table lists every seller agent that can be staked into, with the
-data needed to decide where and for how long:
+The **Pools** table defaults to stakeable sellers. Clear **Only show pools ready
+for staking** to include sellers that still need a binding, with the data needed to
+decide where and for how long:
 
 | Column | What it tells you |
 |---|---|
@@ -69,9 +79,16 @@ explorer profile, and your positions in that pool.
 
 ### Staking
 
-The **Stake ANTS** form takes a pool, an amount (**Max** fills the balance),
-and a lock length on a slider that defaults to the maximum lock. Power
-activates next epoch. Staking new ANTS requires transfers to be enabled for
+**Stake ANTS** opens a modal; a seller row's **Stake** button preselects that
+pool. Choose the terms, then select **Review stake** to check the summary
+before **Confirm stake** submits the action. **Back** preserves your entries;
+**Cancel**, the close button, or Escape dismisses the modal.
+
+The form takes a pool, an amount (**Max** fills the balance),
+and a lock length on a slider that defaults to the minimum lock. The unlock
+date includes the contract's activation delay as well as the selected lock.
+Early withdrawal can burn part of the principal; review the displayed terms.
+Staking new ANTS requires transfers to be enabled for
 your wallet; rewards can be restaked regardless because they mint straight into
 the pool.
 
@@ -94,7 +111,8 @@ The row menu offers:
 
 **Withdraw** shows the estimated principal burn for positions still under
 lock and requires explicit consent before an early exit. Matured positions
-withdraw without a penalty.
+withdraw without a penalty. A read-only dashboard can open the cost preview,
+but cannot submit a withdrawal.
 
 ## Rewards tab
 
@@ -110,13 +128,22 @@ individually: staker pool rewards, seller usage, buyer usage, legacy V2
 emissions, and the locked legacy pool. Buyer usage rewards are paid to the
 deposits operator, so they are claimable here only when the node wallet is its
 own operator.
+Locked legacy rewards remain visible even when nothing is claimable. The
+dashboard explains when the unlock policy is missing. If indexed reward
+history fails to load, it shows an error instead of reporting a complete total
+from only open positions. Without an indexer, a warning identifies that limit.
 
 ## Seller tab
 
 For seller wallets: agent id, ERC-8004 identity, seller-registry binding,
 eligibility to serve, pool active stake against the minimum, and the starter
-grant for legacy sellers. **Register binding** binds your agent id in the
-seller registry (required before anyone can stake into your pool).
+grant for legacy sellers. Identity ownership and seller-registry binding are
+shown separately. **Register binding** reuses a known agent id, or creates an
+ERC-8004 identity for a wallet that does not own one, then binds it in the seller
+registry (required before anyone can stake into your pool). You can also supply
+an existing agent id. If creation succeeds but binding fails, Activity records
+the new id to use when retrying. Legacy stake is shown in USDC; starter grant
+availability is a count, separate from the ANTS amount of each grant.
 
 **Wash-trading status** shows the registry facts and this seller's proven wash
 share. Proof artifacts produced by the `antseed-loop-proof` host are submitted

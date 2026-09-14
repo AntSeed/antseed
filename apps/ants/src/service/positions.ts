@@ -6,9 +6,6 @@ import { toJson } from './json.js';
 import { IndexerError, type IndexedPosition } from './indexer.js';
 import { assertAgentId, assertEpochs, assertPositiveIds, silentReporter, type StepReporter } from './steps.js';
 
-async function safe<T>(read: () => Promise<T>, fallback: T): Promise<T> {
-  try { return await read(); } catch { return fallback; }
-}
 
 export interface PositionDetail extends PositionView { raw: SellerPoolPosition; }
 
@@ -19,7 +16,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
   const rewardIds = positions.map((position) => position.id);
   const rewards = new Map<number, bigint>();
   if (poolRewards && rewardIds.length > 0) {
-    const amounts = await safe(() => poolRewards.previewStakerRewards(rewardIds), rewardIds.map(() => 0n));
+    const amounts = await poolRewards.previewStakerRewards(rewardIds);
     rewardIds.forEach((id, index) => rewards.set(id, amounts[index] ?? 0n));
   }
   const details: PositionDetail[] = [];
@@ -27,11 +24,11 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
     details.push(...await Promise.all(positions.slice(offset, offset + 8).map(async (position): Promise<PositionDetail> => {
       const open = !position.withdrawn && position.closedAtEpoch === 0;
       const [withdrawableEpoch, maxLocked] = await Promise.all([
-        safe(() => pools.positionWithdrawableEpoch(position.id), 0),
-        open ? safe(() => pools.isMaxLocked(position.id, Math.max(currentEpoch, position.stakeStartEpoch)), false) : Promise.resolve(false),
+        pools.positionWithdrawableEpoch(position.id),
+        open ? pools.isMaxLocked(position.id, Math.max(currentEpoch, position.stakeStartEpoch)) : Promise.resolve(false),
       ]);
       const changePending = currentEpoch < withdrawableEpoch;
-      const slashBps = open && !changePending ? await safe<number | null>(() => pools.earlyExitSlashBps(position.id), null) : null;
+      const slashBps = open && !changePending ? await pools.earlyExitSlashBps(position.id) : null;
       const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
       const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
       return {

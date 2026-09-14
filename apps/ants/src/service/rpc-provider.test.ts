@@ -51,10 +51,10 @@ describe('RotatingJsonRpcProvider', () => {
     expect(await provider.send('eth_blockNumber', [])).toBe('0x1');
   });
 
-  it('surfaces other HTTP errors instead of rotating', async () => {
+  it('rotates away from a server failure', async () => {
     const clock = { now: 0 };
     const { provider, sent } = build({ 'https://a': [{ status: 500, body: null }], 'https://b': [ok(1, '0x1')] }, clock);
-    await expect(provider.send('eth_blockNumber', [])).rejects.toThrow(/HTTP 500/);
-    expect(sent).toEqual(['https://a']);
+    expect(await provider.send('eth_blockNumber', [])).toBe('0x1');
+    expect(sent).toEqual(['https://a', 'https://b']);
   });
 });
