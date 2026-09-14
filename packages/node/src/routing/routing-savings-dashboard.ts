@@ -181,7 +181,8 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
 <script>
 (function () {
   function fmtUsd(n) {
-    if (!isFinite(n) || n <= 0) return '$0';
+    if (typeof n !== 'number' || !isFinite(n) || n < 0) return '&mdash;';
+    if (n === 0) return '$0';
     if (n < 0.01) return '<$0.01';
     if (n >= 1000) return '$' + (n / 1000).toFixed(1) + 'k';
     return '$' + n.toFixed(2);
@@ -207,9 +208,9 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
     var actualUsd = 0, baselineUsd = 0, models = {};
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
-      if (!row.actualModel) continue;
+      if (!row.actualModel || !validUsage(row)) continue;
       var baseline = row.baselinePrices && row.baselinePrices[baselineModel];
-      if (!baseline) continue;
+      if (!validPrice(baseline)) continue;
       var fresh = Math.max(0, (row.actualPromptTokens || 0) - (row.actualCachedTokens || 0));
       var cached = row.actualCachedTokens || 0;
       var output = row.actualCompletionTokens || 0;
@@ -218,11 +219,23 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
       var rowBaseline = (fresh * baseline.inUsdPerM + cached * cachedPrice + output * baseline.outUsdPerM) / 1000000;
       if (rowBaseline <= 0) continue;
       baselineUsd += rowBaseline;
-      actualUsd += row.actualUsdcPaid || 0;
+      actualUsd += row.actualUsdcPaid;
       models[row.actualModel] = true;
     }
     if (baselineUsd <= 0) return null;
     return { actualUsd: actualUsd, baselineUsd: baselineUsd, savedUsd: Math.max(0, baselineUsd - actualUsd) };
+  }
+  function validAmount(value) {
+    return typeof value === 'number' && isFinite(value) && value >= 0;
+  }
+  function validPrice(price) {
+    return price && validAmount(price.inUsdPerM) && validAmount(price.outUsdPerM) &&
+      (price.cachedInUsdPerM == null || validAmount(price.cachedInUsdPerM));
+  }
+  function validUsage(row) {
+    return validAmount(row.actualUsdcPaid) && validAmount(row.actualPromptTokens) &&
+      validAmount(row.actualCachedTokens) && validAmount(row.actualCompletionTokens) &&
+      row.actualCachedTokens <= row.actualPromptTokens;
   }
   function allBaselineModels(rows) {
     var counts = {};
@@ -275,11 +288,11 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
   }
 
   function statsRowHtml(rows, baselineModel) {
-    var savings = computeSavings(rows, baselineModel) || { baselineUsd: 0, actualUsd: 0, savedUsd: 0 };
+    var savings = computeSavings(rows, baselineModel) || { baselineUsd: null, actualUsd: null, savedUsd: null };
     var pct = savings.baselineUsd > 0 ? Math.round((savings.savedUsd / savings.baselineUsd) * 100) : null;
     return '<div class="stats-row">' +
       '<div class="card"><div class="label">Baseline</div><div class="value">' + fmtUsd(savings.baselineUsd) + '</div></div>' +
-      '<div class="card"><div class="label">Spent</div><div class="value">' + fmtUsd(savings.actualUsd) + '</div></div>' +
+      '<div class="card"><div class="label">Observed / estimated cost</div><div class="value">' + fmtUsd(savings.actualUsd) + '</div></div>' +
       '<div class="card"><div class="label">Saved</div><div class="value">' + fmtUsd(savings.savedUsd) + (pct !== null ? '<span class="pct">' + pct + '%</span>' : '') + '</div></div>' +
       '</div>';
   }
@@ -288,7 +301,7 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
   }
   function savedCardHtml(label, savings, baselineLabel) {
     var pct = savings.baselineUsd > 0 ? Math.round((savings.savedUsd / savings.baselineUsd) * 100) : null;
-    var hover = savings.baselineUsd > 0 ? fmtUsd(savings.actualUsd) + ' spent vs ' + fmtUsd(savings.baselineUsd) + ' ' + (baselineLabel || 'baseline') : '';
+    var hover = savings.baselineUsd > 0 ? fmtUsd(savings.actualUsd) + ' observed / estimated cost vs ' + fmtUsd(savings.baselineUsd) + ' ' + (baselineLabel || 'baseline') : '';
     return '<div class="card"' + (hover ? ' title="' + escapeHtml(hover) + '"' : '') + '>' +
       '<div class="label">' + label + '</div>' +
       '<div class="value">' + fmtUsd(savings.savedUsd) + (pct !== null ? '<span class="pct">' + pct + '%</span>' : '') + '</div>' +
@@ -300,12 +313,11 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
   // AntSeed-baseline one are computed over the exact same row set and stay
   // directly comparable/stackable.
   function computeOpenRouterSavings(rows, baselineModel, orPrice) {
-    if (!orPrice || (orPrice.inUsdPerM == null && orPrice.outUsdPerM == null)) return null;
+    if (!validPrice(orPrice)) return null;
     var actualUsd = 0, baselineUsd = 0;
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
-      if (!row.actualModel) continue;
-      if (!(row.baselinePrices && row.baselinePrices[baselineModel])) continue;
+      if (!computeSavings([row], baselineModel)) continue;
       var fresh = Math.max(0, (row.actualPromptTokens || 0) - (row.actualCachedTokens || 0));
       var cached = row.actualCachedTokens || 0;
       var output = row.actualCompletionTokens || 0;
@@ -316,7 +328,7 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
       var rowBaseline = (fresh * inputPrice + cached * cachedPrice + output * outputPrice) / 1000000;
       if (rowBaseline <= 0) continue;
       baselineUsd += rowBaseline;
-      actualUsd += row.actualUsdcPaid || 0;
+      actualUsd += row.actualUsdcPaid;
     }
     if (baselineUsd <= 0) return null;
     return { actualUsd: actualUsd, baselineUsd: baselineUsd, savedUsd: Math.max(0, baselineUsd - actualUsd) };
@@ -343,8 +355,8 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
     var token = ++statsRenderToken;
     var sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     var recentRows = rows.filter(function (r) { return r.atMs >= sevenDaysAgo; });
-    var week = computeSavings(recentRows, baselineModel) || { baselineUsd: 0, actualUsd: 0, savedUsd: 0 };
-    var allTime = computeSavings(rows, baselineModel) || { baselineUsd: 0, actualUsd: 0, savedUsd: 0 };
+    var week = computeSavings(recentRows, baselineModel) || { baselineUsd: null, actualUsd: null, savedUsd: null };
+    var allTime = computeSavings(rows, baselineModel) || { baselineUsd: null, actualUsd: null, savedUsd: null };
     function paint(openRouterCardHtml) {
       if (token !== statsRenderToken) return; // superseded by a newer render
       document.getElementById('stats').innerHTML = '<div class="stats-row">' +
@@ -370,7 +382,7 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
     renderSessionListStats(allRows, currentBaseline);
     var sessions = groupBySession(allRows);
     var html = '<div class="table-wrap"><table><thead><tr>' +
-      '<th>Session</th><th>Tool</th><th>Last active</th><th class="num">Turns</th><th class="num">Baseline</th><th class="num">Spent</th><th class="num">Saved</th>' +
+      '<th>Session</th><th>Tool</th><th>Last active</th><th class="num">Turns</th><th class="num">Baseline</th><th class="num">Observed / estimated cost</th><th class="num">Saved</th>' +
       '</tr></thead><tbody>';
     sessions.forEach(function (session) {
       var savings = computeSavings(session.rows, currentBaseline);
@@ -430,7 +442,7 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
       (toolLabelRaw ? '<span class="tool-pill">' + escapeHtml(toolLabelRaw) + '</span>' : '') + '</div>' +
       '<div class="table-wrap"><table><thead><tr>' +
       '<th>Time</th><th>Model</th><th class="num">Input</th><th class="num">Cached</th><th class="num">Output</th>' +
-      '<th class="num">Baseline</th><th class="num">Spent</th><th class="num">Saved</th>' +
+      '<th class="num">Baseline</th><th class="num">Observed / estimated cost</th><th class="num">Saved</th>' +
       '</tr></thead><tbody>';
     rows.forEach(function (row, index) {
       var rowSavings = computeSavings([row], currentBaseline);
@@ -439,12 +451,12 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
       var hoverTitle = baselinePrice ? 'vs ' + currentBaseline + ': ' + fmtPricePair(baselinePrice) : '';
       html += '<tr class="turn-row" data-turn-index="' + index + '"' + (hoverTitle ? ' title="' + escapeHtml(hoverTitle) + '"' : '') + '>' +
         '<td>' + fmtDate(row.atMs) + '</td>' +
-        '<td>' + (row.actualModel || '&mdash;') + '</td>' +
+        '<td>' + (row.actualModel ? escapeHtml(row.actualModel) : '&mdash;') + '</td>' +
         '<td class="num">' + freshInput + '</td>' +
         '<td class="num">' + (row.actualCachedTokens || 0) + '</td>' +
         '<td class="num">' + (row.actualCompletionTokens || 0) + '</td>' +
         '<td class="num">' + (rowSavings ? fmtUsd(rowSavings.baselineUsd) : '&mdash;') + '</td>' +
-        '<td class="num">' + fmtUsd(row.actualUsdcPaid || 0) + '</td>' +
+        '<td class="num">' + fmtUsd(row.actualUsdcPaid) + '</td>' +
         '<td class="num">' + (rowSavings ? fmtUsd(rowSavings.savedUsd) : '&mdash;') + '</td>' +
         '</tr>';
       if (index === expandedTurnIndex) html += renderTurnExpansion(row);

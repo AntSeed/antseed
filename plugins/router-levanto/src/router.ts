@@ -177,7 +177,7 @@ interface RouteResponseBody {
     model: string;
     peer: string;
     estimate: { costUsd: number; inputTokens: number; cachedInputTokens: number; outputTokens: number };
-    price: { inUsdPerM: number; outUsdPerM: number; cachedInUsdPerM: number };
+    price: { inUsdPerM: number; outUsdPerM: number; cachedInUsdPerM: number | null };
   }>;
   router: string;
   /**
@@ -254,7 +254,7 @@ function computeBaselinePrices(ranked: RouteResponseBody['ranked']): BaselinePri
       out[model] = {
         inUsdPerM: best.price.inUsdPerM,
         outUsdPerM: best.price.outUsdPerM,
-        cachedInUsdPerM: best.price.cachedInUsdPerM > 0 ? best.price.cachedInUsdPerM : null,
+        cachedInUsdPerM: best.price.cachedInUsdPerM ?? null,
       };
     }
   }
@@ -276,7 +276,7 @@ function topConsideredCandidates(ranked: RouteResponseBody['ranked']): Considere
     peer: entry.peer,
     inUsdPerM: entry.price.inUsdPerM,
     outUsdPerM: entry.price.outUsdPerM,
-    cachedInUsdPerM: entry.price.cachedInUsdPerM > 0 ? entry.price.cachedInUsdPerM : null,
+    cachedInUsdPerM: entry.price.cachedInUsdPerM ?? null,
   }));
 }
 
@@ -936,7 +936,7 @@ export class LevantoRouter {
         peerId: peer.peerId,
         serviceId: entry.model,
         reputation: 0,
-        hasCachedInputPricing: entry.price.cachedInUsdPerM > 0,
+        hasCachedInputPricing: entry.price.cachedInUsdPerM != null,
         inputUsdPerMillion: entry.price.inUsdPerM,
         outputUsdPerMillion: entry.price.outUsdPerM,
         minImageUsdPerImage: null,

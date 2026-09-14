@@ -988,7 +988,7 @@ describe('LevantoRouter.selectRoute', () => {
       // subset -- so a future comparison dropdown can price any of them.
       expect(row?.baselinePrices).toEqual({
         'gpt-5.6-luna': { inUsdPerM: 0.2, outUsdPerM: 1.1, cachedInUsdPerM: 0.02 },
-        'claude-opus-5': { inUsdPerM: 15, outUsdPerM: 75, cachedInUsdPerM: null }, // 0xCCC wins (cheaper), 0 -> null
+        'claude-opus-5': { inUsdPerM: 15, outUsdPerM: 75, cachedInUsdPerM: 0 },
       });
       expect(row?.baselinePrices['gpt-5.6-sol']).toBeUndefined(); // never offered -- absent, not fabricated
     });
@@ -1015,7 +1015,7 @@ describe('LevantoRouter.selectRoute', () => {
       // though its input price is higher than 0xBBB's).
       expect(row?.consideredCandidates).toEqual([
         { model: 'gpt-5.6-luna', peer: '0xAAA', inUsdPerM: 5, outUsdPerM: 20, cachedInUsdPerM: 1.25 },
-        { model: 'kimi-k3', peer: '0xBBB', inUsdPerM: 0.6, outUsdPerM: 2.5, cachedInUsdPerM: null }, // 0 -> null
+        { model: 'kimi-k3', peer: '0xBBB', inUsdPerM: 0.6, outUsdPerM: 2.5, cachedInUsdPerM: 0 },
       ]);
       expect(row?.inputMessagePreview).toBeNull();
     });
