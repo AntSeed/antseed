@@ -12,7 +12,7 @@ export const generatedChainConfigFile = path.join(
   'packages/node/src/payments/generated-contract-addresses.ts',
 );
 
-const contractFields = {
+export const contractFields = {
   registry: 'registryContractAddress',
   usdc: 'usdcContractAddress',
   deposits: 'depositsContractAddress',
@@ -21,10 +21,20 @@ const contractFields = {
   staking: 'stakingContractAddress',
   emissions: 'emissionsContractAddress',
   legacyEmissions: 'legacyEmissionsContractAddress',
+  legacyStaking: 'legacyStakingContractAddress',
+  legacyEmissionsV1: 'legacyEmissionsV1ContractAddress',
   antsToken: 'antsTokenAddress',
   identityRegistry: 'identityRegistryAddress',
   stats: 'statsContractAddress',
   depositRelay: 'depositRelayAddress',
+  emissionsGate: 'emissionsGateAddress',
+  sellerPools: 'sellerPoolsAddress',
+  sellerRegistry: 'sellerRegistryAddress',
+  positionInit: 'positionInitAddress',
+  usageAccounting: 'usageAccountingAddress',
+  usageRewards: 'usageRewardsAddress',
+  sellerPoolsRewards: 'sellerPoolsRewardsAddress',
+  legacyEmissionsEscrow: 'legacyEmissionsEscrowAddress',
 };
 
 async function readDeployment(network) {
@@ -61,9 +71,12 @@ export function renderNetwork(record, recognizedUsageDeployment = null) {
     const active = record.status === 'active'
       && sameAddress(record.contracts.emissions?.address, contracts.usageAccounting)
       && sameAddress(record.contracts.staking?.address, contracts.sellerRegistry);
+    const deploymentBlocks = Object.values(recognizedUsageDeployment.contracts)
+      .map((contract) => contract.deploymentBlock).filter((block) => Number.isInteger(block));
     values.recognizedUsage = {
       status: active ? 'active' : 'deployed',
       effectiveEpoch: recognizedUsageDeployment.effectiveEpoch,
+      ...(deploymentBlocks.length ? { deploymentBlock: Math.min(...deploymentBlocks) } : {}),
       contracts,
     };
   }
