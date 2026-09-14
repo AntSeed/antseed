@@ -216,14 +216,15 @@ export interface BuyerCLIConfig {
 }
 
 export interface RoutingServiceConfig {
+  billing?: { kind: 'token' } | { kind: 'per_call'; maxAmountMicroUsdc: string };
   routerKey: string;
   peerId: string;
   provider: string;
   serviceId: string;
   allowPromptSharing: boolean;
-  maxInputUsdPerMillion: number;
-  maxOutputUsdPerMillion: number;
-  maxCachedInputUsdPerMillion: number;
+  maxInputUsdPerMillion?: number;
+  maxOutputUsdPerMillion?: number;
+  maxCachedInputUsdPerMillion?: number;
   maxAdditionalAuthorizationUsdc: string;
   maxRequestsPerMinute: number;
   maxInputBytes: number;

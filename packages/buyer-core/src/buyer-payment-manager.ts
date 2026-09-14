@@ -1,4 +1,5 @@
 import { hexlify, randomBytes } from 'ethers';
+import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
 import type { PaymentMux } from './payment-mux.js';
@@ -174,7 +175,7 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
 export class BuyerPaymentManager {
   private readonly _routingPeers = new Set<string>();
   private readonly _routingGrants = new Map<string, {
-    requestId: string; parentRequestId: string; service: string; remaining: bigint; signal: AbortSignal; maxPricing?: ServicePricing;
+    requestId: string; parentRequestId: string; service: string; remaining: bigint; signal: AbortSignal; maxPricing?: ServicePricing; perCallAmountUsdc?: bigint;
   }>();
   private readonly _routingLocks = new Map<string, Promise<unknown>>();
 
@@ -186,8 +187,13 @@ export class BuyerPaymentManager {
     sellerPeerId: string; requestId: string; parentRequestId: string; service: string;
     maxAdditionalAuthorizationUsdc: bigint; signal: AbortSignal;
     maxPricing?: ServicePricing;
+    perCallAmountUsdc?: bigint;
   }): () => void {
     options.signal.throwIfAborted();
+    if (options.perCallAmountUsdc !== undefined && (options.perCallAmountUsdc < 0n || options.perCallAmountUsdc > 0xffff_ffffn
+      || options.maxAdditionalAuthorizationUsdc !== options.perCallAmountUsdc)) {
+      throw buyerFault('Per-call authorization must equal one advertised fee', 'buyer-session-state');
+    }
     if (options.maxAdditionalAuthorizationUsdc < 0n || this._routingGrants.has(options.sellerPeerId)) {
       throw buyerFault('Routing authorization is invalid or a routing operation is already active for this seller', 'buyer-session-state');
     }
@@ -211,6 +217,10 @@ export class BuyerPaymentManager {
     if (!this._routingPeers.has(sellerPeerId)) return;
     const grant = this._routingGrants.get(sellerPeerId);
     const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    if (grant?.perCallAmountUsdc !== undefined && amount > current
+      && this.getRequestBilling(grant.requestId)?.observedUnitUsage?.units.successful_requests !== 1) {
+      throw buyerFault('Per-call payment requires an observed successful response', 'buyer-session-state');
+    }
     if (!grant || grant.signal.aborted || amount > current + grant.remaining) {
       throw buyerFault('Routing authorization expired or exceeds the operation limit', 'buyer-session-state');
     }
@@ -1818,7 +1828,8 @@ export class BuyerPaymentManager {
       }
     } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
-      if (sellerCost > 0n && unitBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+      if (sellerCost > 0n && unitBillingModel && (buyerBillingContext?.serviceApiProtocol === 'openai-images'
+        || unitBillingModel.components.some((component) => component.unit === 'successful_requests'))) {
         debugWarn(
           `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
         );
@@ -2276,10 +2287,17 @@ export class BuyerPaymentManager {
   }
 
   trackRequestBilling(requestId: string, entry: BuyerRequestBillingEntry): void {
+    const grant = this._routingGrants.get(entry.context.sellerPeerId);
+    if (grant?.perCallAmountUsdc !== undefined && (grant.requestId !== requestId || grant.service !== entry.context.service
+      || perCallPriceMicroUsdc(entry.unitModel) !== grant.perCallAmountUsdc
+      || entry.tokenPricing?.inputUsdPerMillion !== 0 || entry.tokenPricing?.outputUsdPerMillion !== 0
+      || (entry.tokenPricing?.cachedInputUsdPerMillion ?? 0) !== 0)) {
+      throw buyerFault('Per-call billing changed after authorization', 'buyer-session-state');
+    }
     this._cleanupRequestBillingCache();
     this._requestService.track(requestId, entry.context.service);
     this._requestBillingEntries.set(requestId, {
-      ...entry,
+      ...structuredClone(entry),
       createdAtMs: Date.now(),
     });
     this._trimRequestBillingCache();

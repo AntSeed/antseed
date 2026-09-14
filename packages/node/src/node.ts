@@ -6,6 +6,7 @@ import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
+import { perCallPriceMicroUsdc, isFreeUnitBillingModel, validateUnitBillingModelV1 } from './billing/unit.js';
 import { peerIdToAddress } from "./types/peer.js";
 import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
 import type {
@@ -1480,13 +1481,26 @@ export class AntseedNode extends EventEmitter {
     const providerPricing = provider ? peer.providerPricing?.[provider] : undefined;
     const maxPricing = providerPricing ? { ...providerPricing.defaults, ...providerPricing.services?.[body.model] } : undefined;
     if (!maxPricing) throw buyerFault('Metered routing requires an advertised price snapshot', 'invalid-request');
+    const unitModel = provider ? peer.providerServiceUnitBillingModels?.[provider]?.services[body.model]?.['openai-chat-completions'] : undefined;
+    let perCallAmountUsdc: bigint | undefined;
+    if (authorization.billing) {
+      const advertisedAmount = perCallPriceMicroUsdc(unitModel);
+      if (authorization.billing.kind !== 'per_call' || typeof authorization.validateResponse !== 'function'
+        || !/^(0|[1-9]\d*)$/.test(authorization.billing.amountMicroUsdc)
+        || advertisedAmount === null || advertisedAmount !== BigInt(authorization.billing.amountMicroUsdc)
+        || amount !== advertisedAmount || maxPricing.inputUsdPerMillion !== 0 || maxPricing.outputUsdPerMillion !== 0
+        || (maxPricing.cachedInputUsdPerMillion ?? 0) !== 0) throw buyerFault('Invalid per-call routing authorization or advertised price', 'invalid-request');
+      perCallAmountUsdc = advertisedAmount;
+    } else if (unitModel && (validateUnitBillingModelV1(unitModel).length > 0 || !isFreeUnitBillingModel(unitModel))) {
+      throw buyerFault('Unit-priced routing requires explicit per-call authorization', 'invalid-request');
+    }
     if (amount > 0n && !this._buyerPaymentManager) throw buyerFault('Paid routing requires buyer payments', 'buyer-session-state');
     const signal = options.signal ?? new AbortController().signal;
     const finish = this._buyerPaymentManager?.beginRoutingRequest({
       sellerPeerId: peer.peerId, requestId: req.requestId, parentRequestId: authorization.parentRequestId,
-      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal, maxPricing,
+      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal, maxPricing, perCallAmountUsdc,
     });
-    try { return await this._buyerHandler.sendRequest(peer, req, undefined, options); }
+    try { return await this._buyerHandler.sendRequest(structuredClone(peer), req, undefined, options); }
     finally { finish?.(); }
   }
 

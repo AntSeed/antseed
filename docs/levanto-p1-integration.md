@@ -95,6 +95,10 @@ pairs and advertised input/output prices) and `invokeService(messages)`. A plugi
 can classify with a local algorithm, use its existing upstream, or call the
 host-bound service. There is no required vendor and no forecast requirement.
 
+Fixed-price routing additionally requires `invokeService(messages, parseResponse)`
+so the response can be validated before payment authorization. See
+`router-per-call-billing.md` for the acceptance rule and configuration.
+
 Configure a dedicated routing seller explicitly in `config.json`:
 
 ```json

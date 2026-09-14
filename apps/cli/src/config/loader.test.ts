@@ -59,6 +59,23 @@ test('routing service consent and limits survive config loading', async () => {
   }
 });
 
+test('per-call routing config round-trips without requiring token price ceilings', async () => {
+  const routingService = {
+    routerKey: 'instance:fixture', peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier',
+    allowPromptSharing: true, billing: { kind: 'per_call', maxAmountMicroUsdc: '5000' },
+    maxAdditionalAuthorizationUsdc: '10000', maxRequestsPerMinute: 2, maxInputBytes: 4096, maxOutputTokens: 32,
+  };
+  await withTempConfig(JSON.stringify({ buyer: { routingService } }), async (path) => {
+    assert.deepEqual((await loadConfig(path)).buyer.routingService, routingService);
+  });
+  for (const billing of [null, { kind: 'unknown' }, { kind: 'token' },
+    ...['-1', '01', '0.005', '4294967296', 5000].map((maxAmountMicroUsdc) => ({ kind: 'per_call', maxAmountMicroUsdc }))]) {
+    await withTempConfig(JSON.stringify({ buyer: { routingService: { ...routingService, billing } } }), async (path) => {
+      await assert.rejects(loadConfig(path), /routingService/);
+    });
+  }
+});
+
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {
   const config = createDefaultConfig();
 

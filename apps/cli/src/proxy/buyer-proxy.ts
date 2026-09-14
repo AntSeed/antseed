@@ -2687,30 +2687,34 @@ export class BuyerProxy {
         && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
         const sharedPreferences = structuredClone(this._routingPreferences)
         if (sharedPreferences) delete sharedPreferences.routerSettings
-        routeSelected = await executeRouter((context) => this._node.router!.selectRoute!(
-          structuredClone(serializedReq),
-          structuredClone(peers),
-          structuredClone(conversationIdentity),
-          sharedPreferences,
-          null,
-          {
-            ...context,
-            routing: structuredClone(routingContext),
-            settings: validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}),
-            candidates: buildNetworkServiceOffers(peers).flatMap((offer) => {
-              if (this._routingPeerIds.has(offer.peerId)) return []
-              const candidate = validateRouterCandidate({ recommendation: offer, peers, request: serializedReq,
-                protocol: requestProtocol, provider: explicitProvider, requiredParameters,
-                preferences: this._routingPreferences, maxPricing: this._maxPricing,
-                minPeerReputation: this._minPeerReputation, now: this._now() })
-              return candidate && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
-                ? [{ peerId: candidate.peerId, serviceId: candidate.serviceId,
-                    inputUsdPerMillion: candidate.inputUsdPerMillion, outputUsdPerMillion: candidate.outputUsdPerMillion }]
-                : []
-            }),
-            invokeService: (messages) => this._routingServiceExecutor.invoke(serializedReq.requestId, context, messages),
-          },
-        ), clientAbortController.signal, this._routerTimeoutMs)
+        routeSelected = await executeRouter((context) => {
+          const candidates = buildNetworkServiceOffers(peers).flatMap((offer) => {
+            if (this._routingPeerIds.has(offer.peerId)) return []
+            const candidate = validateRouterCandidate({ recommendation: offer, peers, request: serializedReq,
+              protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+              preferences: this._routingPreferences, maxPricing: this._maxPricing,
+              minPeerReputation: this._minPeerReputation, now: this._now() })
+            return candidate && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
+              && peerAllowedByPolicy(this._node.router as BuyerPolicyRouter, candidate.request, candidate.peer)
+              ? [{ peerId: candidate.peerId, serviceId: candidate.serviceId,
+                  inputUsdPerMillion: candidate.inputUsdPerMillion, outputUsdPerMillion: candidate.outputUsdPerMillion }]
+              : []
+          })
+          return this._node.router!.selectRoute!(
+            structuredClone(serializedReq),
+            structuredClone(peers),
+            structuredClone(conversationIdentity),
+            sharedPreferences,
+            null,
+            {
+              ...context,
+              routing: structuredClone(routingContext),
+              settings: validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}),
+              candidates: structuredClone(candidates),
+              invokeService: (messages, parseResponse) => this._routingServiceExecutor.invoke(serializedReq.requestId, { ...context, candidates }, messages, parseResponse),
+            },
+          )
+        }, clientAbortController.signal, this._routerTimeoutMs)
         if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
         if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
         void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,

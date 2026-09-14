@@ -12,6 +12,7 @@ import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { estimateCostFromBytes } from '../src/payments/pricing.js';
+import { createPerCallBillingModel } from '../src/types/billing.js';
 
 const enc = new TextEncoder();
 
@@ -158,6 +159,71 @@ describe('BuyerPaymentManager', () => {
   });
 
   // ── authorizeSpending ──────────────────────────────────────────
+
+  async function setupPerCall() {
+    const sellerPeerId = fakePeerId('per-call-router');
+    const requestId = 'per-call-operation';
+    const controller = new AbortController();
+    manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'inference', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 5000n, perCallAmountUsdc: 5000n, signal: controller.signal,
+      maxPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    const entry = { context: { sellerPeerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' as const },
+      requestFacts: {}, unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+    manager.trackRequestBilling(requestId, entry);
+    const response = { requestId, service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('selection'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { units: { successful_requests: 1 } } };
+    const claim = { channelId, requestId, requiredCumulativeAmount: '5000', currentAcceptedCumulative: '0', deposit: '10000000',
+      lastRequestCost: '5000', inputTokens: '100', outputTokens: '20', billingUsage: { version: 1 as const, units: { successful_requests: '1' } } };
+    return { sellerPeerId, requestId, controller, channelId, entry, response, claim };
+  }
+
+  it.each(['buyer-first', 'seller-first'])('signs one fixed fee under concurrent authorization (%s)', async (order) => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    const operations = [() => manager.signPerRequestAuth(state.sellerPeerId, state.response),
+      () => manager.handleNeedAuth(state.sellerPeerId, state.claim, mux)];
+    if (order === 'seller-first') operations.reverse();
+    await Promise.all(operations.map((operation) => operation()));
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ amountUsdc: '5000', purpose: 'routing', parentRequestId: 'inference' });
+  });
+
+  it('does not sign a per-call fee without observed success or after cancellation', async () => {
+    const state = await setupPerCall();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 0 } });
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    state.controller.abort();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/No active routing/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+  });
+
+  it('rejects omitted evidence, duplicate units, and even a one-micro overcharge', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, billingUsage: undefined }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '10000', billingUsage: { version: 1, units: { successful_requests: '2' } } }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '5001' }, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    await manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+  });
+
+  it('rejects changed per-call models and snapshots the accepted billing context', async () => {
+    const state = await setupPerCall();
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, unitModel: createPerCallBillingModel('5001') })).toThrow(/changed/);
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, tokenPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 0 } })).toThrow(/changed/);
+    state.entry.unitModel.components[0]!.priceUsd = 9;
+    expect(manager.getRequestBilling(state.requestId)?.unitModel?.components[0]?.priceUsd).toBe(0.005);
+  });
 
   it('meters routing tokens once under concurrent buyer and seller authorizations', async () => {
     const sellerPeerId = fakePeerId('metered-router');

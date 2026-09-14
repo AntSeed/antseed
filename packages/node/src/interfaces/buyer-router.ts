@@ -137,7 +137,10 @@ export type RouteSelectionContext = {
   signal: AbortSignal;
   deadlineMs: number;
   candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'outputUsdPerMillion'>>;
-  invokeService?: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => Promise<SerializedHttpResponse>;
+  invokeService?: (
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    parseResponse?: (response: SerializedHttpResponse) => Array<Pick<RouteCandidate, 'peerId' | 'serviceId'>>,
+  ) => Promise<SerializedHttpResponse>;
 };
 
 export interface Router {

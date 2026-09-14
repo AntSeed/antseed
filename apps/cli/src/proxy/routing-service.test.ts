@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { PeerInfo } from '@antseed/node'
+import { createPerCallBillingModel, type PeerInfo, type RouteSelectionContext } from '@antseed/node'
 import type { RoutingServiceConfig } from '../config/types.js'
 import { RoutingServiceExecutor } from './routing-service.js'
 
@@ -24,13 +24,16 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
     getConfig: () => config, getPeers: async () => [peer], record: async (event) => { records.push(event) },
     node: { sendRequest: async (...args: any[]) => {
       sent.push(args)
-      return { requestId: args[1].requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
+      const response = { requestId: args[1].requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
         choices: [{ message: { role: 'assistant', content: 'test-model' } }], usage: { prompt_tokens: 100, completion_tokens: 20 },
       })) }
+      const validateResponse = args[2]?.routingAuthorization?.validateResponse
+      if (validateResponse && validateResponse(response) !== true) throw new Error('invalid classification')
+      return response
     } },
   })
   const controller = new AbortController()
-  const context = { signal: controller.signal, deadlineMs: Date.now() + 10_000 }
+  const context: RouteSelectionContext = { signal: controller.signal, deadlineMs: Date.now() + 10_000 }
   const messages = [{ role: 'user' as const, content: 'private example prompt' }]
   return { executor, context, messages, sent, records, config, peer, controller }
 }
@@ -130,4 +133,63 @@ test('oversized classifier responses are rejected rather than parsed or forwarde
   })
   await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /response limit/)
   assert.equal(state.records[0]?.outcome, 'failed')
+})
+
+function setupPerCall() {
+  const state = setup({ billing: { kind: 'per_call', maxAmountMicroUsdc: '10000' }, maxAdditionalAuthorizationUsdc: '20000' }, 0)
+  state.peer.providerServiceUnitBillingModels = { openai: { services: {
+    'route-classifier': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+  } } }
+  state.context.candidates = [{ peerId: 'b'.repeat(40), serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]
+  return state
+}
+
+test('per-call routing validates the recommendation and authorizes only the advertised fee', async () => {
+  const state = setupPerCall()
+  let validations = 0
+  const parseResponse = (response: { body: Uint8Array }) => {
+    validations++
+    const model = JSON.parse(new TextDecoder().decode(response.body)).choices[0].message.content
+    return [{ peerId: 'b'.repeat(40), serviceId: model }]
+  }
+  await Promise.all([
+    state.executor.invoke('parent', state.context, state.messages, parseResponse),
+    state.executor.invoke('parent', state.context, state.messages, parseResponse),
+  ])
+  assert.equal(validations, 1)
+  assert.equal(state.sent.length, 1)
+  assert.equal(state.sent[0][2].routingAuthorization.maxAdditionalAuthorizationUsdc, '5000')
+  assert.deepEqual(state.sent[0][2].routingAuthorization.billing, { kind: 'per_call', amountMicroUsdc: '5000' })
+  assert.equal(state.records[0]?.outcome, 'succeeded')
+})
+
+test('per-call routing requires a parser before contacting the seller', async () => {
+  const state = setupPerCall()
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /requires a classification parser/)
+  assert.equal(state.sent.length, 0)
+})
+
+for (const [name, routes] of Object.entries({
+  'empty recommendation': [],
+  'missing recommendation': null,
+  'unknown model': [{ peerId: 'b'.repeat(40), serviceId: 'unadvertised' }],
+  'wrong peer': [{ peerId: 'c'.repeat(40), serviceId: 'test-model' }],
+  'missing model': [{ peerId: 'b'.repeat(40) }],
+  'partially invalid list': [{ peerId: 'b'.repeat(40), serviceId: 'test-model' }, { peerId: 'c'.repeat(40), serviceId: 'test-model' }],
+})) {
+  test(`per-call validation rejects ${name} without retrying`, async () => {
+    const state = setupPerCall()
+    const parseResponse = () => routes as any
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages, parseResponse), /invalid classification/)
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages, parseResponse), /invalid classification/)
+    assert.equal(state.sent.length, 1)
+    assert.equal(state.records[0]?.outcome, 'failed')
+  })
+}
+
+test('eligibility cannot be expanded by mutating the candidate snapshot during the request', async () => {
+  const state = setupPerCall()
+  const pending = state.executor.invoke('parent', state.context, state.messages, () => [{ peerId: 'c'.repeat(40), serviceId: 'test-model' }])
+  state.context.candidates!.push({ peerId: 'c'.repeat(40), serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 })
+  await assert.rejects(pending, /invalid classification/)
 })

@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
 import { parseHostPort } from './public-address.js';
+import { createPerCallBillingModel } from '@antseed/node';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -348,8 +349,17 @@ export function validateConfig(config: AntseedConfig): string[] {
       }
       if (typeof routingService.peerId !== 'string' || !PEER_ID_PATTERN.test(routingService.peerId)) errors.push('buyer.routingService.peerId must be a peer ID');
       if (routingService.allowPromptSharing !== true) errors.push('buyer.routingService.allowPromptSharing must be explicitly true');
-      for (const key of ['maxInputUsdPerMillion', 'maxOutputUsdPerMillion', 'maxCachedInputUsdPerMillion'] as const) {
-        if (!Number.isFinite(routingService[key]) || routingService[key] < 0) errors.push(`buyer.routingService.${key} must be non-negative and finite`);
+      if (routingService.billing !== undefined && routingService.billing?.kind !== 'token' && routingService.billing?.kind !== 'per_call') {
+        errors.push('buyer.routingService.billing.kind must be token or per_call');
+      }
+      if (routingService.billing?.kind === 'per_call') {
+        try { createPerCallBillingModel(routingService.billing.maxAmountMicroUsdc); }
+        catch { errors.push('buyer.routingService.billing.maxAmountMicroUsdc must be a canonical uint32 micro-USDC amount'); }
+      } else {
+        for (const key of ['maxInputUsdPerMillion', 'maxOutputUsdPerMillion', 'maxCachedInputUsdPerMillion'] as const) {
+          const value = routingService[key];
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) errors.push(`buyer.routingService.${key} must be non-negative and finite`);
+        }
       }
       for (const key of ['maxRequestsPerMinute', 'maxInputBytes', 'maxOutputTokens'] as const) {
         if (!Number.isSafeInteger(routingService[key]) || routingService[key] < 1) errors.push(`buyer.routingService.${key} must be a positive safe integer`);

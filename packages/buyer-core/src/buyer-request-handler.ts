@@ -46,6 +46,8 @@ export interface RequestExecutionOptions {
   routingAuthorization?: {
     parentRequestId: string;
     maxAdditionalAuthorizationUsdc: string;
+    billing?: { kind: 'per_call'; amountMicroUsdc: string };
+    validateResponse?: (response: SerializedHttpResponse) => boolean;
   };
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
@@ -100,6 +102,10 @@ export class BuyerRequestHandler {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     options?.signal?.throwIfAborted();
+    if (options?.routingAuthorization?.billing?.kind === 'per_call'
+      && typeof options.routingAuthorization.validateResponse !== 'function') {
+      throw buyerFault('Per-call routing requires response validation', 'invalid-request');
+    }
     if (!req.requestId || typeof req.requestId !== "string") {
       throw buyerFault("requestId must be a non-empty string", 'invalid-request');
     }
@@ -388,6 +394,7 @@ export class BuyerRequestHandler {
       }
       startTime = Date.now();
       const retriedResponse = await executeRequest();
+      this._validateRoutingResponse(retriedResponse, options);
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
         if (options?.routingAuthorization && retriedResponse.statusCode < 400) {
@@ -399,6 +406,7 @@ export class BuyerRequestHandler {
       return adaptPeerResponse(retriedResponse);
     }
 
+    this._validateRoutingResponse(response, options);
     if (negotiator && !isFreeService) {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
       if (options?.routingAuthorization && response.statusCode < 400) {
@@ -409,6 +417,20 @@ export class BuyerRequestHandler {
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
     return adaptPeerResponse(response);
+  }
+
+  private _validateRoutingResponse(response: SerializedHttpResponse, options?: RequestExecutionOptions): void {
+    if (options?.routingAuthorization?.billing?.kind !== 'per_call'
+      || response.statusCode < 200 || response.statusCode >= 300) return;
+    options.signal?.throwIfAborted();
+    let valid = false;
+    try {
+      valid = options.routingAuthorization.validateResponse?.(structuredClone(response)) === true;
+    } catch {
+      throw peerFault('Routing service returned an invalid classification', 'peer-protocol-violation');
+    }
+    options.signal?.throwIfAborted();
+    if (!valid) throw peerFault('Routing service returned an invalid classification', 'peer-protocol-violation');
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {
