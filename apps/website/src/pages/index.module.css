@@ -86,6 +86,130 @@
   }
 }
 
+/* ---- split hero (copy left, AI VPN demo right) — wide viewports only ---- */
+@media (min-width: 997px) {
+  .heroSplit {
+    text-align: left;
+    padding-top: 28px;
+    padding-bottom: 32px;
+  }
+
+  .heroSplitInner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(320px, 33%, 400px);
+    grid-template-areas:
+      'copy demo'
+      'stats demo';
+    grid-template-rows: auto auto;
+    column-gap: 56px;
+    align-items: center;
+    align-content: center;
+    max-width: 1120px;
+  }
+
+  .heroCopy {
+    grid-area: copy;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    align-self: end;
+  }
+
+  .heroSplit .heroTitle {
+    white-space: normal;
+    font-size: clamp(44px, 4.4vw, 62px);
+    line-height: 1.08;
+    margin-bottom: 12px;
+  }
+
+  .heroSplit .heroSub {
+    margin-bottom: 20px;
+  }
+
+  /* static subtitle (split hero) — same type as the rotating line, but
+     allowed to wrap */
+  .heroSubStatic {
+    max-width: 40ch;
+    margin: 0 0 20px;
+    font-size: 18px;
+    line-height: 26px;
+    font-weight: 500;
+    color: var(--as-text);
+  }
+
+  .heroSplit .heroLead {
+    max-width: 48ch;
+    margin: 20px 0 0;
+    font-size: 15px;
+    line-height: 23px;
+    font-weight: 400;
+    color: var(--as-text-2, var(--as-text));
+    opacity: 0.85;
+  }
+
+  .heroSplit .heroTitleBreak {
+    display: block;
+  }
+
+  .heroSplit .heroSubTrack,
+  .heroSplit .heroSubLine {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .heroSplit .ctaBlock {
+    align-items: flex-start;
+  }
+
+  .heroSplit .statsRow {
+    grid-area: stats;
+    align-self: start;
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    justify-content: start;
+    gap: clamp(16px, 2.2vw, 32px);
+    margin-top: 36px;
+  }
+
+  .heroSplit .stat {
+    align-items: flex-start;
+  }
+
+  .heroSplit .statValue {
+    font-size: 30px;
+    line-height: 40px;
+  }
+
+  .heroSplit .statLabel {
+    white-space: nowrap;
+  }
+
+  .demoFrameSplit {
+    grid-area: demo;
+    margin-top: 0;
+    transform: none;
+    max-width: none;
+    justify-self: end;
+    align-self: center;
+  }
+}
+
+/* forced two-line headline only applies in the wide split layout */
+.heroTitleBreak {
+  display: none;
+}
+
+/* explainer line under the subtitle (split hero); centred when stacked */
+.heroLead {
+  max-width: 40ch;
+  margin: 0 auto 20px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  color: var(--as-text);
+  opacity: 0.85;
+}
+
 /* rotating subtitle — fixed line height so phrases slide vertically */
 .heroSub {
   position: relative;
@@ -98,6 +222,15 @@
   font-weight: 500;
   color: var(--as-text);
   margin-bottom: 24px;
+}
+
+/* Phrases stay on one line (the slide relies on a fixed 1.6em row), so
+   scale the type down on narrow screens instead of wrapping. Sized so
+   the longest phrase (~24em) clears the 16px hero padding at 375px. */
+@media (max-width: 640px) {
+  .heroSub {
+    font-size: clamp(11px, 3.7vw, 18px);
+  }
 }
 
 .heroSubTrack {
@@ -252,6 +385,19 @@
 
 /* Google/Meta fall back to plain <img> (external SVG) — currentColor
    can't reach into those, so force the same white silhouette via filter. */
+.marqueeLockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.marqueeWordmark {
+  font-family: var(--as-font-app);
+  font-size: 17px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
 .marqueeItem img {
   height: 100%;
   width: auto;
@@ -532,7 +678,7 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 600;
-  color: var(--as-live-text);
+  color: var(--as-heading);
 }
 
 .bestBadge {
@@ -543,16 +689,17 @@
   font-size: 12px;
   line-height: 16px;
   font-weight: 500;
-  color: var(--as-live-text);
-  background: var(--as-badge-green-bg);
+  /* neutral on purpose — the savings figure is the only green in the row */
+  color: var(--as-text-2);
+  background: var(--as-soil-0);
   border-radius: 8px;
   padding: 0 8px 0 4px;
   white-space: nowrap;
 }
 
 :global(html[data-theme='dark']) .bestBadge {
-  background: rgba(16, 185, 129, 0.16);
-  color: var(--as-primary-3);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--as-text-2);
 }
 
 .priceBestSub {
@@ -580,9 +727,9 @@
 }
 
 .priceSave strong {
-  font-size: 18px;
+  font-size: 20px;
   line-height: 24px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--as-live-text);
 }
 
@@ -902,6 +1049,58 @@
 /* ============================================================
    RUNS ON YOUR COMPUTER
    ============================================================ */
+/* ---- who it's for — text-only persona cards ---- */
+.whoGrid {
+  margin-top: 40px;
+}
+
+/* soil card with a white art panel, per the design system card-*.svg */
+.whoCard {
+  display: flex;
+  flex-direction: column;
+  background: var(--as-soil-0);
+  border-radius: 28px;
+  padding: 24px 24px 20px;
+}
+
+.whoArt {
+  aspect-ratio: 300 / 130;
+  background: #fff;
+  border-radius: 16px;
+  padding: 12px 8px;
+  box-sizing: border-box;
+}
+
+.whoArt svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.whoKicker {
+  display: block;
+  margin: 24px 0 0;
+  font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--as-green-deep);
+}
+
+/* copy block stretches so the three links sit on one baseline */
+.whoCard .featureCopy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 24px 0 0;
+}
+
+.whoCard .featureCopy p {
+  flex: 1;
+}
+
 .runsTitle {
   font-family: var(--as-font-display);
   font-weight: 500;
@@ -1322,7 +1521,14 @@
 
 .stepsSection {
   position: relative;
+  overflow: hidden;
   padding: 96px 16px;
+  background: var(--as-soil-0);
+}
+
+.stepsSection .sectionInner {
+  position: relative;
+  z-index: 1;
 }
 
 .stepsAnt {
@@ -1337,6 +1543,16 @@
   z-index: 0;
 }
 
+.stepsLead {
+  max-width: 820px;
+  margin: 0 auto 40px;
+  text-align: center;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--as-text);
+}
+
 .stepsTitle {
   font-family: var(--as-font-display);
   font-size: clamp(32px, 3.4vw, 48px);
@@ -1345,25 +1561,31 @@
   letter-spacing: -1px;
   text-align: center;
   color: var(--as-heading);
-  margin: 0 0 32px;
+  margin: 0 0 20px;
 }
 
 .stepsGrid {
   position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  max-width: 720px;
-  margin: 0 auto;
   z-index: 1;
 }
 
+/* step cards reuse the illustrated "runs" card chrome (white card, soft
+   illustration well); the copy block only adds the numbered head */
 .stepCard {
   border: 1px solid var(--as-line);
-  border-radius: 24px;
-  background: var(--as-soil-2);
-  padding: 16px;
-  min-height: 216px;
+}
+
+/* two of the three illustrations carry their own grey well; give the well
+   to all of them so the row reads as one set */
+.stepCard .runsIlloWell img {
+  background: var(--as-soil-0);
+  border-radius: 16px;
+}
+
+.stepCard .runsIlloWell svg {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .stepHead {
@@ -1420,6 +1642,7 @@
 .sellSection {
   position: relative;
   padding: 40px 16px 96px;
+  overflow: hidden;
 }
 
 .sellCardWrap {
@@ -1685,6 +1908,14 @@
   margin: 0 0 32px;
 }
 
+.finalBtnRow {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .ctaCaptionLight {
   font-size: 12px;
   line-height: 16px;
@@ -1707,7 +1938,7 @@
   }
 
   .stepCard {
-    min-height: 160px;
+    min-height: 0;
   }
 
   .privacyGrid {

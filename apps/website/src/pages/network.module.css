@@ -1,0 +1,157 @@
+/* /network — token section; everything else comes from shared components */
+.tokenGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 1024px;
+  margin: 40px auto 0;
+}
+
+.tokenCard {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.tokenCard:hover {
+  border-color: var(--as-line-strong);
+  box-shadow: 0 12px 28px -18px rgba(0, 30, 18, 0.35);
+  transform: translateY(-2px);
+}
+
+.tokenCardLink {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.tokenCardLink:hover {
+  text-decoration: none;
+  color: inherit;
+}
+
+.tokenCardLink p {
+  flex: 1;
+}
+
+.tokenCardMore {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--as-green-deep);
+}
+
+.tokenCardMore svg {
+  transition: transform 0.15s ease;
+}
+
+.tokenCard:hover .tokenCardMore svg {
+  transform: translateX(3px);
+}
+
+.tokenCard h3 {
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--as-heading);
+  margin: 0 0 6px;
+}
+
+.tokenCard p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+.supply {
+  max-width: 1024px;
+  margin: 12px auto 0;
+  padding: 20px 24px;
+  border-radius: 24px;
+  border: 1px solid var(--as-line);
+  background: var(--as-soil-2);
+}
+
+.supplyTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.supplyTop strong {
+  font-family: var(--as-font-app);
+  font-weight: 700;
+  color: var(--as-heading);
+}
+
+.liveDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--as-green);
+  vertical-align: middle;
+  animation: liveDot 2s ease-in-out infinite;
+}
+
+@keyframes liveDot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+.supplyTrack {
+  height: 10px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: var(--as-soil-0);
+  overflow: hidden;
+}
+
+.supplyFill {
+  height: 100%;
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--as-green);
+  transition: width 0.6s var(--as-ease, ease);
+}
+
+.supplyNote {
+  margin: 12px 0 0;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--as-text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveDot { animation: none; }
+}
+
+.tokenCtas {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+
+@media (max-width: 996px) {
+  .tokenGrid { grid-template-columns: 1fr; }
+}
