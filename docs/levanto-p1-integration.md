@@ -17,6 +17,8 @@ Buyer `maxPricing.defaults` limits input, output, and cached-input prices;
 independently of optional router policy hooks. The preference ranking dial is
 not reinterpreted as a hard price ceiling. Policy is checked after selection and
 again before dispatch, including after asynchronous verification or retries.
+When cached-input pricing is absent, the ceiling check uses the normal input
+rate, matching SDK billing; it does not invent a cached discount or a forecast.
 Plugins receive copies rather than references to the host's request/discovery
 state. This protects against accidental mutation, not malicious in-process code.
 
@@ -78,6 +80,11 @@ ReserveAuth collateral, or reversal of previously signed obligations. Existing
 is dedicated to routing for this buyer process; use a different inference peer.
 Do not mix routing and inference/day-pass traffic on that payment relationship.
 
+The operation's remaining allowance survives channel rollover. Negotiated input,
+output and cached-input prices may not exceed the host-approved advertised
+snapshot. Failed persistence does not consume the allowance, and cancellation
+during signing prevents that authorization from being committed or returned.
+
 ## Host service adapter
 
 The optional sixth argument also supplies `candidates` (eligible exact model/peer
@@ -134,10 +141,82 @@ the cost of a routing classification that already completed.
 
 ## Validation notes
 
+### Isolated local-chain routing fixture
+
+Prerequisites: Node 20, pnpm dependencies, Foundry (`anvil`, `forge`, `cast`) and
+the initialized `packages/contracts/lib/forge-std` submodule. Build the workspace,
+then run from the repository root:
+
+```sh
+pnpm run build
+pnpm --filter @antseed/e2e run flow:local-chain-routing
+```
+
+The fixture starts its own Anvil on a free loopback port and deploys test
+contracts. It does not use an existing chain or real funds. It uses a
+vendor-neutral fixture router, one token-priced classifier and a separate
+inference seller. Discovery is injected locally; HTTP proxy handling, SDK/P2P
+transport, authorization and settlement use the real implementation.
+
+Assertions cover one classification and one inference, distinct request IDs,
+parent-linked routing accounting, and actual on-chain settlement of **140
+micro-USDC** for 100 input tokens at $1/million plus 20 output tokens at
+$2/million. The fixture stops its nodes and Anvil and removes its temporary
+identities on exit. Foundry's normal ignored build/broadcast artifacts remain.
+
 Use Node 20 for this snapshot's native dependencies. The machine's default Node
 26 installation failed to install `better-sqlite3`; Node 20.17.0 installs it.
-The original proxy has an independently reproduced failing test:
-`conversation routing keeps the actual peer as a soft preference and fails over when needed`.
-This is not repaired as part of route eligibility.
+### Vendor-neutral regression coverage
 
-No P2 work, upstream merge, push, or competitor integration is included.
+The proxy fixtures exercise selectors without forecasts, forged peer/request/
+price data, unknown models and peers, buyer blocklists and trust constraints,
+input/output/cached-input ceilings, required capabilities, cooldowns, and policy
+changes while selection is in progress. Failure fixtures cover throws, empty or
+malformed results, ignored cancellation, deadlines, explicit eligible fallback
+and forbidden fallback. Activation tests keep enabling separate from consent.
+
+Host-service fixtures check exact router-instance authorization, prompt consent,
+seller/service binding, price and input limits, invalid advertised rates, free
+versus paid authorization, one-operation deduplication, rate limits, cancellation,
+separate IDs and prompt-free accounting. SDK payment tests cover both buyer/seller
+authorization race orderings, mismatched/expired grants, day-pass isolation,
+negotiated price increases, remaining allowance across channel rollover,
+persistence failure and cancellation during signing. The local-chain fixture
+complements these unit tests with actual settlement.
+
+### Verification results (September 14, 2026)
+
+- Full workspace build and workspace typecheck pass; desktop renderer typecheck
+  also passes. Node 20 was used throughout.
+- SDK: 1,053 tests pass. Buyer core: 11 pass. Levanto plugin: 92 pass.
+- Desktop: 6 script tests and 371 main-process tests pass; renderer has 407
+  passing tests and one baseline cooldown failure.
+- CLI: the full suite has one baseline conversation-affinity failure. All added
+  P1 cases pass. Under Node 20, the existing extensionless wrapper-test fixtures
+  require `NODE_OPTIONS='--experimental-default-type=module --no-warnings'`.
+  Clear inherited `FORCE_COLOR`/`NO_COLOR` for those stderr assertions and
+  `ANTSEED_SYSTEM_PROXY_DATA_DIR` for desktop's default-directory assertion.
+- The root recursive test command is not green: it stops at the existing web-SDK
+  top-up-replay test and its resulting cleanup timeout.
+
+The three remaining failures were reproduced using the corresponding baseline
+implementation from `227046fdacc470c8d030534ab8e956a3b0272a73` in generated build
+output, then restoring the P1 build output. These are focused baseline checks,
+not a claim that an entire pristine baseline suite passes:
+
+1. CLI: `conversation routing keeps the actual peer as a soft preference and
+   fails over when needed` expects a cleared affinity but receives the prior pin.
+2. Desktop renderer: `a distant cooldown still counts as cooling down` conflicts
+   with the baseline cooldown implementation's upper bound.
+3. Web SDK: `replays an ambiguously delivered top-up without trusting it after
+   restart` expects a transport failure, but baseline deposit verification fails
+   first against its test RPC configuration; cleanup then times out.
+
+These failures are not repaired as part of P1. The original AntSeed checkout is
+untouched. Changes are separate local commits on `codex/levanto-p1-local`.
+
+P2 remains deferred: router-owned configuration/UI redesign, shared forecast and
+savings-record changes, and routing cadence/turn/compaction heuristics. The
+existing universal CQT behavior is not expanded or presented as a standard that
+other routers must implement. No upstream merge, push, or competitor integration
+is included.
