@@ -194,6 +194,21 @@ test('selectRoute receives eligible candidate prices without requiring forecasts
   assert.deepEqual(candidates, [{ peerId: allowed.peerId, serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }])
 })
 
+test('host sends only the active router settings and rejects unknown fields before invoking it', async () => {
+  const peer = routerPeer('a')
+  const seen: any[] = []
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    selectRoute: async (...args: any[]) => { seen.push(args[5].settings); return [] },
+  }, undefined, { ...priceAndTrustPreferences, routerSettings: { 'plugin:one': { policy: 'fast' }, 'plugin:two': { policy: 'other' } } })
+  ;(proxy as any)._routerKey = 'plugin:one'
+  ;(proxy as any)._routingSettingsSchema = [{ key: 'policy', label: 'Policy', type: 'string', options: ['fast'] }]
+  await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+  assert.deepEqual(seen, [{ policy: 'fast' }])
+  ;(proxy as any)._routingPreferences.routerSettings['plugin:one'] = { unknown: 'value' }
+  await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+  assert.equal(seen.length, 1)
+})
+
 for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
   test(`selectRoute fails closed on ${failure}`, async () => {
     const peer = routerPeer('a')

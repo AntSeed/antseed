@@ -20,6 +20,9 @@ const plugin: AntseedRouterPlugin = {
     + 'cost against quality.',
   savingsBaselineModel: DEFAULT_BASELINE_MODELS[0],
   dailyPassServiceId: LEVANTO_DAILY_PASS_SERVICE_ID,
+  routingSettingsSchema: [{ key: 'costQuality', label: 'Levanto cost / quality tradeoff', type: 'number',
+    default: '5', options: ['1', '3', '5', '7', '9'], min: 1, max: 9,
+    description: 'Levanto-specific preference: 1 favours cost, 9 favours quality.' }],
   configSchema: [
     {
       key: 'LEVANTO_ROUTING_PEER_URL',

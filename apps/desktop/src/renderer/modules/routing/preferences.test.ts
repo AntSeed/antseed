@@ -25,6 +25,15 @@ const fallbackPreferences: VprRoutingPreferences = {
   dayPassOnDemandEnabled: false,
 };
 
+test('plugin settings round-trip independently without granting payment consent', () => {
+  const routerSettings = { 'plugin:one': { policy: 'fast' }, 'plugin:two': { threshold: '0.7' } };
+  saveVprRoutingPreferences({ ...fallbackPreferences, routerSettings });
+  const loaded = loadVprRoutingPreferences(fallbackPreferences);
+  assert.deepEqual(loaded.routerSettings, routerSettings);
+  assert.deepEqual(buyerModelRoutingPreferences(loaded).routerSettings, routerSettings);
+  assert.equal(loaded.dayPassOnDemandEnabled, false);
+});
+
 test('legacy activation migrates without granting new day-pass consent', () => {
   for (const consent of [true, false]) {
     localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ dayPassOnDemandEnabled: consent, autoRouting: false }));

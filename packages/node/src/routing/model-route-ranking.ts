@@ -1,6 +1,7 @@
 import { normalizedModelReputationScore } from '../reputation/model-reputation.js';
 
 export type ModelRoutingPreferences = {
+  routerSettings?: Record<string, Record<string, string>>;
   preferFreePeers: boolean;
   maxInputUsdPerMillion: number;
   minTrustScore: number;

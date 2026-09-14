@@ -1,5 +1,6 @@
 import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
+import { readRouterSettings } from '@antseed/node/router-settings';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
@@ -116,6 +117,8 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
   // (see DEFAULT_MODEL_ROUTING_PREFERENCES), not inherited from some other
   // truthy default.
   const dayPassOnDemandEnabled = readBoolean(parsed.dayPassOnDemandEnabled, fallback.dayPassOnDemandEnabled ?? false);
+  let routerSettings: ModelRoutingPreferences['routerSettings'];
+  try { routerSettings = readRouterSettings(parsed.routerSettings); } catch { routerSettings = {}; }
 
   return {
     autoRouting: readBoolean(parsed.autoRouting, fallback.autoRouting),
@@ -132,6 +135,7 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
       ? normalizePeerIdList(parsed.blockedPeerIds)
       : fallback.blockedPeerIds,
     cqt: readCqt(parsed.cqt, fallback.cqt ?? 5),
+    ...(Object.keys(routerSettings).length ? { routerSettings } : {}),
     dayPassOnDemandEnabled,
     routerEnabled: readBoolean(parsed.routerEnabled, dayPassOnDemandEnabled),
     // Nothing is selected until the user explicitly picks a router, whether
@@ -170,6 +174,7 @@ export function buyerModelRoutingPreferences(
     allowedPeerIds: validPeerIds(value.allowedPeerIds),
     blockedPeerIds: validPeerIds(value.blockedPeerIds),
     cqt: value.cqt,
+    ...(value.routerSettings ? { routerSettings: readRouterSettings(value.routerSettings) } : {}),
     dayPassOnDemandEnabled: value.dayPassOnDemandEnabled,
     routerEnabled: value.routerEnabled ?? value.dayPassOnDemandEnabled ?? false,
     selectedRouterPackage: value.selectedRouterPackage ?? null,

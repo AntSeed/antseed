@@ -5,7 +5,7 @@ import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { peerAccessSummaryLabel } from '../../../modules/routing/peer-access';
 import { buildVprPeerOptions } from '../../../modules/routing/tools';
 import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
-import { CQT_LABELS, cqtToPositionIndex, positionIndexToCqt } from '../../../modules/routing/cqt';
+import { RouterSettings } from '../chat/RouterSettings';
 import { AUTO_DAY_PASS_MIN_TRUST_SCORE } from '../../../modules/routing/auto-router';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { dayPassPriceIncreaseResource, installedRouterPluginsResource } from '../../../modules/app/vpr-resources';
@@ -176,24 +176,13 @@ export function VprPreferencesView({ onSelectView }: Props) {
             <div className={styles.routerDescription}>{routerDescription}</div>
           </div>
 
-          {dayPassOnDemandEnabled ? (
-            <div className={styles.sliderGroup}>
-              <div className={styles.sliderHead}>
-                <span className={styles.sliderTitle}>Cost / quality tradeoff</span>
-                <span className={styles.sliderReadingSmall}>
-                  {CQT_LABELS[cqtToPositionIndex(snap.preferences.cqt)]}
-                </span>
-              </div>
-              <VprSlider
-                min={0}
-                max={CQT_LABELS.length - 1}
-                step={1}
-                value={cqtToPositionIndex(snap.preferences.cqt)}
-                onChange={(next) => actions.updateVprRoutingPreferences({ cqt: positionIndexToCqt(next) })}
-                ariaLabel="Cost / quality tradeoff"
-              />
-            </div>
-          ) : null}
+          {selectedRouterPackage ? <RouterSettings
+            schema={availableRouters.find((router) => router.package === selectedRouterPackage)?.routingSettingsSchema ?? []}
+            values={snap.preferences.routerSettings?.[`plugin:${selectedRouterPackage}`] ?? {}}
+            onChange={(values) => actions.updateVprRoutingPreferences({ routerSettings: {
+              ...snap.preferences.routerSettings, [`plugin:${selectedRouterPackage}`]: values,
+            } })}
+          /> : null}
 
           <VprSettingRow
             title="Prefer free peers when available"

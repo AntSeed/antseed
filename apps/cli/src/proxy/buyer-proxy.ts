@@ -111,6 +111,7 @@ import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js'
 import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
 import { validateRouterCandidate } from './router-policy.js'
 import { executeRouter, RouterExecutionError } from './router-execution.js'
+import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
 import { RoutingServiceExecutor } from './routing-service.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
@@ -147,6 +148,7 @@ export interface BuyerProxyConfig {
   dailyPassServiceId?: string
   routerKey?: string
   routingService?: RoutingServiceConfig
+  routingSettingsSchema?: RouterSettingField[]
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -841,6 +843,8 @@ export class BuyerProxy {
   private readonly _autoRouteServiceId: string | undefined
   private readonly _dailyPassServiceId: string | undefined
   private _routingServiceConfig: RoutingServiceConfig | undefined
+  private readonly _routingSettingsSchema: RouterSettingField[]
+  private readonly _routerKey: string
   private readonly _routingServiceExecutor: RoutingServiceExecutor
   private readonly _routingPeerIds = new Set<string>()
 
@@ -896,6 +900,8 @@ export class BuyerProxy {
     this._autoRouteServiceId = config.autoRouteServiceId
     this._dailyPassServiceId = config.dailyPassServiceId
     this._routingServiceConfig = config.routingService
+    this._routingSettingsSchema = config.routingSettingsSchema ?? []
+    this._routerKey = config.routerKey ?? ''
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -2666,6 +2672,7 @@ export class BuyerProxy {
           null,
           {
             ...context,
+            settings: validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}),
             candidates: buildNetworkServiceOffers(peers).flatMap((offer) => {
               if (this._routingPeerIds.has(offer.peerId)) return []
               const candidate = validateRouterCandidate({ recommendation: offer, peers, request: serializedReq,

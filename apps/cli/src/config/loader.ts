@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readRouterSettings } from '@antseed/node';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -426,6 +427,7 @@ function mergeBuyerRoutingPreferences(
     allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
     cqt: cqt === undefined ? fallback.cqt : toFiniteOrNaN(cqt),
+    ...(value['routerSettings'] !== undefined ? { routerSettings: readRouterSettings(value['routerSettings']) } : {}),
     routerEnabled: value['routerEnabled'] === undefined ? dayPassOnDemandEnabled === true : value['routerEnabled'] as boolean,
     dayPassOnDemandEnabled: dayPassOnDemandEnabled === undefined
       ? fallback.dayPassOnDemandEnabled

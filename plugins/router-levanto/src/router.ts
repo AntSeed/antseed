@@ -768,7 +768,8 @@ export class LevantoRouter {
     // CQT dial: one of the five discrete VPR positions {1,3,5,7,9}; 5
     // ("Balanced") when the host hasn't wired VprRoutingPreferences.cqt
     // through yet, or for a CLI-only caller with no preferences UI at all.
-    const cqt = routingPreferences?.cqt ?? 5;
+    const cqt = Number(context?.settings?.costQuality ?? routingPreferences?.cqt ?? 5);
+    if (![1, 3, 5, 7, 9].includes(cqt)) throw new Error('Invalid Levanto costQuality setting');
     const body: RouteRequestBody = {
       v: 1,
       cqt,

@@ -130,6 +130,7 @@ export type RoutingDecisionRow = {
  * the cheapest peer with reputation above a minimum threshold.
  */
 export type RouteSelectionContext = {
+  settings?: Record<string, string>;
   signal: AbortSignal;
   deadlineMs: number;
   candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'outputUsdPerMillion'>>;

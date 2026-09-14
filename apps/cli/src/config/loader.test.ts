@@ -13,6 +13,13 @@ import { loadConfig } from './loader.js';
 import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
 
+test('loads namespaced router settings without converting plugin vocabulary', async () => {
+  const routerSettings = { 'plugin:classifier': { policy: 'fast' }, 'instance:other': { threshold: '0.5' } };
+  await withTempConfig(JSON.stringify({ buyer: { routingPreferences: { routerSettings } } }), async (path) => {
+    assert.deepEqual((await loadConfig(path)).buyer.routingPreferences.routerSettings, routerSettings);
+  });
+});
+
 async function withTempConfig(contents: string, fn: (configPath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-cli-config-'));
   const configPath = join(dir, 'config.json');

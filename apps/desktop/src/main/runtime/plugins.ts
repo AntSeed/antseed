@@ -208,6 +208,7 @@ export type RouterPluginMetadata = {
   preferencesSummary?: string;
   savingsBaselineModel?: string;
   configSchema?: ConfigField[];
+  routingSettingsSchema?: AntseedRouterPlugin['routingSettingsSchema'];
 };
 
 /**
@@ -249,6 +250,7 @@ export async function listInstalledRouterPluginMetadata(): Promise<RouterPluginM
         preferencesSummary: plugin.preferencesSummary,
         savingsBaselineModel: plugin.savingsBaselineModel,
         configSchema: plugin.configSchema,
+        routingSettingsSchema: plugin.routingSettingsSchema,
       });
     } catch (err) {
       // A plugin that fails to import (missing deps, broken build) doesn't

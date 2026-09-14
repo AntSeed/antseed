@@ -352,3 +352,4 @@ export {
   type LoadedProvider,
   type LoadedRouter,
 } from './config/plugin-loader.js'
+export { readRouterSettings, validateRouterSettings, type RouterSettingField } from './routing/router-settings.js';

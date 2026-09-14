@@ -184,6 +184,7 @@ export type PluginListResult = {
 };
 
 export type RouterPluginInfo = {
+  routingSettingsSchema?: import('@antseed/node').RouterSettingField[];
   package: string;
   version: string;
   name: string;

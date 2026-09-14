@@ -76,6 +76,14 @@ function fetchWithPaymentRequired(unpaidCount = 1) {
 }
 
 describe('LevantoRouter.selectRoute', () => {
+  it('uses its namespaced setting instead of the legacy universal preference', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
+    const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl });
+    await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, enabledPreferences(), null,
+      { signal: new AbortController().signal, deadlineMs: Date.now() + 1000, settings: { costQuality: '9' } });
+    const bodies = fetchImpl.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(bodies.find((body) => 'inputMessage' in body).cqt).toBe(9);
+  });
   it('declines immediately for a concretely-chosen model, without calling the routing peer', async () => {
     const fetchImpl = vi.fn();
     const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl });
