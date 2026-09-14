@@ -90,4 +90,18 @@ describe('routing context and local cadence gate', () => {
     expect(started().observe(request([user], {}, { previous_response_id: 'remote' }), conversation, { cadence: 'session' }))
       .toMatchObject({ trigger: 'request', shouldRoute: true, previousRoute: null });
   });
+
+  it('does not reuse an old route after a rewritten-context selection failed or was cancelled', () => {
+    const tracker = started();
+    const rewritten = request([{ role: 'system', content: 'summary' }, user]);
+    expect(tracker.observe(rewritten, conversation, { cadence: 'session' }).trigger).toBe('context-rewrite');
+    expect(tracker.observe(rewritten, conversation, { cadence: 'session' }))
+      .toMatchObject({ trigger: 'route-unavailable', shouldRoute: true, previousRoute: null });
+  });
+
+  it('discards old tracking when an intervening request has unobservable history', () => {
+    const tracker = started();
+    tracker.observe(request([user], {}, { previous_response_id: 'remote' }), conversation, { cadence: 'session' });
+    expect(tracker.observe(request(), conversation, { cadence: 'session' }).trigger).toBe('new-session');
+  });
 });

@@ -60,11 +60,12 @@ export class RoutingContextTracker {
   } = {}): RoutingRequestContext {
     const base: RoutingRequestContext = { trigger: 'request', shouldRoute: true, contextRewritten: false, cacheState: 'unknown', turnId: null, previousRoute: null };
     if (!conversation) return base;
+    const untracked = () => { this.sessions.delete(this.key(conversation)); return base; };
     let body: Record<string, unknown>;
-    try { body = JSON.parse(new TextDecoder().decode(request.body)); } catch { return base; }
-    if (!body || typeof body !== 'object' || body.previous_response_id) return base;
+    try { body = JSON.parse(new TextDecoder().decode(request.body)); } catch { return untracked(); }
+    if (!body || typeof body !== 'object' || body.previous_response_id) return untracked();
     const messages = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : null;
-    if (!messages) return base;
+    if (!messages) return untracked();
     const now = this.now();
     for (const [key, entry] of this.sessions) if (now - entry.atMs >= this.ttlMs) this.sessions.delete(key);
     const key = this.key(conversation);
@@ -92,9 +93,12 @@ export class RoutingContextTracker {
     this.sessions.set(key, snapshot);
     while (this.sessions.size > this.capacity) this.sessions.delete(this.sessions.keys().next().value!);
     const cadence = options.cadence ?? 'request';
-    return { trigger, shouldRoute: cadence === 'request' || !['continuation', 'new-turn'].includes(trigger)
-      || (cadence === 'turn' && trigger === 'new-turn'), contextRewritten: rewritten, cacheState: 'unknown',
-      turnId: snapshot.turnId, previousRoute: snapshot.route ? { ...snapshot.route } : null };
+    const shouldRoute = cadence === 'request' || !['continuation', 'new-turn'].includes(trigger)
+      || (cadence === 'turn' && trigger === 'new-turn');
+    const previousRoute = snapshot.route ? { ...snapshot.route } : null;
+    if (shouldRoute) snapshot.route = null;
+    return { trigger, shouldRoute, contextRewritten: rewritten, cacheState: 'unknown',
+      turnId: snapshot.turnId, previousRoute };
   }
 
   recordRoute(conversation: ConversationIdentity | null, requestId: string, route: RouteReference | null): void {
