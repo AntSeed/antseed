@@ -17,6 +17,10 @@ AntSeed is infrastructure for building differentiated AI services — not for ra
 ## Quick Start
 
 ```bash
+# Select the repository's Node 24 development runtime
+nvm install
+nvm use
+
 # Install dependencies
 pnpm install
 
@@ -139,7 +143,7 @@ See [packages/node/README.md](packages/node/README.md) for the `Provider` and `R
 
 ## Tech Stack
 
-- **Runtime**: Node.js >= 20, ES modules
+- **Development runtime**: Node.js 24 (pinned in `.nvmrc`), ES modules
 - **Language**: TypeScript 5.x, strict mode
 - **Package Manager**: pnpm workspaces
 - **Build**: tsc for libraries, Vite for web apps
