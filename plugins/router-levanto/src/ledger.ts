@@ -65,10 +65,7 @@ const MAX_PENDING_DECISIONS = 500;
  * Flat cap on the in-memory `rows` list backing `getRoutingDecisions()` --
  * 5000 rows is generous for the per-conversation drill-down/savings
  * dashboard this caps for -- at 100 routed messages/day that's ~50 days of
- * in-memory history, far more than either UI surface needs at once. The
- * on-disk SQLite store itself is not pruned to this cap -- unlike the old
- * JSONL file, an indexed, queryable table growing past 5000 rows costs
- * nothing UI surfaces care about, so there's no forced-deletion policy here.
+ * in-memory history, far more than either UI surface needs at once.
  */
 const MAX_LEDGER_ROWS = 5000;
 

@@ -361,7 +361,7 @@ export function getRoutingSavingsDashboardHtml(routerName?: string): string {
       if (token !== statsRenderToken) return; // superseded by a newer render
       document.getElementById('stats').innerHTML = '<div class="stats-row">' +
         savedCardHtml('Saved, 1w', week) +
-        savedCardHtml('Saved, all time', allTime) +
+        savedCardHtml('Saved, retained history', allTime) +
         '<div class="card"><div class="label">Turns routed</div><div class="value">' + rows.length + '</div></div>' +
         (openRouterCardHtml || '') +
         '</div>';

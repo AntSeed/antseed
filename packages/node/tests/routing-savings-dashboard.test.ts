@@ -10,6 +10,11 @@ const row = { actualModel: 'fixture-model', actualPromptTokens: 100, actualCache
   actualCompletionTokens: 20, actualUsdcPaid: 0.0001, baselinePrices: { baseline: price } };
 
 describe('embedded savings dashboard', () => {
+  it('labels the bounded ledger as retained history, not all-time savings', () => {
+    expect(html).toContain('Saved, retained history');
+    expect(html).not.toContain('Saved, all time');
+  });
+
   it('preserves known zero cost and free cached-input prices', () => {
     const result = dashboard.computeSavings([{ ...row, actualUsdcPaid: 0 }], 'baseline');
     expect(result.baselineUsd).toBeCloseTo(0.0009);
