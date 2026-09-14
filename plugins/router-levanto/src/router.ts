@@ -10,6 +10,7 @@ import type {
 import { ConversationState, pinnedToRouteCandidate, type PinnedDecision } from './conversation-state.js';
 import { RoutingLedger, type RoutingDecisionRow } from './ledger.js';
 import { buildDigest, periodKey } from './digest.js';
+import { RoutingContextTracker } from '@antseed/node';
 
 export interface LevantoRouterConfig {
   /**
@@ -372,6 +373,7 @@ export class LevantoRouter {
   constructor(private readonly config: LevantoRouterConfig) {
     this.ledger = new RoutingLedger(config.dataDir);
   }
+  private readonly routingContext = new RoutingContextTracker();
 
   /** `chainId === 'base-local'` -- this plugin's own local devnet test harness, see DEFAULT_DEVNET_SELLER_PEER_ID's doc comment. */
   private get isDevnet(): boolean {
@@ -721,8 +723,14 @@ export class LevantoRouter {
     // decision, no network call. Conversations we can't key (no
     // ConversationIdentity) always route -- a safe default, not a full
     // content-hash fallback.
-    if (convKey && !this.conversations.isNewUserMessage(convKey, lastUserText)) {
-      const pinned = this.conversations.getPinned(convKey);
+    const routing = context?.routing ?? this.routingContext.observe(req, conversation, {
+      cadence: 'turn', settings: context?.settings ?? routingPreferences?.cqt,
+      isRouteAvailable: (route) => peers.some((entry) => entry.peerId === route.peerId),
+    });
+    if (convKey && !routing.shouldRoute && routing.previousRoute) {
+      const previous = this.conversations.getPinned(convKey);
+      const actualPeer = peers.find((entry) => entry.peerId === routing.previousRoute!.peerId);
+      const pinned = previous && actualPeer ? { ...previous, ...routing.previousRoute, peer: actualPeer } : null;
       if (pinned) {
         // A reused dispatch still costs real money and still resolves via
         // the normal onResult flow -- give it its own ledger row too,
@@ -987,7 +995,8 @@ export class LevantoRouter {
 
     const winner = ranked[0]!;
     if (convKey) {
-      this.conversations.recordDecision(convKey, lastUserText, winner);
+      this.conversations.recordDecision(convKey, winner);
+      this.routingContext.recordRoute(conversation, req.requestId, winner);
     }
 
     this.ledger.recordPending(req.requestId, {

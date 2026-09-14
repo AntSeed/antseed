@@ -112,6 +112,7 @@ import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/
 import { validateRouterCandidate } from './router-policy.js'
 import { executeRouter, RouterExecutionError } from './router-execution.js'
 import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
+import { RoutingContextTracker, type RoutingCadence } from '@antseed/node'
 import { RoutingServiceExecutor } from './routing-service.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
@@ -149,6 +150,7 @@ export interface BuyerProxyConfig {
   routerKey?: string
   routingService?: RoutingServiceConfig
   routingSettingsSchema?: RouterSettingField[]
+  routingCadence?: RoutingCadence
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -845,6 +847,8 @@ export class BuyerProxy {
   private _routingServiceConfig: RoutingServiceConfig | undefined
   private readonly _routingSettingsSchema: RouterSettingField[]
   private readonly _routerKey: string
+  private readonly _routingContext = new RoutingContextTracker()
+  private readonly _routingCadence: RoutingCadence
   private readonly _routingServiceExecutor: RoutingServiceExecutor
   private readonly _routingPeerIds = new Set<string>()
 
@@ -902,6 +906,7 @@ export class BuyerProxy {
     this._routingServiceConfig = config.routingService
     this._routingSettingsSchema = config.routingSettingsSchema ?? []
     this._routerKey = config.routerKey ?? ''
+    this._routingCadence = config.routingCadence ?? 'request'
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -2655,6 +2660,18 @@ export class BuyerProxy {
     // side effects (payment signing, ledger recording), so this must never
     // run twice for the same request.
     let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
+    const routingSettings = this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}
+    const routingContext = this._routingContext.observe(serializedReq, conversationIdentity, {
+      cadence: this._routingCadence, settings: routingSettings,
+      isRouteAvailable: (recommendation) => {
+        const candidate = validateRouterCandidate({ recommendation, peers, request: serializedReq,
+          protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+          preferences: this._routingPreferences, maxPricing: this._maxPricing,
+          minPeerReputation: this._minPeerReputation, now: this._now() })
+        return !!candidate && !this._routingPeerIds.has(candidate.peerId)
+          && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
+      },
+    })
     if (requestedService === this._autoRouteServiceId
       && (this._routingPreferences?.routerEnabled === false || this._routingPreferences?.autoRouting === false)) {
       res.writeHead(503, { 'content-type': 'application/json' })
@@ -2672,6 +2689,7 @@ export class BuyerProxy {
           null,
           {
             ...context,
+            routing: structuredClone(routingContext),
             settings: validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}),
             candidates: buildNetworkServiceOffers(peers).flatMap((offer) => {
               if (this._routingPeerIds.has(offer.peerId)) return []
@@ -2921,6 +2939,9 @@ export class BuyerProxy {
             conversationIdentity,
           )
           if (result.done) {
+            if (routeSelected && !clientAbortController.signal.aborted && res.statusCode < 400 && result.latencyMs !== undefined) {
+              this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, selected)
+            }
             if (trackedConversationId) {
               this._conversations.recordRoutedModel(
                 trackedConversationId,
@@ -2952,6 +2973,7 @@ export class BuyerProxy {
       }
 
       if (lastRetry) {
+        this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, null)
         res.writeHead(lastRetry.statusCode, lastRetry.responseHeaders)
         res.end(lastRetry.responseBody)
       } else {
@@ -3326,6 +3348,9 @@ export class BuyerProxy {
       'x-antseed-prefer-peer': _preferPeer,
       [REQUIRED_PARAMETERS_HEADER]: _requiredParameters,
       'x-vpr-session-id': _vprSession,
+      'x-antseed-turn-id': _turnId,
+      'x-antseed-context-revision': _contextRevision,
+      'x-antseed-route-refresh': _routeRefresh,
       // Legacy desktop builds (pre AntStation → VPR rename) still send this.
       'x-antstation-session-id': _antstationSession,
       ...headersForPeer

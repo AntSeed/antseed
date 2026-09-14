@@ -240,6 +240,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       let dailyPassServiceId: string | undefined
       let autoRouteServiceId: string | undefined
       let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
+      let routingCadence: import('@antseed/node').RoutingCadence | undefined
       // Set by day-pass-signing.ts's onPriceCappedChange below, read by
       // BuyerProxy's /_antseed/day-pass-price-increase admin route -- these
       // run on entirely independent cycles (a signing pass vs. an HTTP
@@ -276,6 +277,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           dailyPassServiceId = plugin.dailyPassServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
+          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -299,6 +301,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           dailyPassServiceId = plugin.dailyPassServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
+          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -605,6 +608,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routerName: dashboardRouterName,
         autoRouteServiceId,
         routingSettingsSchema,
+        routingCadence,
         dailyPassServiceId,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         routingService: effectiveBuyerConfig.routingService,

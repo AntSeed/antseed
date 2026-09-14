@@ -408,6 +408,31 @@ describe('LevantoRouter.selectRoute', () => {
   });
 
   describe('new-user-message gate', () => {
+    it('classifies identical appended user turns and same-text compacted context again', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
+      const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl });
+      const first = req(LEVANTO_AUTO_SERVICE_ID, 'repeat');
+      await router.selectRoute(first, [peer('0xAAA')], conversation(), null);
+      const next = { ...first, requestId: 'next', body: new TextEncoder().encode(JSON.stringify({ model: LEVANTO_AUTO_SERVICE_ID,
+        messages: [{ role: 'user', content: 'repeat' }, { role: 'assistant', content: 'answer' }, { role: 'user', content: 'repeat' }] })) };
+      await router.selectRoute(next, [peer('0xAAA')], conversation(), null);
+      await router.selectRoute({ ...first, requestId: 'compacted', headers: { 'x-antseed-context-revision': '2' } }, [peer('0xAAA')], conversation(), null);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it('reuses the actual eligible failover peer supplied by the host rather than its original top pick', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
+      const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl });
+      const peers = [peer('0xAAA'), peer('0xBBB')];
+      await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), peers, conversation(), null);
+      const reused = await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), peers, conversation(), null, null, {
+        signal: new AbortController().signal, deadlineMs: Date.now() + 1000,
+        routing: { trigger: 'continuation', shouldRoute: false, previousRoute: { peerId: '0xBBB', serviceId: 'other-model' },
+          contextRewritten: false, cacheState: 'unknown', turnId: null },
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(reused?.[0]).toMatchObject({ peerId: '0xBBB', serviceId: 'other-model' });
+    });
     it('a tool-loop continuation (same last user message) skips the network call and reuses the pinned decision', async () => {
       const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => rankedResponse() });
       const router = new LevantoRouter({ routingPeerUrl: 'http://x', fetchImpl: fetchImpl as unknown as typeof fetch });

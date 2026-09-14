@@ -60,20 +60,14 @@ describe('ConversationState cached-token estimator', () => {
   });
 });
 
-describe('ConversationState gate + pin', () => {
-  it('an unseen conversation is always a new user message', () => {
+describe('ConversationState pin', () => {
+  it('records the selected model without storing or comparing the user text', () => {
     const state = new ConversationState();
-    expect(state.isNewUserMessage('conv-1', 'hello')).toBe(true);
-  });
-
-  it('the same last user message is not new once recorded', () => {
-    const state = new ConversationState();
-    state.recordDecision('conv-1', 'hello', {
+    state.recordDecision('conv-1', {
       peer: { peerId: '0xAAA' } as never, peerId: '0xAAA', serviceId: 'gpt-5.6-luna',
       reputation: 0, hasCachedInputPricing: false, inputUsdPerMillion: null, outputUsdPerMillion: null, minImageUsdPerImage: null,
     });
-    expect(state.isNewUserMessage('conv-1', 'hello')).toBe(false);
-    expect(state.isNewUserMessage('conv-1', 'a different message')).toBe(true);
+    expect(state.getPinned('conv-1')?.serviceId).toBe('gpt-5.6-luna');
   });
 
   it('getPinned returns null until a decision has been recorded', () => {
@@ -88,13 +82,13 @@ describe('ConversationState gate + pin', () => {
       reputation: 0, hasCachedInputPricing: false, inputUsdPerMillion: null, outputUsdPerMillion: null, minImageUsdPerImage: null,
     };
     for (let i = 0; i < 500; i++) {
-      state.recordDecision(`conv-${i}`, 'hello', pinned as never);
+      state.recordDecision(`conv-${i}`, pinned as never);
     }
-    expect(state.isNewUserMessage('conv-0', 'hello')).toBe(false);
+    expect(state.getPinned('conv-0')).not.toBeNull();
 
-    state.recordDecision('conv-500', 'hello', pinned as never);
+    state.recordDecision('conv-500', pinned as never);
 
-    expect(state.isNewUserMessage('conv-0', 'hello')).toBe(true);
-    expect(state.isNewUserMessage('conv-500', 'hello')).toBe(false);
+    expect(state.getPinned('conv-0')).toBeNull();
+    expect(state.getPinned('conv-500')).not.toBeNull();
   });
 });

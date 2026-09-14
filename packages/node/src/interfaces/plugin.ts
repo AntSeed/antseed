@@ -31,6 +31,7 @@ export interface AntseedProviderPlugin extends AntseedPluginBase {
 export interface AntseedRouterPlugin extends AntseedPluginBase {
   type: 'router'
   routingSettingsSchema?: import('../routing/router-settings.js').RouterSettingField[]
+  routingCadence?: import('../routing/routing-context.js').RoutingCadence
   createRouter(config: Record<string, string>): Router | Promise<Router>
   /**
    * The `serviceId` this router's "auto" model-picker entry responds to --

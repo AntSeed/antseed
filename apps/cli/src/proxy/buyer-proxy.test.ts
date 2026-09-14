@@ -209,6 +209,47 @@ test('host sends only the active router settings and rejects unknown fields befo
   assert.equal(seen.length, 1)
 })
 
+test('host supplies session cadence, rewrite signals, and eligible actual route before forwarding', async () => {
+  const peer = routerPeer('a')
+  const seen: any[] = []
+  const forwarded: any[] = []
+  let classifications = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
+      seen.push(context.routing)
+      if (context.routing.shouldRoute) classifications++
+      return [context.routing.previousRoute ?? { peerId: peer.peerId, serviceId: 'test-model' }]
+    },
+  }, undefined, priceAndTrustPreferences)
+  ;(proxy as any)._routingCadence = 'session'
+  ;(proxy as any)._node.sendRequest = async (_peer: any, request: any) => {
+    forwarded.push({ request, classified: classifications })
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'answer' } }] })) }
+  }
+  const send = (messages: any[], headers: Record<string, string> = {}) => invokeProxy(proxy,
+    makeProxyRequest({ headers: { 'x-vpr-session-id': 'p2-session', ...headers }, body: { model: 'router-test', messages } }))
+  const user = { role: 'user', content: 'repeat' }
+  assert.equal((await send([user])).statusCode, 200)
+  assert.equal((await send([user, { role: 'assistant', content: 'answer' }, user])).statusCode, 200)
+  assert.equal(classifications, 1)
+  assert.equal(seen[1].shouldRoute, false)
+  assert.deepEqual(seen[1].previousRoute, { peerId: peer.peerId, serviceId: 'test-model' })
+  assert.equal((await send([{ role: 'system', content: 'summary' }, user], { 'x-antseed-context-revision': '2' })).statusCode, 200)
+  assert.equal(seen[2].trigger, 'context-rewrite')
+  assert.equal(seen[2].cacheState, 'unknown')
+  assert.equal(forwarded[2].classified, 2)
+  assert.equal(forwarded[2].request.headers['x-antseed-context-revision'], undefined)
+  await send([user], { 'x-antseed-route-refresh': 'true' })
+  assert.equal(seen[3].trigger, 'explicit')
+  ;(proxy as any)._routingPreferences.blockedPeerIds = [peer.peerId]
+  await send([user])
+  assert.equal(seen[4].previousRoute, null)
+  assert.equal(seen[4].shouldRoute, true)
+  assert.equal(forwarded.length, 4)
+})
+
 for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
   test(`selectRoute fails closed on ${failure}`, async () => {
     const peer = routerPeer('a')

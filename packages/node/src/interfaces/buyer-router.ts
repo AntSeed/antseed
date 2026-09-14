@@ -132,6 +132,7 @@ export type RoutingDecisionRow = {
  * the cheapest peer with reputation above a minimum threshold.
  */
 export type RouteSelectionContext = {
+  routing?: import('../routing/routing-context.js').RoutingRequestContext;
   settings?: Record<string, string>;
   signal: AbortSignal;
   deadlineMs: number;
@@ -199,7 +200,7 @@ export interface Router {
      */
     defaultRoutedModel?: string | null,
     context?: RouteSelectionContext,
-  ): Promise<RouteCandidate[] | null>;
+  ): Promise<Array<Pick<RouteCandidate, 'peerId' | 'serviceId'> & Partial<RouteCandidate>> | null>;
 
   /**
    * Optional, additive: the router's local `routing_decisions` ledger, if

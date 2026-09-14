@@ -40,7 +40,6 @@ interface CacheObservation {
 }
 
 interface ConversationEntry {
-  lastRoutedUserText: string;
   pinned: PinnedDecision | null;
   /** (model, peer) key -> cache observation, for the per-candidate expectedCachedTokens estimator below. */
   cacheByModelPeer: Map<string, CacheObservation>;
@@ -73,16 +72,9 @@ export class ConversationState {
       const oldestKey = this.entries.keys().next().value;
       if (oldestKey !== undefined) this.entries.delete(oldestKey);
     }
-    entry = { lastRoutedUserText: '', pinned: null, cacheByModelPeer: new Map() };
+    entry = { pinned: null, cacheByModelPeer: new Map() };
     this.entries.set(key, entry);
     return entry;
-  }
-
-  /** True when this is a new user message for this conversation, or the conversation is unseen. */
-  isNewUserMessage(key: string, lastUserText: string): boolean {
-    const entry = this.entries.get(key);
-    if (!entry) return true;
-    return entry.lastRoutedUserText !== lastUserText;
   }
 
   /** Read the pinned decision from the last routing call, for a tool-loop continuation. */
@@ -91,9 +83,8 @@ export class ConversationState {
   }
 
   /** Record a fresh routing decision -- called after a real (non-gated) selectRoute call. */
-  recordDecision(key: string, lastUserText: string, pinned: PinnedDecision): void {
+  recordDecision(key: string, pinned: PinnedDecision): void {
     const entry = this.getOrCreate(key);
-    entry.lastRoutedUserText = lastUserText;
     entry.pinned = pinned;
   }
 
