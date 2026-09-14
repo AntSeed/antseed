@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Seller disconnect cleanup now defers final settlement and timeout eviction while billable requests are in flight, preserving their recorded costs. Existing timeout cleanup resumes after requests finish; unsigned spend still cannot be collected without a buyer SpendingAuth.
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 
