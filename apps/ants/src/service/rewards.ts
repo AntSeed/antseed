@@ -8,6 +8,7 @@ import type { RewardsView, ClaimRequest, RestakeRequest, StakeUsageRequest, Epoc
 import { formatAnts } from './format.js';
 import { toJson } from './json.js';
 import { assertAgentId, assertEpochs, assertPositiveIds, silentReporter, type StepReporter } from './steps.js';
+import { rewardAddress } from './locked-rewards.js';
 
 const MAX_EPOCH_BREAKDOWN = 64;
 
@@ -113,7 +114,8 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
     legacySeller = pending;
   }
 
-  const lockedInfo = locked ? await safe(() => locked.claimable(ctx.address), { locked: 0n, claimable: 0n, policy: ZeroAddress }) : { locked: 0n, claimable: 0n, policy: ZeroAddress };
+  if (stack.lockedRewardsPoolError) throw new Error(stack.lockedRewardsPoolError);
+  const lockedInfo = locked ? await locked.claimable(ctx.address) : { locked: 0n, claimable: 0n, policy: ZeroAddress };
 
   const total = stakerTotal + sellerTotal + buyerTotal + legacySeller + legacyBuyer + lockedInfo.claimable;
   return toJson({
@@ -167,91 +169,101 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
   const signer = ctx.requireSigner();
   const stack = await ctx.stack();
   const epochs = await ctx.claimableEpochs();
-  const recipient = request.recipient ?? ctx.address;
-  if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) throw new Error('Recipient must be an address.');
+  const recipient = rewardAddress(request.recipient ?? ctx.address);
   const buckets = request.buckets.length > 0 ? request.buckets : (['staker', 'seller', 'buyer', 'legacy', 'locked'] as RewardBucket[]);
   const token = ctx.antsToken();
   const transactions: string[] = [];
   let claimed = 0n;
-  const record = async (hash: string, label: string, credit = true) => {
+  const record = async (hash: string, label: string, credit = true, receiver = recipient) => {
     transactions.push(hash);
-    if (credit) claimed += await safe(() => token.receivedInTransaction(hash, recipient), 0n);
     await report(label, hash);
+    if (credit) claimed += await token.receivedInTransaction(hash, receiver);
   };
 
-  if (buckets.includes('staker')) {
-    const pools = ctx.pools();
-    const poolRewards = ctx.poolRewards();
-    if (pools && poolRewards) {
-      const closed = await closedPositionIds(ctx);
-      const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })).filter((position) => position.amount > 0n);
-      if (pending.length > 0) {
-        await preparePoolIndexes(pools, poolRewards, signer, pending, report);
-        const ids: number[] = [];
-        for (const position of pending) if (await poolRewards.pendingIndexedStakerReward(position.id) > 0n) ids.push(position.id);
-        for (let offset = 0; offset < ids.length; offset += 32) {
-          const batch = ids.slice(offset, offset + 32);
-          await report(`Claiming staker rewards for position(s) ${batch.join(', ')}`);
-          await record(await poolRewards.claimStakerRewardsBatch(signer, batch, recipient), 'Staker rewards claimed');
+  try {
+    if (buckets.includes('staker')) {
+      const pools = ctx.pools();
+      const poolRewards = ctx.poolRewards();
+      if (pools && poolRewards) {
+        const closed = await closedPositionIds(ctx);
+        const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })).filter((position) => position.amount > 0n);
+        if (pending.length > 0) {
+          await preparePoolIndexes(pools, poolRewards, signer, pending, report);
+          const ids: number[] = [];
+          for (const position of pending) if (await poolRewards.pendingIndexedStakerReward(position.id) > 0n) ids.push(position.id);
+          for (let offset = 0; offset < ids.length; offset += 32) {
+            const batch = ids.slice(offset, offset + 32);
+            await report(`Claiming staker rewards for position(s) ${batch.join(', ')}`);
+            await record(await poolRewards.claimStakerRewardsBatch(signer, batch, recipient), 'Staker rewards claimed');
+          }
         }
       }
     }
-  }
 
-  if (buckets.includes('seller') && stack.phase === 'active') {
-    const usageAccounting = ctx.usageAccounting();
-    if (usageAccounting && epochs.recognized.length > 0) {
-      await claimEpochRewards(epochs.recognized,
-        async (batch) => (await usageAccounting.pendingEmissions(ctx.address, batch)).seller,
-        async (batch) => { await report(`Claiming seller usage rewards for epochs ${batch[0]}…${batch[batch.length - 1]}`); return usageAccounting.claimSellerEmissions(signer, batch); },
-        async (hash) => record(hash, 'Seller usage rewards claimed'));
+    if (buckets.includes('seller') && stack.phase === 'active') {
+      const usageAccounting = ctx.usageAccounting();
+      if (usageAccounting && epochs.recognized.length > 0) {
+        await claimEpochRewards(epochs.recognized,
+          async (batch) => (await usageAccounting.pendingEmissions(ctx.address, batch)).seller,
+          async (batch) => { await report(`Claiming seller usage rewards for epochs ${batch[0]}…${batch[batch.length - 1]}`); return usageAccounting.claimSellerEmissions(signer, batch); },
+          async (hash) => record(hash, 'Seller usage rewards claimed', true, ctx.address));
+      }
     }
-  }
 
-  if (buckets.includes('buyer') && stack.phase === 'active') {
-    const usageRewards = ctx.usageRewards();
-    if (usageRewards) {
-      const operator = await buyerOperator(ctx);
-      if (operator && !sameAddress(operator, ctx.address)) {
-        await report(`Buyer usage rewards are paid to the deposits operator ${operator}; claim them from that wallet.`);
-      } else {
-        for (const epoch of epochs.recognized) {
-          if (await safe(() => usageRewards.buyerEpochClaimed(ctx.address, epoch), true)) continue;
-          if (await safe(() => usageRewards.pendingBuyerReward(ctx.address, epoch), 0n) === 0n) continue;
-          await report(`Claiming buyer usage reward for epoch ${epoch}`);
-          await record(await usageRewards.claimBuyerReward(signer, ctx.address, epoch), 'Buyer usage reward claimed');
+    if (buckets.includes('buyer') && stack.phase === 'active') {
+      const usageRewards = ctx.usageRewards();
+      if (usageRewards) {
+        const operator = await buyerOperator(ctx);
+        if (operator && !sameAddress(operator, ctx.address)) {
+          await report(`Buyer usage rewards are paid to the deposits operator ${operator}; claim them from that wallet.`);
+        } else {
+          for (const epoch of epochs.recognized) {
+            if (await safe(() => usageRewards.buyerEpochClaimed(ctx.address, epoch), true)) continue;
+            if (await safe(() => usageRewards.pendingBuyerReward(ctx.address, epoch), 0n) === 0n) continue;
+            await report(`Claiming buyer usage reward for epoch ${epoch}`);
+            await record(await usageRewards.claimBuyerReward(signer, ctx.address, epoch), 'Buyer usage reward claimed', true, ctx.address);
+          }
         }
       }
     }
-  }
 
-  if (buckets.includes('legacy')) {
-    const legacy = ctx.legacyEmissionsAt(stack.legacyEmissions);
-    if (legacy && epochs.legacy.length > 0) {
-      await claimEpochRewards(epochs.legacy,
-        async (batch) => (await legacy.pendingEmissions(ctx.address, batch)).seller,
-        async (batch) => { await report(`Claiming legacy seller emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimSellerEmissions(signer, batch); },
-        async (hash) => record(hash, 'Legacy seller emissions claimed'));
-      await claimEpochRewards(epochs.legacy,
-        async (batch) => (await legacy.pendingEmissions(ctx.address, batch)).buyer,
-        async (batch) => { await report(`Claiming legacy buyer emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimBuyerEmissions(signer, ctx.address, batch); },
-        async (hash) => record(hash, 'Legacy buyer emissions claimed'));
-    }
-  }
-
-  if (buckets.includes('locked')) {
-    const locked = ctx.lockedPoolAt(stack.lockedRewardsPool);
-    if (locked) {
-      const info = await safe(() => locked.claimable(ctx.address), { locked: 0n, claimable: 0n, policy: ZeroAddress });
-      if (info.claimable > 0n) {
-        await report(`Releasing ${formatAnts(info.claimable)} ANTS from the locked legacy rewards pool`);
-        await record(await locked.claim(signer, recipient), 'Locked rewards released');
+    if (buckets.includes('legacy')) {
+      const legacy = ctx.legacyEmissionsAt(stack.legacyEmissions);
+      if (legacy && epochs.legacy.length > 0) {
+        await claimEpochRewards(epochs.legacy,
+          async (batch) => (await legacy.pendingEmissions(ctx.address, batch)).seller,
+          async (batch) => { await report(`Claiming legacy seller emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimSellerEmissions(signer, batch); },
+          async (hash) => record(hash, 'Legacy seller emissions claimed', true, ctx.address));
+        await claimEpochRewards(epochs.legacy,
+          async (batch) => (await legacy.pendingEmissions(ctx.address, batch)).buyer,
+          async (batch) => { await report(`Claiming legacy buyer emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimBuyerEmissions(signer, ctx.address, batch); },
+          async (hash) => record(hash, 'Legacy buyer emissions claimed', true, ctx.address));
       }
     }
-  }
 
-  ctx.invalidate();
-  return { claimed: claimed.toString(), transactions, buckets };
+    if (buckets.includes('locked')) {
+      if (stack.lockedRewardsPoolError) throw new Error(stack.lockedRewardsPoolError);
+      const locked = ctx.lockedPoolAt(stack.lockedRewardsPool);
+      if (!locked && buckets.length === 1) throw new Error('No legacy seller rewards pool is available on this network.');
+      if (locked) {
+        const info = await locked.claimable(ctx.address);
+        if (info.policy === ZeroAddress) throw new Error('No seller claim policy is installed (M002).');
+        if (info.claimable > 0n) {
+          await report(`Releasing ${formatAnts(info.claimable)} ANTS from the locked legacy rewards pool`);
+          await record(await locked.claim(signer, recipient), 'Locked rewards released');
+        }
+      }
+    }
+
+    return { claimed: claimed.toString(), transactions, buckets };
+  } catch (error) {
+    if (transactions.length) {
+      throw new Error(`Claim did not finish. Confirmed transactions: ${transactions.join(', ')}. Verified received so far: ${formatAnts(claimed)} ANTS. Earlier transactions were not rolled back. ${(error as Error).message}`, { cause: error });
+    }
+    throw error;
+  } finally {
+    ctx.invalidate();
+  }
 }
 
 export interface RestakeResult { transactions: string[]; positionIds: number[]; epochs: number; }

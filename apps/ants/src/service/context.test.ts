@@ -31,6 +31,17 @@ class FakeContext extends AntsContext {
 }
 
 describe('AntsContext.stack', () => {
+  it('preserves discovery failures instead of describing a missing pool', async () => {
+    class FailedDiscovery extends FakeContext {
+      override legacyEmissionsAt() {
+        return { sellerRewardsPool: async () => { throw new Error('RPC unavailable'); } } as never;
+      }
+    }
+    const ctx = new FailedDiscovery(chain, { emissions: chain.usageAccountingAddress!, staking: chain.sellerRegistryAddress! });
+    const stack = await ctx.stack();
+    expect(stack.lockedRewardsPool).toBeNull();
+    expect(stack.lockedRewardsPoolError).toContain('RPC unavailable');
+  });
   it('reports the deployed phase while the registry still points at legacy contracts', async () => {
     const ctx = new FakeContext(chain, { emissions: chain.emissionsContractAddress!, staking: chain.stakingContractAddress! }, 21);
     const stack = await ctx.stack();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Command } from 'commander';
 import { compoundSummary, parseUsageSide, registerAntsRewardsCommand, selectedBuckets } from './rewards.js';
+import { lockedClaimDecision, validateLockedClaimOptions } from './locked-rewards.js';
 
 function rewardsCommand(): Command {
   const ants = new Command('ants');
@@ -20,6 +21,31 @@ test('claim has one flag per reward bucket', () => {
   const claim = rewardsCommand().commands.find((command) => command.name() === 'claim')!;
   const flags = claim.options.map((option) => option.long);
   for (const bucket of ['--staker', '--seller', '--buyer', '--legacy', '--locked', '--recipient']) assert.ok(flags.includes(bucket), bucket);
+});
+
+test('locked diagnostics and claim safety flags are registered', () => {
+  const rewards = rewardsCommand();
+  for (const flag of ['--locked', '--address', '--json']) assert.ok(rewards.options.some((option) => option.long === flag));
+  const claim = rewards.commands.find((command) => command.name() === 'claim')!;
+  for (const flag of ['--dry-run', '--yes']) assert.ok(claim.options.some((option) => option.long === flag));
+});
+
+test('locked-only claims preview, confirm, or send explicitly', () => {
+  assert.equal(validateLockedClaimOptions({ locked: true }), true);
+  assert.equal(validateLockedClaimOptions({ locked: true, legacy: true }), false);
+  assert.equal(lockedClaimDecision({}), 'confirm');
+  assert.equal(lockedClaimDecision({ dryRun: true }), 'preview');
+  assert.equal(lockedClaimDecision({ yes: true }), 'send');
+});
+
+test('safety flags cannot silently broadcast a multi-bucket claim', () => {
+  assert.throws(() => validateLockedClaimOptions({ dryRun: true }), /require --locked/);
+  assert.throws(() => validateLockedClaimOptions({ yes: true }), /require --locked/);
+  for (const bucket of ['legacy', 'seller', 'buyer', 'staker'] as const) {
+    assert.throws(() => validateLockedClaimOptions({ locked: true, [bucket]: true, dryRun: true }), /without other/);
+    assert.throws(() => validateLockedClaimOptions({ locked: true, [bucket]: true, yes: true }), /without other/);
+  }
+  assert.throws(() => validateLockedClaimOptions({ locked: true, dryRun: true, yes: true }), /not both/);
 });
 
 test('restake and compound require a lock length; compound can retarget with --to', () => {

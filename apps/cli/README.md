@@ -432,6 +432,59 @@ antseed seller rewards claim
 
 `seller rewards claim` prepares pool accounting in bounded transactions when necessary, then claims all eligible seller rewards to the current wallet. Preparation and claims require gas. Confirmed transaction hashes are printed immediately, and received amounts are read from ANTS transfer receipts. If a later step fails, the CLI reports partial completion; rerun the command to collect remaining rewards. Position-specific claims and alternate reward recipients are not exposed by this minimal command.
 
+#### Legacy seller pool release (M002)
+
+The `antseed ants` rewards interface separates pending legacy epoch emissions
+(`--legacy`) from rewards already held in the legacy seller pool (`--locked`).
+M002 installs a policy that permits a configured portion of cumulative locked
+rewards to be released, less prior withdrawals. Its default is 10%; the CLI
+reads the installed policy rather than assuming that percentage. There is no
+vesting schedule or promised release date for the remainder.
+
+```bash
+antseed ants status
+antseed ants rewards --locked
+antseed ants rewards --locked --address 0xSELLER --json
+antseed ants rewards claim --locked --dry-run
+antseed ants rewards claim --locked
+antseed ants rewards claim --locked --recipient 0xRECIPIENT --yes
+```
+
+`rewards --locked` shows the seller and network, pool and policy addresses,
+snapshot block, cumulative rewards, reconstructed withdrawals, release
+percentage, entitlement and claimable balance. It checks the registry pinned
+by the claim policy, pool transfer permission, M001 activation and expected
+legacy contract/epoch. Read failures are errors, never a zero-balance fallback.
+`--address` requires `--locked` and does not load a signing key or create an
+identity. `--json` prints decimal-string token base units (18 decimals); read
+failures print an `unavailable` error object and exit nonzero.
+
+Locked-only claims simulate the transaction before asking for confirmation.
+`--dry-run` stops after simulation; `--yes` skips the prompt but not preflight.
+These flags require `--locked` alone and cannot be combined with each other.
+The preview shows the signer, recipient and buffered execution-gas estimate;
+Base L1 data fees may be additional. State and fees can change before inclusion.
+Noninteractive locked-only claims require `--yes`. The signer must be the
+seller; `--recipient` only changes where that seller's rewards are sent. Zero
+addresses are rejected. Each claim releases the full currently permitted
+amount, not a user-selected amount or another 10% on every invocation.
+
+For late legacy emissions, `antseed ants rewards claim --legacy --locked`
+first collects pending legacy seller/buyer emissions and then checks the pool
+release. Seller emissions routed into the pool can increase that release.
+This may send several transactions and is not atomic. Confirmed hashes are
+reported immediately; if a later step fails, earlier transactions are not
+rolled back. Inspect balances before retrying. Unfiltered `rewards claim`
+still selects all reward categories; use `--locked` for M002 alone. Mixed-bucket
+claims retain their existing noninteractive behavior and do not support the
+new locked-only preview/confirmation flags.
+
+Choose network/RPC through `payments.crypto` in the config selected with
+`--config`; choose the signing identity with `--data-dir`. These are not
+deployment commands. Operators must separately follow the
+[M002 deployment runbook](../../packages/contracts/script/migrations/M002LegacySellerClaims/README.md),
+including the current fork rehearsal and reviewed production dry run.
+
 #### Command migration
 
 These are intentional command-surface breaks, not hidden aliases:

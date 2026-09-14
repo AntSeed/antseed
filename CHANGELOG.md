@@ -6,6 +6,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+- CLI: add detailed M002 locked-reward inspection with address-only, key-free JSON reads; add locked-only claim simulation, gas previews and explicit confirmation (`--dry-run` / `--yes`). Validate the installed policy's source, epoch, restriction status and pool transfer readiness. Report pool read failures and partially completed claims instead of silently treating failures as zero rewards.
+
 ### Fixed
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.

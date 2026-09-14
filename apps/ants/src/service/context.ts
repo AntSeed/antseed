@@ -68,6 +68,7 @@ export interface ResolvedStack {
   legacyEmissionsV1: string | null;
   /** Legacy locked seller rewards pool discovered from V2. */
   lockedRewardsPool: string | null;
+  lockedRewardsPoolError?: string;
   resolvedAt: number;
 }
 
@@ -340,18 +341,19 @@ export class AntsContext {
       genesis = legacyGenesis;
     }
     let lockedRewardsPool: string | null = null;
+    let lockedRewardsPoolError: string | undefined;
     const legacy = this.legacyEmissionsAt(legacyEmissions);
     if (legacy) {
       try {
         const pool = await legacy.sellerRewardsPool();
         lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
-      } catch {
-        lockedRewardsPool = null;
+      } catch (error) {
+        lockedRewardsPoolError = `Could not discover the legacy rewards pool: ${(error as Error).message}`;
       }
     }
     this.stackCache = {
       phase, currentEpoch, effectiveEpoch, genesis, epochDuration, registryPointers,
-      legacyEmissions, legacyStaking, legacyEmissionsV1, lockedRewardsPool, resolvedAt: Date.now(),
+      legacyEmissions, legacyStaking, legacyEmissionsV1, lockedRewardsPool, lockedRewardsPoolError, resolvedAt: Date.now(),
     };
     return this.stackCache;
   }
