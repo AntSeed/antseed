@@ -322,7 +322,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]?.serviceCapabilities).toBeUndefined();
   });
 
-  it('excludes service unit billing models from v10 metadata bytes', () => {
+  it('rejects dropping service unit billing models from v10 metadata bytes', () => {
     const original = makeMetadata({
       version: 10,
       providers: [
@@ -345,11 +345,8 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
 
-    const decoded = decodeMetadata(encodeMetadata(original));
-
-    expect(decoded.version).toBe(10);
-    expect(decoded.providers[0]?.serviceApiProtocols?.['gpt-image-1']).toEqual(['openai-images']);
-    expect(decoded.providers[0]?.serviceUnitBillingModels).toBeUndefined();
+    expect(() => encodeMetadata(original)).toThrow('Service unit billing requires metadata v11 or newer');
+    expect(() => encodeMetadataForSigning(original)).toThrow('Service unit billing requires metadata v11 or newer');
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {

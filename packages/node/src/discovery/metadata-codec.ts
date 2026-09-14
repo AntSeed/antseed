@@ -108,6 +108,10 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
 
   // each provider
   for (const p of metadata.providers) {
+    if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION
+      && Object.values(p.serviceUnitBillingModels ?? {}).some((models) => Object.keys(models).length > 0)) {
+      throw new Error(`Service unit billing requires metadata v${SERVICE_UNIT_BILLING_METADATA_VERSION} or newer`);
+    }
     const providerNameBytes = new TextEncoder().encode(p.provider);
     parts.push(new Uint8Array([providerNameBytes.length]));
     parts.push(providerNameBytes);
