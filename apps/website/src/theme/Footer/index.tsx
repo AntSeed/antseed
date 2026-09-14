@@ -39,7 +39,7 @@ export default function Footer(): JSX.Element {
       <div className={styles.inner}>
         <div className={styles.brandCol}>
           <div className={styles.brandRow}>
-            <img src="/logo-white.svg" alt="AntSeed" className={styles.logo} />
+            <img src="/logo-white.svg" alt="Antseed" className={styles.logo} />
           </div>
           <p className={styles.tagline}>
             The open market for AI inference.
@@ -63,7 +63,7 @@ export default function Footer(): JSX.Element {
               </svg>
             </a>
           </div>
-          <div className={styles.copyright}>&copy; 2026 AntSeed Foundation</div>
+          <div className={styles.copyright}>&copy; 2026 Antseed Foundation</div>
         </div>
 
         <div className={styles.columns}>

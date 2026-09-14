@@ -85,11 +85,11 @@ function renderStep(s: Step): string {
 
 function renderWireFormatBlock(i: Integration): string {
   const lines: string[] = [];
-  lines.push(`**How ${i.name} talks to AntSeed**`);
+  lines.push(`**How ${i.name} talks to Antseed**`);
   lines.push('');
   if (i.format === 'multi') {
     lines.push(
-      `${i.name} can send any of AntSeed's supported wire formats. Match the request ` +
+      `${i.name} can send any of Antseed's supported wire formats. Match the request ` +
         "format against each service's `protocols` array (advertised per service in " +
         '`providerServiceApiProtocols`) — when it matches, ' +
         'the request passes through untouched; when it does not, `@antseed/api-adapter` ' +
@@ -124,7 +124,7 @@ function renderWireFormatBlock(i: Integration): string {
       'The browse command exposes the same field per peer.',
   );
   lines.push(
-    `- **When protocols differ:** AntSeed's \`@antseed/api-adapter\` translates between ${FORMAT_LABELS[fmt]} ` +
+    `- **When protocols differ:** Antseed's \`@antseed/api-adapter\` translates between ${FORMAT_LABELS[fmt]} ` +
       "and the service's native protocol on the fly. So a request from " +
       `${i.name} can still reach a service that only advertises a different protocol — just ` +
       'with a small transform step.',
@@ -221,19 +221,19 @@ function renderSkillMarkdown(): string {
   const out: string[] = [];
   out.push('---');
   out.push('name: antseed-connect');
-  out.push('description: Connect coding agents, AI SDKs, and LLM tools to the AntSeed buyer proxy locally or through an authenticated public endpoint. Use when configuring Claude Code, Codex, OpenCode, Pi, OpenClaw, Hermes, GenLayer Studio, Vercel AI SDK, LangChain, or raw HTTP.');
+  out.push('description: Connect coding agents, AI SDKs, and LLM tools to the Antseed buyer proxy locally or through an authenticated public endpoint. Use when configuring Claude Code, Codex, OpenCode, Pi, OpenClaw, Hermes, GenLayer Studio, Vercel AI SDK, LangChain, or raw HTTP.');
   out.push('---');
   out.push('');
-  out.push('# AntSeed — Integration Skill');
+  out.push('# Antseed — Integration Skill');
   out.push('');
   out.push('> This file is the agent-readable companion to https://antseed.com/integrations.');
   out.push('> It tells any AI agent (Claude, Codex, OpenClaw, Hermes, custom) exactly');
-  out.push('> how to wire its tool of choice up to the AntSeed peer-to-peer inference network.');
+  out.push('> how to wire its tool of choice up to the Antseed peer-to-peer inference network.');
   out.push('');
 
-  out.push('## What is AntSeed?');
+  out.push('## What is Antseed?');
   out.push('');
-  out.push('AntSeed is a peer-to-peer marketplace for AI inference. Buyers run a small');
+  out.push('Antseed is a peer-to-peer marketplace for AI inference. Buyers run a small');
   out.push('local daemon (the **buyer proxy**) that exposes an HTTP API at');
   out.push('`http://localhost:8377` speaking the three caller-facing LLM API protocols:');
   out.push('Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. Legacy');
@@ -242,18 +242,18 @@ function renderSkillMarkdown(): string {
   out.push('request to a peer, translates between protocols when needed (via');
   out.push('`@antseed/api-adapter`), and settles in USDC on Base.');
   out.push('');
-  out.push('Important: AntSeed is for value-added AI services (specialized models, agents,');
+  out.push('Important: Antseed is for value-added AI services (specialized models, agents,');
   out.push('TEEs, fine-tunes, managed workflows), not raw resale of API keys or subscription');
   out.push('access. Providers must comply with upstream terms of service.');
   out.push('');
-  out.push('From the perspective of any tool, SDK, or agent, **AntSeed is just a local');
+  out.push('From the perspective of any tool, SDK, or agent, **Antseed is just a local');
   out.push('OpenAI/Anthropic-compatible endpoint** — point a `base_url` at it and you are done.');
   out.push('');
 
   out.push('## Glossary (mental model)');
   out.push('');
   out.push('- **Buyer proxy** — the local server on `localhost:8377` that accepts API calls');
-  out.push('  from your tools and forwards them to AntSeed peers. It is the only thing your');
+  out.push('  from your tools and forwards them to Antseed peers. It is the only thing your');
   out.push('  editor / agent / SDK ever talks to.');
   out.push('- **Peer** — someone selling inference. Each peer has a `peerId` (40-char hex),');
   out.push('  a display name, and a list of services. List with `antseed network browse`.');
@@ -295,12 +295,12 @@ function renderSkillMarkdown(): string {
 
   out.push('## Universal setup (do this once)');
   out.push('');
-  out.push('### Option A — VPR desktop app (recommended)');
+  out.push('### Option A — AI VPN desktop app (recommended)');
   out.push('');
   out.push('Download from https://antseed.com — it ships the buyer proxy, a wallet, and a');
   out.push('peer browser in a GUI. While the app is open the proxy is reachable at');
   out.push('`http://localhost:8377`. Its **Apps** view detects installed tools (Claude');
-  out.push('Code, Codex, …) and launches them already wired to AntSeed. The app saves');
+  out.push('Code, Codex, …) and launches them already wired to Antseed. The app saves');
   out.push('its Price + Trust preferences into the buyer config, so internal chat,');
   out.push('connected apps, and direct API calls all use the same routing policy.');
   out.push('');
@@ -394,8 +394,8 @@ function renderSkillMarkdown(): string {
   out.push('  Never print it, paste it into chat, commit it, or copy it off the buyer host.');
   out.push('- Keep the buyer proxy bound to `127.0.0.1` / `localhost`. Do not expose');
   out.push('  `:8377` directly to the public internet. For a remote agent, open **Agents**');
-  out.push('  in the VPR and configure ngrok or Cloudflare under **Define your');
-  out.push('  internet-accessible AntSeed endpoint**. Use the displayed `/v1` URL and');
+  out.push('  in the AI VPN and configure ngrok or Cloudflare under **Define your');
+  out.push('  internet-accessible Antseed endpoint**. Use the displayed `/v1` URL and');
   out.push('  generated `antseed_...` API key.');
   out.push('- Start with small USDC deposits and conservative reserve caps for autonomous');
   out.push('  agents. The funding wallet does not need to stay connected after depositing.');
@@ -423,7 +423,7 @@ function renderSkillMarkdown(): string {
   out.push('');
   out.push('No `Authorization` header is required by the local buyer proxy. It authenticates');
   out.push("and pays peers using the local node's identity key and on-chain USDC deposits.");
-  out.push('The public VPR endpoint is different: it requires the generated bearer key on');
+  out.push('The public AI VPN endpoint is different: it requires the generated bearer key on');
   out.push('every request and permits only the routes listed above.');
   out.push('');
   out.push('### Explicit seller overrides');
@@ -536,13 +536,13 @@ function renderSkillMarkdown(): string {
 
   out.push('## For agents writing integrations');
   out.push('');
-  out.push('If you are a coding agent helping a user wire up AntSeed, the canonical flow is:');
+  out.push('If you are a coding agent helping a user wire up Antseed, the canonical flow is:');
   out.push('');
   out.push('1. Detect what tool the user is using.');
   out.push('2. Look it up in this file by name.');
   out.push('3. Run the **Install** steps if the tool is not present.');
   out.push('4. Before editing config files, read the existing file, preserve unrelated');
-  out.push('   user settings, and merge only the AntSeed provider/profile block.');
+  out.push('   user settings, and merge only the Antseed provider/profile block.');
   out.push('5. Apply the **Configure** block (env vars, config file edit, or GUI instruction).');
   out.push('6. Verify with the **Test it** command.');
   out.push('7. (Optional) Force a specific seller: `antseed network browse` → `antseed network');
