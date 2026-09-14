@@ -198,7 +198,11 @@ test('host sends only the active router settings and rejects unknown fields befo
   const peer = routerPeer('a')
   const seen: any[] = []
   const proxy = makeBuyerProxyWithPeers([peer], [peer], {
-    selectRoute: async (...args: any[]) => { seen.push(args[5].settings); return [] },
+    selectRoute: async (...args: any[]) => {
+      assert.equal(args[3].routerSettings, undefined)
+      seen.push(args[5].settings)
+      return []
+    },
   }, undefined, { ...priceAndTrustPreferences, routerSettings: { 'plugin:one': { policy: 'fast' }, 'plugin:two': { policy: 'other' } } })
   ;(proxy as any)._routerKey = 'plugin:one'
   ;(proxy as any)._routingSettingsSchema = [{ key: 'policy', label: 'Policy', type: 'string', options: ['fast'] }]

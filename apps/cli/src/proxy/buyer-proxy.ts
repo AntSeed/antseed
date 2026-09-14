@@ -2685,11 +2685,13 @@ export class BuyerProxy {
     try {
       if (requestedService && this._node.router?.selectRoute
         && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
+        const sharedPreferences = structuredClone(this._routingPreferences)
+        if (sharedPreferences) delete sharedPreferences.routerSettings
         routeSelected = await executeRouter((context) => this._node.router!.selectRoute!(
           structuredClone(serializedReq),
           structuredClone(peers),
           structuredClone(conversationIdentity),
-          structuredClone(this._routingPreferences),
+          sharedPreferences,
           null,
           {
             ...context,
