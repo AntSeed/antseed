@@ -1478,7 +1478,7 @@ export class AntseedNode extends EventEmitter {
     const amount = BigInt(authorization.maxAdditionalAuthorizationUsdc);
     const provider = req.headers['x-antseed-provider'];
     const providerPricing = provider ? peer.providerPricing?.[provider] : undefined;
-    const maxPricing = providerPricing?.services?.[body.model] ?? providerPricing?.defaults;
+    const maxPricing = providerPricing ? { ...providerPricing.defaults, ...providerPricing.services?.[body.model] } : undefined;
     if (!maxPricing) throw buyerFault('Metered routing requires an advertised price snapshot', 'invalid-request');
     if (amount > 0n && !this._buyerPaymentManager) throw buyerFault('Paid routing requires buyer payments', 'buyer-session-state');
     const signal = options.signal ?? new AbortController().signal;

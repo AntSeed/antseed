@@ -259,7 +259,7 @@ test('selectRoute recommendations cannot replace the host request, prices, or pe
   assert.deepEqual(peer.providers, ['openai'])
 })
 
-for (const violation of ['unknown-peer', 'unknown-service', 'blocked', 'trust', 'input-price', 'output-price', 'capability', 'cooldown', 'changed-policy']) {
+for (const violation of ['unknown-peer', 'unknown-service', 'blocked', 'trust', 'input-price', 'output-price', 'cached-price', 'capability', 'cooldown', 'changed-policy']) {
   test(`selectRoute rejects ${violation} without inference dispatch`, async () => {
     const peer = routerPeer('a')
     const preferences = { ...priceAndTrustPreferences, blockedPeerIds: violation === 'blocked' ? [peer.peerId] : [] }
@@ -274,6 +274,7 @@ for (const violation of ['unknown-peer', 'unknown-service', 'blocked', 'trust', 
     ;(proxy as any)._maxPricing = { defaults: {
       inputUsdPerMillion: violation === 'input-price' ? 0 : 100,
       outputUsdPerMillion: violation === 'output-price' ? 0 : 100,
+      cachedInputUsdPerMillion: violation === 'cached-price' ? 0 : 100,
     } }
     if (violation === 'cooldown') (proxy as any)._peerHealth.set(peer.peerId, { cooldownUntil: Date.now() + 30_000, failureStreak: 3 })
     let dispatches = 0
@@ -366,6 +367,7 @@ test('BuyerProxy reloads model routing preferences from config', async (t) => {
     allowedPeerIds: [allowedPeerId],
     blockedPeerIds: [],
     cqt: 5,
+    routerEnabled: false,
     dayPassOnDemandEnabled: false,
     autoRouting: undefined,
     selectedRouterPackage: null,

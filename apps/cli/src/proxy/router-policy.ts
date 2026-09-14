@@ -36,10 +36,11 @@ export function validateRouterCandidate(options: {
     const limits = maxPricing.defaults
     const input = offer.inputUsdPerMillion
     const output = offer.outputUsdPerMillion
-    const cached = offer.cachedInputUsdPerMillion
+    const cached = offer.cachedInputUsdPerMillion ?? input
     if (input == null || output == null || !Number.isFinite(input) || !Number.isFinite(output)
       || input < 0 || output < 0 || input > limits.inputUsdPerMillion || output > limits.outputUsdPerMillion
-      || (cached != null && (!Number.isFinite(cached) || cached < 0 || cached > (limits.cachedInputUsdPerMillion ?? limits.inputUsdPerMillion)))) return null
+      || cached == null || !Number.isFinite(cached) || cached < 0
+      || cached > (limits.cachedInputUsdPerMillion ?? limits.inputUsdPerMillion)) return null
   }
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId)
   return {

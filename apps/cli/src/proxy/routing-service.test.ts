@@ -83,6 +83,14 @@ test('free routing does not grant paid negotiation', async () => {
   assert.equal(state.sent[0][2].routingAuthorization.maxAdditionalAuthorizationUsdc, '0')
 })
 
+for (const price of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  test(`routing service rejects malformed advertised price ${price}`, async () => {
+    const state = setup({}, price)
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /invalid prices/)
+    assert.equal(state.sent.length, 0)
+  })
+}
+
 test('routing rate limit counts distinct operations, not cache hits', async () => {
   const state = setup({ maxRequestsPerMinute: 1 })
   await state.executor.invoke('first', state.context, state.messages)

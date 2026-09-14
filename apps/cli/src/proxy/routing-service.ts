@@ -64,6 +64,8 @@ export class RoutingServiceExecutor {
       const offer = peer ? buildNetworkServiceOffers([peer]).find((entry) => entry.serviceId === config.serviceId
         && entry.provider === config.provider && entry.protocols.includes('openai-chat-completions')) : null
       if (!peer || !offer || offer.inputUsdPerMillion == null || offer.outputUsdPerMillion == null) throw new Error('Routing service unavailable')
+      if ([offer.inputUsdPerMillion, offer.outputUsdPerMillion, offer.cachedInputUsdPerMillion ?? offer.inputUsdPerMillion]
+        .some((rate) => !Number.isFinite(rate) || rate < 0)) throw new Error('Routing service has invalid prices')
       if (offer.inputUsdPerMillion > config.maxInputUsdPerMillion || offer.outputUsdPerMillion > config.maxOutputUsdPerMillion
         || (offer.cachedInputUsdPerMillion ?? offer.inputUsdPerMillion) > config.maxCachedInputUsdPerMillion) throw new Error('Routing service exceeds authorized prices')
       const free = offer.inputUsdPerMillion === 0 && offer.outputUsdPerMillion === 0
