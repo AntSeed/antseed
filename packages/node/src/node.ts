@@ -1467,7 +1467,23 @@ export class AntseedNode extends EventEmitter {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
-    return this._buyerHandler.sendRequest(peer, req, undefined, options);
+    if (!options?.routingAuthorization) return this._buyerHandler.sendRequest(peer, req, undefined, options);
+    const authorization = options.routingAuthorization;
+    if (!/^\d+$/.test(authorization.maxAdditionalAuthorizationUsdc)
+      || options.controlPlane || req.path !== '/v1/chat/completions' || req.method !== 'POST') {
+      throw buyerFault('Invalid metered routing request', 'invalid-request');
+    }
+    const body = JSON.parse(new TextDecoder().decode(req.body)) as { model?: unknown; stream?: unknown };
+    if (typeof body.model !== 'string' || body.stream === true) throw buyerFault('Invalid metered routing model or stream', 'invalid-request');
+    const amount = BigInt(authorization.maxAdditionalAuthorizationUsdc);
+    if (amount > 0n && !this._buyerPaymentManager) throw buyerFault('Paid routing requires buyer payments', 'buyer-session-state');
+    const signal = options.signal ?? new AbortController().signal;
+    const finish = this._buyerPaymentManager?.beginRoutingRequest({
+      sellerPeerId: peer.peerId, requestId: req.requestId, parentRequestId: authorization.parentRequestId,
+      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal,
+    });
+    try { return await this._buyerHandler.sendRequest(peer, req, undefined, options); }
+    finally { finish?.(); }
   }
 
   async sendRequestStream(

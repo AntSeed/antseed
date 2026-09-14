@@ -56,6 +56,28 @@ plugins can be enabled without buying a day pass. The price lookup matches the
 active plugin's declared service instead of an arbitrary day-pass service.
 Token-priced routing still requires separate host authorization.
 
+## Metered routing authorization
+
+The normal SDK request path accepts a host-only `routingAuthorization` option:
+`parentRequestId` and `maxAdditionalAuthorizationUsdc` (decimal USDC base units).
+It does not use `controlPlane` or the unmetered `/_antseed/route` handler.
+Routing requests are non-streaming chat-completion service requests. A zero limit
+does not negotiate a paid channel after a 402. Paid routing requires a running
+buyer payment manager; successful responses complete normal post-response auth.
+
+The payment manager binds a live grant to one seller, service, request ID, parent
+request and cancellation signal. Only one routing operation can occupy a seller
+at a time. Buyer and seller authorization paths serialize for routing sellers
+and deduplicate response accounting, including both race orderings. Grant expiry
+or cancellation prevents further signatures; day-pass signing cannot consume a
+metered grant. Spend events carry `purpose: "routing"` and the parent request ID.
+
+The limit bounds **additional signed SpendingAuth**, not advertised rates,
+ReserveAuth collateral, or reversal of previously signed obligations. Existing
+`maxPerRequestUsdc` still means unverified exposure. A protected routing seller
+is dedicated to routing for this buyer process; use a different inference peer.
+Do not mix routing and inference/day-pass traffic on that payment relationship.
+
 ## Validation notes
 
 Use Node 20 for this snapshot's native dependencies. The machine's default Node

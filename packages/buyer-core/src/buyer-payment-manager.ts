@@ -151,6 +151,8 @@ interface PendingReserveAuthorization {
  * response was delivered.
  */
 export interface BuyerSpendEvent {
+  purpose?: 'routing';
+  parentRequestId?: string;
   sellerPeerId: string;
   /** Proxy request id, when the caller threaded one through. */
   requestId: string | null;
@@ -170,6 +172,58 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
  * with cumulative authorization, bytes/4 cost verification, and overdraft control.
  */
 export class BuyerPaymentManager {
+  private readonly _routingPeers = new Set<string>();
+  private readonly _routingGrants = new Map<string, {
+    requestId: string; parentRequestId: string; service: string; ceiling: bigint; signal: AbortSignal;
+  }>();
+  private readonly _routingLocks = new Map<string, Promise<unknown>>();
+
+  protectRoutingPeer(sellerPeerId: string): void {
+    this._routingPeers.add(sellerPeerId);
+  }
+
+  beginRoutingRequest(options: {
+    sellerPeerId: string; requestId: string; parentRequestId: string; service: string;
+    maxAdditionalAuthorizationUsdc: bigint; signal: AbortSignal;
+  }): () => void {
+    options.signal.throwIfAborted();
+    if (options.maxAdditionalAuthorizationUsdc < 0n || this._routingGrants.has(options.sellerPeerId)) {
+      throw buyerFault('Routing authorization is invalid or a routing operation is already active for this seller', 'buyer-session-state');
+    }
+    const current = this._cumulativeAmount.get(options.sellerPeerId)
+      ?? BigInt(this.getActiveSession(options.sellerPeerId)?.authMax ?? '0');
+    this._routingPeers.add(options.sellerPeerId);
+    const grant = { ...options, ceiling: current + options.maxAdditionalAuthorizationUsdc };
+    this._routingGrants.set(options.sellerPeerId, grant);
+    return () => {
+      if (this._routingGrants.get(options.sellerPeerId) === grant) this._routingGrants.delete(options.sellerPeerId);
+    };
+  }
+
+  private _assertRoutingRequest(sellerPeerId: string, requestId?: string, service?: string): void {
+    if (!this._routingPeers.has(sellerPeerId)) return;
+    const grant = this._routingGrants.get(sellerPeerId);
+    if (!grant || grant.signal.aborted || grant.requestId !== requestId || grant.service !== service) {
+      throw buyerFault('No active routing authorization for this request and service', 'buyer-session-state');
+    }
+  }
+
+  private _assertRoutingAmount(sellerPeerId: string, amount: bigint): void {
+    if (!this._routingPeers.has(sellerPeerId)) return;
+    const grant = this._routingGrants.get(sellerPeerId);
+    if (!grant || grant.signal.aborted || amount > grant.ceiling) {
+      throw buyerFault('Routing authorization expired or exceeds the operation limit', 'buyer-session-state');
+    }
+  }
+
+  private async _withRoutingLock<T>(sellerPeerId: string, operation: () => Promise<T>): Promise<T> {
+    if (!this._routingPeers.has(sellerPeerId)) return operation();
+    const previous = this._routingLocks.get(sellerPeerId) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(operation);
+    this._routingLocks.set(sellerPeerId, pending);
+    try { return await pending; }
+    finally { if (this._routingLocks.get(sellerPeerId) === pending) this._routingLocks.delete(sellerPeerId); }
+  }
   private readonly _identity: BuyerIdentity;
   private _signer: AbstractSigner;
   private readonly _depositsClient: DepositsClient;
@@ -771,7 +825,8 @@ export class BuyerPaymentManager {
   private _reportSpend(event: BuyerSpendEvent): void {
     if (!this._spendListener) return;
     try {
-      this._spendListener(event);
+      const grant = this._routingGrants.get(event.sellerPeerId);
+      this._spendListener(grant ? { ...event, purpose: 'routing', parentRequestId: grant.parentRequestId } : event);
     } catch (err) {
       // Accounting is a bystander here — never let it break the payment path.
       debugWarn(`[BuyerPayment] spend listener threw: ${err instanceof Error ? err.message : err}`);
@@ -810,6 +865,7 @@ export class BuyerPaymentManager {
     channel: StoredChannel,
     metadata: SpendingAuthMetadata,
   ): Promise<void> {
+    if (BigInt(channel.authMax) > 0n) this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
     const sanitized = this._sanitizeMetadata(metadata);
     const services = sanitized.services;
     const snapshot: StoredChannel = {
@@ -879,6 +935,7 @@ export class BuyerPaymentManager {
     cumulativeAmount: bigint,
     metadata: SpendingAuthMetadata,
   ): Promise<SpendingAuthPayload> {
+    this._assertRoutingAmount(sellerPeerId, cumulativeAmount);
     const sanitizedMetadata = this._sanitizeMetadata(metadata);
     const metadataHashHex = computeMetadataHash(sanitizedMetadata);
     const encodedMetadata = encodeMetadata(sanitizedMetadata);
@@ -1181,7 +1238,11 @@ export class BuyerPaymentManager {
   private _maxSignableForVerified(sellerPeerId: string, verified: bigint): bigint {
     const ceiling = this._getCeiling(sellerPeerId);
     const maxSignable = verified + this._config.maxPerRequestUsdc;
-    return maxSignable < ceiling ? maxSignable : ceiling;
+    const normal = maxSignable < ceiling ? maxSignable : ceiling;
+    if (!this._routingPeers.has(sellerPeerId)) return normal;
+    const grant = this._routingGrants.get(sellerPeerId);
+    const limit = grant && !grant.signal.aborted ? grant.ceiling : (this._cumulativeAmount.get(sellerPeerId) ?? 0n);
+    return normal < limit ? normal : limit;
   }
 
   /**
@@ -1222,12 +1283,28 @@ export class BuyerPaymentManager {
       requestId?: string;
     },
   ): Promise<PerRequestAuthResult> {
+    return this._withRoutingLock(sellerPeerId, () => this._signPerRequestAuth(sellerPeerId, responseStats));
+  }
+
+  private async _signPerRequestAuth(
+    sellerPeerId: string,
+    responseStats: Parameters<BuyerPaymentManager['signPerRequestAuth']>[1],
+  ): Promise<PerRequestAuthResult> {
+    this._assertRoutingRequest(sellerPeerId, responseStats.requestId, responseStats.service);
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw buyerFault(
         `[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`,
         'buyer-session-state',
       );
+    }
+
+    if (this._routingPeers.has(sellerPeerId) && this._serviceTokensCounted.has(responseStats.requestId)) {
+      return {
+        payload: await this._commitUpdatedSpendingAuth(session, sellerPeerId,
+          this._cumulativeAmount.get(sellerPeerId) ?? 0n, this._sanitizeMetadata(this._metadata.get(sellerPeerId))),
+        topUpNeeded: false,
+      };
     }
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
@@ -1402,6 +1479,7 @@ export class BuyerPaymentManager {
       cumulativeAmount: newAmount,
       metadataHash: metadataHashHex,
     };
+    this._assertRoutingAmount(sellerPeerId, newAmount);
     const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
 
     // Persist updated cumulative values to BuyerChannelStore
@@ -1498,6 +1576,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     requestedCumulativeAmount: bigint,
   ): Promise<PerRequestAuthResult> {
+    if (this._routingPeers.has(sellerPeerId)) throw buyerFault('Day-pass signing is not authorized for a metered routing seller', 'buyer-session-state');
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw buyerFault(
@@ -1613,6 +1692,10 @@ export class BuyerPaymentManager {
     payload: NeedAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
+    return this._withRoutingLock(sellerPeerId, () => this._handleNeedAuth(sellerPeerId, payload, paymentMux));
+  }
+
+  private async _handleNeedAuth(sellerPeerId: string, payload: NeedAuthPayload, paymentMux: PaymentMux): Promise<void> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] NeedAuth for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
@@ -1623,6 +1706,8 @@ export class BuyerPaymentManager {
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);
     const buyerBillingContext = requestBilling?.context;
+    this._assertRoutingRequest(sellerPeerId, payload.requestId, buyerService);
+    if (this._routingPeers.has(sellerPeerId) && this._serviceTokensCounted.has(payload.requestId)) return;
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;

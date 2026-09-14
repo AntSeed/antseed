@@ -159,6 +159,77 @@ describe('BuyerPaymentManager', () => {
 
   // ── authorizeSpending ──────────────────────────────────────────
 
+  it('meters routing tokens once under concurrent buyer and seller authorizations', async () => {
+    const sellerPeerId = fakePeerId('metered-router');
+    const requestId = 'routing-operation';
+    const finish = manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'inference-request',
+      service: 'route-classifier', maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, {
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(requestId, 'route-classifier');
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    await Promise.all([
+      manager.signPerRequestAuth(sellerPeerId, {
+        requestId, service: 'route-classifier', inputBytes: enc.encode('route'), outputBytes: enc.encode('selection'),
+        reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n,
+      }),
+      manager.handleNeedAuth(sellerPeerId, {
+        channelId, requestId, requiredCumulativeAmount: '999999', currentAcceptedCumulative: '0', deposit: '10000000',
+        lastRequestCost: '140', inputTokens: '100', outputTokens: '20',
+      }, mux),
+    ]);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('140');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ purpose: 'routing', parentRequestId: 'inference-request', amountUsdc: '140' });
+    finish();
+    await expect(manager.signPerRequestAuth(sellerPeerId, {
+      requestId, service: 'route-classifier', inputBytes: enc.encode('route'), outputBytes: enc.encode('selection'),
+    })).rejects.toThrow(/No active routing authorization/);
+  });
+
+  it('caps routing headroom and rejects overlapping, mismatched, and cancelled grants', async () => {
+    const sellerPeerId = fakePeerId('router-limit');
+    const controller = new AbortController();
+    const grant = { sellerPeerId, requestId: 'limited-route', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 150n, signal: controller.signal };
+    const finish = manager.beginRoutingRequest(grant);
+    expect(() => manager.beginRoutingRequest({ ...grant, requestId: 'overlap' })).toThrow(/already active/);
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, TEST_PRICING);
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(grant.requestId, grant.service);
+    await manager.handleNeedAuth(sellerPeerId, { channelId, requestId: grant.requestId,
+      requiredCumulativeAmount: '999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+    expect(BigInt(manager.getActiveSession(sellerPeerId)!.authMax)).toBeLessThanOrEqual(150n);
+    await expect(manager.signPerRequestAuth(sellerPeerId, { requestId: 'wrong', service: grant.service,
+      inputBytes: enc.encode('a'), outputBytes: enc.encode('b') })).rejects.toThrow(/No active routing/);
+    controller.abort();
+    await expect(manager.signPerRequestAuth(sellerPeerId, { requestId: grant.requestId, service: grant.service,
+      inputBytes: enc.encode('a'), outputBytes: enc.encode('b') })).rejects.toThrow(/No active routing/);
+    await expect(manager.signCumulativeAuth(sellerPeerId, 500n)).rejects.toThrow(/Day-pass signing/);
+    finish();
+  });
+
+  it('does not sign twice when seller authorization wins the routing race', async () => {
+    const sellerPeerId = fakePeerId('routing-seller-first');
+    const requestId = 'seller-first';
+    manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(requestId, 'classifier');
+    await Promise.all([
+      manager.handleNeedAuth(sellerPeerId, { channelId, requestId, requiredCumulativeAmount: '140',
+        currentAcceptedCumulative: '0', deposit: '10000000', lastRequestCost: '140', inputTokens: '100', outputTokens: '20' }, mux),
+      manager.signPerRequestAuth(sellerPeerId, { requestId, service: 'classifier', inputBytes: enc.encode('prompt'),
+        outputBytes: enc.encode('route'), reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n }),
+    ]);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('140');
+    expect(manager.getActiveSession(sellerPeerId)?.requestCount).toBe(1);
+  });
+
   it('authorizeSpending sends SpendingAuth with channelId and reserve fields', async () => {
     const sellerPeerId = fakePeerId('seller-peer-001');
     const minBudget = 50_000n;

@@ -43,6 +43,10 @@ export interface RequestStreamCallbacks {
 }
 
 export interface RequestExecutionOptions {
+  routingAuthorization?: {
+    parentRequestId: string;
+    maxAdditionalAuthorizationUsdc: string;
+  };
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
@@ -374,6 +378,8 @@ export class BuyerRequestHandler {
     }
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
+      options?.signal?.throwIfAborted();
+      if (options?.routingAuthorization?.maxAdditionalAuthorizationUsdc === '0') return adaptPeerResponse(response);
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') {
         return adaptPeerResponse(result.response);
@@ -382,6 +388,10 @@ export class BuyerRequestHandler {
       const retriedResponse = await executeRequest();
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+        if (options?.routingAuthorization && retriedResponse.statusCode < 400) {
+          options.signal?.throwIfAborted();
+          await negotiator.sendPostResponseAuth(peer, conn);
+        }
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
       return adaptPeerResponse(retriedResponse);
@@ -389,6 +399,10 @@ export class BuyerRequestHandler {
 
     if (negotiator && !isFreeService) {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
+      if (options?.routingAuthorization && response.statusCode < 400) {
+        options.signal?.throwIfAborted();
+        await negotiator.sendPostResponseAuth(peer, conn);
+      }
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
