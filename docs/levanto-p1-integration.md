@@ -1,5 +1,8 @@
 # Router integration: P1 implementation
 
+This is the historical P1 snapshot. The completed P2 changes and test matrix
+are documented in `docs/levanto-p2-integration.md`.
+
 Baseline: Levanto `model-routing-clean-v2`, commit
 `227046fdacc470c8d030534ab8e956a3b0272a73`. Work is isolated from AntSeed main.
 
@@ -215,8 +218,7 @@ not a claim that an entire pristine baseline suite passes:
 These failures are not repaired as part of P1. The original AntSeed checkout is
 untouched. Changes are separate local commits on `codex/levanto-p1-local`.
 
-P2 remains deferred: router-owned configuration/UI redesign, shared forecast and
-savings-record changes, and routing cadence/turn/compaction heuristics. The
-existing universal CQT behavior is not expanded or presented as a standard that
-other routers must implement. No upstream merge, push, or competitor integration
-is included.
+P2 was deferred at the P1 checkpoint. Router-owned configuration/UI, optional
+shared forecasts, honest savings records, routing cadence/context, operational
+limits, and their tests are now implemented; see `docs/levanto-p2-integration.md`.
+No upstream merge, push, or competitor integration is included.
