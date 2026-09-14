@@ -602,6 +602,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routerName: dashboardRouterName,
         autoRouteServiceId,
         dailyPassServiceId,
+        routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
+        routingService: effectiveBuyerConfig.routingService,
         getDayPassPriceIncreaseNotice: () => dayPassPriceIncreaseNotice,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })

@@ -338,6 +338,27 @@ export function validateConfig(config: AntseedConfig): string[] {
   if (config.buyer.routerFailureFallback !== undefined && !['none', 'default'].includes(config.buyer.routerFailureFallback)) {
     errors.push('buyer.routerFailureFallback must be none or default');
   }
+  const routingService = config.buyer.routingService;
+  if (routingService !== undefined) {
+    if (!routingService || typeof routingService !== 'object') {
+      errors.push('buyer.routingService must be an object');
+    } else {
+      for (const key of ['routerKey', 'provider', 'serviceId'] as const) {
+        if (typeof routingService[key] !== 'string' || !routingService[key].trim()) errors.push(`buyer.routingService.${key} is required`);
+      }
+      if (typeof routingService.peerId !== 'string' || !PEER_ID_PATTERN.test(routingService.peerId)) errors.push('buyer.routingService.peerId must be a peer ID');
+      if (routingService.allowPromptSharing !== true) errors.push('buyer.routingService.allowPromptSharing must be explicitly true');
+      for (const key of ['maxInputUsdPerMillion', 'maxOutputUsdPerMillion', 'maxCachedInputUsdPerMillion'] as const) {
+        if (!Number.isFinite(routingService[key]) || routingService[key] < 0) errors.push(`buyer.routingService.${key} must be non-negative and finite`);
+      }
+      for (const key of ['maxRequestsPerMinute', 'maxInputBytes', 'maxOutputTokens'] as const) {
+        if (!Number.isSafeInteger(routingService[key]) || routingService[key] < 1) errors.push(`buyer.routingService.${key} must be a positive safe integer`);
+      }
+      if (typeof routingService.maxAdditionalAuthorizationUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(routingService.maxAdditionalAuthorizationUsdc)) {
+        errors.push('buyer.routingService.maxAdditionalAuthorizationUsdc must be a non-negative integer string');
+      }
+    }
+  }
 
   if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS) {
     errors.push('buyer.maxStreamDurationMs must be an integer >= 1');

@@ -78,6 +78,60 @@ ReserveAuth collateral, or reversal of previously signed obligations. Existing
 is dedicated to routing for this buyer process; use a different inference peer.
 Do not mix routing and inference/day-pass traffic on that payment relationship.
 
+## Host service adapter
+
+The optional sixth argument also supplies `candidates` (eligible exact model/peer
+pairs and advertised input/output prices) and `invokeService(messages)`. A plugin
+can classify with a local algorithm, use its existing upstream, or call the
+host-bound service. There is no required vendor and no forecast requirement.
+
+Configure a dedicated routing seller explicitly in `config.json`:
+
+```json
+{
+  "buyer": {
+    "routingPreferences": { "routerEnabled": true, "dayPassOnDemandEnabled": false },
+    "routingService": {
+      "routerKey": "instance:my-router",
+      "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provider": "openai",
+      "serviceId": "route-classifier",
+      "allowPromptSharing": true,
+      "maxInputUsdPerMillion": 1,
+      "maxOutputUsdPerMillion": 2,
+      "maxCachedInputUsdPerMillion": 1,
+      "maxAdditionalAuthorizationUsdc": "1000",
+      "maxRequestsPerMinute": 20,
+      "maxInputBytes": 16384,
+      "maxOutputTokens": 128
+    }
+  }
+}
+```
+
+Replace the example peer ID and instance with your actual installed instance;
+start with `antseed buyer start --instance my-router`. For non-instance loading,
+use `plugin:<router argument>` as the router key. Authorization does not transfer
+when switching plugins or instances. The example's authorization increment limit
+is 0.001 USDC per operation; the input/output rates are USD per million tokens.
+Zero authorization permits only a free advertised service and does not buy a
+day pass. Omission authorizes no host-mediated routing service.
+
+The host fixes model, provider, peer, endpoint, output limit and identity headers.
+Plugins supply only text messages. Explicit prompt-sharing consent is required.
+One operation per inference request is cached for ten minutes: identical repeated
+calls reuse the result; different input is rejected. Distinct calls are rate
+limited. No application-level retries are made, including after 429s. Ordinary
+SDK 402 negotiation remains part of the single metered request. Configuration
+changes and shutdown abort active operations. Routing peers are excluded from
+inference selection so their scoped payment authorization cannot be mixed.
+
+`routing-operations.jsonl` stores operation status and separate signed-spend events
+with request/parent IDs, never prompt contents. Match the IDs to sum authorization
+deltas; do not mistake a response's reported usage, an authorization, and actual
+on-chain settlement for three charges. Failed downstream inference does not erase
+the cost of a routing classification that already completed.
+
 ## Validation notes
 
 Use Node 20 for this snapshot's native dependencies. The machine's default Node

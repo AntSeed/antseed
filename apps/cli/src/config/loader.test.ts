@@ -34,6 +34,24 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
   assert.equal(shouldDeriveDisplayName('custom seller'), false);
 });
 
+test('routing service consent and limits survive config loading', async () => {
+  const routingService = {
+    routerKey: 'instance:fixture', peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier',
+    allowPromptSharing: true, maxInputUsdPerMillion: 1, maxOutputUsdPerMillion: 2, maxCachedInputUsdPerMillion: 1,
+    maxAdditionalAuthorizationUsdc: '1000', maxRequestsPerMinute: 2, maxInputBytes: 4096, maxOutputTokens: 32,
+  };
+  await withTempConfig(JSON.stringify({ buyer: { routingService } }), async (path) => {
+    assert.deepEqual((await loadConfig(path)).buyer.routingService, routingService);
+  });
+  for (const invalid of [null, { ...routingService, allowPromptSharing: false },
+    { ...routingService, maxAdditionalAuthorizationUsdc: 1000 }, { ...routingService, maxRequestsPerMinute: 0 },
+    { ...routingService, peerId: 'invalid' }, { ...routingService, maxOutputUsdPerMillion: -1 }]) {
+    await withTempConfig(JSON.stringify({ buyer: { routingService: invalid } }), async (path) => {
+      await assert.rejects(loadConfig(path), /routingService/);
+    });
+  }
+});
+
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {
   const config = createDefaultConfig();
 

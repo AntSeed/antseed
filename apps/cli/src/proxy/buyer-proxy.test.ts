@@ -169,6 +169,31 @@ function routerPeer(seed: string): PeerInfo {
   }
 }
 
+test('disabled routers are blocked by the host without invoking a plugin', async () => {
+  const peer = routerPeer('a')
+  let calls = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], { selectRoute: async () => { calls++; return null } },
+    undefined, { ...priceAndTrustPreferences, routerEnabled: false })
+  ;(proxy as any)._autoRouteServiceId = 'router-test'
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+  assert.equal(response.statusCode, 503)
+  assert.equal(calls, 0)
+})
+
+test('selectRoute receives eligible candidate prices without requiring forecasts', async () => {
+  const allowed = routerPeer('a')
+  const blocked = routerPeer('b')
+  let candidates: any[] = []
+  const proxy = makeBuyerProxyWithPeers([allowed, blocked], [allowed, blocked], {
+    selectRoute: async (_req: any, _peers: any, _conversation: any, _prefs: any, _fallback: any, context: any) => {
+      candidates = context.candidates
+      return []
+    },
+  }, undefined, { ...priceAndTrustPreferences, blockedPeerIds: [blocked.peerId] })
+  await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+  assert.deepEqual(candidates, [{ peerId: allowed.peerId, serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }])
+})
+
 for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
   test(`selectRoute fails closed on ${failure}`, async () => {
     const peer = routerPeer('a')

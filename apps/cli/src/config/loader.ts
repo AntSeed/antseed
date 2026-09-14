@@ -8,6 +8,7 @@ import {
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
+  BuyerCLIConfig,
   DomainVerificationConfig,
   DomainVerificationMethod,
   GithubVerificationConfig,
@@ -517,6 +518,7 @@ function mergeBuyerConfig(
       : defaults.metadataFetchTimeoutMs,
     routerTimeoutMs: value['routerTimeoutMs'] === undefined ? 10_000 : toFiniteOrNaN(value['routerTimeoutMs']),
     routerFailureFallback: (value['routerFailureFallback'] ?? 'none') as 'none' | 'default',
+    ...(value['routingService'] !== undefined ? { routingService: value['routingService'] as BuyerCLIConfig['routingService'] } : {}),
     requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
       ? value['requestTimeoutMs']
       : defaults.requestTimeoutMs,

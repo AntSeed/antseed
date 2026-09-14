@@ -1,5 +1,5 @@
 import type { PeerInfo } from '../types/peer.js';
-import type { SerializedHttpRequest } from '../types/http.js';
+import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
 import type { ConversationIdentity } from '../routing/conversation-identity.js';
 import type { ModelRoutingPreferences } from '../routing/model-route-ranking.js';
 
@@ -132,6 +132,8 @@ export type RoutingDecisionRow = {
 export type RouteSelectionContext = {
   signal: AbortSignal;
   deadlineMs: number;
+  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'outputUsdPerMillion'>>;
+  invokeService?: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => Promise<SerializedHttpResponse>;
 };
 
 export interface Router {

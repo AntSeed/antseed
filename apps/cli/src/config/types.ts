@@ -183,6 +183,7 @@ export interface SellerCLIConfig {
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
+  routingService?: RoutingServiceConfig;
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */
@@ -212,6 +213,21 @@ export interface BuyerCLIConfig {
   autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+}
+
+export interface RoutingServiceConfig {
+  routerKey: string;
+  peerId: string;
+  provider: string;
+  serviceId: string;
+  allowPromptSharing: boolean;
+  maxInputUsdPerMillion: number;
+  maxOutputUsdPerMillion: number;
+  maxCachedInputUsdPerMillion: number;
+  maxAdditionalAuthorizationUsdc: string;
+  maxRequestsPerMinute: number;
+  maxInputBytes: number;
+  maxOutputTokens: number;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
-import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, readdir, stat, unlink, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
@@ -108,9 +108,10 @@ import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 import { loadConfig } from '../config/loader.js'
 import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js'
-import type { HierarchicalPricingConfig } from '../config/types.js'
+import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
 import { validateRouterCandidate } from './router-policy.js'
 import { executeRouter, RouterExecutionError } from './router-execution.js'
+import { RoutingServiceExecutor } from './routing-service.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -144,6 +145,8 @@ export interface BuyerProxyConfig {
   routerFailureFallback?: 'none' | 'default'
   autoRouteServiceId?: string
   dailyPassServiceId?: string
+  routerKey?: string
+  routingService?: RoutingServiceConfig
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -837,6 +840,9 @@ export class BuyerProxy {
   private readonly _routerFailureFallback: 'none' | 'default'
   private readonly _autoRouteServiceId: string | undefined
   private readonly _dailyPassServiceId: string | undefined
+  private _routingServiceConfig: RoutingServiceConfig | undefined
+  private readonly _routingServiceExecutor: RoutingServiceExecutor
+  private readonly _routingPeerIds = new Set<string>()
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -889,12 +895,20 @@ export class BuyerProxy {
     this._routerFailureFallback = config.routerFailureFallback ?? 'none'
     this._autoRouteServiceId = config.autoRouteServiceId
     this._dailyPassServiceId = config.dailyPassServiceId
+    this._routingServiceConfig = config.routingService
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
+    this._routingServiceExecutor = new RoutingServiceExecutor({
+      node: this._node, routerKey: config.routerKey ?? '',
+      getConfig: () => this._routingServiceConfig,
+      getPeers: () => this._getPeers(),
+      record: (event) => this._recordRoutingOperation(event),
+    })
+    if (config.routingService) this._protectRoutingPeer(config.routingService.peerId)
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._configPath = config.configPath ?? null
     this._routerName = config.routerName
@@ -940,6 +954,10 @@ export class BuyerProxy {
     }
     if (typeof spendEventNode.on === 'function') {
       spendEventNode.on('payment:spend', (event: BuyerSpendEvent) => {
+        if (event.purpose === 'routing') {
+          void this._recordRoutingOperation({ kind: 'authorization', ...event }).catch((error) => log('Routing accounting write failed', error))
+          return
+        }
         this._attributeSpend(event)
       })
     }
@@ -956,7 +974,17 @@ export class BuyerProxy {
     }
   }
 
-  /** Roll a signed spend delta into the conversation that triggered it. */
+  private _protectRoutingPeer(peerId: string): void {
+    const normalized = peerId.toLowerCase().replace(/^0x/, '')
+    this._routingPeerIds.add(normalized)
+    this._node.buyerPaymentManager?.protectRoutingPeer(normalized)
+  }
+
+  private async _recordRoutingOperation(event: Record<string, unknown>): Promise<void> {
+    await mkdir(this._stateDir, { recursive: true })
+    await appendFile(join(this._stateDir, 'routing-operations.jsonl'), `${JSON.stringify(event)}\n`, { mode: 0o600 })
+  }
+
   private _attributeSpend(event: BuyerSpendEvent): void {
     if (!event.requestId) return
     const entry = this._requestConversations.get(event.requestId)
@@ -1066,6 +1094,7 @@ export class BuyerProxy {
   }
 
   async stop(): Promise<void> {
+    this._routingServiceExecutor.cancel()
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
@@ -1159,6 +1188,9 @@ export class BuyerProxy {
     if (!this._configPath) return
     try {
       const config = await loadConfig(this._configPath)
+      if (JSON.stringify(config.buyer.routingService) !== JSON.stringify(this._routingServiceConfig)) this._routingServiceExecutor.cancel()
+      this._routingServiceConfig = config.buyer.routingService
+      if (this._routingServiceConfig) this._protectRoutingPeer(this._routingServiceConfig.peerId)
       const next = config.buyer.routingPreferences
       this._maxPricing = config.buyer.maxPricing
       this._minPeerReputation = config.buyer.minPeerReputation
@@ -2624,14 +2656,29 @@ export class BuyerProxy {
       return
     }
     try {
-      if (requestedService && this._node.router?.selectRoute) {
+      if (requestedService && this._node.router?.selectRoute
+        && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
         routeSelected = await executeRouter((context) => this._node.router!.selectRoute!(
           structuredClone(serializedReq),
           structuredClone(peers),
           structuredClone(conversationIdentity),
           structuredClone(this._routingPreferences),
           null,
-          context,
+          {
+            ...context,
+            candidates: buildNetworkServiceOffers(peers).flatMap((offer) => {
+              if (this._routingPeerIds.has(offer.peerId)) return []
+              const candidate = validateRouterCandidate({ recommendation: offer, peers, request: serializedReq,
+                protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+                preferences: this._routingPreferences, maxPricing: this._maxPricing,
+                minPeerReputation: this._minPeerReputation, now: this._now() })
+              return candidate && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
+                ? [{ peerId: candidate.peerId, serviceId: candidate.serviceId,
+                    inputUsdPerMillion: candidate.inputUsdPerMillion, outputUsdPerMillion: candidate.outputUsdPerMillion }]
+                : []
+            }),
+            invokeService: (messages) => this._routingServiceExecutor.invoke(serializedReq.requestId, context, messages),
+          },
         ), clientAbortController.signal, this._routerTimeoutMs)
         if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
         if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
@@ -2694,7 +2741,8 @@ export class BuyerProxy {
             provider: explicitProvider, requiredParameters, preferences: this._routingPreferences,
             maxPricing: this._maxPricing, minPeerReputation: this._minPeerReputation, now: this._now(),
           })
-          if (!candidate || !peerAllowedByPolicy(policyRouter, candidate.request, candidate.peer)) return []
+          if (!candidate || this._routingPeerIds.has(candidate.peerId)
+            || !peerAllowedByPolicy(policyRouter, candidate.request, candidate.peer)) return []
           const key = `${candidate.peerId}@${candidate.serviceId}`
           if (seen.has(key) || isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())) return []
           seen.add(key)
@@ -2722,6 +2770,7 @@ export class BuyerProxy {
 
         const routeCandidates = modelPeers
           .map((peer) => {
+            if (this._routingPeerIds.has(peer.peerId)) return null
             const plan = modelPlans.get(peer.peerId)
               ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
             if (!plan?.serviceId) return null
@@ -3060,7 +3109,7 @@ export class BuyerProxy {
       return
     }
     const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
-    if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
+    if (this._routingPeerIds.has(selectedPeer.peerId) || !peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
