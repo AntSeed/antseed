@@ -30,6 +30,20 @@ test('returns null with no rows', () => {
   assert.equal(computeRouterSavings([]), null);
 });
 
+test('unknown cost does not become free service or inflate savings', () => {
+  assert.equal(computeRouterSavings([row({ actualUsdcPaid: null })]), null);
+  assert.deepEqual(computeRouterSavings([row(), row({ actualUsdcPaid: null })]), computeRouterSavings([row()]));
+});
+
+test('forecasts are not required for comparisons and a known zero cost stays valid', () => {
+  assert.equal(computeRouterSavings([row({ actualUsdcPaid: 0, predictedCostUsd: undefined, cqt: undefined })])?.pct, 100);
+});
+
+test('invalid price and usage snapshots cannot produce savings', () => {
+  assert.equal(computeRouterSavings([row({ actualCachedTokens: 1001 })]), null);
+  assert.equal(computeRouterSavings([row({ baselinePrices: { [defaultRouterSavingsBaselineModel()]: { inUsdPerM: NaN, outUsdPerM: 1, cachedInUsdPerM: null } } })]), null);
+});
+
 test('computes real savings against the row-level baselinePrices snapshot', () => {
   const result = computeRouterSavings([row()]);
   assert.ok(result);

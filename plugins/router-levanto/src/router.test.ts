@@ -1027,7 +1027,7 @@ describe('LevantoRouter.selectRoute', () => {
       expect(rowB?.predictedCostUsd).toBe(0.002);
     });
 
-    it('writes its own row for a pinned tool-loop continuation, reusing the real decision it was pinned to', async () => {
+    it('writes a pinned continuation without reusing stale token and cost predictions', async () => {
       const fetchImpl = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => rankedResponse({
@@ -1069,8 +1069,8 @@ describe('LevantoRouter.selectRoute', () => {
       expect(pinnedRow).toBeDefined();
       // Reuses the real decision's predicted fields (same model/cost/cqt prediction)...
       expect(pinnedRow?.actualModel).toBe('gpt-5.6-luna');
-      expect(pinnedRow?.predictedCostUsd).toBe(0.0012);
-      expect(pinnedRow?.predictedInputTokens).toBe(100);
+      expect(pinnedRow?.predictedCostUsd).toBeNull();
+      expect(pinnedRow?.predictedInputTokens).toBeNull();
       expect(pinnedRow?.cqt).toBe(5);
       // ...but records its OWN actual outcome, and null latency (gate skipped the call).
       expect(pinnedRow?.actualUsdcPaid).toBe(0.0003);

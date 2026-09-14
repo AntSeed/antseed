@@ -59,11 +59,15 @@ export function computeRouterSavings(
 
   for (const row of rows) {
     if (!row.actualModel) continue;
+    if (row.actualUsdcPaid == null || !Number.isFinite(row.actualUsdcPaid) || row.actualUsdcPaid < 0) continue;
     const baseline = row.baselinePrices?.[baselineModel];
     // Absent, not zero -- the baseline model wasn't offered as a ranked
     // candidate at the moment of this specific decision, so there is no
     // real AntSeed price to compare against for this row.
     if (!baseline) continue;
+    if ([baseline.inUsdPerM, baseline.outUsdPerM, baseline.cachedInUsdPerM ?? baseline.inUsdPerM,
+      row.actualPromptTokens, row.actualCachedTokens, row.actualCompletionTokens].some((value) => !Number.isFinite(value) || value < 0)
+      || row.actualCachedTokens > row.actualPromptTokens) continue;
 
     const freshInput = Math.max(0, row.actualPromptTokens - row.actualCachedTokens);
     const cached = row.actualCachedTokens;
@@ -84,4 +88,3 @@ export function computeRouterSavings(
   const pct = Math.round(Math.max(0, Math.min(1, 1 - actualUsd / baselineUsd)) * 100);
   return { pct, actualUsd, baselineUsd, matchedServices };
 }
-

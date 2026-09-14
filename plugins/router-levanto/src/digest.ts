@@ -54,9 +54,9 @@ export function buildDigest(rows: readonly RoutingDecisionRow[], period: string)
 
   for (const row of dayRows) {
     modelMix[row.actualModel] = (modelMix[row.actualModel] ?? 0) + 1;
-    cqtDistribution[row.cqt] = (cqtDistribution[row.cqt] ?? 0) + 1;
+    if (row.cqt != null) cqtDistribution[row.cqt] = (cqtDistribution[row.cqt] ?? 0) + 1;
     predictedCostUsd += row.predictedCostUsd ?? 0;
-    observedCostUsd += row.actualUsdcPaid;
+    observedCostUsd += row.actualUsdcPaid ?? 0;
     predictedInputTokens += row.predictedInputTokens ?? 0;
     predictedCachedInputTokens += row.predictedCachedInputTokens ?? 0;
     predictedOutputTokens += row.predictedOutputTokens ?? 0;

@@ -244,3 +244,9 @@ describe('RoutingLedger', () => {
     });
   });
 });
+it('keeps an unknown observed cost null rather than reporting a free request', () => {
+  const ledger = new RoutingLedger();
+  ledger.recordPending('unknown', pending());
+  const result = ledger.recordResult('unknown', 'peer', { promptTokens: 100, cachedTokens: 0, completionTokens: 20, usdcPaid: null });
+  expect(result?.actualUsdcPaid).toBeNull();
+});

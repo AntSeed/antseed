@@ -25,12 +25,14 @@ interface RoutingDecisionRecord {
   actual_prompt_tokens: number;
   actual_cached_tokens: number;
   actual_completion_tokens: number;
-  actual_usdc_paid: number;
+  actual_usdc_paid: number | null;
   predicted_cost_usd: number | null;
   predicted_input_tokens: number | null;
   predicted_cached_input_tokens: number | null;
   predicted_output_tokens: number | null;
-  cqt: number;
+  cqt: number | null;
+  cost_source: 'estimate' | 'settled';
+  router_metadata: string;
   routing_latency_ms: number | null;
   baseline_prices: string;
   conversation_key: string | null;
@@ -52,6 +54,8 @@ function toRow(record: RoutingDecisionRecord): RoutingDecisionRow {
     predictedCachedInputTokens: record.predicted_cached_input_tokens,
     predictedOutputTokens: record.predicted_output_tokens,
     cqt: record.cqt,
+    costSource: record.cost_source,
+    routerMetadata: JSON.parse(record.router_metadata) as RoutingDecisionRow['routerMetadata'],
     routingLatencyMs: record.routing_latency_ms,
     baselinePrices: JSON.parse(record.baseline_prices) as RoutingDecisionRow['baselinePrices'],
     conversationKey: record.conversation_key,
@@ -77,12 +81,12 @@ export class RoutingDecisionsStore {
         at_ms, actual_model, actual_peer, actual_prompt_tokens, actual_cached_tokens,
         actual_completion_tokens, actual_usdc_paid, predicted_cost_usd, predicted_input_tokens,
         predicted_cached_input_tokens, predicted_output_tokens, cqt, routing_latency_ms,
-        baseline_prices, conversation_key, considered_candidates, input_message_preview
+        baseline_prices, conversation_key, considered_candidates, input_message_preview, cost_source, router_metadata
       ) VALUES (
         @atMs, @actualModel, @actualPeer, @actualPromptTokens, @actualCachedTokens,
         @actualCompletionTokens, @actualUsdcPaid, @predictedCostUsd, @predictedInputTokens,
         @predictedCachedInputTokens, @predictedOutputTokens, @cqt, @routingLatencyMs,
-        @baselinePrices, @conversationKey, @consideredCandidates, @inputMessagePreview
+        @baselinePrices, @conversationKey, @consideredCandidates, @inputMessagePreview, @costSource, @routerMetadata
       )
     `);
     this._recentStmt = this._db.prepare('SELECT * FROM routing_decisions ORDER BY id DESC LIMIT ?');
@@ -90,6 +94,7 @@ export class RoutingDecisionsStore {
   }
 
   insert(row: RoutingDecisionRow): void {
+    const optionalNumber = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
     this._insertStmt.run({
       atMs: row.atMs,
       actualModel: row.actualModel,
@@ -97,17 +102,19 @@ export class RoutingDecisionsStore {
       actualPromptTokens: row.actualPromptTokens,
       actualCachedTokens: row.actualCachedTokens,
       actualCompletionTokens: row.actualCompletionTokens,
-      actualUsdcPaid: row.actualUsdcPaid,
-      predictedCostUsd: row.predictedCostUsd,
-      predictedInputTokens: row.predictedInputTokens,
-      predictedCachedInputTokens: row.predictedCachedInputTokens,
-      predictedOutputTokens: row.predictedOutputTokens,
-      cqt: row.cqt,
+      actualUsdcPaid: optionalNumber(row.actualUsdcPaid),
+      predictedCostUsd: optionalNumber(row.predictedCostUsd),
+      predictedInputTokens: optionalNumber(row.predictedInputTokens),
+      predictedCachedInputTokens: optionalNumber(row.predictedCachedInputTokens),
+      predictedOutputTokens: optionalNumber(row.predictedOutputTokens),
+      cqt: optionalNumber(row.cqt),
+      costSource: row.costSource ?? 'estimate',
+      routerMetadata: JSON.stringify(row.routerMetadata ?? {}),
       routingLatencyMs: row.routingLatencyMs,
       baselinePrices: JSON.stringify(row.baselinePrices),
       conversationKey: row.conversationKey,
       consideredCandidates: JSON.stringify(row.consideredCandidates),
-      inputMessagePreview: row.inputMessagePreview,
+      inputMessagePreview: row.inputMessagePreview ?? null,
     });
   }
 

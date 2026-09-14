@@ -122,12 +122,12 @@ function sanitizeRow(value: unknown): RoutingDecisionRow | null {
     actualPromptTokens: num(r.actualPromptTokens),
     actualCachedTokens: num(r.actualCachedTokens),
     actualCompletionTokens: num(r.actualCompletionTokens),
-    actualUsdcPaid: num(r.actualUsdcPaid),
+    actualUsdcPaid: numOrNull(r.actualUsdcPaid),
     predictedCostUsd: numOrNull(r.predictedCostUsd),
     predictedInputTokens: numOrNull(r.predictedInputTokens),
     predictedCachedInputTokens: numOrNull(r.predictedCachedInputTokens),
     predictedOutputTokens: numOrNull(r.predictedOutputTokens),
-    cqt: num(r.cqt, 5),
+    cqt: numOrNull(r.cqt),
     routingLatencyMs: numOrNull(r.routingLatencyMs),
     baselinePrices: sanitizeBaselinePrices(r.baselinePrices),
     conversationKey: strOrNull(r.conversationKey),
@@ -225,7 +225,7 @@ export class RoutingLedger {
   recordResult(
     requestId: string,
     peerId: string,
-    actual: { promptTokens: number; cachedTokens: number; completionTokens: number; usdcPaid: number },
+    actual: { promptTokens: number; cachedTokens: number; completionTokens: number; usdcPaid: number | null },
     now = Date.now(),
   ): RoutingDecisionRow | null {
     const pending = this.pendingByRequestId.get(requestId);

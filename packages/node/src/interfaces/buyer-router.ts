@@ -58,12 +58,14 @@ export type RoutingDecisionRow = {
   actualPromptTokens: number;
   actualCachedTokens: number;
   actualCompletionTokens: number;
-  actualUsdcPaid: number;
-  predictedCostUsd: number | null;
-  predictedInputTokens: number | null;
-  predictedCachedInputTokens: number | null;
-  predictedOutputTokens: number | null;
-  cqt: number;
+  actualUsdcPaid: number | null;
+  predictedCostUsd?: number | null;
+  predictedInputTokens?: number | null;
+  predictedCachedInputTokens?: number | null;
+  predictedOutputTokens?: number | null;
+  cqt?: number | null;
+  costSource?: 'estimate' | 'settled';
+  routerMetadata?: Record<string, string | number | boolean | null>;
   routingLatencyMs: number | null;
   /**
    * A price snapshot for each fixed, curated baseline/dropdown model that
@@ -116,7 +118,7 @@ export type RoutingDecisionRow = {
    * conversation content to trim) or for rows persisted before this field
    * existed.
    */
-  inputMessagePreview: string | null;
+  inputMessagePreview?: string | null;
 };
 
 /**

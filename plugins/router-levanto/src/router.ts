@@ -691,7 +691,7 @@ export class LevantoRouter {
       promptTokens: (result.freshInputTokens ?? 0) + (result.cachedInputTokens ?? 0),
       cachedTokens: result.cachedInputTokens ?? 0,
       completionTokens: result.outputTokens ?? 0,
-      usdcPaid: result.estimatedCostUsd ?? 0,
+      usdcPaid: result.estimatedCostUsd ?? null,
     });
   }
 
@@ -733,10 +733,10 @@ export class LevantoRouter {
         // made its own routing call, so there is no latency to record.
         this.ledger.recordPending(req.requestId, {
           model: pinned.serviceId,
-          predictedCostUsd: pinned.predictedCostUsd,
-          predictedInputTokens: pinned.predictedInputTokens,
-          predictedCachedInputTokens: pinned.predictedCachedInputTokens,
-          predictedOutputTokens: pinned.predictedOutputTokens,
+          predictedCostUsd: null,
+          predictedInputTokens: null,
+          predictedCachedInputTokens: null,
+          predictedOutputTokens: null,
           cqt: pinned.cqt,
           routingLatencyMs: null,
           atMs: Date.now(),
