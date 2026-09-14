@@ -53,6 +53,16 @@ function peer(peerId: string): PeerInfo {
 }
 
 describe('routing HTTP operational limits', () => {
+  it.each([null, 0])('distinguishes absent and free cached-input pricing (%s)', async (cachedInUsdPerM) => {
+    const response = rankedResponse();
+    const ranked = response.ranked as Array<{ price: { cachedInUsdPerM: number | null } }>;
+    ranked[0]!.price.cachedInUsdPerM = cachedInUsdPerM;
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(response)));
+    const router = new LevantoRouter({ routingPeerUrl: 'http://fixture', fetchImpl });
+    const result = await router.selectRoute(req(LEVANTO_AUTO_SERVICE_ID), [peer('0xAAA')], null, null);
+    expect(result?.[0]?.hasCachedInputPricing).toBe(cachedInUsdPerM !== null);
+  });
+
   it('keeps the local deadline active until the response body is consumed', async () => {
     const cancel = vi.fn();
     const fetchImpl = vi.fn(async () => new Response(new ReadableStream({ cancel })));

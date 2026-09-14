@@ -255,6 +255,37 @@ test('host supplies session cadence, rewrite signals, and eligible actual route 
   assert.doesNotMatch(JSON.stringify(audit), /repeat|summary/)
 })
 
+for (const stopReason of ['deadline', 'disconnect']) {
+  test(`late router success after ${stopReason} never dispatches inference`, async () => {
+    const peer = routerPeer('a')
+    const request = makeProxyRequest({ headers: { 'x-vpr-session-id': 'late-routing' },
+      body: { model: 'router-test', messages: [{ role: 'user', content: 'fixture' }] } })
+    let resolveLate: (value: any) => void = () => {}
+    let pluginSignal: AbortSignal | undefined
+    let calls = 0
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(),
+      selectRoute: async (...args: any[]) => {
+        pluginSignal = args[5].signal
+        const pending = new Promise((resolve) => { resolveLate = resolve })
+        if (stopReason === 'disconnect') {
+          ;(request as any).complete = false
+          request.emit('close')
+        }
+        return pending
+      },
+    })
+    ;(proxy as any)._routerTimeoutMs = 5
+    ;(proxy as any)._node.sendRequest = async () => { calls++; throw new Error('must not dispatch') }
+    const response = await invokeProxy(proxy, request)
+    assert.equal(pluginSignal?.aborted, true)
+    if (stopReason === 'deadline') assert.equal(response.statusCode, 504)
+    resolveLate([{ peerId: peer.peerId, serviceId: 'test-model' }])
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(calls, 0)
+  })
+}
+
 for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
   test(`selectRoute fails closed on ${failure}`, async () => {
     const peer = routerPeer('a')

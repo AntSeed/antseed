@@ -42,3 +42,17 @@ test('the first rotation also bounds an oversized pre-existing log', async (cont
   assert.ok((await stat(`${file}.1`)).size <= 100)
   for (const line of (await readFile(`${file}.1`, 'utf8')).trim().split('\n')) assert.equal(JSON.parse(line).old, true)
 })
+
+test('queue overload rejects without dropping already accepted records', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'routing-log-overload-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const log = new RoutingLog(directory)
+  const writes = Array.from({ length: 1000 }, (_, index) => log.record({ index }))
+  await assert.rejects(log.record({ index: 1000 }), /capacity/)
+  await Promise.all(writes)
+  await log.record({ index: 1001 })
+  await log.flush()
+  const records = (await readFile(join(directory, 'routing-operations.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(records.length, 1001)
+  assert.equal(records.at(-1).index, 1001)
+})
