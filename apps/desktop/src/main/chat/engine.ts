@@ -51,7 +51,7 @@ import {
   type ChatServiceProtocol,
 } from './service-catalog.js';
 import { enrichDomainVerificationLinks } from '../connected-apps/domain-site-metadata.js';
-import { resolveChainConfig } from '@antseed/node';
+import { resolveChainConfig, routingReputationBreakdown, type PeerInfo } from '@antseed/node';
 import { collectPeerVerificationLinks } from '@antseed/node/discovery';
 import { augmentChatToolPath } from './tool-env.js';
 import type { AiConversation } from './conversation-types.js';
@@ -610,6 +610,7 @@ export function registerPiChatHandlers({
             const rec = p as Record<string, unknown>;
             const peerId = rec.peerId as string;
             const peerRecord: BuyerStateDiscoveredPeer = {
+              reputationBreakdown: routingReputationBreakdown(rec as unknown as PeerInfo),
               onChainAgentId: typeof rec.onChainAgentId === 'number' ? rec.onChainAgentId : null,
               onChainStakeUsdcMicros: typeof rec.onChainStakeUsdcMicros === 'number' ? rec.onChainStakeUsdcMicros : null,
               onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,

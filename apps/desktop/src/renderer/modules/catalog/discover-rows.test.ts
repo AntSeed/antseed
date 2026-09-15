@@ -2,6 +2,16 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
 
+test('normalizeDiscoverRow preserves bounded follower credit and accepts older breakdowns', () => {
+  const raw = { peerId: 'abc', serviceId: 'example', reputationBreakdown: {
+    version: 1, rawChainScore: 3, legacyChainScore: null, externalScore: 33, externalFollowerScore: 16,
+  } };
+  assert.equal(normalizeDiscoverRow(raw)?.reputationBreakdown?.externalFollowerScore, 16);
+  assert.equal(normalizeDiscoverRow({ ...raw, reputationBreakdown: { ...raw.reputationBreakdown, externalFollowerScore: undefined } })?.reputationBreakdown?.externalFollowerScore, 0);
+  assert.equal(normalizeDiscoverRow({ ...raw, reputationBreakdown: { ...raw.reputationBreakdown, externalFollowerScore: -1 } })?.reputationBreakdown?.externalFollowerScore, 0);
+  assert.equal(normalizeDiscoverRow({ ...raw, reputationBreakdown: { ...raw.reputationBreakdown, externalFollowerScore: 100 } })?.reputationBreakdown?.externalFollowerScore, 20);
+});
+
 test('normalizeDiscoverRow rejects entries with missing peerId or serviceId', () => {
   assert.equal(normalizeDiscoverRow({}), null);
   assert.equal(normalizeDiscoverRow({ peerId: 'abc' }), null);

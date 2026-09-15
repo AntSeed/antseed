@@ -103,9 +103,9 @@ export function computeVerificationScoreBonus(
   peer: Pick<PeerInfo, 'verificationResults'>,
 ): number {
   const results = peer.verificationResults;
-  if (!results) return 0;
-  const verifiedDomains = results.domains.filter((result) => result.verified).length;
-  const verifiedGithub = results.github.filter((result) => result.verified).length;
+  if (!results || !Array.isArray(results.domains) || !Array.isArray(results.github)) return 0;
+  const verifiedDomains = results.domains.filter((result) => result?.verified).length;
+  const verifiedGithub = results.github.filter((result) => result?.verified).length;
   return clamp(
     verifiedDomains * ON_CHAIN_VERIFICATION_DOMAIN_POINTS
       + verifiedGithub * ON_CHAIN_VERIFICATION_GITHUB_POINTS,
@@ -410,4 +410,10 @@ export function computeOnChainReputationScore(
   nowMs: number = Date.now(),
 ): number | null {
   return computeOnChainScore(peer, undefined, nowMs);
+}
+
+export function computeRawOnChainScore(peer: PeerInfo, nowMs = Date.now()): number | null {
+  const breakdown = computeOnChainTrustBreakdown(peer, nowMs);
+  if (!breakdown) return null;
+  return scoreFromTrust(breakdown.trust) * breakdown.scoreMultiplier * (1 - clamp(peer.onChainSybilRisk ?? 0, 0, 1));
 }

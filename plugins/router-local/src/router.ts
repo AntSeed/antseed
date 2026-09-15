@@ -1,4 +1,4 @@
-import { computeOnChainReputationScore, type Router, type PeerInfo, type SerializedHttpRequest } from '@antseed/node';
+import { computeRoutingReputationScore, type Router, type PeerInfo, type SerializedHttpRequest, type ExternalHistoryPolicy } from '@antseed/node';
 import {
   scoreCandidates,
   PeerMetricsTracker,
@@ -15,6 +15,7 @@ export interface BuyerMaxPricingConfig {
 }
 
 export interface LocalRouterConfig {
+  externalHistoryPolicy?: ExternalHistoryPolicy;
   minReputation?: number;
   maxPricing?: BuyerMaxPricingConfig;
   maxFailures?: number;
@@ -32,8 +33,10 @@ export class LocalRouter implements Router {
   private readonly _now: () => number;
   private readonly _weights: Partial<ScoringWeights> | undefined;
   private readonly _metrics: PeerMetricsTracker;
+  private readonly _externalHistoryPolicy: ExternalHistoryPolicy | undefined;
 
   constructor(config?: LocalRouterConfig) {
+    this._externalHistoryPolicy = config?.externalHistoryPolicy;
     this._minReputation = config?.minReputation ?? 0;
     this._maxPricing = {
       defaults: {
@@ -118,6 +121,7 @@ export class LocalRouter implements Router {
       maxPeerStalenessMs: this._maxPeerStalenessMs,
       maxFailures: this._maxFailures,
       weights: this._weights,
+      externalHistoryPolicy: this._externalHistoryPolicy,
     });
 
     return scored[0]?.peer ?? null;
@@ -153,7 +157,7 @@ export class LocalRouter implements Router {
   }
 
   private _effectiveReputation(p: PeerInfo): number {
-    return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
+    return computeRoutingReputationScore(p, this._now(), this._externalHistoryPolicy);
   }
 
   private _extractRequestedService(req: SerializedHttpRequest): string | null {

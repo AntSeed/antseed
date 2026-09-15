@@ -116,8 +116,9 @@ export function rowChannelCount(row: DiscoverRow): number {
 }
 
 export function rowReputationScore(row: DiscoverRow): number {
-  return typeof row.onChainReputationScore === 'number' && Number.isFinite(row.onChainReputationScore)
-    ? row.onChainReputationScore
+  const score = row.effectiveReputationScore ?? row.onChainReputationScore;
+  return typeof score === 'number' && Number.isFinite(score)
+    ? score
     : -1;
 }
 

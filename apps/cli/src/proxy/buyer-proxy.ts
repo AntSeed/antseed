@@ -8,7 +8,8 @@ import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
   adaptPeerFaultErrorResponse,
-  computeOnChainReputationScore,
+  computeRawOnChainScore,
+  routingReputationBreakdown,
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
@@ -631,10 +632,7 @@ export function parsePersistedPeers(
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
     }
-    if (peer.onChainReputationScore === undefined) {
-      const derivedScore = computeOnChainReputationScore(peer, nowMs)
-      if (derivedScore !== null) peer.onChainReputationScore = derivedScore
-    }
+    peer.onChainReputationScore = computeRawOnChainScore(peer, nowMs) ?? peer.onChainReputationScore
     peers.push(peer)
   }
   return peers
@@ -1231,7 +1229,8 @@ export class BuyerProxy {
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStakedAtSec: p.onChainStakedAtSec ?? null,
         // Fallback keeps pre-upgrade cache rows usable.
-        onChainReputationScore: p.onChainReputationScore ?? computeOnChainReputationScore(p) ?? null,
+        onChainReputationScore: computeRawOnChainScore(p) ?? p.onChainReputationScore ?? null,
+        reputationBreakdown: routingReputationBreakdown(p),
         onChainTrustScore: p.onChainTrustScore ?? null,
         onChainSybilRisk: p.onChainSybilRisk ?? null,
         onChainSybilFlags: p.onChainSybilFlags ?? null,
@@ -1605,6 +1604,8 @@ export class BuyerProxy {
         providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
         providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
+        reputationBreakdown: routingReputationBreakdown(p, this._now()),
+        verificationResults: p.verificationResults,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })

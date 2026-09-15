@@ -222,7 +222,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
       cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
-      reputationScore: row.onChainReputationScore,
+      reputationScore: row.effectiveReputationScore ?? row.onChainReputationScore,
       channelCount: row.onChainActiveChannelCount,
       volumeUsdc: Number(row.onChainTotalVolumeUsdc) / 1_000_000,
       sybilRisk: row.onChainSybilRisk,
