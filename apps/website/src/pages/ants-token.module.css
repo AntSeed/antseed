@@ -51,7 +51,7 @@
   letter-spacing: -1px;
   color: var(--as-heading);
   margin: 0 0 16px;
-  max-width: 16ch;
+  max-width: 18ch;
 }
 
 .heroSub {
@@ -70,15 +70,26 @@
   align-items: center;
 }
 
-.heroNote {
+.heroTitle em {
+  font-style: normal;
+  color: var(--as-green-deep);
+}
+
+.statusPill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 14px 0 0;
-  font-size: 13px;
-  line-height: 18px;
+  margin: 0 0 18px;
+  padding: 4px 12px 4px 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.12);
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
   font-weight: 500;
-  color: var(--as-text-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--as-green-deep);
 }
 
 .statusDot {
@@ -128,17 +139,6 @@
   font-size: 12px;
   line-height: 20px;
   color: var(--as-text-3);
-}
-
-.liveDot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 8px;
-  border-radius: 50%;
-  background: var(--as-green);
-  vertical-align: middle;
-  animation: pulseDot 2s ease-in-out infinite;
 }
 
 .statsGrid {
@@ -333,119 +333,6 @@
 
 .poolTermResult strong {
   color: var(--as-green-deep);
-}
-
-/* ============================================================
-   EMISSIONS — allocation bar + three notes
-   ============================================================ */
-.alloc {
-  max-width: 1024px;
-  margin: 40px auto 0;
-}
-
-.allocBar {
-  display: flex;
-  gap: 4px;
-  height: 56px;
-  border-radius: 16px;
-  overflow: hidden;
-}
-
-.allocSeg {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  font-family: var(--as-font-data);
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-}
-
-.allocPct {
-  white-space: nowrap;
-}
-
-.a1 { background: var(--as-green); }
-.a2 { background: #047857; }
-.a3 { background: #001E12; }
-.a4 { background: #3E5C4C; }
-.a5 { background: #8DA89A; }
-
-.allocLegend {
-  list-style: none;
-  padding: 0;
-  margin: 16px 0 0;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.allocLegend li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-  color: var(--as-text-2);
-  min-width: 0;
-}
-
-.allocSwatch {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
-.allocLabel {
-  flex: 1;
-  min-width: 0;
-}
-
-.allocValue {
-  font-family: var(--as-font-data);
-  color: var(--as-heading);
-}
-
-.emitGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  max-width: 1024px;
-  margin: 28px auto 0;
-}
-
-.emitCard {
-  background: var(--as-soil-0);
-  border-radius: 24px;
-  padding: 24px;
-}
-
-.emitCard h3 {
-  font-family: var(--as-font-display);
-  font-size: 20px;
-  line-height: 28px;
-  font-weight: 600;
-  color: var(--as-heading);
-  margin: 0 0 8px;
-}
-
-.emitCard p {
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 500;
-  color: var(--as-text-2);
-  margin: 0;
-}
-
-.emitCtas {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 32px;
 }
 
 /* ---- verification (ink band) ---- */
@@ -646,8 +533,7 @@
     max-width: 560px;
   }
 
-  .statsGrid,
-  .allocLegend {
+  .statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -671,36 +557,10 @@
     max-width: 560px;
   }
 
-  .emitGrid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {
-  .liveDot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 8px;
-  border-radius: 50%;
-  background: var(--as-green);
-  vertical-align: middle;
-  animation: pulseDot 2s ease-in-out infinite;
-}
-
-.statsGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .allocBar {
-    height: 44px;
-  }
-
-  .allocSeg {
-    font-size: 11px;
-  }
-
-  .allocLegend {
+  .statsGrid {
     grid-template-columns: 1fr;
   }
 

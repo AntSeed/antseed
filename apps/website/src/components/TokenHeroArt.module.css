@@ -11,12 +11,11 @@
   padding: clamp(16px, 2.2vw, 24px);
   display: flex;
   flex-direction: column;
-  gap: clamp(12px, 1.6vw, 18px);
+  gap: clamp(14px, 1.8vw, 20px);
   font-family: var(--as-font-data);
-  overflow: hidden;
 }
 
-/* ---- top bar: epoch + countdown ---- */
+/* ---- epoch clock ---- */
 .bar {
   display: flex;
   align-items: center;
@@ -43,55 +42,96 @@
 }
 
 .epochFill {
+  display: block;
   height: 100%;
   border-radius: 999px;
   background: var(--as-green);
 }
 
-/* ---- equation: settled × stake = recognized ---- */
-.eq {
-  display: grid;
-  grid-template-columns: 1fr;
+/* ---- supply ---- */
+.supply {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+  padding: clamp(12px, 1.6vw, 18px);
+  border-radius: 16px;
+  background: var(--as-soil-0);
+}
+
+.supplyLabel {
+  display: inline-flex;
+  align-items: center;
+  font-size: clamp(10px, 1.1vw, 12px);
+  line-height: 16px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+}
+
+.liveDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--as-green);
+  animation: liveDot 2s ease-in-out infinite;
+}
+
+@keyframes liveDot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+.supplyValue {
+  font-family: var(--as-font-display);
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.05;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--as-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.supplyTrack {
+  display: block;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.supplyFill {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--as-green);
+  transition: width 0.6s var(--as-ease, ease);
+}
+
+.supplySub {
+  font-size: clamp(11px, 1.15vw, 12px);
+  line-height: 18px;
+  color: var(--as-text-2);
+}
+
+/* ---- three facts ---- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .term {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  padding: clamp(8px, 1.1vw, 11px) clamp(12px, 1.4vw, 16px);
+  padding: clamp(10px, 1.2vw, 12px) clamp(10px, 1.3vw, 14px);
   border-radius: 14px;
-  background: var(--as-soil-0);
-  border: 1px solid transparent;
-}
-
-.termLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.termOp {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: rgba(0, 30, 18, 0.08);
-  font-family: var(--as-font-display);
-  font-size: 11px;
-  line-height: 1;
-  color: var(--as-text-2);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.termResult .termOp {
-  background: rgba(16, 185, 129, 0.14);
-  color: var(--as-green-deep, #047857);
+  border: 1px solid var(--as-line);
 }
 
 .termLabel {
@@ -101,12 +141,10 @@
   text-transform: uppercase;
   color: var(--as-text-3);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .termValue {
-  font-size: clamp(14px, 1.5vw, 17px);
+  font-size: clamp(15px, 1.7vw, 19px);
   line-height: 1.2;
   font-weight: 600;
   color: var(--as-heading);
@@ -114,79 +152,6 @@
   white-space: nowrap;
 }
 
-.termResult {
-  background: #fff;
-  border-color: var(--as-green);
-}
-
-.termResult .termValue {
-  color: var(--as-green-deep, #047857);
-}
-
-/* ---- settlement feed ---- */
-.feed {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: clamp(8px, 1.2vw, 14px);
-  padding: clamp(5px, 0.8vw, 8px) clamp(8px, 1.2vw, 12px);
-  border-radius: 10px;
-  border: 1px solid var(--as-line);
-  font-size: clamp(9px, 1.15vw, 12px);
-  line-height: 16px;
-  color: var(--as-text-2);
-  animation: rowIn 0.45s ease both;
-}
-
-@keyframes rowIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: none; }
-}
-
-.rowId {
-  color: var(--as-text-3);
-}
-
-.rowModel {
-  color: var(--as-heading);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rowAmt {
-  font-variant-numeric: tabular-nums;
-  color: var(--as-heading);
-}
-
-.rowOk {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--as-green-deep, #047857);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.rowOk::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--as-green);
-}
-
-.reduced .row {
-  animation: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .row { animation: none; }
+  .liveDot { animation: none; }
 }

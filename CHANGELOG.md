@@ -17,7 +17,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Website: redesigned marketing site. New split homepage hero with static subhead and stats; new audience pages `/agents`, `/coding`, `/privacy` with bespoke hero animations; `/network` page (replaces the redirect to antseedstats); `/ants-token` rebuilt in the site's design with a live epoch/recognized-usage hero, supply read live from the ANTS contract on Base, emissions allocation bar, provider-pools and verification sections, and a token FAQ. Navbar reordered (Network, Use it for, Integrations, Providers, Prices) with a "Use it for" dropdown; footer rebuilt in four columns. Homepage sections extracted into shared components.
+- Website: redesigned marketing site. New split homepage hero with static subhead and stats; new audience pages `/agents`, `/coding`, `/privacy` with bespoke hero animations; `/network` page (replaces the redirect to antseedstats); `/ants-token` restyled to the site's design with the same content, plus a live hero panel (epoch clock, supply and burned amount read from the ANTS contract on Base). Navbar reordered (Network, Use it for, Integrations, Providers, Prices) with a "Use it for" dropdown; footer rebuilt in four columns. Homepage sections extracted into shared components.
 
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 

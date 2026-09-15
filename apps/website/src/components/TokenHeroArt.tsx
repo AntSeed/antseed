@@ -1,55 +1,35 @@
-import {useEffect, useState} from 'react';
 import styles from './TokenHeroArt.module.css';
-import {useEpochCountdown} from '../lib/useEpochCountdown';
+import {INITIAL_EMISSION, MAX_SUPPLY, useEpochCountdown} from '../lib/useEpochCountdown';
+import {useAntsSupply} from '../lib/useAntsSupply';
 
 /**
- * /ants-token hero animation: the recognized-usage loop as a live ledger.
- * Top: the real epoch clock (weekly epochs from the emissions genesis).
- * Middle: settled USDC volume × provider-pool stake = recognized usage.
- * Bottom: a feed of settlements arriving and being recognized. Numbers
- * are illustrative; only the epoch and countdown are real.
+ * /ants-token hero panel. Real data only: the epoch clock (weekly epochs
+ * from the emissions genesis), total supply and burned amount read live from
+ * the ANTS contract on Base, and the scheduled emission for the current epoch
+ * (5M ANTS, halving every 104 epochs).
  */
 
-const MODELS = ['deepseek-v4-flash', 'gpt-oss-120b', 'kimi-k2.6', 'qwen3-coder', 'claude-fable-5-1', 'glm-5'];
-const STAKE_ANTS = 1_250_000;
-const START_VOLUME = 12_480.2;
-const TICK_MS = 1400;
-const VISIBLE = 3;
+const HALVING_EPOCHS = 104;
 
-type Row = {id: number; model: string; amt: number};
-
-const usd = (n: number) => `$${n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${(n / 1e3).toFixed(0)}k`);
-
-function makeRow(i: number): Row {
-  // deterministic pseudo-random so SSR and client agree on the first frame
-  const seed = (i * 9301 + 49297) % 233280;
-  const r = seed / 233280;
-  return {id: 48219 + i, model: MODELS[i % MODELS.length], amt: 0.08 + r * 1.9};
-}
+const fmt = (n: number, digits = 1) =>
+  n >= 1e9
+    ? `${(n / 1e9).toLocaleString('en-US', {maximumFractionDigits: 2})}B`
+    : n >= 1e6
+      ? `${(n / 1e6).toLocaleString('en-US', {maximumFractionDigits: digits})}M`
+      : n >= 1e3
+        ? `${(n / 1e3).toLocaleString('en-US', {maximumFractionDigits: 0})}k`
+        : n.toLocaleString('en-US', {maximumFractionDigits: 0});
 
 export function TokenHeroArt() {
   const {epoch, timeLeft, progress, started} = useEpochCountdown();
-  const [count, setCount] = useState(VISIBLE);
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReduced(mq.matches);
-    if (mq.matches) return undefined;
-    const id = window.setInterval(() => setCount((c) => c + 1), TICK_MS);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const rows: Row[] = [];
-  for (let i = Math.max(0, count - VISIBLE); i < count; i++) rows.push(makeRow(i));
-  const settled = rows.reduce((sum, r) => sum + r.amt, 0);
-  const volume = START_VOLUME + (count - VISIBLE) * 0.62 + settled;
-  const recognized = volume; // pass-through policy: recognized volume tracks settled volume
+  const live = useAntsSupply();
+  const total = live ? live.total : started ? epoch * INITIAL_EMISSION : null;
+  const pct = total === null ? 0 : (total / MAX_SUPPLY) * 100;
+  const emission = started ? INITIAL_EMISSION / 2 ** Math.floor(epoch / HALVING_EPOCHS) : null;
 
   return (
-    <div className={`${styles.well} ${reduced ? styles.reduced : ''}`}>
-      <div className={styles.panel} role="img" aria-label="Settled usage becoming recognized usage on Antseed">
+    <div className={styles.well}>
+      <div className={styles.panel} role="img" aria-label="Live ANTS supply and epoch clock">
         <div className={styles.bar}>
           <span>
             Epoch <strong>{started ? epoch : '–'}</strong>
@@ -62,36 +42,33 @@ export function TokenHeroArt() {
           </span>
         </div>
 
-        <div className={styles.eq}>
-          <div className={styles.term}>
-            <span className={styles.termLabel}>Settled volume</span>
-            <span className={styles.termValue}>{usd(volume)}</span>
-          </div>
-          <div className={styles.term}>
-            <span className={styles.termLabel}>
-              <span className={styles.termOp} aria-hidden="true">×</span>
-              Pool stake
-            </span>
-            <span className={styles.termValue}>{compact(STAKE_ANTS)} ANTS</span>
-          </div>
-          <div className={`${styles.term} ${styles.termResult}`}>
-            <span className={styles.termLabel}>
-              <span className={styles.termOp} aria-hidden="true">=</span>
-              Recognized usage
-            </span>
-            <span className={styles.termValue}>{usd(recognized)}</span>
-          </div>
+        <div className={styles.supply}>
+          <span className={styles.supplyLabel}>
+            Total supply
+            {live && <i className={styles.liveDot} aria-hidden="true" />}
+          </span>
+          <span className={styles.supplyValue}>{total === null ? '–' : fmt(total)} ANTS</span>
+          <span className={styles.supplyTrack} aria-hidden="true">
+            <span className={styles.supplyFill} style={{width: `${Math.max(pct, 0.3)}%`}} />
+          </span>
+          <span className={styles.supplySub}>
+            {total === null ? '–' : `${pct.toFixed(1)}%`} of the 1.04B hard cap
+          </span>
         </div>
 
-        <div className={styles.feed}>
-          {rows.map((r) => (
-            <div key={r.id} className={styles.row}>
-              <span className={styles.rowId}>#{r.id}</span>
-              <span className={styles.rowModel}>{r.model}</span>
-              <span className={styles.rowAmt}>{usd(r.amt)}</span>
-              <span className={styles.rowOk}>recognized</span>
-            </div>
-          ))}
+        <div className={styles.grid}>
+          <div className={styles.term}>
+            <span className={styles.termLabel}>Hard cap</span>
+            <span className={styles.termValue}>{fmt(MAX_SUPPLY)}</span>
+          </div>
+          <div className={styles.term}>
+            <span className={styles.termLabel}>Burned</span>
+            <span className={styles.termValue}>{live ? fmt(live.burned) : '–'}</span>
+          </div>
+          <div className={styles.term}>
+            <span className={styles.termLabel}>This epoch</span>
+            <span className={styles.termValue}>{emission === null ? '–' : fmt(emission)}</span>
+          </div>
         </div>
       </div>
     </div>
