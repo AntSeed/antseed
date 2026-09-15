@@ -16,12 +16,12 @@ import {PrivacyPanel} from '../components/PrivacyPanel';
 import {useAntsSupply} from '../lib/useAntsSupply';
 import {INITIAL_EMISSION, MAX_SUPPLY, useEpochCountdown} from '../lib/useEpochCountdown';
 
-const TITLE = 'The Open Market for AI Inference | Antseed';
+const TITLE = 'The open market for AI inference | Antseed';
 const DESCRIPTION =
   'Antseed is a peer-to-peer network for AI inference. Providers set their own prices, buyers route to the best one, and payments settle onchain with no company in the middle.';
 
 /* The original homepage hero lines */
-const HERO_PHRASES = ['Every Model, No Middleman.', 'Anonymous and Always On.', 'Self hosted.'];
+const HERO_PHRASES = ['Every model, no middleman.', 'Anonymous and always on.', 'Self-hosted.'];
 
 /* Network-side questions from the shared homepage FAQ */
 const NETWORK_FAQ = HOME_FAQ.filter((item) =>
@@ -164,7 +164,7 @@ export default function NetworkPage(): JSX.Element {
         </script>
       </Head>
       <StackedHero
-        title="The Open Market for AI Inference"
+        title="The open market for AI inference"
         phrases={HERO_PHRASES}
         caption="Start for free. Keep using your tools."
       />

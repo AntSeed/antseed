@@ -8,7 +8,7 @@ import {Button, Reveal, ArrowRight} from './ui';
 /** The ink closing band from the homepage, shared with /network. */
 export function FinalCtaBand({
   title = 'Run your agents on your terms',
-  sub = 'Every Model, No Middleman. Anonymous and Always On.',
+  sub = 'Every model, no middleman. Anonymous and always on.',
   caption = 'No account needed. Just start.',
   secondary,
   versionsLink = true,

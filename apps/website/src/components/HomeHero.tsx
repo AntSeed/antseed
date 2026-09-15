@@ -446,8 +446,8 @@ export const HERO_MODELS_STAT = {value: '700+', label: 'Models', accent: true};
 export function HeroStatsRow() {
   const stats = useNetworkStats();
   const heroStats: {value: string; label: string; accent?: boolean}[] = [
-    {value: stats.tokens, label: 'Tokens Processed'},
-    {value: stats.revenue, label: 'Network Revenue'},
+    {value: stats.tokens, label: 'Tokens processed'},
+    {value: stats.revenue, label: 'Network revenue'},
     {value: stats.providers, label: 'Providers'},
     HERO_MODELS_STAT,
   ];
