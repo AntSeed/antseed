@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AntseedVerifierPlugin, VerifyResult } from '@antseed/node';
 import { TEE_REQUIRED_CLAIMS } from '@antseed/node/tee-status';
-import { resolveVerifierPolicy, runVerifier } from './verifier.js';
+import { runVerifier } from './verifier.js';
 
 const claims = TEE_REQUIRED_CLAIMS.map((claim) => ({ claim, ok: true }));
-const policy = { require: true, requireSellerNode: true, prefer: ['antseed-verifier'] };
+const policy = { require: true, prefer: ['antseed-verifier'] };
 const caps = ['verifier.antseed-verifier'];
 function loader(result: VerifyResult, name = 'antseed-verifier') {
   return async (): Promise<AntseedVerifierPlugin> => ({ name, type: 'verifier', version: '0.1.0', displayName: 'Test', description: 'Test', verify: () => result });
 }
 const reach = () => async () => ({ statusCode: 200, headers: {}, body: new Uint8Array() });
 
-test('strict TEE policy requires genuine-node and seller-binding claims, not just SDK ok', async () => {
+test('TEE badge requires genuine-node and seller-binding claims without changing generic CLI verification', async () => {
   const passed = await runVerifier(policy, 'seller', caps, reach, undefined, loader({ ok: true, claims }));
   assert.equal(passed.ok, true);
   assert.equal(passed.sellerNodeVerified, true);
@@ -27,7 +27,7 @@ test('strict TEE policy requires genuine-node and seller-binding claims, not jus
     { ok: true, claims: [{ claim: 'anything', ok: 'yes' }] } as unknown as VerifyResult,
   ]) {
     const failed = await runVerifier(policy, 'seller', caps, reach, undefined, loader(result));
-    assert.equal(failed.ok, false);
+    assert.equal(failed.ok, result.ok);
     assert.equal(failed.sellerNodeVerified, false);
     const optional = await runVerifier({ require: false }, 'seller', caps, reach, undefined, loader(result));
     assert.equal(optional.ok, true);
@@ -41,12 +41,4 @@ test('missing/unavailable/wrong verifier never produces positive evidence', asyn
   const unavailable = await runVerifier(policy, 'seller', caps, reach, undefined, async () => { throw new Error('SDK unavailable'); });
   assert.equal(unavailable.ok, false);
   assert.equal(unavailable.transient, true);
-});
-
-test('persisted TEE policy defaults to optional; explicit verifier CLI flags take precedence', () => {
-  assert.deepEqual(resolveVerifierPolicy({ teeMode: 'required' }), policy);
-  assert.deepEqual(resolveVerifierPolicy({ teeMode: 'optional' }), { require: false, prefer: [] });
-  assert.equal(resolveVerifierPolicy({ teeMode: 'required', verifier: false }), undefined);
-  assert.deepEqual(resolveVerifierPolicy({ teeMode: 'required', verifiers: 'other' }), { require: false, prefer: ['other'] });
-  assert.deepEqual(resolveVerifierPolicy({ teeMode: 'required', requireVerifier: true }), { require: true, prefer: [] });
 });

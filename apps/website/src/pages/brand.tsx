@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useRef, useState, type JSX} from 'react';
 import Layout from '@theme/Layout';
 import styles from './brand.module.css';
 import {PageHero, Reveal, Section, SectionHeader} from '../components/ui';

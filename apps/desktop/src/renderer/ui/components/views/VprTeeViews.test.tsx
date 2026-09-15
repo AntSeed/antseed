@@ -7,8 +7,10 @@ import { normalizeDiscoverRow } from '../../../modules/catalog/discover-rows';
 import { projectRowsToVprModelCatalog } from '../../../modules/catalog/model-catalog';
 import { teeBrowseCache } from '../../../modules/catalog/tee-browse';
 import { VprModelRowList } from '../vpr/VprModelRows';
+import { PublicEndpointModalProvider } from '../tunnels/PublicEndpointModal';
 import { VprExploreView } from './VprExploreView';
 import { VprModelView } from './VprModelView';
+import { VprPreferencesView } from './VprPreferencesView';
 
 const { action } = vi.hoisted(() => ({ action: vi.fn() }));
 vi.mock('../../hooks/useActions', () => ({ useActions: () => new Proxy({}, { get: () => action }) }));
@@ -16,6 +18,7 @@ vi.mock('../../hooks/useActions', () => ({ useActions: () => new Proxy({}, { get
 afterEach(() => {
   teeBrowseCache.filter = 'all';
   action.mockClear();
+  vi.unstubAllGlobals();
 });
 
 function initialize() {
@@ -53,6 +56,17 @@ test('Models overview omits TEE availability badges with either seller filter', 
     assert.doesNotMatch(markup, /TEE available/);
     assert.match(markup, filter === 'tee' ? /automatic routing may use other sellers/ : /All sellers/);
   }
+  assert.deepEqual(state.vprRouteSelection, selection);
+  assert.equal(action.mock.calls.length, 0);
+});
+
+test('Preferences does not expose a TEE routing setting', () => {
+  vi.stubGlobal('document', { body: { classList: { contains: () => false } } });
+  const state = initialize();
+  const selection = structuredClone(state.vprRouteSelection);
+  const markup = renderToStaticMarkup(<PublicEndpointModalProvider><VprPreferencesView /></PublicEndpointModalProvider>);
+  assert.match(markup, /Auto select seller/);
+  assert.doesNotMatch(markup, /Require.*verification|Seller-node verification|Reapply saved setting|routing is paused/);
   assert.deepEqual(state.vprRouteSelection, selection);
   assert.equal(action.mock.calls.length, 0);
 });

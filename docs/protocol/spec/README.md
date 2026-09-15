@@ -68,6 +68,10 @@ How Buyers pay Sellers for inference. Covers pricing terms, payment settlement, 
 
 See: [04-payments.md](./04-payments.md)
 
+For the recognized-usage accounting extensions, see [Reward
+Policies](../../../apps/website/docs/protocol/reward-policies.md). This separates
+the deployed policy mechanism from the proposed model-verification designs below.
+
 ### 5. Reputation
 
 How nodes build and query trust. Covers reputation scoring, peer ratings, historical performance tracking, and Sybil resistance.

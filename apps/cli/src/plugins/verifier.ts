@@ -36,7 +36,6 @@ export function curatedVerifierIds(): Set<string> {
 export interface VerifierPolicy {
   prefer?: string[]
   require: boolean
-  requireSellerNode?: boolean
 }
 
 /**
@@ -48,16 +47,12 @@ export function resolveVerifierPolicy(opts: {
   verifier?: boolean
   verifiers?: string
   requireVerifier?: boolean
-  teeMode?: 'optional' | 'required'
 }): VerifierPolicy | undefined {
   if (opts.verifier === false) {
     if (opts.requireVerifier || opts.verifiers) {
       throw new Error('--no-verifier cannot be combined with --require-verifier or --verifiers')
     }
     return undefined
-  }
-  if (opts.teeMode === 'required' && !opts.verifiers && !opts.requireVerifier) {
-    return { prefer: [TEE_VERIFIER_ID], require: true, requireSellerNode: true }
   }
   return { prefer: normalizeVerifierIds(opts.verifiers ?? ''), require: Boolean(opts.requireVerifier) }
 }
@@ -170,12 +165,11 @@ export async function runVerifier(
       claim: claim.claim, ok: claim.ok,
       ...(claim.detail ? { detail: claim.detail.slice(0, 1024) } : {}),
     })) : []
-    const verified = result.ok === true && valid
-    const sellerNodeVerified = verified && chosen === TEE_VERIFIER_ID && passedSellerNodeClaims(claims)
-    const passed = policy.requireSellerNode ? sellerNodeVerified : verified
+    const verified = result.ok === true
+    const sellerNodeVerified = verified && valid && chosen === TEE_VERIFIER_ID && passedSellerNodeClaims(claims)
     const failed = claims.filter((claim) => !claim.ok).map((claim) => `${claim.claim}: ${claim.detail ?? 'failed'}`).join('; ')
     return {
-      ok: !policy.require || passed, verified, sellerNodeVerified, sdk: chosen,
+      ok: !policy.require || verified, verified, sellerNodeVerified, sdk: chosen,
       version: sdk.version, claims,
       ...(!sellerNodeVerified ? { reason: (failed || 'Required seller-node claims did not pass').slice(0, 2048) } : {}),
     }

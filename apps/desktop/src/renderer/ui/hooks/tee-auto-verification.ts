@@ -29,7 +29,7 @@ export class TeeAutoVerification {
         this.entries.set(peerId, { fingerprint: entry.fingerprint, attempted: false, failures: 0, retryAt: 0 });
       }
     }
-    if (!snapshot.verificationEnabled || snapshot.routingPaused) return;
+    if (!snapshot.verificationEnabled) return;
     const evidence = new Map(snapshot.evidence.map((entry) => [entry.peerId, entry]));
     const candidates = [...this.entries].sort(([leftId, left], [rightId, right]) =>
       Number(interested.has(rightId)) - Number(interested.has(leftId)) || left.retryAt - right.retryAt);

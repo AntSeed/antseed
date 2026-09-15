@@ -401,7 +401,6 @@ export type DesktopBridge = {
   getTelemetryStatus?: () => Promise<import('../../shared/telemetry.js').TelemetryStatus>;
   getTeeStatus?: () => Promise<import('@antseed/node/tee-status').DesktopTeeStatus>;
   checkSellerTee?: (peerId: string) => Promise<import('@antseed/node/tee-status').DesktopTeeStatus>;
-  setTeeMode?: (mode: import('@antseed/node/tee-status').TeeMode) => Promise<import('@antseed/node/tee-status').DesktopTeeStatus>;
   setTelemetryEnabled?: (enabled: boolean) => Promise<import('../../shared/telemetry.js').TelemetryStatusUpdateResult>;
   telemetryRecordUserAction?: (payload: import('../../shared/telemetry.js').UserActionSignal) => Promise<{ ok: boolean }>;
   telemetryRecordFirstModelShown?: (payload: import('../../shared/telemetry.js').FirstModelShownSignal) => Promise<{ ok: boolean }>;

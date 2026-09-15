@@ -1,5 +1,31 @@
 # M001 — Recognized usage cutover
 
+## Recorded Base mainnet deployment
+
+Phase 1 completed on September 6, 2026: 30 transactions in blocks
+50,955,026–50,955,055 and 11 verified contracts. The append-only record is
+`deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
+The token now points to the gate and legacy emissions to its funded escrow.
+The main registry's staking/emissions pointers are still legacy.
+
+The next operation on this deployment is **cutover**, not another deployment.
+Effective epoch 22 begins September 10, 2026 at 09:54:21 UTC; run the waiting
+cutover process before 09:53:21 UTC and leave signing available. Initialization
+and historical proof submission must be prepared before that boundary.
+See the [full contract inventory](../../../README.md#m001-deployed-stack).
+
+The deployment key `0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a` held all five
+M001 signer roles at the phase-1 preflight. Recheck owners before cutover and
+after any ownership handoff. DIEM staking is not proxy operator authorization:
+starter initialization requires an operator and is a separate transaction.
+
+The phase-1 runner's RPC `codehash` read failed after all transactions and
+explorer verifications completed. Its history was recovered from confirmed
+receipts using hashes of fetched runtime bytecode, then checked against the
+local build. Do not repeat deployment to repair a local recording failure.
+
+## General workflow
+
 Two CLI broadcast runs: deploy during the current epoch, then activate at the
 next epoch boundary. They are not necessarily a full epoch apart. For the
 step-by-step operator walkthrough, see
@@ -58,6 +84,33 @@ emissions at it. Registry `emissions`/`staking` pointers are **not** touched:
 the network keeps running on the legacy stack until the in-flight epoch
 finalizes.
 
+This phase also deploys `AntseedWashTradingRegistry` and pins its address into
+`AntseedWashTradingPointsPolicy`, registered in the usage-points policy registry.
+Proven wash-trading sellers generate zero seller and buyer usage points, but
+can still initialize starter positions and settle USDC payments. Do not deploy
+a separate registry for M001.
+Set `SP1_VERIFIER` to a concrete SP1 verifier (not the gateway),
+`SP1_VERIFIER_HASH` to its release hash, `WASH_TRADING_SELLER_PROGRAM_VKEY` to
+the seller proof program vkey, and `HISTORICAL_PERIOD_START_BLOCK` /
+`HISTORICAL_PERIOD_END_BLOCK` to the proof's nonzero, ordered uint64 block range.
+`WASH_TRADING_BLOCKHASH_STORE` defaults to Chainlink's Base deployment and
+cannot be overridden on Base mainnet; other networks need a deployed store.
+M001 uses the existing deployer signer, not `DEPLOYER_PRIVATE_KEY`.
+
+The deployment record includes the registry's address, constructor arguments,
+and bytecode provenance. Deployment and resumed cutover checks require
+`AntseedWashTradingPointsPolicy.washTradingRegistry()` to match that record and
+the policy to be the sole registered modifier. The CLI supplies
+`WASH_TRADING_POINTS_POLICY` from the deployment record to the cutover script.
+Activation history
+retains these contract entries with their original provenance, marked as
+inherited rather than newly deployed during cutover. Submit historical
+proofs to this new registry before cutover: only usage recorded after a seller
+is flagged is filtered, with no retroactive deletion of points. The registry
+is empty immediately after deployment, and prior submissions to
+another registry are not copied. The fork rehearsal deploys the real registry
+with a test-only verifier stub by default, not a replacement status registry.
+
 Signer: `--signer deployer=…` must own `ANTSToken` and the legacy emissions
 contract (checked before anything is sent).
 
@@ -98,15 +151,16 @@ Roles are never defaulted from one another. Required for the cutover:
 | `diemStaker` | address with DIEM staked on the proxy (mainnet, or when `DIEM_STAKING_PROXY` is set) |
 | `sellerRewardsPoolOwner` | `AntseedSellerRewardsPool.owner()` (same condition) |
 
-On Base mainnet today every role is one of two EOAs, so the full command is:
+For the recorded mainnet deployment, the same keystore can supply all five
+roles while ownership and DIEM stake remain unchanged:
 
 ```bash
 pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
-  --signer deployer=account:antseed-owner \
-  --signer registryOwner=account:antseed-owner \
-  --signer channelsOwner=account:antseed-ops \
-  --signer sellerRewardsPoolOwner=account:antseed-ops \
-  --signer diemStaker=account:antseed-ops
+  --signer deployer=account:antseed-deployer \
+  --signer registryOwner=account:antseed-deployer \
+  --signer channelsOwner=account:antseed-deployer \
+  --signer sellerRewardsPoolOwner=account:antseed-deployer \
+  --signer diemStaker=account:antseed-deployer
 ```
 
 `USAGE_ACCOUNTING`, `SELLER_REGISTRY`, and the `EXPECTED_*` legacy addresses
@@ -117,9 +171,12 @@ Writes `history/001-recognized-usage-activated.json` and updates
 
 ## Post-flip checklist (manual)
 
-- Create and seed an ANTS seller pool for the proxy's agent id right after the
-  flip: usage of pool-less agents is not accounted, so the proxy earns nothing
-  in the new stack until it has a pool.
+- Seed the proxy's agent pool before the flip boundary to activate its power
+  in the first rewarded epoch. Once the faucet is funded, an authorized proxy operator can call
+  `AntseedPositionInit.initPosition(proxyAddress)`. The operator owns the lANTS
+  position, staker rewards, and withdrawal rights; the proxy's agent pool gets
+  the stake. Operator revocation does not remove those position rights. Usage
+  of pool-less agents is not accounted, and late stake activates next epoch.
 - Do **not** renounce `AntseedEmissionsGate` ownership before the verification
   rollout: that rollout rotates the editable 10% controller from
   `VERIFICATION_WALLET` to `AntseedVerification`.
@@ -144,3 +201,35 @@ Writes `history/001-recognized-usage-activated.json` and updates
   after legacy claim activity has wound down.
 - Fallback for locked-path stragglers: `EmissionsV2.setSellerUnlockPolicy`
   (plain `onlyOwner`, works even after any registry renouncement).
+
+## Local CLI rehearsal
+
+Use the persistent M001 sandbox to rehearse CLI behavior on the same pinned Base mainnet fork as the migration fork test. The sandbox runs the deploy phase first and deliberately stops before cutover, preserving the Anvil process between commands.
+
+```bash
+export BASE_MAINNET_RPC_URL=https://your-archive-base-rpc.example
+export ANTS_HOLDER=0x... # ANTS balance at BASE_MAINNET_FORK_BLOCK
+
+pnpm m001:sandbox up --port 8545 --out .m001-sandbox
+pnpm m001:sandbox status --out .m001-sandbox
+```
+
+The deploy command writes a copied deployment ledger and `.m001-sandbox/cli-config.json`. Point CLI commands at that file to verify legacy mode, then cut over and reuse the refreshed file:
+
+```bash
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller rewards
+
+pnpm m001:sandbox cutover --out .m001-sandbox
+pnpm m001:sandbox fund-position-init 5 --out .m001-sandbox
+pnpm m001:sandbox advance-epoch 2 --out .m001-sandbox
+pnpm m001:sandbox fund-ants 0xYourCliWallet 100 --out .m001-sandbox
+
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller register
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller legacy claim-starter
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller stake 100 --epochs 4
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller pool positions
+
+pnpm m001:sandbox down --out .m001-sandbox
+```
+
+Additional helpers are `fund-seller <address>`, `advance-epoch [n]`, `fund-ants <address> <amount>`, and `fund-position-init <n>`. The generated config carries all ledger-derived address overrides; the CLI still reads the registry and refuses commands if either active pointer disagrees.

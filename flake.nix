@@ -244,6 +244,7 @@
               # Web dashboard assets; @antseed/payments resolves ./web relative
               # to import.meta.url, which is the bundle's directory once built.
               cp -r apps/payments/dist/web "$out/libexec/antseed/web"
+              cp -r apps/ants/dist/ants-web "$out/libexec/antseed/ants-web"
 
               for pkg in ${lib.concatStringsSep " " runtimeNodeModules}; do
                 if [ -e "node_modules/$pkg" ]; then

@@ -14,10 +14,28 @@ export interface ChainCryptoOverrides {
   fallbackRpcUrls?: string[];
   depositsContractAddress?: string;
   channelsContractAddress?: string;
+  registryContractAddress?: string;
   freeUsageContractAddress?: string;
   usdcContractAddress?: string;
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
+  emissionsContractAddress?: string;
+  legacyEmissionsContractAddress?: string;
+  legacyStakingContractAddress?: string;
+  legacyEmissionsV1ContractAddress?: string;
+  antsTokenAddress?: string;
+  emissionsGateAddress?: string;
+  sellerPoolsAddress?: string;
+  sellerRegistryAddress?: string;
+  positionInitAddress?: string;
+  usageAccountingAddress?: string;
+  usageRewardsAddress?: string;
+  sellerPoolsRewardsAddress?: string;
+  legacyEmissionsEscrowAddress?: string;
+  washTradingRegistryAddress?: string;
+  pointsPolicyRegistryAddress?: string;
+  /** Explorer REST base for seller profiles in `antseed ants`; empty string disables the lookup. */
+  explorerApiUrl?: string;
 }
 
 /**
