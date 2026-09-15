@@ -308,7 +308,7 @@ export default function CodingPage(): JSX.Element {
       <PointAtLocalhost />
       <CodingSteps />
       <CodingFaq />
-      <FinalCta title="Code on your terms." note="Free models to start. Keep using your tool.">
+      <FinalCta title="Code on your terms.">
         <DownloadButton />
       </FinalCta>
     </Layout>

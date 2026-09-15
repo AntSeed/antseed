@@ -265,7 +265,7 @@ export default function PrivacyPage(): JSX.Element {
       <StaysOnYourMachine />
       <WhoItsFor />
       <PrivacyFaq />
-      <FinalCta title="Privacy on your terms." note="Free models to start. No account, ever.">
+      <FinalCta title="Privacy on your terms.">
         <DownloadButton />
       </FinalCta>
     </Layout>

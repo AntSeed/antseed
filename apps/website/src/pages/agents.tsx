@@ -323,7 +323,7 @@ export default function AgentsPage(): JSX.Element {
       <PointAtLocalhost />
       <AgentSteps />
       <AgentFaq />
-      <FinalCta title="Run your agents on your terms." note="Free models to start. Keep using your agent.">
+      <FinalCta title="Run your agents on your terms.">
         <DownloadButton />
       </FinalCta>
     </Layout>

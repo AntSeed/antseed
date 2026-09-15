@@ -178,7 +178,6 @@ export default function NetworkPage(): JSX.Element {
       <FinalCtaBand
         title="Buy, sell, or build on the open market."
         sub="Use it for your own AI work, or become a provider and get paid for every request you serve."
-        caption="No account needed. No approval to sell."
         versionsLink={false}
         secondary={
           <Button to="/providers" variant="light" size="lg" arrow>

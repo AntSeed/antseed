@@ -9,12 +9,13 @@ import {Button, Reveal, ArrowRight} from './ui';
 export function FinalCtaBand({
   title = 'Run your agents on your terms',
   sub = 'Every model, no middleman. Anonymous and always on.',
-  caption = 'No account needed. Just start.',
+  caption,
   secondary,
   versionsLink = true,
 }: {
   title?: string;
   sub?: string;
+  /** optional small line under the button */
   caption?: string;
   /** optional second button beside the download pill */
   secondary?: ReactNode;
@@ -35,7 +36,7 @@ export function FinalCtaBand({
             <FinalCtaButton />
           )}
           {versionsLink && <AllVersionsLink light />}
-          <span className={styles.ctaCaptionLight}>{caption}</span>
+          {caption && <span className={styles.ctaCaptionLight}>{caption}</span>}
         </div>
       </Reveal>
     </section>
