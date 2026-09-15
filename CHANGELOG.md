@@ -84,6 +84,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop: "More options" in the Add Credits chooser gains a "Deposit using Outerfound" row that opens the AntSeed Pay page on its Stripe integration (card, US only), alongside Meridian.
+
 - Desktop: the Add Credits chooser now leads with the AntSeed Pay card checkout (Crossmint) for every region, opened in a narrow in-app popup. The Fun (fun.xyz) checkout, its API key (`payments.funkit.apiKey` / `ANTSEED_FUNKIT_API_KEY`), and the region probe that gated the primary CTA are removed; dev builds target a local pay page via `ANTSEED_PAY_URL`.
 
 - Contracts: the wash-trading registry now flags sellers only when finalized proven wash volume is at least 25% of their authenticated total volume. Below-threshold proofs remain recorded; existing proof bytes and guest vkeys are unchanged. The policy requires deploying the updated registry.

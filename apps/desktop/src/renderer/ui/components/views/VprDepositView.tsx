@@ -223,6 +223,25 @@ function VisaRoundMark({ size = 18 }: { size?: number }) {
   );
 }
 
+function AmexRoundMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#016FD0" />
+      <text x="12" y="14.6" textAnchor="middle" fontSize="6" fontWeight="800" fill="#fff">AMEX</text>
+    </svg>
+  );
+}
+
+/** Official Stripe mark — from stripe.com's SVG favicon. */
+function StripeMark({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" aria-hidden="true">
+      <rect width="512" height="512" rx="64" fill="#533AFD" />
+      <path fillRule="evenodd" clipRule="evenodd" d="M120 392L392 334.317V120L120 178.357V392Z" fill="#fff" />
+    </svg>
+  );
+}
+
 /** Official Meridian (mrdn.finance) mark — the green pinwheel favicon. */
 function MeridianMark({ size = 20 }: { size?: number }) {
   return (
@@ -605,7 +624,22 @@ export function VprDepositView({ onSelectView }: Props) {
                   <PolygonMark />
                 </span>
               </button>
-
+              {/* The pay page's Stripe integration. US only — elsewhere the
+                  page shows its region-unavailable screen. */}
+              <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay-stripe')}>
+                <span className={styles.methodCtaIcon}>
+                  <StripeMark size={20} />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>Deposit using Outerfound</span>
+                  <span className={styles.methodCtaCaption}>Card · US only</span>
+                </span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <VisaRoundMark />
+                  <MastercardRoundMark />
+                  <AmexRoundMark />
+                </span>
+              </button>
             </div>
           )}
 
