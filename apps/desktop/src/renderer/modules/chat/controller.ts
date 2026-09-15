@@ -1,6 +1,7 @@
 import type { BadgeTone, DiscoverRow, RendererUiState, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
 import { LOCALHOST_URL } from '../../constants';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
+import { deriveConnectBadge } from '../app/connect-badge';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
 import { supportsImageEdits, supportsServiceParameter } from '../catalog/model-capabilities.js';
@@ -190,6 +191,7 @@ export function initChatModule({
 
   const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
   const CHAT_SERVICE_REFRESH_INTERVAL_MS = 60_000;
+  const PROXY_STARTUP_PROBE_INTERVAL_MS = 1_000;
   // Faster retry during first-run setup while no services have been found yet.
   const CHAT_SERVICE_SETUP_REFRESH_INTERVAL_MS = 2_000;
   // Last-resort backstop only: the main-process handler bounds itself to
@@ -408,6 +410,10 @@ export function initChatModule({
       : null;
   }
 
+  function isPinnedConversation(convId: string): boolean {
+    return findConversationSummary(convId)?.routeMode === 'pinned';
+  }
+
   /**
    * Pick a different healthy peer for a conversation whose current peer just
    * failed.
@@ -426,7 +432,7 @@ export function initChatModule({
     const conversation = findConversationSummary(convId);
     // Threads with no recorded mode predate route-mode tracking; they are
     // treated as auto, since failover only runs after a failure.
-    if (conversation?.routeMode === 'pinned') return null;
+    if (isPinnedConversation(convId)) return null;
 
     const serviceId = normalizeChatServiceId(conversation?.service);
     if (serviceId.length === 0) return null;
@@ -1664,11 +1670,34 @@ export function initChatModule({
   // Proxy status
   // ---------------------------------------------------------------------------
 
+  // Re-probe timer used while the runtime process is up but the proxy port
+  // is not answering yet (startup) — the 5s poll is too slow for the power
+  // button / status strip to feel responsive.
+  let proxyStartupProbeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function setProxyOnline(online: boolean): void {
+    uiState.chatProxyOnline = online;
+    uiState.connectBadge = deriveConnectBadge(uiState.processes, online);
+    const connectRunning = uiState.processes.some((process) => process.mode === 'connect' && process.running === true);
+    if (proxyStartupProbeTimer) {
+      clearTimeout(proxyStartupProbeTimer);
+      proxyStartupProbeTimer = null;
+    }
+    if (!online && connectRunning) {
+      proxyStartupProbeTimer = setTimeout(() => {
+        proxyStartupProbeTimer = null;
+        void refreshChatProxyStatus();
+      }, PROXY_STARTUP_PROBE_INTERVAL_MS);
+    }
+  }
+
   async function refreshChatProxyStatus(): Promise<void> {
     const previousProxyState = proxyState;
     if (!bridge || !bridge.chatAiGetProxyStatus) {
       proxyState = 'unknown';
       proxyPort = 0;
+      setProxyOnline(false);
+      notifyUiStateChanged();
       updateStreamingIndicator();
       return;
     }
@@ -1681,6 +1710,7 @@ export function initChatModule({
           proxyState = 'online';
           proxyPort = Number(port) || 0;
           uiState.chatProxyPort = proxyPort;
+          setProxyOnline(true);
           notifyUiStateChanged();
           // Proxy just became available — fetch metering stats for active conversation
           if (activeConversation) {
@@ -1697,6 +1727,7 @@ export function initChatModule({
           proxyState = 'offline';
           proxyPort = 0;
           uiState.chatProxyPort = 0;
+          setProxyOnline(false);
           notifyUiStateChanged();
           if (previousProxyState !== 'offline') {
             setRuntimeActivity('warn', 'Waiting for runtime.');
@@ -1707,6 +1738,7 @@ export function initChatModule({
       proxyState = 'offline';
       proxyPort = 0;
       uiState.chatProxyPort = 0;
+      setProxyOnline(false);
       notifyUiStateChanged();
       if (previousProxyState !== 'offline') {
         setRuntimeActivity('warn', 'Buyer proxy unreachable; retrying.');
@@ -2670,8 +2702,11 @@ export function initChatModule({
               // finalized the partial message. Don't overwrite with an error.
               clearPaymentRetry(convId);
               setConversationSending(convId, false);
-            } else if (result.stopReason?.retryable === false) {
-              reportChatError(result.stopReason.message || result.error, 'Request failed');
+            } else if (
+              result.stopReason?.retryable === false
+              || isPinnedConversation(convId)
+            ) {
+              reportChatError(result.stopReason?.message || result.error, 'Request failed');
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
@@ -3542,6 +3577,7 @@ export function initChatModule({
         streamFailedAtByConversation.set(data.conversationId, Date.now());
 
         const isActiveConversation = data.conversationId === uiState.chatActiveConversation;
+        const isPinned = isPinnedConversation(data.conversationId);
         if (isActiveConversation) {
           // Ensure the waiting-for-stream flag is cleared even if the error fires
           // before chat:ai-stream-start is received (which is the only other place
@@ -3566,7 +3602,7 @@ export function initChatModule({
             } else {
               clearPaymentRetry(data.conversationId);
             }
-          } else if (stopReason?.retryable === false || outputAlreadyStarted) {
+          } else if (stopReason?.retryable === false || outputAlreadyStarted || isPinned) {
             clearPaymentRetry(data.conversationId);
             if (isActiveConversation) {
               reportChatError(stopReason?.message || data.error, 'Request failed');

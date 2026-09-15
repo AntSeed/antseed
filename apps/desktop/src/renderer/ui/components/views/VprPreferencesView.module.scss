@@ -207,6 +207,21 @@
   padding: 16px;
 }
 
+.telemetryDetails {
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.telemetryDetails:hover {
+  text-decoration: underline;
+}
+
 /* Light/Dark segmented control. */
 .themeSegment {
   display: inline-flex;

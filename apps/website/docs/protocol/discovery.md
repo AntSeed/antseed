@@ -201,6 +201,10 @@ Verifiers reject redirected proof URLs. Domain and GitHub proofs must be served 
 
 ## Peer Scoring
 
+The weights below belong to the generic router-core scorer. Model-only routing
+in the buyer proxy and desktop uses the shared Price + Trust ranking described
+in [Reputation](./reputation.md#buyer-route-scoring).
+
 | Dimension | Weight | Description |
 |---|---|---|
 | Price | 0.30 | Lower price scores higher (inverted min-max) |
@@ -210,6 +214,10 @@ Verifiers reject redirected proof URLs. Domain and GitHub proofs must be served 
 | Freshness | 0.10 | Recently seen peers score higher |
 | Reliability | 0.05 | Lower failure rate and streak scores higher |
 
-All factors are min-max normalized across the eligible candidate pool. By default there is no minimum reputation gate (`minPeerReputation: 0`); buyers can explicitly raise it to exclude lower-reputation peers before scoring. Peers in a failure cooldown (exponential backoff) are also excluded.
+The generic scorer normalizes its factors across eligible candidates. The
+lower-level `minPeerReputation` filter defaults to `0`, but model-only routing
+also applies `buyer.routingPreferences.minTrustScore`, which defaults to `60`.
+Setting the first filter to zero does not disable the second. Peers in a failure
+cooldown are also excluded.
 
 Buyers can filter by capability, Skill, minimum reputation, and price ceiling.

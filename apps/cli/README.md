@@ -13,9 +13,10 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Providing** | |
 | `antseed seller start` | Start providing AI services on the P2P network |
 | `antseed seller register` | Register peer identity on-chain (ERC-8004) |
-| `antseed seller stake <amount>` | Stake USDC as a provider (min $10) |
-| `antseed seller unstake` | Withdraw staked USDC |
-| `antseed seller emissions claim` | Claim accumulated seller payouts |
+| **Legacy staking and emissions** | See the pre-migration setup below; these are not ANTS pool commands |
+| `antseed seller stake <amount>` | Stake legacy USDC (min $10) |
+| `antseed seller unstake` | Withdraw legacy USDC stake |
+| `antseed seller emissions claim` | Claim legacy seller ANTS emissions, not USDC payouts |
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
@@ -329,7 +330,19 @@ For tools that can only set a model name, use `<peerId>@<model>` as the model. T
 
 Payments run on **Base Mainnet** by default. Contract addresses are resolved automatically — no manual configuration needed.
 
-### Provider Setup (Selling)
+**Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
+See [Recognized Usage and ANTS Rewards](../website/docs/protocol/recognized-usage.md)
+for ANTS pool positions, seller eligibility, and usage rewards. The SDK exposes
+the contract inventory as `getChainConfig('base-mainnet').recognizedUsage`.
+See [Reward Policies](../website/docs/protocol/reward-policies.md) for how usage
+points are adjusted and historical wash-trading evidence affects rewards.
+
+Looking for pre-migration USDC staking or rewards? See
+[Legacy emissions and claims](../website/docs/protocol/legacy-emissions.md).
+The setup commands below use that legacy USDC interface; they do not create
+ANTS pool positions.
+
+### Legacy USDC Provider Setup (Pre-Migration)
 
 ```bash
 # 1. Set your identity (secp256k1 private key)

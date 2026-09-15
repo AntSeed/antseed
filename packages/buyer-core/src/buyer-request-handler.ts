@@ -28,6 +28,7 @@ import {
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
 import { buyerFault, peerFault } from './errors.js';
+import { adaptPeerFaultErrorResponse } from './peer-error-response.js';
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -45,6 +46,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Present peer failures as coming from an explicitly pinned route. */
+  pinned?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -122,6 +125,9 @@ export class BuyerRequestHandler {
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const requestProtocol = options?.controlPlane ? null : detectRequestServiceApiProtocol(req);
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
@@ -137,7 +143,6 @@ export class BuyerRequestHandler {
           debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
         }
       } else {
-        const requestProtocol = detectRequestServiceApiProtocol(req);
         if (
           requestProtocol === "openai-images"
           && (
@@ -174,6 +179,7 @@ export class BuyerRequestHandler {
       let streamStartedAtMs = 0;
       let streamBufferedBytes = 0;
       let streamStartResponse: SerializedHttpResponse | null = null;
+      let forwardStreamToCallbacks = false;
       const streamChunks: Uint8Array[] = [];
       let activeTimeout: ReturnType<typeof setTimeout> | null = null;
       let activeTimeoutMs = streamInitialResponseTimeoutMs;
@@ -280,14 +286,19 @@ export class BuyerRequestHandler {
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
             streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
+            forwardStreamToCallbacks = response.statusCode < 400;
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
-            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            if (forwardStreamToCallbacks) {
+              callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            }
             return;
           }
 
           callbacks?.onResponseStart?.(
-            stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            adaptPeerResponse(
+              stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            ),
             { streaming: false },
           );
           finish(response);
@@ -304,25 +315,23 @@ export class BuyerRequestHandler {
             return;
           }
 
-          callbacks?.onResponseChunk?.(chunk);
+          if (forwardStreamToCallbacks) {
+            callbacks?.onResponseChunk?.(chunk);
+          }
 
           if (chunk.data.length > 0) {
-            if (callbacks?.onResponseChunk) {
-              streamBufferedBytes += chunk.data.length;
-              streamChunks.push(chunk.data);
-            } else {
-              const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
-              if (nextBufferedBytes > maxStreamBufferBytes) {
-                mux.cancelProxyRequest(req.requestId);
-                fail(buyerFault(
-                  `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
-                  'buyer-stream-limit',
-                ));
-                return;
-              }
-              streamBufferedBytes = nextBufferedBytes;
-              streamChunks.push(chunk.data);
+            const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
+            const enforceBufferLimit = !forwardStreamToCallbacks || !callbacks?.onResponseChunk;
+            if (enforceBufferLimit && nextBufferedBytes > maxStreamBufferBytes) {
+              mux.cancelProxyRequest(req.requestId);
+              fail(buyerFault(
+                `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
+                'buyer-stream-limit',
+              ));
+              return;
             }
+            streamBufferedBytes = nextBufferedBytes;
+            streamChunks.push(chunk.data);
           }
 
           if (!chunk.done) return;
@@ -366,14 +375,16 @@ export class BuyerRequestHandler {
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
-      if (result.action === 'return') return result.response;
+      if (result.action === 'return') {
+        return adaptPeerResponse(result.response);
+      }
       startTime = Date.now();
       const retriedResponse = await executeRequest();
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return retriedResponse;
+      return adaptPeerResponse(retriedResponse);
     }
 
     if (negotiator && !isFreeService) {
@@ -381,7 +392,7 @@ export class BuyerRequestHandler {
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
-    return response;
+    return adaptPeerResponse(response);
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {

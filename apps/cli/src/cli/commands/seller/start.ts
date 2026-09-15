@@ -617,6 +617,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ? toUSDCBaseUnits(minSettleDeltaFlag, DEFAULT_MIN_SETTLE_DELTA_STR)
         : (config.payments.minSettleDelta ?? DEFAULT_MIN_SETTLE_DELTA_STR)
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
+      if (config.payments.serveWhileClosePending) {
+        console.log(chalk.yellow('  Warning: serveWhileClosePending is enabled. Channels whose buyer already requested close on-chain will still be served, and their withdraw timer may already have matured — work served on them can become uncollectible.'))
+      }
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       if (healthCheckEnabled) {
@@ -708,6 +711,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           paymentConfig,
           minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
           minSettleDelta,
+          ...(config.payments.serveWhileClosePending !== undefined
+            ? { serveWhileClosePending: config.payments.serveWhileClosePending }
+            : {}),
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,

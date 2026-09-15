@@ -5,6 +5,7 @@ import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
 import { VIEW_NAMES, type ViewName } from './types';
 import { VprShell } from './components/VprShell';
+import { recordUserAction, telemetrySurfaceForView } from '../modules/telemetry/actions';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
 
@@ -55,6 +56,7 @@ export function AppShell() {
   const handleSelectView = useCallback((view: ViewName) => {
     const current = activeViewRef.current;
     if (view === current) return;
+    recordUserAction('view_opened', telemetrySurfaceForView(view));
     const stack = viewHistoryRef.current;
     stack.push(current);
     if (stack.length > 32) stack.shift();
@@ -69,6 +71,7 @@ export function AppShell() {
     while (target === current) target = stack.pop();
     const next = target ?? fallback;
     if (next === current) return;
+    recordUserAction('view_opened', telemetrySurfaceForView(next));
     activeViewRef.current = next;
     setActiveView(next);
   }, []);
@@ -148,8 +151,8 @@ export function AppShell() {
 
   useEffect(() => {
     if (showSetup) return;
-    // Chat supports both window sizes: thin by default, expanded to the
-    // standard preset when the user opens the conversation-list panel.
+    // Chat supports both window sizes: wide (standard preset, conversation
+    // list showing) by default, thin when the user collapses the panel.
     if (activeView === 'chat' && snap.chatPanelExpanded) {
       void window.antseedDesktop?.applyWindowPreset?.('standard');
       return;
