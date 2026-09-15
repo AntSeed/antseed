@@ -71,6 +71,7 @@ apps/               Applications
   cli/              CLI tool (@antseed/cli) — bin: antseed
   desktop/          Electron desktop app
   dashboard/        Web dashboard (Fastify server + React frontend)
+  ants/             ANTS staking dashboard (@antseed/ants: Fastify server + React web + service layer shared with the CLI)
   website/          Marketing website (React + Vite + Tailwind)
 e2e/                End-to-end tests
 docs/protocol/      Protocol specification and plugin templates

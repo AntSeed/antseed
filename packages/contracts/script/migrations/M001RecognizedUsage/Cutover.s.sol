@@ -27,6 +27,7 @@ interface IEmissionsGateClock {
 interface IPointsPolicyRegistryLike {
     function owner() external view returns (address);
     function policyCount() external view returns (uint256);
+    function policyAt(uint256 index) external view returns (address policy);
 }
 
 interface ISellerRewardsPoolAdmin {
@@ -152,7 +153,9 @@ contract M001CutoverRecognizedUsage is Script {
         require(verificationController == verificationWallet, "unexpected verification controller");
         require(verificationShareBps == 10_000, "unexpected verification share");
         require(verificationEditable, "verification minter must remain editable");
-        require(pointsPolicyRegistry.policyCount() == 0, "M001 must not activate points policies");
+        require(pointsPolicyRegistry.policyCount() == 1, "unexpected points policy count");
+        address washPolicy = pointsPolicyRegistry.policyAt(0);
+        require(washPolicy == vm.envAddress("WASH_TRADING_POINTS_POLICY"), "unexpected wash policy");
         require(gate.owner() == deployer, "unexpected emissions gate owner");
         require(pointsPolicyRegistry.owner() == deployer, "unexpected points policy registry owner");
         uint256 effectiveEpoch = gate.effectiveEpoch();

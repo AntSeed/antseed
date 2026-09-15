@@ -6,7 +6,6 @@ export const TEE_REQUIRED_CLAIMS = [
   'antseed-verifier:seller-bound',
 ] as const
 
-export type TeeMode = 'optional' | 'required'
 export interface TeeClaim {
   claim: string
   ok: boolean
@@ -27,17 +26,11 @@ export interface TeeEvidence {
 }
 export interface TeeSnapshot {
   sessionId: string
-  mode: TeeMode
   verificationEnabled: boolean
-  routingPaused?: boolean
-  requireVerifier?: boolean
-  preferredVerifierIds?: string[]
   evidence: TeeEvidence[]
 }
 export interface DesktopTeeStatus {
-  configuredMode: TeeMode
   snapshot: TeeSnapshot | null
-  applying?: boolean
   error?: string
 }
 

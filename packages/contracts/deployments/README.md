@@ -21,8 +21,12 @@ Each network contains:
 10. Deployment records are created atomically and may never be overwritten, including by a resumed run.
 11. Non-fork deployment phases require `BASESCAN_API_KEY` (an Etherscan V2 key) and submit source verification during broadcast.
 
-`packages/node/src/payments/generated-contract-addresses.ts` is generated from
-each network's `current.json`. A successful canonical migration regenerates it
+`packages/node/src/payments/generated-contract-addresses.ts` uses each network's
+`current.json` for active routing addresses and M001's deployed history record
+for the optional `recognizedUsage` address inventory and effective epoch.
+That inventory is marked `active` only when both committed emissions/staking
+aliases point to the new stack; deployment or passage of time is insufficient.
+A successful canonical migration regenerates it
 automatically; `pnpm contracts:check` reports any stale generated output.
 
 `M001RecognizedUsage` has two records because deployment and activation happen in separate epochs:
@@ -80,7 +84,7 @@ setting (the legacy baseline) are not compared.
    documents the same shape for editor tooling.
 2. Invariants that apply only to the releases one migration owns, declared as
    `recordErrors(record)` on the migration. M001 proves the verification bucket
-   remains editable at 10%, that no points policy is active, and that both
+remains editable at 10%, that exactly one wash-trading points policy is registered, and that both
    administrative contracts have recorded owners.
 
 ## Commands
@@ -107,7 +111,7 @@ export const migration = {
   networks: ['base-sepolia'],
   releases: ['002-example'],          // releases this migration may write
   phases: [                           // first phase whose guard passes is run
-    { id: 'deploy', guard: (o) => o.state === 'ready', signers: () => ['deployer'], run },
+    { id: 'deploy', guard: (observation) => observation.state === 'ready', signers: () => ['deployer'], run },
   ],
   expectedSigner,                     // role -> live owner address, for dry runs
   expectedState,                      // pointers read from current.json
@@ -119,3 +123,19 @@ export const migration = {
 
 The registry rejects a migration that declares no phases, a phase without an
 `id`/`guard`/`run`, no releases, or a release another migration already claims.
+
+M001 keeps its production flow in ordinary phase `run` functions: deployment
+runs Forge and records the result; cutover uses explicit `try/finally` to
+retain confirmed partial receipts before recording a successful activation.
+Recovery checks live state and bytecode before repairing local records.
+
+Shared helpers perform small data operations, not lifecycle callbacks:
+`buildReleaseRecord` supplies standard ledger metadata; `mergeBroadcast`
+deduplicates transaction hashes while retaining creation provenance;
+`writeActivationRecords` checks history and `current.json` independently.
+Checkpoints retain their existing keys so interrupted M001 runs remain resumable.
+
+M001-specific Anvil fixtures and rehearsal assertions live in the local-test
+section at the bottom of `scripts/deployments/m001.mjs` and execute only for
+`--fork-test`. They run the same production phases; the shared framework still
+owns Anvil, temporary deployment records, and prerequisite ordering.

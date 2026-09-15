@@ -1,12 +1,12 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import type { DesktopTeeStatus, TeeMode } from '@antseed/node/tee-status';
+import type { DesktopTeeStatus } from '@antseed/node/tee-status';
 import { advertisesTeeSupport } from '@antseed/node/verifier-capabilities';
 import type { DiscoverRow } from '../../core/state';
 import { useUiSelector } from './useUiSelector';
 import { TeeAutoVerification } from './tee-auto-verification';
 
-type State = { status: DesktopTeeStatus; now: number; checking: readonly string[]; peerErrors: Record<string, string>; error?: string };
-const initial: State = { status: { configuredMode: 'optional', snapshot: null }, now: 0, checking: [], peerErrors: {} };
+type State = { status: DesktopTeeStatus; now: number; checking: readonly string[]; peerErrors: Record<string, string> };
+const initial: State = { status: { snapshot: null }, now: 0, checking: [], peerErrors: {} };
 let state = initial;
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -24,7 +24,7 @@ function publish(next: Partial<State>): void {
 }
 
 async function refresh(): Promise<void> {
-  if (polling || state.status.applying) return;
+  if (polling) return;
   const current = generation;
   const startedAtRevision = revision;
   polling = true;
@@ -62,7 +62,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 async function checkNext(): Promise<void> {
-  if (checking || state.status.applying || !listeners.size || !state.status.snapshot
+  if (checking || !listeners.size || !state.status.snapshot
     || Date.now() < nextCheckAt || document.visibilityState === 'hidden' || !window.antseedDesktop?.checkSellerTee) return;
   const interested = new Set([...visibleSellers.values()].flatMap((sellers) => [...sellers]));
   const attempt = automatic.next(state.status.snapshot, interested, Date.now());
@@ -96,21 +96,9 @@ async function checkNext(): Promise<void> {
   }
 }
 
-async function setMode(mode: TeeMode): Promise<void> {
-  generation += 1;
-  publish({ status: { ...state.status, snapshot: null, applying: true }, error: undefined, checking: [], peerErrors: {} });
-  try {
-    const status = await window.antseedDesktop?.setTeeMode?.(mode);
-    if (!status) throw new Error('Verification settings are unavailable');
-    publish({ status });
-  } catch (error) {
-    publish({ status: { ...state.status, applying: false }, error: error instanceof Error ? error.message : 'Setting could not be applied' });
-  }
-}
-
 export function useTeeVerification() {
   const snapshot = useSyncExternalStore(subscribe, teeVerificationStore.getSnapshot, () => initial);
-  return { ...snapshot, setMode };
+  return snapshot;
 }
 
 export const teeVerificationStore = {

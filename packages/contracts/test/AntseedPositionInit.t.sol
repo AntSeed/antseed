@@ -9,19 +9,6 @@ import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 import { MockERC8004Registry } from "./mocks/MockERC8004Registry.sol";
-import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
-
-contract MockWashTradingStatusForInit is IAntseedWashTradingStatus {
-    mapping(address => bool) public wash;
-
-    function set(address seller, bool value) external {
-        wash[seller] = value;
-    }
-
-    function isProvenWashTrader(address seller) external view returns (bool) {
-        return wash[seller];
-    }
-}
 
 contract MockLegacySellerStaking {
     mapping(address => uint256) public sellerAgentId;
@@ -44,6 +31,14 @@ contract MockLegacySellerStaking {
     }
 }
 
+contract MockSellerOperatorsForInit {
+    mapping(address => bool) public isOperator;
+
+    function setOperator(address operator, bool enabled) external {
+        isOperator[operator] = enabled;
+    }
+}
+
 contract AntseedPositionInitTest is Test {
     uint256 constant EPOCH_DURATION = 1 weeks;
     uint256 constant INIT_AMOUNT = 1 ether;
@@ -53,7 +48,6 @@ contract AntseedPositionInitTest is Test {
     AntseedRegistry registry;
     MockERC8004Registry identityRegistry;
     MockLegacySellerStaking legacyStaking;
-    MockWashTradingStatusForInit washRegistry;
     AntseedSellerPools pools;
     AntseedSellerRegistry sellerRegistry;
     AntseedPositionInit positionInit;
@@ -72,7 +66,6 @@ contract AntseedPositionInitTest is Test {
         registry = new AntseedRegistry();
         identityRegistry = new MockERC8004Registry();
         legacyStaking = new MockLegacySellerStaking();
-        washRegistry = new MockWashTradingStatusForInit();
         token = new ANTSToken();
         token.setRegistry(address(registry));
         registry.setAntsToken(address(token));
@@ -83,9 +76,7 @@ contract AntseedPositionInitTest is Test {
         sellerRegistry = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacyStaking));
         pools.setStakingSource(address(sellerRegistry));
 
-        positionInit = new AntseedPositionInit(
-            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
-        );
+        positionInit = new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
 
         token.setTransferWhitelist(address(pools), true);
         token.setTransferWhitelist(address(positionInit), true);
@@ -135,6 +126,117 @@ contract AntseedPositionInitTest is Test {
         assertEq(pools.positionWeightAtEpoch(positionId, 1), INIT_AMOUNT * (INIT_END_EPOCH - 1));
         assertEq(pools.poolWeightAtEpoch(agentId, 1), INIT_AMOUNT * (INIT_END_EPOCH - 1));
         assertEq(pools.poolActiveStakeAtEpoch(agentId, 1), INIT_AMOUNT);
+    }
+
+    function test_explicitSellerCanInitItself() public {
+        vm.prank(seller);
+        uint256 positionId = positionInit.initPosition(seller);
+        assertEq(pools.ownerOf(positionId), seller);
+        assertTrue(positionInit.agentInitialized(agentId));
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.AlreadyInitialized.selector);
+        positionInit.initPosition();
+    }
+
+    function test_operatorOwnsPositionInContractSellersPool() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        proxy.setOperator(outsider, true);
+
+        vm.expectEmit(true, true, false, true, address(positionInit));
+        emit AntseedPositionInit.PositionInitialized(
+            address(proxy), proxyAgentId, pools.nextPositionId(), INIT_AMOUNT, 104
+        );
+        vm.prank(outsider);
+        uint256 positionId = positionInit.initPosition(address(proxy));
+
+        assertFalse(token.transfersEnabled());
+        assertEq(pools.ownerOf(positionId), outsider);
+        (, uint256 positionAgentId, uint256 amount,,,,,) = pools.positions(positionId);
+        assertEq(positionAgentId, proxyAgentId);
+        assertEq(amount, INIT_AMOUNT);
+        assertTrue(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 9);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        assertEq(pools.poolActiveStakeAtEpoch(proxyAgentId, 1), INIT_AMOUNT);
+        assertEq(pools.poolWeightAtEpoch(proxyAgentId, 1), INIT_AMOUNT * 104);
+    }
+
+    function test_differentOperatorsCannotClaimSameSellerTwice() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        _registerLegacySeller(address(proxy));
+        proxy.setOperator(outsider, true);
+        proxy.setOperator(otherSeller, true);
+        vm.prank(outsider);
+        positionInit.initPosition(address(proxy));
+
+        vm.prank(otherSeller);
+        vm.expectRevert(AntseedPositionInit.AlreadyInitialized.selector);
+        positionInit.initPosition(address(proxy));
+    }
+
+    function test_unauthorizedAndRevokedOperatorsCannotInit() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+
+        proxy.setOperator(outsider, true);
+        proxy.setOperator(outsider, false);
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        assertFalse(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 10);
+    }
+
+    function test_operatorCannotBypassSellerEligibility() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        uint256 proxyAgentId = _registerLegacySeller(address(proxy));
+        proxy.setOperator(seller, true);
+        legacyStaking.setStakedAboveMin(address(proxy), false);
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.NotLegacySeller.selector);
+        positionInit.initPosition(address(proxy));
+
+        assertFalse(positionInit.agentInitialized(proxyAgentId));
+        assertEq(positionInit.remainingInits(), 10);
+    }
+
+    function test_otherEoaAndContractWithoutOperatorGetterReject() public {
+        vm.startPrank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(seller);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(legacyStaking));
+        vm.stopPrank();
+    }
+
+    function test_revertingOrMalformedOperatorGetterRejects() public {
+        MockSellerOperatorsForInit proxy = new MockSellerOperatorsForInit();
+        bytes memory query = abi.encodeWithSignature("isOperator(address)", outsider);
+        vm.mockCallRevert(address(proxy), query, abi.encode("unavailable"));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        vm.clearMockedCalls();
+
+        vm.mockCall(address(proxy), query, hex"01");
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+        vm.mockCall(address(proxy), query, abi.encode(uint256(2)));
+        vm.prank(outsider);
+        vm.expectRevert(AntseedPositionInit.NotOperator.selector);
+        positionInit.initPosition(address(proxy));
+    }
+
+    function test_zeroSellerRejects() public {
+        vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
+        positionInit.initPosition(address(0));
     }
 
     function test_latePositionNeverOutweighsEarlyPosition() public {
@@ -198,9 +300,8 @@ contract AntseedPositionInitTest is Test {
     }
 
     function test_depletedPotBlocksInitsUntilRefunded() public {
-        AntseedPositionInit smallInit = new AntseedPositionInit(
-            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
-        );
+        AntseedPositionInit smallInit =
+            new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
         token.setTransferWhitelist(address(smallInit), true);
         token.mint(address(smallInit), INIT_AMOUNT);
 
@@ -219,9 +320,8 @@ contract AntseedPositionInitTest is Test {
     }
 
     function test_initRevertsWithoutTransferWhitelist() public {
-        AntseedPositionInit unlisted = new AntseedPositionInit(
-            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
-        );
+        AntseedPositionInit unlisted =
+            new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
         token.mint(address(unlisted), INIT_AMOUNT);
 
         vm.prank(seller);
@@ -229,48 +329,19 @@ contract AntseedPositionInitTest is Test {
         unlisted.initPosition();
     }
 
-    function test_provenWashTraderCannotInit() public {
-        washRegistry.set(seller, true);
-        vm.prank(seller);
-        vm.expectRevert(AntseedPositionInit.WashTrader.selector);
-        positionInit.initPosition();
-        assertFalse(positionInit.agentInitialized(agentId));
-        assertEq(positionInit.remainingInits(), 10);
-
-        // Honest sellers are unaffected.
-        vm.prank(otherSeller);
-        positionInit.initPosition();
-        assertTrue(positionInit.agentInitialized(otherAgentId));
-    }
-
-    function test_washTraderClearedLaterCanInit() public {
-        washRegistry.set(seller, true);
-        vm.prank(seller);
-        vm.expectRevert(AntseedPositionInit.WashTrader.selector);
-        positionInit.initPosition();
-
-        washRegistry.set(seller, false);
-        vm.prank(seller);
-        positionInit.initPosition();
-        assertTrue(positionInit.agentInitialized(agentId));
-    }
-
     function test_constructorValidation() public {
         vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
-        new AntseedPositionInit(address(pools), address(legacyStaking), address(0), INIT_AMOUNT, INIT_END_EPOCH);
+        new AntseedPositionInit(address(0), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
 
         vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
-        new AntseedPositionInit(address(0), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH);
-
-        vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
-        new AntseedPositionInit(address(pools), address(0), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH);
+        new AntseedPositionInit(address(pools), address(0), INIT_AMOUNT, INIT_END_EPOCH);
 
         vm.expectRevert(AntseedPositionInit.InvalidValue.selector);
-        new AntseedPositionInit(address(pools), address(legacyStaking), address(washRegistry), 0, INIT_END_EPOCH);
+        new AntseedPositionInit(address(pools), address(legacyStaking), 0, INIT_END_EPOCH);
 
         // End epoch must be in the future relative to the pools' clock.
         vm.warp(genesis + 5 * EPOCH_DURATION);
         vm.expectRevert(AntseedPositionInit.InvalidValue.selector);
-        new AntseedPositionInit(address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, 5);
+        new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, 5);
     }
 }

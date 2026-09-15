@@ -423,6 +423,7 @@ function SellerRow({ route, active, auto, onClick, tee }: {
       .filter((parameter) => parameter.trim().toLowerCase() !== 'moderation')
       .map((parameter) => parameter.replaceAll('_', ' ')),
   ].join(' · ');
+  const sellerName = route.peerDisplayName || route.peerLabel || route.peerId;
   return (
     <div className={`${styles.sellerRow}${active ? ` ${styles.sellerRowActive}` : ''}`}>
     <button
@@ -430,34 +431,36 @@ function SellerRow({ route, active, auto, onClick, tee }: {
       className={styles.sellerSelect}
       onClick={onClick}
       title={active && !auto ? 'Unpin this seller' : 'Pin this seller'}
-    >
+      aria-label={`${active && !auto ? 'Unpin' : 'Pin'} ${sellerName}`}
+    />
+    <div className={styles.sellerContent}>
       {active && (
         <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.sellerCheck} />
       )}
-      <span className={styles.sellerText}>
-        <span className={styles.sellerName}>
-          {route.peerDisplayName || route.peerLabel || route.peerId}
+      <div className={styles.sellerText}>
+        <div className={styles.sellerName}>
+          <span className={styles.sellerNameLabel}>{sellerName}</span>
+          {advertisesTeeSupport(route) &&
+            <VprTeeStatus
+              className={styles.sellerVerification}
+              evidence={tee.status.snapshot?.evidence.find((entry) => entry.peerId === route.peerId)}
+              now={tee.now}
+              checking={tee.checking.includes(route.peerId)}
+              available={Boolean(tee.status.snapshot?.verificationEnabled)}
+              error={tee.peerErrors[route.peerId]}
+            />
+          }
           {active && <VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
           {isFreeRoute(route) && <VprBadge tone="green">Free</VprBadge>}
           {hasModerationControl && <VprBadge tone="neutral">Moderation control</VprBadge>}
-        </span>
+        </div>
         <span className={styles.sellerMeta}>
           {sellerMetaLabel(route)}
           {capabilityLabel ? ` · ${capabilityLabel}` : ''}
         </span>
-      </span>
+      </div>
       <span className={styles.sellerScore}>{sellerReputationLabel(route)}</span>
-    </button>
-    {advertisesTeeSupport(route) &&
-      <VprTeeStatus
-        className={styles.sellerVerification}
-        evidence={tee.status.snapshot?.evidence.find((entry) => entry.peerId === route.peerId)}
-        now={tee.now}
-        checking={tee.checking.includes(route.peerId)}
-        available={Boolean(tee.status.snapshot?.verificationEnabled) && !tee.status.applying}
-        error={tee.peerErrors[route.peerId]}
-      />
-    }
+    </div>
     </div>
   );
 }

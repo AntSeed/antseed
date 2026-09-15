@@ -12,7 +12,7 @@ test('verification control authenticates, rejects origins/targets, bounds reques
   const control = new TeeControl('session');
   const checks: string[] = [];
   const seller = 'a'.repeat(40);
-  const snapshot = { sessionId: 'session', mode: 'optional' as const, verificationEnabled: true, evidence: [] };
+  const snapshot = { sessionId: 'session', verificationEnabled: true, evidence: [] };
   const server = createServer((req, res) => {
     void control.handle(req, res, req.method!, req.url!, () => snapshot, async (peerId) => {
       if (peerId !== seller) throw new Error('Unknown seller');
@@ -38,6 +38,7 @@ test('verification control authenticates, rejects origins/targets, bounds reques
   assert.equal((await fetch(url, { headers: { ...headers, origin: 'http://localhost:3000' } })).status, 403);
   const status = await (await fetch(url, { headers })).json();
   assert.deepEqual(status, snapshot);
+  assert.equal((await fetch(`${url}/resume`, { method: 'POST', headers })).status, 404);
   assert.ok(!JSON.stringify(status).includes(credential.token));
   assert.equal((await fetch(`${url}/check`, { method: 'POST', headers, body: JSON.stringify({ peerId: seller, url: 'https://evil.test' }) })).status, 400);
   await new Promise((resolve) => setTimeout(resolve, 1010));

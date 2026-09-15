@@ -36,19 +36,9 @@ The startup banner confirms the active policy, e.g. `Verifier: antseed-verifier 
 
 ## Finding TEE sellers
 
-VPR offers an advertised-TEE seller filter in Explore, without TEE badges on the models overview, and automatically checks advertising sellers after discovery. Model-detail seller rows show a **TEE** badge only for a current passing seller-node check and refresh expired evidence while viewed, without manual check buttons. Other outcomes show no seller badge. See the [VPR guide](/docs/guides/vpr#tee-availability-and-seller-node-verification) for badge behavior, retries, and the separate required-verification routing policy.
+VPR offers an advertised-TEE seller filter in Explore, without TEE badges on the models overview, and automatically checks advertising sellers after discovery. Model-detail seller rows show a **TEE** badge only for a current passing seller-node check and refresh expired evidence while viewed, without manual check buttons. Other outcomes show no seller badge. See the [VPR guide](/docs/guides/vpr#tee-availability-and-seller-node-verification) for badge behavior and automatic retries.
 
-For enforced seller-node checks, set **Preferences → Require seller-node verification**, or persist this buyer configuration and restart:
-
-```json
-{
-  "buyer": {
-    "teeVerification": { "mode": "required" }
-  }
-}
-```
-
-The default is `optional`. This setting is separate from `buyer.verification`, which controls response-auth sampling. Required mode selects `antseed-verifier` and requires its overall success plus explicit passing claims `antseed-verifier:seller-node-tee-genuine` and `antseed-verifier:seller-bound`. Missing, malformed, or conflicting duplicate claims fail closed. The setting does not enforce provider/GPU/image checks or guarantee confidential inference. Explicit `--no-verifier`, `--verifiers`, or `--require-verifier` options take precedence over this persisted TEE setting; generic `--require-verifier` is not a substitute for explicitly requiring both seller-node claims.
+The badge and browse filter do not change routing policy. Existing CLI options such as `--require-verifier` continue to control whether the selected verifier's overall result gates requests; they do not add a separate requirement for the two badge claims.
 
 The buyer must be able to load the curated, pinned verifier SDK. Required mode refuses startup when it cannot prepare that SDK; a UI advertisement or a unit test is not a live attestation.
 
