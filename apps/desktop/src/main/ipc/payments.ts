@@ -51,12 +51,10 @@ import {
   PAYMENTS_PORT,
   PAY_PAGE_KINDS,
   type PayPageKind,
-  fetchOnrampAvailability,
   focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
   readCardProviders,
-  readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
 import { closeCheckoutWindows, openCheckoutPopup } from '../payments/checkout-window.js';
@@ -184,9 +182,10 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
-        // The chooser's Stripe row is the only path here — open the page on
-        // exactly that integration (no provider tab strip). Unsigned, UX-only.
-        parsed.searchParams.set('provider', 'stripe');
+        // The chooser's primary CTA is the only path here — open the page on
+        // exactly the Crossmint integration (no provider tab strip).
+        // Unsigned, UX-only.
+        parsed.searchParams.set('provider', 'crossmint');
       }
       const url = parsed.toString();
 
@@ -217,31 +216,8 @@ export function registerPaymentsIpc(): void {
     }
   });
 
-  // Region-gated deposit options: the hosted pay page reports which providers
-  // it would offer this machine's region (Stripe = US only). Fail-closed —
-  // an unreachable page just hides the gated rows.
-  ipcMain.handle('payments:onramp-availability', async () => {
-    try {
-      const availability = await fetchOnrampAvailability();
-      return { ok: true, data: availability };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  ipcMain.handle('payments:funkit-config', async () => {
-    try {
-      const apiKey = await readFunkitApiKey();
-      if (!apiKey) return { ok: true, data: null };
-      return { ok: true, data: { apiKey } };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // The renderer closes the Fun checkout/sign-in popup windows on flows that
-  // never produce a deposit — e.g. a Google login, where "success" is the
-  // SDK's connection status flipping to connected, not funds arriving.
+  // The renderer closes checkout popup windows on flows that never produce
+  // a deposit.
   ipcMain.handle('payments:close-checkout-windows', () => {
     if (closeCheckoutWindows()) focusMainWindow();
     return { ok: true };
