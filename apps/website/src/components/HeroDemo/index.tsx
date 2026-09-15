@@ -1,5 +1,5 @@
 /**
- * HeroDemo — the live VPR demo animation from the hero prototype
+ * HeroDemo — the live AI VPN demo animation from the hero prototype
  * (antseed-website.vercel.app), ported 1:1 from its Remotion
  * composition: a 2048×1152 scene at 30 fps over 582 frames.
  *
@@ -187,7 +187,7 @@ const asset = (name: string) => `/img/demo/${name}`;
    Mobile composition — one centred column instead of the wide scene.
    The chat windows drop out; what is left is the story of a single
    request, stacked top -> bottom in the order the timeline already
-   tells it: the VPR, the price it got, the network it got it from.
+   tells it: the AI VPN, the price it got, the network it got it from.
 
    Hierarchy comes from nested widths — card 524 < routing pill 580 <
    network bar 636, in even 56px steps — so the card stays the
@@ -459,7 +459,7 @@ function ChatApp({
 }
 
 /* ============================================================
-   VPR card with power button (`av`)
+   AI VPN card with power button (`av`)
    ============================================================ */
 function VprCard({
   left = 1110,
@@ -573,7 +573,7 @@ function VprCard({
             onClick={onToggle}
             onPointerEnter={() => setHover(true)}
             onPointerLeave={() => setHover(false)}
-            aria-label={powerOn > 0.5 ? 'Turn the VPR demo off' : 'Turn the VPR demo on'}
+            aria-label={powerOn > 0.5 ? 'Turn the AI VPN demo off' : 'Turn the AI VPN demo on'}
             aria-pressed={powerOn > 0.5}
             style={{
               position: 'absolute',
@@ -773,7 +773,7 @@ function StackConnector({
 }
 
 /* ============================================================
-   AntSeed network searching bar (`al`)
+   Antseed network searching bar (`al`)
    ============================================================ */
 function NetworkBar({
   opacity = 1,
@@ -985,7 +985,7 @@ function MobileScene({onToggle}: {onToggle?: () => void}) {
 
   return (
     <div style={{position: 'absolute', inset: 0}}>
-      {/* 1 — the VPR itself: 524 wide, centred, the anchor of the column */}
+      {/* 1 — the AI VPN itself: 524 wide, centred, the anchor of the column */}
       <VprCard left={M_CX - 262} top={0} onToggle={onToggle} />
 
       {/* 2 — routing + model roulette, sized to cover the card's baked-in
@@ -1018,7 +1018,7 @@ function MobileScene({onToggle}: {onToggle?: () => void}) {
         scale={M_TOKENS_S * tokens.scale}
       />
 
-      {/* 4 — VPR -> network, with the anonymous relay sitting on the line.
+      {/* 4 — AI VPN -> network, with the anonymous relay sitting on the line.
              The node stays small enough that the wire still reads either
              side of it — it is a stop on the line, not a break in it. */}
       <StackConnector
@@ -1185,6 +1185,7 @@ export function HeroDemo({
   frameRef,
   shutdownRef,
   className,
+  compact = false,
 }: {
   /** Shared frame counter (read by the hero dot canvas each rAF). */
   frameRef?: MutableRefObject<number>;
@@ -1194,20 +1195,24 @@ export function HeroDemo({
    */
   shutdownRef?: MutableRefObject<number>;
   className?: string;
+  /** Force the stacked single-column scene regardless of viewport width
+      (used when the demo shares the hero row with the copy). */
+  compact?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(0);
   const [shut, setShut] = useState<number | null>(null);
   const [interactive, setInteractive] = useState(false);
   const [scale, setScale] = useState(0.5);
-  const [mobile, setMobile] = useState(false);
+  const [mobileMq, setMobileMq] = useState(false);
+  const mobile = compact || mobileMq;
   const modeRef = useRef<PowerMode>('running');
   const originRef = useRef(0); // clock origin (ms) — frame 0 of the loop
   const frozenRef = useRef(0); // scene frame held during shutdown
   const shutStartRef = useRef(0);
 
   /**
-   * Power button. While the VPR reads as on, a click plays the loop's closing
+   * Power button. While the AI VPN reads as on, a click plays the loop's closing
    * beat over the frozen frame and parks the demo off; otherwise it restarts
    * the loop at the button press so the whole opening replays.
    */
@@ -1226,7 +1231,7 @@ export function HeroDemo({
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 768px)');
-    const update = () => setMobile(mq.matches);
+    const update = () => setMobileMq(mq.matches);
     update();
     mq.addEventListener('change', update);
     return () => mq.removeEventListener('change', update);

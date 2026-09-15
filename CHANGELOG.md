@@ -11,7 +11,13 @@ This project uses selective package publishing. Each release entry lists the pub
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 
+### Changed
+
+- Website and docs: wording only. "VPR" and "Virtual Private Router" → "AI VPN", "AntSeed" → "Antseed" in copy (URLs, package names and identifiers unchanged), "seller" → "provider" and "on-chain" → "onchain" in marketing copy. No code or layout changes.
+
 ### Added
+
+- Website: redesigned marketing site. New split homepage hero with static subhead and stats; new audience pages `/agents`, `/coding`, `/privacy` with bespoke hero animations; `/network` page (replaces the redirect to antseedstats); `/ants-token` restyled to the site's design with the same content, plus a live hero panel (epoch clock, supply and burned amount read from the ANTS contract on Base). Navbar reordered (Network, Use it for, Integrations, Providers, Prices) with a "Use it for" dropdown; footer rebuilt in four columns. Homepage sections extracted into shared components.
 
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
