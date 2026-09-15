@@ -18,6 +18,8 @@ import {
   type SerializedHttpResponse,
 } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import { TeeVerification } from './tee-verification.js'
+import { TEE_MAX_AGE_MS } from '@antseed/node/tee-status'
 import {
   BuyerProxy,
   isModelNotFoundResponse,
@@ -45,6 +47,61 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
     providers,
   }
 }
+
+test('required TEE routing rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {
+  const rejected = makePeer('a', ['openai'])
+  const accepted = makePeer('b', ['openai'])
+  for (const peer of [rejected, accepted]) {
+    peer.capabilities = ['verifier.antseed-verifier']
+    peer.providerServiceApiProtocols = { openai: { services: { 'gpt-4o': ['openai-chat-completions'] } } }
+  }
+  rejected.reputationScore = 99
+  accepted.reputationScore = 90
+  const peers = [rejected, accepted]
+  const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
+  const policy = { require: true, requireSellerNode: true, prefer: ['antseed-verifier'] }
+  const verification = new TeeVerification(policy)
+  ;(proxy as any)._verifier = policy
+  ;(proxy as any)._teeVerification = verification
+  ;(proxy as any)._cachedPeers = peers
+  await verification.verify(rejected, policy, async () => ({ ok: false, verified: false, reason: 'Seller binding failed' }))
+  await verification.verify(accepted, policy, async () => ({ ok: true, verified: true, sellerNodeVerified: true }))
+  const dispatches: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    dispatches.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }
+  }
+  const pinned = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': rejected.peerId } }))
+  assert.equal(pinned.statusCode, 502)
+  assert.equal(JSON.parse(pinned.body).error.code, 'seller_verification_required')
+  assert.deepEqual(dispatches, [])
+  const automatic = await invokeProxy(proxy, makeProxyRequest({}))
+  assert.equal(automatic.statusCode, 200)
+  assert.deepEqual(dispatches, [accepted.peerId])
+  const explicit = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': accepted.peerId } }))
+  assert.equal(explicit.statusCode, 200)
+  assert.deepEqual(dispatches, [accepted.peerId, accepted.peerId])
+});
+
+test('verification is rechecked before retry dispatch and paused buyers never dispatch', async () => {
+  const peer = makePeer('a', ['openai'])
+  const policy = { require: true, requireSellerNode: true, prefer: ['antseed-verifier'] }
+  let now = 100
+  const verification = new TeeVerification(policy, () => now)
+  await verification.verify(peer, policy, async () => ({ ok: true, verified: true, sellerNodeVerified: true }))
+  now += TEE_MAX_AGE_MS
+  const proxy = makeBuyerProxyWithPeers([peer])
+  ;(proxy as any)._verifier = policy
+  ;(proxy as any)._teeVerification = verification
+  ;(proxy as any)._node.sendRequest = async () => { throw new Error('Must not dispatch') }
+  const result = await (proxy as any)._dispatchToPeer(makeProxyResponse(), {}, peer, new Map(), null, 'gpt-4o', null, null, new Set(), true, new AbortController().signal)
+  assert.equal(result.statusCode, 502)
+  assert.equal(JSON.parse(result.responseBody).error.code, 'seller_verification_required')
+  ;(proxy as any)._verificationPaused = true
+  const paused = await invokeProxy(proxy, makeProxyRequest({}))
+  assert.equal(paused.statusCode, 503)
+  assert.equal(JSON.parse(paused.body).error.code, 'verification_policy_applying')
+});
 
 function makeProxyRequest(options: {
   method?: string

@@ -34,6 +34,22 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
   assert.equal(shouldDeriveDisplayName('custom seller'), false);
 });
 
+test('TEE mode is backward compatible, validated, and separate from response-auth sampling', async () => {
+  await withTempConfig('{}', async (path) => { assert.equal((await loadConfig(path)).buyer.teeVerification, undefined); });
+  for (const mode of ['optional', 'required']) {
+    await withTempConfig(JSON.stringify({ buyer: { teeVerification: { mode }, verification: { sampleRate: 0.25 } } }), async (path) => {
+      const config = await loadConfig(path);
+      assert.equal(config.buyer.teeVerification?.mode, mode);
+      assert.equal(config.buyer.verification?.sampleRate, 0.25);
+    });
+  }
+  for (const invalid of [null, true, 'required', {}, { mode: 'unsafe' }]) {
+    await withTempConfig(JSON.stringify({ buyer: { teeVerification: invalid } }), async (path) => {
+      await assert.rejects(loadConfig(path), /buyer.teeVerification.mode/);
+    });
+  }
+});
+
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {
   const config = createDefaultConfig();
 

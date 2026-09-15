@@ -428,6 +428,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           verifier: options.verifier,
           verifiers: options.verifiers,
           requireVerifier: options.requireVerifier,
+          teeMode: config.buyer.teeVerification?.mode,
         })
       } catch (err) {
         console.error(chalk.red((err as Error).message))
@@ -474,7 +475,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           console.log(chalk.dim('  Verifier: disabled'))
         }
       } catch (err) {
-        if (isAddrInUseError(err) && await isCompatibleBuyerProxy(proxyPort)) {
+        if (isAddrInUseError(err) && !verifierPolicy?.require
+          && process.env['ANTSEED_BUYER_VERIFICATION_PAUSED'] !== '1'
+          && await isCompatibleBuyerProxy(proxyPort)) {
           proxySpinner.succeed(chalk.yellow(`Proxy port ${proxyPort} already in use; reusing existing local proxy.`))
           console.log(chalk.yellow('Proxy request logs will be emitted by the process that already owns this port.'))
         } else {

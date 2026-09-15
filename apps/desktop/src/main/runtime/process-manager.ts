@@ -411,6 +411,9 @@ export class ProcessManager {
   }
 
   attach(mode: RuntimeMode): RuntimeProcessState {
+    if (mode === 'connect' && (this.connectRestarting || this.connectRestartFailed)) {
+      throw new Error('Reapply seller-node verification settings before attaching to a buyer');
+    }
     const state = this.states.get(mode)!;
     this.attachedModes.add(mode);
     state.running = true;
@@ -452,6 +455,34 @@ export class ProcessManager {
   }
 
   async start(opts: StartOptions): Promise<RuntimeProcessState> {
+    if (opts.mode === 'connect' && (this.connectRestarting || this.connectRestartFailed)) throw new Error('Reapply seller-node verification settings before starting the buyer');
+    return this.startProcess(opts);
+  }
+
+  private connectRestarting = false;
+  private connectRestartFailed = false;
+
+  isConnectRestartBlocked(): boolean { return this.connectRestartFailed; }
+
+  async restartConnect(opts: StartOptions, prepare: () => Promise<void>, validate: () => Promise<void>): Promise<void> {
+    if (this.connectRestarting || this.isAttached('connect')) throw new Error('Buyer cannot be restarted by this window');
+    this.connectRestarting = true;
+    try {
+      await this.stop('connect');
+      await prepare();
+      await this.startProcess({ ...opts, mode: 'connect' }, true);
+      await validate();
+      this.connectRestartFailed = false;
+    } catch (error) {
+      this.connectRestartFailed = true;
+      await this.stop('connect');
+      throw error;
+    } finally {
+      this.connectRestarting = false;
+    }
+  }
+
+  private async startProcess(opts: StartOptions, verificationRestart = false): Promise<RuntimeProcessState> {
     const mode = opts.mode;
     if (this.processes.has(mode)) {
       throw new Error(`${mode} is already running`);
@@ -463,6 +494,10 @@ export class ProcessManager {
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
     await this.ensureRuntimeNativeModules(mode, executable, cliExecution.isLocalDevScript);
+    if (mode === 'connect' && !verificationRestart && (this.connectRestarting || this.connectRestartFailed)) {
+      throw new Error('Reapply seller-node verification settings before starting the buyer');
+    }
+    if (this.processes.has(mode)) throw new Error(`${mode} is already running`);
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     // Desktop repairs the default router from its own app bundle. Do not let
     // the child CLI try an npm-based plugin refresh/install on locked-down
@@ -660,6 +695,7 @@ export class ProcessManager {
   }
 
   private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, isLocalDevScript: boolean): Promise<void> {
+    if (process.env['ANTSEED_LIVE_QA'] === '1') return;
     if (!isLocalDevScript) {
       return;
     }

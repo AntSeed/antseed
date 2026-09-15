@@ -508,6 +508,15 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
+  getTeeStatus(): Promise<unknown> {
+    return ipcRenderer.invoke('tee:status');
+  },
+  checkSellerTee(peerId: string): Promise<unknown> {
+    return ipcRenderer.invoke('tee:check', peerId);
+  },
+  setTeeMode(mode: 'optional' | 'required'): Promise<unknown> {
+    return ipcRenderer.invoke('tee:set-mode', mode);
+  },
   getTelemetryStatus(): Promise<TelemetryStatus> {
     return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
   },

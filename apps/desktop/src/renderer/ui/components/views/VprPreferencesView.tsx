@@ -13,6 +13,7 @@ import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle }
 import { VprPeerAccessDialog } from './VprPeerAccessDialog';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprPreferencesView.module.scss';
+import { useTeeVerification } from '../../hooks/useTeeVerification';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
@@ -20,6 +21,8 @@ const TELEMETRY_DOC_URL = 'https://github.com/AntSeed/antseed/blob/main/docs/tel
 
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
+  const tee = useTeeVerification();
+  const [confirmTeeMode, setConfirmTeeMode] = useState<'optional' | 'required' | null>(null);
   const { status: tunnelStatus, openPublicEndpointModal } = usePublicEndpointModal();
   const snap = useUiSelector((state) => ({
     preferences: state.vprRoutingPreferences,
@@ -83,7 +86,42 @@ export function VprPreferencesView({ onSelectView }: Props) {
     <section className={`view view-vpr-preferences view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage title="Preferences" backFallback="home">
       <div className={styles.stack}>
-        <p className={styles.lede}>These preferences apply to every model with Auto select turned on</p>
+        <p className={styles.lede}>Routing preferences apply to Auto select. Seller-node verification applies to all requests, including pinned sellers.</p>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Seller-node verification</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Require seller-node verification"
+              hint="Only route after the seller-node TEE and identity checks pass. This does not guarantee confidential downstream inference."
+              control={<VprToggle
+                checked={tee.status.configuredMode === 'required'}
+                disabled={tee.status.applying}
+                ariaLabel="Require seller-node verification"
+                onChange={(next) => setConfirmTeeMode(next ? 'required' : 'optional')}
+              />}
+            />
+            <div className={styles.verificationStatus} role="status">
+              {tee.status.applying ? 'Applying… routing is paused while the buyer restarts.'
+                : tee.status.snapshot ? `Buyer policy: ${tee.status.snapshot.mode === 'required' ? 'seller-node verification required' : 'seller-node verification optional'}.`
+                : 'No active verification session. Saved settings apply when the buyer starts.'}
+              {tee.status.snapshot && tee.status.snapshot.mode !== tee.status.configuredMode && <span>Saved and active policies differ. Restart the owning buyer; CLI flags may override the saved setting.</span>}
+              {tee.status.snapshot && !tee.status.snapshot.verificationEnabled && <span>Verification is disabled by the buyer CLI.</span>}
+              {tee.status.snapshot?.mode === 'optional' && tee.status.snapshot.requireVerifier && <span>The CLI requires its selected verifier, not necessarily the seller-node TEE claims.</span>}
+              {tee.status.snapshot?.routingPaused && <span>Routing is paused. Reapply the setting to restart safely.</span>}
+              {(tee.status.error || tee.error) && <span role="alert">{tee.status.error || tee.error}</span>}
+              {tee.status.error && <button type="button" onClick={() => setConfirmTeeMode(tee.status.configuredMode)}>Reapply saved setting</button>}
+            </div>
+            {confirmTeeMode && <div className={styles.verificationStatus} role="group" aria-label="Confirm verification policy change">
+              <span>{confirmTeeMode === 'required' ? 'Require verification for every seller, including pins?' : 'Allow routing when seller-node verification is missing or fails?'}</span>
+              <span>The buyer will restart and active requests will be interrupted. Connected apps keep their proxy settings. If restart fails, routing stays disconnected.</span>
+              <div>
+                <button type="button" onClick={() => { const mode = confirmTeeMode; setConfirmTeeMode(null); void tee.setMode(mode); }}>Apply setting</button>
+                <button type="button" onClick={() => setConfirmTeeMode(null)}>Cancel</button>
+              </div>
+            </div>}
+          </VprCard>
+        </div>
 
         <div className={styles.settings}>
           <VprSettingRow

@@ -337,6 +337,10 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
+  if (config.buyer.teeVerification !== undefined
+    && !['optional', 'required'].includes(config.buyer.teeVerification?.mode)) {
+    errors.push('buyer.teeVerification.mode must be optional or required');
+  }
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

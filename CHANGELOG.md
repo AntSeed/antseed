@@ -8,6 +8,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop VPR: automatically check TEE-advertising sellers and show a neutral TEE badge on model-detail seller rows after successful seller-node verification. Cache successful badge results for up to 24 hours, invalidate them on newer failures, capability changes, or buyer restart, and keep routing evidence limited to five minutes. The badge does not verify individual inference responses.
+- Desktop VPR: add session-retained, browse-only TEE seller filters to Models and model details, with matching-offer pricing and seller counts. Browsing does not change seller pins or automatic routing, and the Models overview shows no TEE badges.
+- Desktop/CLI: expose authenticated local seller-node verification status and a separate optional required-verification routing setting, with guarded buyer restarts and no silent fallback when required verification fails.
+
 - Contracts: migrated the historical wash-trading registry to schema 1 direct seller proofs. Deployments now pin one `sellerProgramVKey`; journals no longer carry closed-loop or reciprocal child vkeys, while receipt/transaction/storage proof verification, settlement deduplication, evidence digests, and Chainlink `BlockhashStore` authentication remain enforced inside the direct seller proof flow.
 - Contracts: added a historical SP1 wash-trading registry that accepts authenticated seller proofs independently, records each seller's strongest proven wash-volume lower bound, and does not implement historical claims or ongoing epoch penalties.
 - Contracts: the wash-trading registry now pins a concrete `SP1VerifierGroth16` deployment by `VERIFIER_HASH()` (constructor argument `expectedVerifierHash`, exposed as `verifierHash`) and rejects the routable `SP1VerifierGateway`; it authenticates block references directly against Chainlink's public `BlockhashStore` on Base and maps its "blockhash not found" revert to `NonCanonicalBlock`. The deploy script defaults to and, on chain ID 8453, requires the Chainlink store.

@@ -210,6 +210,7 @@ export interface BuyerCLIConfig {
   autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+  teeVerification?: { mode: 'optional' | 'required' };
 }
 
 /**

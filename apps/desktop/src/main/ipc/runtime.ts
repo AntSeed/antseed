@@ -8,6 +8,9 @@ import type { LogEvent } from '../runtime/log-parser.js';
 import type { ProcessManager, RuntimeProcessState } from '../runtime/process-manager.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { isCompatibleSharedBuyer, refreshSharedBuyerAttachment } from '../runtime/shared-buyer.js';
+import { resolveConnectDataDir } from '../runtime/process-manager.js';
+import { buyerPortListening, requestTeeSnapshot, TeeSettings } from '../runtime/tee-verification.js';
+import type { TeeMode } from '@antseed/node/tee-status';
 
 /** Shape every dashboard-style handler answers with. */
 export type ApiResult = {
@@ -104,6 +107,32 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
     processManager,
     requestBuyerPeerRefresh,
   } = deps;
+
+  const teeSettings = new TeeSettings({
+    readMode: async () => {
+      const config = await readConfig(ACTIVE_CONFIG_PATH);
+      const buyer = config['buyer'] as { teeVerification?: { mode?: string } } | undefined;
+      return buyer?.teeVerification?.mode === 'required' ? 'required' : 'optional';
+    },
+    writeMode: async (mode) => { await mergeConfig({ buyer: { teeVerification: { mode } } }, ACTIVE_CONFIG_PATH); },
+    snapshot: async (peerId) => requestTeeSnapshot(resolveConnectDataDir(), await resolveBuyerProxyPort(), peerId),
+    resume: async (sessionId) => requestTeeSnapshot(resolveConnectDataDir(), await resolveBuyerProxyPort(), undefined, sessionId),
+    listening: async () => buyerPortListening(await resolveBuyerProxyPort()),
+    blocked: () => processManager.isConnectRestartBlocked(),
+    running: () => processManager.getState().some((state) => state.mode === 'connect' && state.running),
+    shared: () => processManager.isAttached('connect') || isMultiInstanceDevelopment(),
+    restart: async (prepare, validate) => {
+      await ensureSecureIdentity();
+      await processManager.restartConnect({
+        mode: 'connect', router: 'local', configPath: ACTIVE_CONFIG_PATH,
+        ...(isDesktopDebugEnabled() ? { verbose: true } : {}),
+        env: { ...secureIdentityEnv(), ANTSEED_BUYER_VERIFICATION_PAUSED: '1', ...(isDesktopDebugEnabled() ? { ANTSEED_DEBUG: '1' } : {}) },
+      }, prepare, validate);
+    },
+  });
+  ipcMain.handle('tee:status', () => teeSettings.status());
+  ipcMain.handle('tee:check', (_event, peerId: string) => teeSettings.check(peerId));
+  ipcMain.handle('tee:set-mode', (_event, mode: TeeMode) => teeSettings.setMode(mode));
 
   ipcMain.handle('runtime:get-state', async () => {
     if (isMultiInstanceDevelopment() && processManager.isAttached('connect')) {
@@ -336,6 +365,13 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
         return { ok: false, data: null, error: 'No valid config keys provided', status: null };
       }
       try {
+        const buyer = safeConfig['buyer'] as Record<string, unknown> | undefined;
+        const existing = await readConfig(ACTIVE_CONFIG_PATH);
+        const currentBuyer = existing['buyer'] as Record<string, unknown> | undefined;
+        if (buyer?.['teeVerification'] !== undefined
+          && JSON.stringify(buyer['teeVerification']) !== JSON.stringify(currentBuyer?.['teeVerification'])) {
+          throw new Error('Change seller-node verification through Preferences so the buyer restarts safely');
+        }
         const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
         // Drop cached clients and the RPC backoff so the next read uses the
         // new chain config instead of answers from the old chain.

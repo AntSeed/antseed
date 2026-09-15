@@ -467,6 +467,7 @@ function mergeBuyerConfig(
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
+      ...(defaults.teeVerification ? { teeVerification: { ...defaults.teeVerification } } : {}),
     };
   }
   return {
@@ -502,7 +503,16 @@ function mergeBuyerConfig(
       'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
+    ...normalizeTeeVerification(value['teeVerification']),
   };
+}
+
+function normalizeTeeVerification(value: unknown): { teeVerification?: { mode: 'optional' | 'required' } } {
+  if (value === undefined) return {};
+  if (!isRecord(value) || (value['mode'] !== 'optional' && value['mode'] !== 'required')) {
+    throw new Error('buyer.teeVerification.mode must be optional or required');
+  }
+  return { teeVerification: { mode: value['mode'] } };
 }
 
 function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path: string): boolean {

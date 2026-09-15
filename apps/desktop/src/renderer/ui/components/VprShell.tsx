@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import type { BadgeTone } from '../../core/state';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
+import { useTeeBackgroundVerification } from '../hooks/useTeeVerification';
 import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCredits } from '../../core/format';
 import { shouldNotifyAppsOnboarding } from '../../modules/app/apps-onboarding';
@@ -57,6 +58,7 @@ function networkStatusClassName(networkHealth: string): string {
 }
 
 export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
+  useTeeBackgroundVerification();
   const snap = useUiSelector((state) => ({
     headlineBalanceUsdc: selectHeadlineBalanceUsdc(state),
     connectBadgeLabel: state.connectBadge.label,
