@@ -1,17 +1,11 @@
 /**
- * Fun (fun.xyz) checkout popup windows.
+ * Checkout popup windows (the hosted AntSeed Pay page and any sized popups
+ * it opens — card processors, sign-ins).
  *
- * The Fun SDK opens its external payment flows — Meld/Swapped card pages,
- * brokerage sign-ins ("continue with Google", Coinbase, …) — via window.open
- * with explicit popup dimensions, then writes a loading spinner into the
- * about:blank document before pointing it at the real URL. Punting those to
- * the system browser (the old blanket deny + shell.openExternal) breaks that
- * dance and leaves an orphaned browser tab the app can never close.
- *
- * Instead, sized popups open as plain Electron child windows: no browser
- * chrome (the `--app` look), window.opener intact for the OAuth postMessage
- * flows, and the app owns the handle — the deposit watcher closes every
- * checkout window the moment the bought USDC lands at the hot wallet.
+ * Sized popups open as plain Electron child windows: no browser chrome (the
+ * `--app` look), window.opener intact for OAuth postMessage flows, and the
+ * app owns the handle — the deposit watcher closes every checkout window the
+ * moment the bought USDC lands at the hot wallet.
  *
  * Plain `_blank` links (terms, explorers) still go to the system browser.
  */
