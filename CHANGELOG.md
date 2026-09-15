@@ -10,9 +10,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
+- Dashboard/CLI: pool stakeability is verified on chain (ERC-8004 ownerOf plus the seller registry, with the legacy USDC-staking fallback) instead of trusting the indexer's `registered` flag, so all registered sellers — including every legacy staker — appear as stakeable; staking, moving, and restaking into them work.
 
 ### Added
 
+- Dashboard/CLI: the Pools table, pool drawer, and stake pool picker now distinguish registered pools that have power this epoch (staking earns rewards from your first active epoch) from registered pools without power (stakes are accepted now and take effect at the next epoch): a Status column and drawer pill in the dashboard, status labels plus a next-epoch hint in the stake form, `(no power yet)` marks in `antseed ants pools`, an activation note in `ants pool`, and the matching guide documentation.
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
 - Contracts: standalone Base mainnet commands to deploy, verify, and wire the legacy rewards registry and switch the staking pointer ahead of cutover, then fund legacy DIEM pots and flip the emissions pointer with Channels pause/unpause handled manually.

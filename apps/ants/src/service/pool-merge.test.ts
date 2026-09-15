@@ -47,4 +47,32 @@ describe('mergePools', () => {
     });
     expect(rows.map((row) => row.agentId)).toEqual([2, 1, 4, 3]);
   });
+
+  it('prefers chain-verified stakeability over the indexer flag, including legacy-bound sellers and unindexed agents', () => {
+    const rows = mergePools({
+      indexed: { ...indexed, pools: [pool({ agentId: 11, seller: '0xbbb', registered: false })] },
+      explorer: { byAddress: new Map(), byAgent: new Map([[12, '0xccc']]) },
+      sellerEpochs: new Map(),
+      epochs: [22],
+      own: new Map(),
+      // 11: indexer says not registered, but the chain resolves its owner
+      // through the legacy USDC staking fallback. 12: unindexed explorer
+      // seller whose agent is bound.
+      stakeable: new Map([[11, true], [12, true]]),
+    });
+    const byId = new Map(rows.map((row) => [row.agentId, row]));
+    expect(byId.get(11)?.stakeable).toBe(true);
+    expect(byId.get(12)?.stakeable).toBe(true);
+  });
+
+  it('falls back to the indexer flag when the chain verification is missing', () => {
+    const rows = mergePools({
+      indexed: { ...indexed, pools: [pool({ agentId: 11, registered: true }), pool({ agentId: 12, registered: false })] },
+      explorer: { byAddress: new Map(), byAgent: new Map() }, sellerEpochs: new Map(), epochs: [22], own: new Map(),
+      stakeable: new Map([[12, true]]),
+    });
+    const byId = new Map(rows.map((row) => [row.agentId, row]));
+    expect(byId.get(11)?.stakeable).toBe(true);
+    expect(byId.get(12)?.stakeable).toBe(true);
+  });
 });

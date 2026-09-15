@@ -1,3 +1,4 @@
+import { ZeroAddress } from 'ethers';
 import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments';
 import type { AntsContext } from './context.js';
 import type { PositionView, PositionsView, StakeRequest, MoveRequest, SplitRequest, MergeRequest, ExtendRequest, MaxLockRequest, WithdrawRequest } from '../api-types.js';
@@ -125,12 +126,21 @@ async function requireNoPendingChange(ctx: AntsContext, list: SellerPoolPosition
   if (pending.length > 0) throw new Error(`Position(s) ${pending.join(', ')} changed this epoch; try again after the next epoch boundary.`);
 }
 
-async function requireStakeableAgent(ctx: AntsContext, agentId: number): Promise<void> {
+/**
+ * The gate `AntseedSellerPools.stake` enforces: the agent's ERC-8004 owner
+ * must resolve to the agent in the seller registry — via the direct
+ * `agentSeller` binding or the registry's fallback to the legacy USDC staking
+ * contract. Checking `agentSeller` alone would reject legacy-bound sellers.
+ */
+export async function requireStakeableAgent(ctx: AntsContext, agentId: number): Promise<void> {
   const registry = ctx.sellerRegistry();
   if (!registry) return;
-  const seller = await registry.agentSeller(agentId).catch(() => null);
-  if (!seller || /^0x0{40}$/.test(seller)) {
-    throw new Error(`Agent ${agentId} has no seller bound in the seller registry, so it has no stakeable pool. The seller must run \`antseed seller register\` first.`);
+  const identity = ctx.identity();
+  const owner = identity ? await identity.getAgentWallet(agentId).catch(() => null) : null;
+  const seller = owner && owner !== ZeroAddress ? owner : await registry.agentSeller(agentId).catch(() => null);
+  const resolved = seller && seller !== ZeroAddress ? await registry.getAgentId(seller).catch(() => 0) : 0;
+  if (resolved !== agentId) {
+    throw new Error(`Agent ${agentId} is not stakeable: the seller registry does not resolve the agent's owner to it. The owner must bind it with \`antseed seller register\` (sellers staked in the legacy USDC contract are bound automatically while they own the agent).`);
   }
 }
 
