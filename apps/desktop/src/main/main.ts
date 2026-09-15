@@ -805,7 +805,7 @@ app.whenReady().then(async () => {
       // padding the user-visible gap before the relaunch.
       'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
       // The install gap has no UI at all — reassure via a system notification.
-      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "AntSeed VPR"\' >/dev/null 2>&1 || true',
+      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "Antseed AI VPN"\' >/dev/null 2>&1 || true',
       'j=0; while [ "$j" -lt 3 ]; do',
       '  sleep 2',
       '  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',

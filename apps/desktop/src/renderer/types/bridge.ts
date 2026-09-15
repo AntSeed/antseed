@@ -302,7 +302,7 @@ export type DesktopBridge = {
   /**
    * OpenRouter reference/retail prices keyed by normalized model id/name
    * (USD per million tokens). Used to render the struck-through baseline on
-   * the VPR Home "Popular" list. Empty map when OpenRouter is unreachable.
+   * the AI VPN Home "Popular" list. Empty map when OpenRouter is unreachable.
    */
   getOpenRouterReferencePrices?: () => Promise<
     Record<string, { input: number | null; output: number | null }>

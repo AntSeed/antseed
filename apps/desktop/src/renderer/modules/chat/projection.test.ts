@@ -35,7 +35,7 @@ const autoSelection: VprRouteSelection = {
   peerId: null,
 };
 
-test('returns null when VPR selection has no model', () => {
+test('returns null when AI VPN selection has no model', () => {
   assert.equal(findChatOptionForVprSelection([option()], { model: null, mode: 'auto', peerId: null }), null);
 });
 

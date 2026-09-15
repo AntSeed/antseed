@@ -1,6 +1,6 @@
 appId: com.antseed.desktop
-productName: AntSeed VPR
-copyright: Copyright © 2025-2026 AntSeed
+productName: Antseed AI VPN
+copyright: Copyright © 2025-2026 Antseed
 electronVersion: 31.7.7
 npmRebuild: false
 
@@ -183,7 +183,7 @@ linux:
   icon: assets/antseed-dock-icon.png
   category: Development
   # Deterministic names (default deb naming uses the package name + amd64):
-  # AntSeed-VPR-<version>-<x64|arm64>.<AppImage|deb>. The website download
+  # Antseed-AI VPN-<version>-<x64|arm64>.<AppImage|deb>. The website download
   # matcher and the alpha mirror both rely on this shape.
   artifactName: "${productName}-${version}-${arch}.${ext}"
   # NOTE: arch is intentionally NOT pinned here (same reasoning as mac above).

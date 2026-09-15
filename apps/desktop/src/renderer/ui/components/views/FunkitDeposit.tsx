@@ -130,12 +130,12 @@ export default function FunkitDeposit(props: Props) {
   const mode = useAppThemeMode();
 
   const funkitConfig = useMemo<FunkitConfig>(() => ({
-    appName: 'AntSeed',
+    appName: 'Antseed',
     apiKey: props.apiKey,
     source: 'antseed vpr',
     // Fun keys checkout state (payment methods, saved cards) to this id —
     // without it the method list comes back empty. The buyer hot wallet is
-    // the user's AntSeed identity, and it's also the delivery target.
+    // the user's Antseed identity, and it's also the delivery target.
     externalUserId: props.recipient,
     uiCustomizations: {
       sourceChangeScreen: {

@@ -1,10 +1,10 @@
-# Join AntSeed as a Buyer (Client)
+# Join Antseed as a Buyer (Client)
 
-Help the user set up an AntSeed buyer node to consume AI services from the peer-to-peer network. Walk them through installation, funding, and connecting their existing tools (Aider, Continue.dev, Cursor, or any OpenAI-compatible client) through the local proxy.
+Help the user set up Antseed buyer node to consume AI services from the peer-to-peer network. Walk them through installation, funding, and connecting their existing tools (Aider, Continue.dev, Cursor, or any OpenAI-compatible client) through the local proxy.
 
 ## Overview
 
-A **buyer** (client) routes AI requests through the AntSeed network instead of directly to an API provider. A local HTTP proxy intercepts requests and forwards them to the best available peer. The buyer pays per-token in USDC via on-chain payment channels. From the tool's perspective, it's just hitting a different base URL.
+A **buyer** (client) routes AI requests through the Antseed network instead of directly to an API provider. A local HTTP proxy intercepts requests and forwards them to the best available peer. The buyer pays per-token in USDC via on-chain payment channels. From the tool's perspective, it's just hitting a different base URL.
 
 **Requirements:**
 - Node.js 20+
@@ -72,7 +72,7 @@ Supported chains:
 
 ## Step 5: Fund your account when you need payments
 
-The buyer needs USDC deposited into the AntSeed deposits contract to pay for requests.
+The buyer needs USDC deposited into the Antseed deposits contract to pay for requests.
 
 ```bash
 # Check wallet and deposit balance
@@ -109,7 +109,7 @@ antseed config buyer set routingPreferences.maxInputUsdPerMillion 25
 
 ```
 
-These settings are optional. Skip them if the defaults are fine. The desktop VPR
+These settings are optional. Skip them if the defaults are fine. The desktop AI VPN
 writes the same `buyer.routingPreferences`, and a running proxy hot-reloads valid
 changes from `config.json`.
 
@@ -152,7 +152,7 @@ If you already put `proxyPort` in `config.json`, you can still just run `antseed
 
 ## Step 9: Point your tools at the proxy
 
-The proxy is API-compatible with the OpenAI chat completions format. Set environment variables so your tools route through AntSeed:
+The proxy is API-compatible with the OpenAI chat completions format. Set environment variables so your tools route through Antseed:
 
 ### Any OpenAI-compatible tool
 
