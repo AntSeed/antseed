@@ -7,8 +7,10 @@ import { normalizeDiscoverRow } from '../../../modules/catalog/discover-rows';
 import { projectRowsToVprModelCatalog } from '../../../modules/catalog/model-catalog';
 import { teeBrowseCache } from '../../../modules/catalog/tee-browse';
 import { VprModelRowList } from '../vpr/VprModelRows';
+import { PublicEndpointModalProvider } from '../tunnels/PublicEndpointModal';
 import { VprExploreView } from './VprExploreView';
 import { VprModelView } from './VprModelView';
+import { VprPreferencesView } from './VprPreferencesView';
 
 const { action } = vi.hoisted(() => ({ action: vi.fn() }));
 vi.mock('../../hooks/useActions', () => ({ useActions: () => new Proxy({}, { get: () => action }) }));
@@ -16,6 +18,7 @@ vi.mock('../../hooks/useActions', () => ({ useActions: () => new Proxy({}, { get
 afterEach(() => {
   teeBrowseCache.filter = 'all';
   action.mockClear();
+  vi.unstubAllGlobals();
 });
 
 function initialize() {
@@ -33,14 +36,10 @@ function initialize() {
   return state;
 }
 
-test('TEE model badges are opt-in and do not appear in Home/chat row lists', () => {
+test('TEE availability badges do not appear in Home/chat row lists', () => {
   const state = initialize();
   const props = { entries: state.vprModelCatalog, onSelect: action, emptyLabel: 'Empty' };
   assert.doesNotMatch(renderToStaticMarkup(<VprModelRowList {...props} />), /TEE available/);
-  const markup = renderToStaticMarkup(<VprModelRowList {...props} showTeeAvailability />);
-  assert.match(markup, /TEE available · 1 seller/);
-  assert.match(markup, /tabindex="0"/);
-  assert.match(markup, /not a verification verdict/);
 });
 
 test('Models overview omits TEE availability badges with either seller filter', () => {
@@ -53,6 +52,17 @@ test('Models overview omits TEE availability badges with either seller filter', 
     assert.doesNotMatch(markup, /TEE available/);
     assert.match(markup, filter === 'tee' ? /automatic routing may use other sellers/ : /All sellers/);
   }
+  assert.deepEqual(state.vprRouteSelection, selection);
+  assert.equal(action.mock.calls.length, 0);
+});
+
+test('Preferences does not expose a TEE routing setting', () => {
+  vi.stubGlobal('document', { body: { classList: { contains: () => false } } });
+  const state = initialize();
+  const selection = structuredClone(state.vprRouteSelection);
+  const markup = renderToStaticMarkup(<PublicEndpointModalProvider><VprPreferencesView /></PublicEndpointModalProvider>);
+  assert.match(markup, /Auto select seller/);
+  assert.doesNotMatch(markup, /Require.*verification|Seller-node verification|Reapply saved setting|routing is paused/);
   assert.deepEqual(state.vprRouteSelection, selection);
   assert.equal(action.mock.calls.length, 0);
 });

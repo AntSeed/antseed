@@ -36,7 +36,7 @@ export class TeeControl {
   }
 
   async handle(req: IncomingMessage, res: ServerResponse, method: string, path: string,
-    snapshot: () => TeeSnapshot, check: (peerId: string) => Promise<void>, resume?: () => void): Promise<void> {
+    snapshot: () => TeeSnapshot, check: (peerId: string) => Promise<void>): Promise<void> {
     const reply = (status: number, body: unknown): void => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify(body))
@@ -52,11 +52,6 @@ export class TeeControl {
       return
     }
     if (method === 'GET' && path === '/_antseed/verification') {
-      reply(200, snapshot())
-      return
-    }
-    if (method === 'POST' && path === '/_antseed/verification/resume' && resume) {
-      resume()
       reply(200, snapshot())
       return
     }

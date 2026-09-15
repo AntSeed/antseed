@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 async function setup() {
-  let status: DesktopTeeStatus = { configuredMode: 'optional', snapshot: { sessionId: 'buyer', mode: 'optional', verificationEnabled: true, evidence: [] } };
+  let status: DesktopTeeStatus = { snapshot: { sessionId: 'buyer', verificationEnabled: true, evidence: [] } };
   const getTeeStatus = vi.fn(async () => status);
   const checkSellerTee = vi.fn(async (peerId: string): Promise<DesktopTeeStatus> => {
     status = { ...status, snapshot: { ...status.snapshot!, evidence: [...status.snapshot!.evidence.filter((entry) => entry.peerId !== peerId), {
@@ -27,17 +27,16 @@ async function setup() {
     }] } };
     return status;
   });
-  const setTeeMode = vi.fn();
-  vi.stubGlobal('window', { antseedDesktop: { getTeeStatus, checkSellerTee, setTeeMode } });
+  vi.stubGlobal('window', { antseedDesktop: { getTeeStatus, checkSellerTee } });
   const { teeVerificationStore: store } = await import('./useTeeVerification');
   dispose = store.subscribe(() => {});
   store.updatePeers([peer]);
-  return { store, getTeeStatus, checkSellerTee, setTeeMode };
+  return { store, getTeeStatus, checkSellerTee };
 }
 
 describe('background verification lifecycle', () => {
   it('checks at startup and on new discovery without manual actions or routing writes', async () => {
-    const { store, checkSellerTee, setTeeMode } = await setup();
+    const { store, checkSellerTee } = await setup();
     await vi.advanceTimersByTimeAsync(0);
     expect(checkSellerTee).toHaveBeenCalledTimes(1);
     expect(checkSellerTee).toHaveBeenCalledWith(peer.peerId);
@@ -49,8 +48,6 @@ describe('background verification lifecycle', () => {
     anotherSubscriber();
     await vi.advanceTimersByTimeAsync(600_000);
     expect(checkSellerTee).toHaveBeenCalledTimes(2);
-    expect(setTeeMode).not.toHaveBeenCalled();
-    expect(store.getSnapshot().status.configuredMode).toBe('optional');
   });
 
   it('serializes checks and ignores a late result after teardown', async () => {
@@ -63,7 +60,7 @@ describe('background verification lifecycle', () => {
     expect(store.getSnapshot().checking).toEqual([peer.peerId]);
     dispose?.();
     dispose = undefined;
-    finish({ configuredMode: 'required', snapshot: { sessionId: 'buyer', mode: 'required', verificationEnabled: true, evidence: [] } });
+    finish({ snapshot: { sessionId: 'buyer', verificationEnabled: true, evidence: [] } });
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getSnapshot().status.snapshot).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
@@ -87,7 +84,7 @@ describe('background verification lifecycle', () => {
     const { store, checkSellerTee, getTeeStatus } = await setup();
     let finishCheck!: (status: DesktopTeeStatus) => void;
     let finishPoll!: (status: DesktopTeeStatus) => void;
-    const stale: DesktopTeeStatus = { configuredMode: 'optional', snapshot: { sessionId: 'buyer', mode: 'optional', verificationEnabled: true, evidence: [] } };
+    const stale: DesktopTeeStatus = { snapshot: { sessionId: 'buyer', verificationEnabled: true, evidence: [] } };
     checkSellerTee.mockImplementation(() => new Promise((resolve) => { finishCheck = resolve; }));
     await vi.advanceTimersByTimeAsync(0);
     getTeeStatus.mockImplementation(() => new Promise((resolve) => { finishPoll = resolve; }));

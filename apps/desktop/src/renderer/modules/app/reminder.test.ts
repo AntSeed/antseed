@@ -39,7 +39,6 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     serviceId: 'gpt-5.6-sol',
     label: 'GPT 5.6 Sol',
     peerCount: 1,
-    teeSellerCount: 0,
     categories: [],
     minInputUsdPerMillion: 5,
     maxInputUsdPerMillion: 5,

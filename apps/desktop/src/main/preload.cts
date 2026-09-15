@@ -514,9 +514,6 @@ const api = {
   checkSellerTee(peerId: string): Promise<unknown> {
     return ipcRenderer.invoke('tee:check', peerId);
   },
-  setTeeMode(mode: 'optional' | 'required'): Promise<unknown> {
-    return ipcRenderer.invoke('tee:set-mode', mode);
-  },
   getTelemetryStatus(): Promise<TelemetryStatus> {
     return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
   },

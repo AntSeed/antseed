@@ -86,7 +86,6 @@ test('desktop Auto replaces a stale coding-only selection with an unrestricted r
     serviceId: 'claude-fable-5',
     label: 'Claude Fable 5',
     peerCount: 2,
-    teeSellerCount: 0,
     categories: [],
     kind: 'text',
     protocols: ['openai-chat-completions'],

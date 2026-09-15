@@ -3,7 +3,7 @@ import { TEE_BADGE_MAX_AGE_MS, TEE_MAX_AGE_MS, type TeeEvidence, type TeeSnapsho
 import { TeeAutoVerification } from './tee-auto-verification';
 
 const peer = { peerId: 'seller', advertisedVerifierIds: ['antseed-verifier'] };
-const snapshot: TeeSnapshot = { sessionId: 'buyer', mode: 'optional', verificationEnabled: true, evidence: [] };
+const snapshot: TeeSnapshot = { sessionId: 'buyer', verificationEnabled: true, evidence: [] };
 const verdict: TeeEvidence = { peerId: 'seller', verifierId: 'antseed-verifier', fingerprint: 'caps', checkedAt: 0, expiresAt: 300_000, sellerNodeVerified: true, claims: [] };
 
 describe('automatic TEE checks', () => {
@@ -128,11 +128,10 @@ describe('automatic TEE checks', () => {
     expect(automatic.current(restored)).toBe(false);
   });
 
-  it('respects disabled verification, paused routing, existing in-flight checks, and bounded tracking', () => {
+  it('respects disabled verification, existing in-flight checks, and bounded tracking', () => {
     const automatic = new TeeAutoVerification();
     automatic.update([peer]);
     expect(automatic.next({ ...snapshot, verificationEnabled: false }, new Set(), 0)).toBeUndefined();
-    expect(automatic.next({ ...snapshot, routingPaused: true }, new Set(), 0)).toBeUndefined();
     expect(automatic.next({ ...snapshot, evidence: [{ ...verdict, checking: true }] }, new Set(), 0)).toBeUndefined();
     automatic.update(Array.from({ length: 600 }, (_, index) => ({ ...peer, peerId: String(index) })));
     const selected: string[] = [];

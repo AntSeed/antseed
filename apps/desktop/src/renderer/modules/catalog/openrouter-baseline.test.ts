@@ -9,7 +9,6 @@ function fableEntry(): VprModelCatalogEntry {
     serviceId: 'fable-5-coding-only',
     label: 'Fable 5',
     peerCount: 11,
-    teeSellerCount: 0,
     categories: [],
     kind: 'text',
     protocols: ['anthropic-messages', 'openai-chat-completions'],

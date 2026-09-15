@@ -30,7 +30,6 @@ test('TEE browsing counts distinct sellers and intersects pricing with matching 
   const pinBefore = structuredClone(pin);
   const filtered = projectTeeBrowseCatalog(catalog, rows, preferences, 'tee');
   assert.equal(filtered.length, 1);
-  assert.equal(filtered[0].teeSellerCount, 1);
   assert.equal(filtered[0].peerCount, 1);
   assert.equal(filtered[0].minInputUsdPerMillion, 2);
   assert.equal(filtered[0].minOutputUsdPerMillion, 4);
@@ -48,7 +47,6 @@ test('TEE browsing counts distinct sellers and intersects pricing with matching 
   assert.equal(chooseBestVprRoute(rows, preferences), routeBefore);
   const withdrawn = rows.map((row) => ({ ...row, advertisedVerifierIds: [] }));
   assert.deepEqual(projectTeeBrowseCatalog(catalog, withdrawn, preferences, 'tee'), []);
-  assert.equal(projectRowsToVprModelCatalog(withdrawn)[0].teeSellerCount, 0);
 });
 
 test('TEE browsing keeps existing trust-based pricing eligibility and fallback', () => {

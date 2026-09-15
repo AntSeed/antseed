@@ -266,7 +266,6 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
 /** Min gap between background peer refreshes triggered by model_not_found responses. */
 const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
-/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
 
 /**
  * Statuses that prove the peer is alive and serving. Any response short of a
@@ -775,7 +774,6 @@ export class BuyerProxy {
   private readonly _verifier?: VerifierPolicy
   private readonly _teeVerification: TeeVerification
   private readonly _teeControl: TeeControl
-  private _verificationPaused = process.env['ANTSEED_BUYER_VERIFICATION_PAUSED'] === '1'
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _routingPreferences: ModelRoutingPreferences | null
@@ -1007,7 +1005,6 @@ export class BuyerProxy {
   }
 
   async stop(): Promise<void> {
-    this._verificationPaused = true
     this._teeVerification.close()
     await this._teeControl.close()
     if (this._stateWatchDebounce) {
@@ -1572,7 +1569,7 @@ export class BuyerProxy {
   ): Promise<void> {
     if (path.startsWith('/_antseed/verification')) {
       await this._teeControl.handle(req, res, method, path,
-        () => ({ ...this._teeVerification.snapshot(this._cachedPeers), routingPaused: this._verificationPaused }),
+        () => this._teeVerification.snapshot(this._cachedPeers),
         async (peerId) => {
           const peer = this._cachedPeers.find((candidate) => candidate.peerId === peerId)
           if (!peer || !parseVerifierCapabilities(peer.capabilities).supported.includes(TEE_VERIFIER_ID)) {
@@ -1583,8 +1580,8 @@ export class BuyerProxy {
           const outcome = await this._teeVerification.verifyForDisplay(peer,
             () => runVerifier({ require: false, prefer: [TEE_VERIFIER_ID] }, peer.peerId, peer.capabilities,
               (chosen) => makeVerifierReach(this._node, peer, chosen, signal), signal))
-          if (outcome.reason === 'Verification busy; retry shortly') throw new Error(outcome.reason)
-        }, () => { this._verificationPaused = false })
+          if (outcome.code === 'busy') throw new Error(outcome.reason)
+        })
       return
     }
     const origin = req.headers.origin ?? '';
@@ -2140,11 +2137,6 @@ export class BuyerProxy {
     // Control-plane endpoints — handle before collecting proxy body
     if (path.startsWith('/_antseed/')) {
       return this._handleControlPlane(req, res, method, path)
-    }
-    if (this._verificationPaused) {
-      res.writeHead(503, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { code: 'verification_policy_applying', message: 'Routing paused until verification settings are confirmed' } }))
-      return
     }
 
     // Only proxy known API paths — reject everything else with 404
@@ -2774,17 +2766,17 @@ export class BuyerProxy {
         makeVerifierReach(this._node, selectedPeer, chosenId, clientAbortController.signal)
       const outcome = await this._verifyPeer(selectedPeer, makeReach, clientAbortController.signal)
       const short = selectedPeer.peerId.slice(0, 12)
-      if (outcome.verified && (!this._verifier.requireSellerNode || outcome.sellerNodeVerified)) {
+      if (outcome.verified) {
         log(`Verified ${short}... via ${outcome.sdk}`)
       } else if (outcome.sdk || outcome.reason) {
         log(`Verification ${outcome.sdk ? `(${outcome.sdk}) ` : ''}did not pass for ${short}...: ${outcome.reason ?? 'failed'}${outcome.ok ? ' (optional — routing anyway)' : ''}`)
       }
       if (!outcome.ok) {
-        res.writeHead(502, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: {
-          code: 'seller_verification_required',
-          message: `Pinned peer ${short}... failed required verification (${outcome.reason ?? 'failed'}). Your pin has not changed.`,
-        } }))
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(
+          `Pinned peer ${short}... failed required verification (${outcome.reason ?? 'failed'}). `
+          + 'Pick a different peer, or run without --require-verifier.',
+        )
         return
       }
     }
@@ -2920,20 +2912,6 @@ export class BuyerProxy {
     | { done: true }
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
   > {
-    if (this._verificationPaused) {
-      return { done: false, statusCode: 503, responseBody: Buffer.from('Routing paused'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: 'Routing paused' }
-    }
-    if (this._verifier?.require) {
-      const outcome = await this._verifyPeer(selectedPeer,
-        (chosen) => makeVerifierReach(this._node, selectedPeer, chosen, requestSignal), requestSignal)
-      if (!outcome.ok) {
-        return {
-          done: false, statusCode: 502,
-          responseBody: Buffer.from(JSON.stringify({ error: { code: 'seller_verification_required', message: outcome.reason ?? 'Seller verification required' } })),
-          responseHeaders: { 'content-type': 'application/json' }, errorMessage: outcome.reason ?? 'Seller verification required',
-        }
-      }
-    }
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
       ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
 

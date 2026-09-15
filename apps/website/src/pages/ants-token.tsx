@@ -1,4 +1,4 @@
-import {useState, useEffect, useRef} from 'react';
+import {useState, useEffect, useRef, type JSX} from 'react';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';

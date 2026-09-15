@@ -454,7 +454,7 @@ function SellerRow({ route, active, auto, onClick, tee }: {
         evidence={tee.status.snapshot?.evidence.find((entry) => entry.peerId === route.peerId)}
         now={tee.now}
         checking={tee.checking.includes(route.peerId)}
-        available={Boolean(tee.status.snapshot?.verificationEnabled) && !tee.status.applying}
+        available={Boolean(tee.status.snapshot?.verificationEnabled)}
         error={tee.peerErrors[route.peerId]}
       />
     }

@@ -9,7 +9,6 @@ function catalogEntry(kind: VprModelCatalogEntry['kind'], serviceId: string): Vp
     serviceId,
     label: serviceId,
     peerCount: 1,
-    teeSellerCount: 0,
     categories: [],
     kind,
     protocols: [kind === 'image' ? 'openai-images' : 'openai-chat-completions'],

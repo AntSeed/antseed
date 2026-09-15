@@ -36,7 +36,6 @@ export function curatedVerifierIds(): Set<string> {
 export interface VerifierPolicy {
   prefer?: string[]
   require: boolean
-  requireSellerNode?: boolean
 }
 
 /**
@@ -48,16 +47,12 @@ export function resolveVerifierPolicy(opts: {
   verifier?: boolean
   verifiers?: string
   requireVerifier?: boolean
-  teeMode?: 'optional' | 'required'
 }): VerifierPolicy | undefined {
   if (opts.verifier === false) {
     if (opts.requireVerifier || opts.verifiers) {
       throw new Error('--no-verifier cannot be combined with --require-verifier or --verifiers')
     }
     return undefined
-  }
-  if (opts.teeMode === 'required' && !opts.verifiers && !opts.requireVerifier) {
-    return { prefer: [TEE_VERIFIER_ID], require: true, requireSellerNode: true }
   }
   return { prefer: normalizeVerifierIds(opts.verifiers ?? ''), require: Boolean(opts.requireVerifier) }
 }
@@ -84,6 +79,7 @@ export interface VerifyOutcome {
   reason?: string
   /** True for install/network/timeout failures — a transient outcome must not be cached. */
   transient?: boolean
+  code?: 'busy'
   sellerNodeVerified?: boolean
   claims?: TeeClaim[]
   version?: string
@@ -170,12 +166,11 @@ export async function runVerifier(
       claim: claim.claim, ok: claim.ok,
       ...(claim.detail ? { detail: claim.detail.slice(0, 1024) } : {}),
     })) : []
-    const verified = result.ok === true && valid
-    const sellerNodeVerified = verified && chosen === TEE_VERIFIER_ID && passedSellerNodeClaims(claims)
-    const passed = policy.requireSellerNode ? sellerNodeVerified : verified
+    const verified = result.ok === true
+    const sellerNodeVerified = verified && valid && chosen === TEE_VERIFIER_ID && passedSellerNodeClaims(claims)
     const failed = claims.filter((claim) => !claim.ok).map((claim) => `${claim.claim}: ${claim.detail ?? 'failed'}`).join('; ')
     return {
-      ok: !policy.require || passed, verified, sellerNodeVerified, sdk: chosen,
+      ok: !policy.require || verified, verified, sellerNodeVerified, sdk: chosen,
       version: sdk.version, claims,
       ...(!sellerNodeVerified ? { reason: (failed || 'Required seller-node claims did not pass').slice(0, 2048) } : {}),
     }
@@ -183,36 +178,4 @@ export async function runVerifier(
     const reason = err instanceof Error ? err.message : String(err)
     return { ok: !policy.require, verified: false, sdk: chosen, reason: `verify error: ${reason}`.slice(0, 2048), transient: true }
   }
-}
-
-export interface CachedVerdict {
-  outcome: VerifyOutcome
-  expires: number
-}
-
-export async function getCachedVerdict(
-  cache: Map<string, CachedVerdict>,
-  key: string,
-  now: number,
-  ttlMs: number,
-  maxEntries: number,
-  run: () => Promise<VerifyOutcome>,
-): Promise<VerifyOutcome> {
-  const cached = cache.get(key)
-  if (cached && cached.expires > now) return cached.outcome
-  if (cached) cache.delete(key)
-
-  const outcome = await run()
-  if (!outcome.transient) {
-    if (cache.size >= maxEntries) {
-      for (const [k, v] of cache) if (v.expires <= now) cache.delete(k)
-      while (cache.size >= maxEntries) {
-        const oldest = cache.keys().next().value
-        if (oldest === undefined) break
-        cache.delete(oldest)
-      }
-    }
-    cache.set(key, { outcome, expires: now + ttlMs })
-  }
-  return outcome
 }
