@@ -23,6 +23,12 @@ import { recordUserAction } from '../../../modules/telemetry/actions';
 // as its own chunk the first time the deposit chooser renders the CTA.
 const FunkitDeposit = lazy(() => import('./FunkitDeposit'));
 
+const PEER_PAY_LOGO = new URL('../../../assets/peer-pay.webp', import.meta.url).href;
+const VENMO_LOGO = new URL('../../../assets/venmo.svg', import.meta.url).href;
+const PAYPAL_LOGO = new URL('../../../assets/paypal.svg', import.meta.url).href;
+const REVOLUT_LOGO = new URL('../../../assets/revolut.png', import.meta.url).href;
+const WISE_LOGO = new URL('../../../assets/wise.png', import.meta.url).href;
+
 /** Build-time Fun API key (empty when the build had none) — vite.config.ts. */
 declare const __FUNKIT_API_KEY__: string;
 
@@ -171,6 +177,16 @@ function BaseMark({ size = 18 }: { size?: number }) {
       <rect x="1" y="10.95" width="15.85" height="2.1" fill="#fff" />
     </svg>
   );
+}
+
+function PeerMark({ size = 20 }: { size?: number }) {
+  return (
+    <img className={styles.peerMark} src={PEER_PAY_LOGO} width={size} height={size} alt="" aria-hidden="true" />
+  );
+}
+
+function PaymentRailMark({ src, label }: { src: string; label: string }) {
+  return <img className={styles.paymentRailMark} src={src} alt={label} title={label} />;
 }
 
 /** Apple logo silhouette (the classic bitten-apple path, 814×1000 box). */
@@ -388,7 +404,7 @@ export function VprDepositView({ onSelectView }: Props) {
     direction: 'forward',
   }));
   const stage = slide.stage;
-  const [amount, setAmount] = useState('10');
+  const [amount, setAmount] = useState('');
   const [watchInfo, setWatchInfo] = useState<DepositWatchInfo | null>(null);
   const [watchError, setWatchError] = useState<string | null>(null);
   const [watchStatus, setWatchStatus] = useState<DepositWatchStatus | null>(null);
@@ -644,6 +660,7 @@ export function VprDepositView({ onSelectView }: Props) {
             type="text"
             inputMode="decimal"
             value={amount}
+            placeholder="Enter amount"
             aria-label="Deposit amount in USD"
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
           />
@@ -661,6 +678,8 @@ export function VprDepositView({ onSelectView }: Props) {
         <VprPage title="Add credits" backFallback="credits">
         <div className={styles.stack}>
           <BalanceSummaryCard values={balanceValues} />
+
+          {amountForm}
 
           <div className={styles.primaryMethods}>
             {/* Primary path — for US users (the pay page's region gating
@@ -729,6 +748,27 @@ export function VprDepositView({ onSelectView }: Props) {
                 </span>
                 <span className={styles.methodArrow} aria-hidden="true">
                   <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+                </span>
+              </button>
+            </div>
+            <div className={styles.methodGroup}>
+              <button
+                type="button"
+                className={styles.methodCta}
+                onClick={() => openCardProvider('peer-pay')}
+              >
+                <span className={styles.methodCtaIcon}>
+                  <PeerMark size={24} />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>Deposit using Peer</span>
+                  <span className={styles.methodCtaCaption}>Bank or payment app · Peer Pay</span>
+                </span>
+                <span className={styles.methodBadges}>
+                  <PaymentRailMark src={VENMO_LOGO} label="Venmo" />
+                  <PaymentRailMark src={PAYPAL_LOGO} label="PayPal" />
+                  <PaymentRailMark src={REVOLUT_LOGO} label="Revolut" />
+                  <PaymentRailMark src={WISE_LOGO} label="Wise" />
                 </span>
               </button>
               <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
