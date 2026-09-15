@@ -33,7 +33,6 @@ const COLUMNS: {title: string; links: FooterLink[]}[] = [
     title: 'Company',
     links: [
       {label: 'About', to: '/docs/lightpaper'},
-      {label: 'Press', to: '/brand'},
       {label: 'Blog', to: '/blog'},
       {label: 'Brand', to: '/brand'},
       {label: 'Contact', href: 'https://t.me/antseed', external: true},
