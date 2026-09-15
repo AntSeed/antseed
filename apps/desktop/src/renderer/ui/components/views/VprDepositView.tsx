@@ -731,7 +731,7 @@ export function VprDepositView({ onSelectView }: Props) {
                   <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
                 </span>
               </button>
-              <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
+              <span className={styles.methodFootnote}>* Deposited to your credits by the Antseed relayer network</span>
             </div>
             {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
           </div>

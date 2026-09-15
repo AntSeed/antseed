@@ -34,7 +34,7 @@ function AntIconPaths({ color = '#1FD87A' }: { color?: string }) {
 }
 
 /**
- * "VPR" letterforms drawn on the same 11-unit cap grid and stroke weight as the
+ * "AI VPN" letterforms drawn on the same 11-unit cap grid and stroke weight as the
  * previous wordmark (cap top y=0.237, baseline y=10.763, ~1.71 stem width).
  * Total advance width: 26.
  */

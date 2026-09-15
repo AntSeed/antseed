@@ -51,7 +51,7 @@ export function checkoutWindowOpenHandler(details: HandlerDetails): WindowOpenRe
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
-        title: 'AntSeed — Secure checkout',
+        title: 'Antseed — Secure checkout',
         autoHideMenuBar: true,
         // webPreferences stay inherited on purpose: the SDK's spinner
         // injection needs the about:blank child in the opener's renderer
@@ -98,7 +98,7 @@ export function openCheckoutPopup(url: string, parent?: BrowserWindow | null): B
     minWidth: 360,
     minHeight: 560,
     ...(parent && !parent.isDestroyed() ? { parent } : {}),
-    title: 'AntSeed — Secure checkout',
+    title: 'Antseed — Secure checkout',
     autoHideMenuBar: true,
     backgroundColor: '#ffffff',
     webPreferences: {

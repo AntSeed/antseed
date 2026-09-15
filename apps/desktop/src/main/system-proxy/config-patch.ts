@@ -16,14 +16,14 @@ import {
 
 /**
  * Model alias resolved by the buyer proxy at request time to the route
- * currently selected in the desktop (floating pill / VPR). Must match
+ * currently selected in the desktop (floating pill / AI VPN). Must match
  * ROUTED_MODEL_ALIAS in apps/cli/src/proxy/request-utils.ts.
  */
 export const ROUTED_MODEL_ALIAS = 'antseed';
-const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
+const ROUTED_MODEL_ALIAS_LABEL = 'Antseed Auto';
 // Droid requires the `custom:` namespace to resolve this through `customModels`;
 // an unprefixed value is treated as a Factory-managed model and triggers Factory authentication.
-const DROID_ROUTED_MODEL_ID = 'custom:AntSeed-Auto-0';
+const DROID_ROUTED_MODEL_ID = 'custom:Antseed-Auto-0';
 
 /**
  * Config patches point a tool's own configuration at the buyer proxy. Each
@@ -182,7 +182,7 @@ export type ConfigPatchDef =
 export const CLAUDE_GATEWAY_DEFAULT_PORT = Number(process.env['ANTSEED_CLAUDE_GATEWAY_PORT']) || 8380;
 /** Fixed id of the managed third-party profile entry in Claude's configLibrary. */
 export const CLAUDE_DESKTOP_PROFILE_ID = '00000000-0000-4000-8000-0000a4753eed';
-const CLAUDE_DESKTOP_PROFILE_NAME = 'AntSeed';
+const CLAUDE_DESKTOP_PROFILE_NAME = 'Antseed';
 
 export function readString(raw: Record<string, unknown>, key: string): string | undefined {
   const value = raw[key];
@@ -476,7 +476,7 @@ function removeFromStringArray(config: JsonObject, key: string, value: string): 
 /**
  * Point the tool's config at the buyer proxy. The config exposes a single
  * model — the ROUTED_MODEL_ALIAS — which the buyer resolves per request to
- * the route currently selected in the desktop (floating pill / VPR). Concrete
+ * the route currently selected in the desktop (floating pill / AI VPN). Concrete
  * `<peerId>@<service>` entries are no longer written: the only place to pick
  * a model is the desktop route selector, so route changes reach running tool
  * sessions without a config rewrite.
@@ -726,7 +726,7 @@ function writeTextFile(filePath: string, content: string): void {
 // --- Droid CLI + Factory Desktop (`~/.factory/settings.json`) ---
 //
 // Both clients watch this file and share its `customModels` catalog. The
-// sidecar remembers only the fields AntSeed temporarily owns so disconnect
+// sidecar remembers only the fields Antseed temporarily owns so disconnect
 // can restore the user's prior default without rolling back unrelated edits.
 
 type DroidPatchState = {
@@ -755,7 +755,7 @@ function readDroidPatchState(filePath: string): DroidPatchState | null {
       typeof state['sessionDefaultSettingsPresent'] !== 'boolean'
       || typeof state['sessionDefaultModelPresent'] !== 'boolean'
     ))) {
-    throw new Error(`Invalid AntSeed Droid restore state at ${droidPatchStatePath(filePath)}`);
+    throw new Error(`Invalid Antseed Droid restore state at ${droidPatchStatePath(filePath)}`);
   }
   return {
     version: state['version'],
@@ -1382,7 +1382,7 @@ function applyHermesConfigPatch(patch: HermesConfigPatchDef, buyerPort: number):
   const document = readHermesConfigDocument(filePath);
   backupConfigFile(filePath);
   document.setIn(['providers', patch.providerKey], {
-    name: 'AntSeed',
+    name: 'Antseed',
     api: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
     transport: 'chat_completions',
     extra_headers: {

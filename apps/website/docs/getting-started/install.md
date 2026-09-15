@@ -9,7 +9,7 @@ hide_title: true
 
 ## CLI
 
-AntSeed requires Node.js 20+ and works on macOS, Linux, and Windows (WSL).
+Antseed requires Node.js 20+ and works on macOS, Linux, and Windows (WSL).
 
 ```bash
 npm install -g @antseed/cli
@@ -29,7 +29,7 @@ antseed --version
 
 ## Desktop App
 
-AntSeed Desktop (the VPR) is a standalone app that bundles the CLI, a
+Antseed Desktop (the AI VPN) is a standalone app that bundles the CLI, a
 chat interface, and encrypted identity storage via the OS keychain.
 
 **Downloads:**

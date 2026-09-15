@@ -70,7 +70,7 @@ function createViewEntry(
   };
 }
 
-// Legacy dev routes have no slide relationship to the VPR screens; parking
+// Legacy dev routes have no slide relationship to the AI VPN screens; parking
 // them past the end keeps any transition involving them sliding "forward".
 const LEGACY_SLIDE_INDEX = 13;
 
@@ -81,7 +81,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 0,
       preloadPriority: 'eager',
-      nav: { slot: 'main', label: 'VPR', icon: SquarePowerIcon },
+      nav: { slot: 'main', label: 'AI VPN', icon: SquarePowerIcon },
     },
   ),
   explore: createViewEntry(

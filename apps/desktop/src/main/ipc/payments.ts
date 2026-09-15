@@ -135,7 +135,7 @@ export function registerPaymentsIpc(): void {
       const identity = getSecureIdentity();
       if (!identity) return { ok: false, error: 'Identity not available' };
       const providers = await readCardProviders();
-      // The chooser's fixed lineup (Meridian, AntSeed Pay) must resolve even
+      // The chooser's fixed lineup (Meridian, Antseed Pay) must resolve even
       // when a legacy config overrides the provider list with other entries.
       const provider = opts?.providerId
         ? providers.find((entry) => entry.id === opts.providerId)
@@ -166,7 +166,7 @@ export function registerPaymentsIpc(): void {
         }
       }
 
-      // AntSeed Pay authenticates the request: the page expects the buyer
+      // Antseed Pay authenticates the request: the page expects the buyer
       // address, currency and amount plus a personal-sign signature over the
       // canonical message below, proving the params came from this wallet.
       // The signed message carries the LOWERCASED address (the URL param stays
@@ -175,7 +175,7 @@ export function registerPaymentsIpc(): void {
         const cur = 'USD';
         const amountStr = hasAmount ? String(amount) : '';
         const message = [
-          'AntSeed Pay',
+          'Antseed Pay',
           `address: ${identity.wallet.address.toLowerCase()}`,
           `currency: ${cur}`,
           `amount: ${amountStr}`,
@@ -190,7 +190,7 @@ export function registerPaymentsIpc(): void {
       }
       const url = parsed.toString();
 
-      // AntSeed Pay needs no wallet extension (the link is pre-signed), so it
+      // Antseed Pay needs no wallet extension (the link is pre-signed), so it
       // opens as an app-owned checkout popup: the deposit watcher closes it
       // the moment the bought USDC lands, instead of stranding a browser tab.
       if (provider.id === 'antseed-pay') {
@@ -332,7 +332,7 @@ export function registerPaymentsIpc(): void {
 
       const wallet = identity.wallet;
 
-      // Sign SpendingAuth (AntSeed Channels domain)
+      // Sign SpendingAuth (Antseed Channels domain)
       const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
       const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
         channelId: params.channelId,

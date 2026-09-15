@@ -264,7 +264,7 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
-  // Image models are internal-chat tools, not VPR defaults. Restore a
+  // Image models are internal-chat tools, not AI VPN defaults. Restore a
   // remembered explicit seller pin when the model page hands the model to
   // chat; clearing Auto removes that remembered pin first.
   if (entry.kind === 'image') {
