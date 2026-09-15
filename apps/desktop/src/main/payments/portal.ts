@@ -125,7 +125,16 @@ const ANTSEED_PAY_URL =
 export const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
   { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/?buyer={address}' },
   { id: 'antseed-pay', label: 'AntSeed Pay', url: ANTSEED_PAY_URL },
+  // Same page, opened on its Stripe integration (US only).
+  { id: 'antseed-pay-stripe', label: 'AntSeed Pay (Stripe)', url: ANTSEED_PAY_URL },
 ];
+
+/** Which pay-page integration a provider id opens; null for other providers. */
+export function payPageProvider(id: string): 'crossmint' | 'stripe' | null {
+  if (id === 'antseed-pay') return 'crossmint';
+  if (id === 'antseed-pay-stripe') return 'stripe';
+  return null;
+}
 
 // A configured empty array is respected (zero providers = card disabled);
 // only a missing/invalid config falls back to the built-in default.

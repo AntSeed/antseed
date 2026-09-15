@@ -54,6 +54,7 @@ import {
   focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
+  payPageProvider,
   readCardProviders,
   startPaymentsPortal,
 } from '../payments/portal.js';
@@ -169,7 +170,8 @@ export function registerPaymentsIpc(): void {
       // canonical message below, proving the params came from this wallet.
       // The signed message carries the LOWERCASED address (the URL param stays
       // checksummed) — verified against the reference sig their page accepts.
-      if (provider.id === 'antseed-pay') {
+      const payPage = payPageProvider(provider.id);
+      if (payPage) {
         const cur = 'USD';
         const amountStr = hasAmount ? String(amount) : '';
         const message = [
@@ -182,17 +184,16 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
-        // The chooser's primary CTA is the only path here — open the page on
-        // exactly the Crossmint integration (no provider tab strip).
+        // Open the page on exactly one integration (no provider tab strip).
         // Unsigned, UX-only.
-        parsed.searchParams.set('provider', 'crossmint');
+        parsed.searchParams.set('provider', payPage);
       }
       const url = parsed.toString();
 
       // AntSeed Pay needs no wallet extension (the link is pre-signed), so it
       // opens as an app-owned checkout popup: the deposit watcher closes it
       // the moment the bought USDC lands, instead of stranding a browser tab.
-      if (provider.id === 'antseed-pay') {
+      if (payPage) {
         // The full signed funding link — nothing secret in it (the sig is in
         // the URL by design), and having it in the dev log makes testing the
         // hosted page outside the popup trivial. Dev only: production output
