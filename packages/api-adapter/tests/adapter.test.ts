@@ -2151,7 +2151,7 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(body.end_turn).toBe(false);
   });
 
-  it('converts unmarked chat text streams into explicit tool terminations', () => {
+  it('keeps unmarked chat text streams active for Codex', () => {
     const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-interim-stream',
@@ -2165,8 +2165,27 @@ describe('createStreamingAdapter chat to responses', () => {
     const completed = events.find((event) => event.event === 'response.completed');
 
     const response = JSON.parse(completed!.data).response;
-    expect(response.end_turn).toBe(true);
+    expect(response.end_turn).toBe(false);
     expect(response.output[0].type).toBe('message');
+  });
+
+  it('tells Codex to stop when chat-only models stream the explicit final-answer tool', () => {
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-final-stream',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-final-stream","model":"kimi-k3","choices":[{"delta":{"content":"The test suite now covers both cases."}}]}\n\n'
+        + 'data: {"id":"chatcmpl-final-stream","model":"kimi-k3","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_final","type":"function","function":{"name":"final_answer","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    const response = JSON.parse(completed!.data).response;
+    expect(response.end_turn).toBe(true);
+    expect(response.output.some((item: { type?: string }) => item.type === 'function_call')).toBe(false);
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

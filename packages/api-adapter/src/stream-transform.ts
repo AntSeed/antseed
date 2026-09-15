@@ -85,7 +85,7 @@ export function createStreamingAdapter(
 
   const internals = {
     fallbackModel: options.fallbackModel ?? null,
-    forceResponsesAgentTools: options.from === 'openai-responses',
+    forceResponsesAgentTools: options.to === 'openai-responses',
   };
   const normalizer = createNormalizer(internals);
   const renderer = createRenderer(internals);
@@ -105,6 +105,7 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   let sawRealToolCall = false;
   let sawFinalMarker = false;
   let textBuffer = '';
+  const finalToolCallIndexes = new Set<number>();
 
   const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
     if (responseStarted) return;
@@ -125,22 +126,26 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
     },
     onToolCallStart(index, id, name) {
       emitStart(parser.getId(), parser.getModel());
-      if (name === RESPONSES_FINAL_ANSWER_TOOL) return;
+      if (name === RESPONSES_FINAL_ANSWER_TOOL) {
+        finalToolCallIndexes.add(index);
+        return;
+      }
       sawRealToolCall = true;
       sawFinalMarker = false;
       emitted.push({ type: 'tool_call_start', index, id, name });
     },
     onToolCallDelta(index, _id, argumentsDelta) {
+      if (finalToolCallIndexes.has(index)) return;
       emitted.push({ type: 'tool_call_delta', index, argumentsDelta });
     },
     onFinish(info) {
       emitStart(info.id, info.model, info.usage);
-      if (info.toolCalls.some((toolCall) => toolCall.name === RESPONSES_FINAL_ANSWER_TOOL)) {
-        sawFinalMarker = true;
-      }
+      const realToolCalls = info.toolCalls.filter((toolCall) => toolCall.name !== RESPONSES_FINAL_ANSWER_TOOL);
+      sawRealToolCall ||= realToolCalls.length > 0;
+      sawFinalMarker ||= realToolCalls.length < info.toolCalls.length;
       const forceToolCompletion = options.forceResponsesAgentTools && !sawRealToolCall;
       const toolCalls = forceToolCompletion
-        ? [...info.toolCalls, {
+        ? [...realToolCalls, {
           index: Math.max(-1, ...info.toolCalls.map((toolCall) => toolCall.index)) + 1,
           id: `final_${info.id || 'response'}`,
           name: sawFinalMarker || /\s+(Done|Complete|Complete\.)$/i.test(textBuffer)
@@ -148,13 +153,13 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
             : RESPONSES_CONTINUE_TOOL,
           arguments: '',
         }]
-        : info.toolCalls;
+        : realToolCalls;
       emitted.push({
         type: 'response_done',
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        endTurn: !forceToolCompletion,
+        endTurn: sawFinalMarker,
         usage: info.usage,
         toolCalls,
       });
@@ -762,7 +767,9 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
 
         if (event.type === 'response_done') {
           ensureResponseCreated(emitted, null);
-          const messagePhase = toolCalls.size > 0 ? 'commentary' : undefined;
+          const visibleToolCalls = sortedToolCalls(toolCalls)
+            .filter((toolCall) => toolCall.name !== RESPONSES_FINAL_ANSWER_TOOL);
+          const messagePhase = visibleToolCalls.length > 0 ? 'commentary' : undefined;
           if (!outputDone) {
             outputDone = true;
             const msgId = getMessageId();
@@ -793,7 +800,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
               });
             }
 
-            for (const toolCall of sortedToolCalls(toolCalls)) {
+            for (const toolCall of visibleToolCalls) {
               const outputIndex = getToolOutputIndex(toolCall.index);
               const itemId = openAIResponsesFunctionCallId(toolCall.id);
               pushEvent(emitted, 'response.function_call_arguments.done', {
@@ -833,7 +840,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                   content: [{ type: 'output_text' as const, text: textBuffer, annotations: [] }],
                   ...(messagePhase ? { phase: messagePhase } : {}),
                 }] : []),
-                ...sortedToolCalls(toolCalls).map((toolCall) => ({
+                ...visibleToolCalls.map((toolCall) => ({
                   type: 'function_call' as const,
                   id: openAIResponsesFunctionCallId(toolCall.id),
                   call_id: toolCall.id,

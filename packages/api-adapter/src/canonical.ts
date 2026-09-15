@@ -9,8 +9,6 @@ import {
   type TokenUsage,
 } from './utils.js';
 
-const RESPONSES_FINAL_ANSWER_TOOL_RE = /(?:^|\n\s*)tool\s+final_answer\s*\{\s*\}\s*(?:\n|$)/g;
-
 export interface CanonicalFunctionTool {
   name: string;
   description?: string;
@@ -506,27 +504,7 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
   }
 
   const input = body.input;
-  const normalizedInput = Array.isArray(input)
-    ? input.map((item) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
-      const msg = item as Record<string, unknown>;
-      if (msg.type !== 'message' || msg.role !== 'assistant' || !Array.isArray(msg.content)) return item;
-      const text = msg.content.map((part) => {
-        if (!part || typeof part !== 'object') return '';
-        const value = (part as Record<string, unknown>).text;
-        return typeof value === 'string' ? value : '';
-      }).join('');
-      if (!RESPONSES_FINAL_ANSWER_TOOL_RE.test(text)) return item;
-      return {
-        ...msg,
-        content: [{
-          type: 'output_text',
-          text: text.replace(RESPONSES_FINAL_ANSWER_TOOL_RE, '').trim(),
-          ...(Array.isArray(msg.annotations) ? { annotations: msg.annotations } : {}),
-        }],
-      };
-    })
-    : input;
+  const normalizedInput = input;
   if (typeof input === 'string') {
     request.input.push({ type: 'message', role: 'user', content: [{ type: 'text', text: input }] });
   } else if (Array.isArray(normalizedInput)) {
