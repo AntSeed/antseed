@@ -2151,7 +2151,7 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(body.end_turn).toBe(false);
   });
 
-  it('keeps streaming Codex turns active after unmarked chat text responses', () => {
+  it('converts unmarked chat text streams into explicit tool terminations', () => {
     const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-interim-stream',
@@ -2164,7 +2164,9 @@ describe('createStreamingAdapter chat to responses', () => {
     const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
     const completed = events.find((event) => event.event === 'response.completed');
 
-    expect(JSON.parse(completed!.data).response.end_turn).toBe(false);
+    const response = JSON.parse(completed!.data).response;
+    expect(response.end_turn).toBe(true);
+    expect(response.output[0].type).toBe('message');
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

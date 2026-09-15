@@ -47,6 +47,7 @@ type CanonicalStreamRenderer = (options: StreamTransformInternals) => ProtocolSt
 
 interface StreamTransformInternals {
   fallbackModel: string | null;
+  forceResponsesAgentTools?: boolean;
 }
 
 interface ProtocolStreamNormalizer {
@@ -58,6 +59,8 @@ interface ProtocolStreamRenderer {
 }
 
 const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
+
+const RESPONSES_CONTINUE_TOOL = 'exec_command';
 
 const STREAM_NORMALIZERS: Partial<Record<ServiceApiProtocol, CanonicalStreamNormalizer>> = {
   'anthropic-messages': createAnthropicStreamNormalizer,
@@ -80,7 +83,10 @@ export function createStreamingAdapter(
   const createRenderer = STREAM_RENDERERS[options.to];
   if (!createNormalizer || !createRenderer) return null;
 
-  const internals = { fallbackModel: options.fallbackModel ?? null };
+  const internals = {
+    fallbackModel: options.fallbackModel ?? null,
+    forceResponsesAgentTools: options.from === 'openai-responses',
+  };
   const normalizer = createNormalizer(internals);
   const renderer = createRenderer(internals);
 
@@ -97,6 +103,8 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   const emitted: CanonicalStreamEvent[] = [];
   let responseStarted = false;
   let sawRealToolCall = false;
+  let sawFinalMarker = false;
+  let textBuffer = '';
 
   const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
     if (responseStarted) return;
@@ -112,12 +120,14 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   const parser = createChatStreamParser({
     onText(delta) {
       emitStart(parser.getId(), parser.getModel());
+      textBuffer += delta;
       emitted.push({ type: 'text_delta', delta });
     },
     onToolCallStart(index, id, name) {
       emitStart(parser.getId(), parser.getModel());
       if (name === RESPONSES_FINAL_ANSWER_TOOL) return;
       sawRealToolCall = true;
+      sawFinalMarker = false;
       emitted.push({ type: 'tool_call_start', index, id, name });
     },
     onToolCallDelta(index, _id, argumentsDelta) {
@@ -125,14 +135,28 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
     },
     onFinish(info) {
       emitStart(info.id, info.model, info.usage);
+      if (info.toolCalls.some((toolCall) => toolCall.name === RESPONSES_FINAL_ANSWER_TOOL)) {
+        sawFinalMarker = true;
+      }
+      const forceToolCompletion = options.forceResponsesAgentTools && !sawRealToolCall;
+      const toolCalls = forceToolCompletion
+        ? [...info.toolCalls, {
+          index: Math.max(-1, ...info.toolCalls.map((toolCall) => toolCall.index)) + 1,
+          id: `final_${info.id || 'response'}`,
+          name: sawFinalMarker || /\s+(Done|Complete|Complete\.)$/i.test(textBuffer)
+            ? RESPONSES_FINAL_ANSWER_TOOL
+            : RESPONSES_CONTINUE_TOOL,
+          arguments: '',
+        }]
+        : info.toolCalls;
       emitted.push({
         type: 'response_done',
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        endTurn: sawRealToolCall,
+        endTurn: !forceToolCompletion,
         usage: info.usage,
-        toolCalls: info.toolCalls,
+        toolCalls,
       });
     },
   }, {
