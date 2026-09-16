@@ -9,7 +9,7 @@ import type {
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
 import { parseHostPort } from './public-address.js';
-import { createPerCallBillingModel } from '@antseed/node';
+import { createPerCallBillingModel, readRouterSettings } from '@antseed/node';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -297,6 +297,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   const routingPreferences = config.buyer.routingPreferences;
+  try { readRouterSettings(routingPreferences.routerSettings); }
+  catch (error) { errors.push(`buyer.routingPreferences.routerSettings: ${(error as Error).message}`); }
   if (typeof routingPreferences.preferFreePeers !== 'boolean') {
     errors.push('buyer.routingPreferences.preferFreePeers must be a boolean');
   }

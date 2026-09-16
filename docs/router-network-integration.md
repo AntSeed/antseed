@@ -122,6 +122,37 @@ collateral and not a daily spending allowance.
 
 ## Payment and operational boundaries
 
+### CLI configuration
+
+Optional routing fields can be initialized through either `config set buyer.<key>`
+or `config buyer set <key>`. For example:
+
+```sh
+antseed config buyer set routingPreferences.routerSettings '{"plugin:example-router":{"policy":"balanced"}}'
+antseed config buyer set routerTimeoutMs 10000
+antseed config buyer set routerFailureFallback none
+antseed config buyer set routingPreferences.routerEnabled true
+```
+
+Set `routingService` as one complete JSON object using the configuration example
+above. Partial service configurations fail validation and are not saved. Once
+configured, individual fields can be updated, for example:
+
+```sh
+antseed config buyer set routingService.billing.maxAmountMicroUsdc 6000
+antseed config buyer set routingService.maxAdditionalAuthorizationUsdc 6000
+antseed config buyer set routingPreferences.routerEnabled false
+```
+
+The first two commands apply to the per-call example. Payment amounts remain
+integer strings in the configuration; booleans remain booleans. Router-owned
+settings remain strings and should be supplied as a complete namespaced JSON
+object, including when package names contain dots. Invalid edits leave the
+previous configuration intact. These commands do not install a plugin or start
+a buyer; they configure the existing `buyer start --router` flow.
+
+### Billing semantics
+
 The buyer opts into sharing classifier input with the configured seller. Input,
 output-token, request-rate, and authorization limits are checked by the host.
 The classifier peer is kept separate from inference peers to prevent ordinary
