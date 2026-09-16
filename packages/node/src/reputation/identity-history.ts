@@ -177,6 +177,12 @@ export interface IdentityScore {
   points: number;
 }
 
+const YEAR_MS = 365.25 * 86_400_000;
+const MAX_PROJECTS_SCORED = 400;
+const MIN_PROJECT_STARS = 5;
+const MIN_PROJECT_AGE_YEARS = 0.25;
+const ARCHIVED_PROJECT_WEIGHT = 0.2;
+
 /**
  * Score the strongest verified identity, or `null` when none has usable
  * evidence. Identities never add up: several accounts or domains owned by one
@@ -199,43 +205,18 @@ export function scoreIdentityHistory(peer: Pick<PeerInfo, 'peerId' | 'metadata' 
     || evidence?.version !== IDENTITY_HISTORY_VERSION || !Array.isArray(evidence.identities)) {
     return null;
   }
-  const years = (time: number) => Number.isFinite(time) && time > 0 && time <= nowMs ? (nowMs - time) / (365.25 * 86_400_000) : 0;
-  const announced = peer.metadata?.verifications;
-  const githubStillClaimed = (claim: string) => !announced
-    || (Array.isArray(announced.github) && announced.github.some((entry) => typeof entry?.username === 'string' && entry.username.toLowerCase() === claim));
-  const domainStillClaimed = (claim: string) => !announced
-    || (Array.isArray(announced.domains) && announced.domains.some((entry) => typeof entry?.domain === 'string' && entry.domain.toLowerCase() === claim));
-  const githubVerified = (claim: string) => results.github.some((result) => result?.verified && result.peerId === peer.peerId
-    && typeof result.username === 'string' && result.username.toLowerCase() === claim && fresh(result.checkedAtMs));
-  const domainVerified = (claim: string) => results.domains.some((result) => result?.verified && result.peerId === peer.peerId
-    && typeof result.domain === 'string' && result.domain.toLowerCase() === claim && fresh(result.checkedAtMs));
-  const isProofRepository = (claim: string, name: string) => results.github.some((result) => typeof result?.username === 'string'
-    && result.username.toLowerCase() === claim && typeof result.repository === 'string' && result.repository.toLowerCase() === name.toLowerCase());
+  const years = (time: number) => Number.isFinite(time) && time > 0 && time <= nowMs ? (nowMs - time) / YEAR_MS : 0;
 
   let best: IdentityScore | null = null;
   const seen = new Set<string>();
   for (const item of evidence.identities.slice(0, MAX_IDENTITIES)) {
     if (!item || item.status !== 'available' || !fresh(item.fetchedAtMs) || !item.identityId || seen.has(item.identityId)) continue;
+    if (!isStillClaimed(peer, item) || !isOwnershipVerified(peer.peerId, results, item, fresh)) continue;
+
     let points: number;
-    if (item.kind === 'github' && /^github:[1-9]\d*$/.test(item.identityId) && githubVerified(item.claim) && githubStillClaimed(item.claim)) {
-      const repoIds = new Set<number>();
-      let oldestYears = 0;
-      let starWeight = 0;
-      let projectWeight = 0;
-      for (const project of (Array.isArray(item.projects) ? item.projects : []).slice(0, 400)) {
-        if (!project || !id(project.id) || repoIds.has(project.id) || !Number.isFinite(project.stars) || project.stars < 5
-          || typeof project.name !== 'string' || typeof project.archived !== 'boolean' || isProofRepository(item.claim, project.name)
-          || project.createdAtMs < (item.createdAtMs ?? Infinity) || years(project.createdAtMs) < 0.25) continue;
-        repoIds.add(project.id);
-        const weight = project.archived ? 0.2 : 1;
-        starWeight += Math.log2(1 + Math.min(500, project.stars)) * weight;
-        projectWeight += weight;
-        oldestYears = Math.max(oldestYears, years(project.createdAtMs) * weight);
-      }
-      points = 40 * Math.min(1, starWeight / 40) + 20 * Math.min(1, projectWeight / 8)
-        + (projectWeight > 0 ? 10 * Math.min(1, oldestYears / 3) : 0);
-      points = Math.min(IDENTITY_GITHUB_MAX_POINTS, points);
-    } else if (item.kind === 'domain' && item.identityId === `domain:${item.claim}` && domainVerified(item.claim) && domainStillClaimed(item.claim)) {
+    if (item.kind === 'github' && /^github:[1-9]\d*$/.test(item.identityId)) {
+      points = scoreGithubPortfolio(item, results, years);
+    } else if (item.kind === 'domain' && item.identityId === `domain:${item.claim}`) {
       points = IDENTITY_DOMAIN_MAX_POINTS * Math.min(1, years(item.createdAtMs ?? NaN) / 5);
     } else {
       continue;
@@ -244,4 +225,59 @@ export function scoreIdentityHistory(peer: Pick<PeerInfo, 'peerId' | 'metadata' 
     if (!best || points > best.points) best = { kind: item.kind, claim: item.claim, identityId: item.identityId, points };
   }
   return best;
+}
+
+/** The seller still announces this claim in its current metadata (or metadata is unavailable). */
+function isStillClaimed(peer: Pick<PeerInfo, 'metadata'>, item: IdentityHistory): boolean {
+  const announced = peer.metadata?.verifications;
+  if (!announced) return true;
+  if (item.kind === 'github') {
+    return Array.isArray(announced.github)
+      && announced.github.some((entry) => typeof entry?.username === 'string' && entry.username.toLowerCase() === item.claim);
+  }
+  return Array.isArray(announced.domains)
+    && announced.domains.some((entry) => typeof entry?.domain === 'string' && entry.domain.toLowerCase() === item.claim);
+}
+
+/** This peer's ownership proof for the claim verified recently. */
+function isOwnershipVerified(peerId: string, results: PeerVerificationResults, item: IdentityHistory, fresh: (time: number) => boolean): boolean {
+  if (item.kind === 'github') {
+    return results.github.some((result) => result?.verified && result.peerId === peerId
+      && typeof result.username === 'string' && result.username.toLowerCase() === item.claim && fresh(result.checkedAtMs));
+  }
+  return results.domains.some((result) => result?.verified && result.peerId === peerId
+    && typeof result.domain === 'string' && result.domain.toLowerCase() === item.claim && fresh(result.checkedAtMs));
+}
+
+/** The repository that hosts the ownership proof never counts as a project. */
+function isProofRepository(results: PeerVerificationResults, claim: string, name: string): boolean {
+  return results.github.some((result) => typeof result?.username === 'string' && result.username.toLowerCase() === claim
+    && typeof result.repository === 'string' && result.repository.toLowerCase() === name.toLowerCase());
+}
+
+function scoreGithubPortfolio(item: IdentityHistory, results: PeerVerificationResults, years: (time: number) => number): number {
+  const projects = Array.isArray(item.projects) ? item.projects.slice(0, MAX_PROJECTS_SCORED) : [];
+  const accountCreatedAtMs = item.createdAtMs ?? Infinity;
+  const seenIds = new Set<number>();
+  let starWeight = 0;
+  let projectWeight = 0;
+  let oldestYears = 0;
+  for (const project of projects) {
+    if (!project || !id(project.id) || seenIds.has(project.id)) continue;
+    if (!Number.isFinite(project.stars) || project.stars < MIN_PROJECT_STARS) continue;
+    if (typeof project.name !== 'string' || typeof project.archived !== 'boolean') continue;
+    if (isProofRepository(results, item.claim, project.name)) continue;
+    // A project older than the account was transferred in, not built here.
+    if (project.createdAtMs < accountCreatedAtMs || years(project.createdAtMs) < MIN_PROJECT_AGE_YEARS) continue;
+    seenIds.add(project.id);
+    const weight = project.archived ? ARCHIVED_PROJECT_WEIGHT : 1;
+    starWeight += Math.log2(1 + Math.min(500, project.stars)) * weight;
+    projectWeight += weight;
+    oldestYears = Math.max(oldestYears, years(project.createdAtMs) * weight);
+  }
+  if (projectWeight === 0) return 0;
+  const starPoints = 40 * Math.min(1, starWeight / 40);
+  const breadthPoints = 20 * Math.min(1, projectWeight / 8);
+  const agePoints = 10 * Math.min(1, oldestYears / 3);
+  return Math.min(IDENTITY_GITHUB_MAX_POINTS, starPoints + breadthPoints + agePoints);
 }

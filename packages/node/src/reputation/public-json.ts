@@ -75,8 +75,14 @@ export async function fetchPublicJson(value: string, options: { maxBytes?: numbe
   }
 }
 
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 export const fetchPublicProof: typeof fetch = async (input, init) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const url = requestUrl(input);
   const data = await fetchPublicJson(url, { maxBytes: 16_384, signal: init?.signal ?? undefined });
   return new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } });
 };

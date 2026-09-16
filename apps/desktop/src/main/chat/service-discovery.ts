@@ -350,32 +350,32 @@ export function normalizeTrustBreakdown(raw: unknown): TrustBreakdown | null {
   if (!value) return null;
   const score = boundedScore(value.score);
   if (score === null) return null;
+  return {
+    score,
+    usage: normalizeSharePart(asPlainObject(value.usage)),
+    power: normalizeSharePart(asPlainObject(value.power)),
+    identity: normalizeIdentityPart(asPlainObject(value.identity)),
+    washFlagged: typeof value.washFlagged === 'boolean' ? value.washFlagged : null,
+  };
+}
 
-  const usageRaw = asPlainObject(value.usage);
-  const usageScore = usageRaw ? boundedScore(usageRaw.score) : null;
-  const usageShare = usageRaw ? nonNegative(usageRaw.shareBps) : null;
-  const usageEpoch = usageRaw ? nonNegative(usageRaw.epoch) : null;
-  const usage = usageScore !== null && usageShare !== null && usageEpoch !== null
-    ? { score: usageScore, shareBps: usageShare, epoch: usageEpoch }
-    : null;
+/** A usage or power part: weighted score plus the share and epoch it came from. */
+function normalizeSharePart(raw: Record<string, unknown> | null): TrustBreakdown['usage'] {
+  if (!raw) return null;
+  const score = boundedScore(raw.score);
+  const shareBps = nonNegative(raw.shareBps);
+  const epoch = nonNegative(raw.epoch);
+  if (score === null || shareBps === null || epoch === null) return null;
+  return { score, shareBps, epoch };
+}
 
-  const powerRaw = asPlainObject(value.power);
-  const powerScore = powerRaw ? boundedScore(powerRaw.score) : null;
-  const powerShare = powerRaw ? nonNegative(powerRaw.shareBps) : null;
-  const powerEpoch = powerRaw ? nonNegative(powerRaw.epoch) : null;
-  const power = powerScore !== null && powerShare !== null && powerEpoch !== null
-    ? { score: powerScore, shareBps: powerShare, epoch: powerEpoch }
-    : null;
-
-  const identityRaw = asPlainObject(value.identity);
-  const identityScore = identityRaw ? boundedScore(identityRaw.score) : null;
-  const identityKind: 'github' | 'domain' | null = identityRaw?.kind === 'github' || identityRaw?.kind === 'domain' ? identityRaw.kind : null;
-  const identity = identityScore !== null && identityKind !== null
-    ? { score: identityScore, kind: identityKind, claim: typeof identityRaw?.claim === 'string' ? identityRaw.claim : '' }
-    : null;
-
-  const washFlagged = typeof value.washFlagged === 'boolean' ? value.washFlagged : null;
-  return { score, usage, power, identity, washFlagged };
+function normalizeIdentityPart(raw: Record<string, unknown> | null): TrustBreakdown['identity'] {
+  if (!raw) return null;
+  const score = boundedScore(raw.score);
+  if (score === null) return null;
+  if (raw.kind !== 'github' && raw.kind !== 'domain') return null;
+  const claim = typeof raw.claim === 'string' ? raw.claim : '';
+  return { score, kind: raw.kind, claim };
 }
 
 export function invalidateOnChainEnrichmentCache(): void {

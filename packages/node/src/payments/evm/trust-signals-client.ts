@@ -68,8 +68,43 @@ function toSafeNumber(value: unknown): number | undefined {
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : Number.MAX_SAFE_INTEGER;
 }
 
-function first(result: unknown[] | null): unknown {
-  return result && result.length > 0 ? result[0] : undefined;
+function shareBps(part: bigint, total: bigint): number {
+  return total > 0n ? Number((part * 10_000n) / total) : 0;
+}
+
+function weiToAnts(wei: bigint): number {
+  return Number(wei / ANTS_WEI) + Number(wei % ANTS_WEI) / 1e18;
+}
+
+/**
+ * Collects the calls of one round and hands back a lookup for their results,
+ * so callers address results by the handle they got when queueing instead of
+ * by computed offsets.
+ */
+class Round {
+  readonly requests: MulticallRequest[] = [];
+  private results: Array<unknown[] | null> = [];
+
+  add(target: string, iface: Interface, method: string, args: unknown[] = []): number {
+    this.requests.push({ target, iface, method, args });
+    return this.requests.length - 1;
+  }
+
+  async run(read: (requests: MulticallRequest[]) => Promise<Array<unknown[] | null>>): Promise<void> {
+    this.results = this.requests.length > 0 ? await read(this.requests) : [];
+  }
+
+  /** First decoded return value of a call, or `undefined` when it failed or was not queued. */
+  value(handle: number | undefined): unknown {
+    if (handle === undefined) return undefined;
+    const result = this.results[handle];
+    return result && result.length > 0 ? result[0] : undefined;
+  }
+
+  /** All decoded return values of a call, or `undefined` when it failed. */
+  values(handle: number): unknown[] | undefined {
+    return this.results[handle] ?? undefined;
+  }
 }
 
 export class TrustSignalsClient {
@@ -105,86 +140,70 @@ export class TrustSignalsClient {
     const { sellerRegistry, channels, sellerPools, usageAccounting, washTradingRegistry } = this._addresses;
 
     // Round 1: agent ids, wash verdicts, current epoch.
-    const round1: MulticallRequest[] = [];
-    if (usageAccounting) round1.push({ target: usageAccounting, iface: USAGE_IFACE, method: 'currentEpoch' });
-    const round1Offset = round1.length;
-    const perSeller1 = 1 + (washTradingRegistry ? 2 : 0);
-    for (const seller of sellers) {
-      round1.push({ target: sellerRegistry, iface: REGISTRY_IFACE, method: 'getAgentId', args: [seller] });
-      if (washTradingRegistry) {
-        round1.push({ target: washTradingRegistry, iface: WASH_IFACE, method: 'isProvenWashTrader', args: [seller] });
-        round1.push({ target: washTradingRegistry, iface: WASH_IFACE, method: 'provenWashShareBps', args: [seller] });
-      }
-    }
-    const results1 = await this._read(round1);
-    const epoch = usageAccounting ? toSafeNumber(first(results1[0] ?? null)) : undefined;
+    const round1 = new Round();
+    const epochCall = usageAccounting ? round1.add(usageAccounting, USAGE_IFACE, 'currentEpoch') : undefined;
+    const round1Calls = sellers.map((seller) => ({
+      seller,
+      agentId: round1.add(sellerRegistry, REGISTRY_IFACE, 'getAgentId', [seller]),
+      washFlagged: washTradingRegistry ? round1.add(washTradingRegistry, WASH_IFACE, 'isProvenWashTrader', [seller]) : undefined,
+      washShare: washTradingRegistry ? round1.add(washTradingRegistry, WASH_IFACE, 'provenWashShareBps', [seller]) : undefined,
+    }));
+    await round1.run((requests) => this._read(requests));
+
+    const epoch = toSafeNumber(round1.value(epochCall));
     const agentIds = new Map<string, number>();
-    sellers.forEach((seller, index) => {
-      const base = round1Offset + index * perSeller1;
-      const agentId = toSafeNumber(first(results1[base] ?? null));
-      if (!agentId || agentId <= 0) return;
-      agentIds.set(seller, agentId);
+    for (const call of round1Calls) {
+      const agentId = toSafeNumber(round1.value(call.agentId));
+      if (!agentId || agentId <= 0) continue;
+      agentIds.set(call.seller, agentId);
       const signals: TrustSignals = { agentId };
-      if (washTradingRegistry) {
-        const flagged = first(results1[base + 1] ?? null);
-        const share = toSafeNumber(first(results1[base + 2] ?? null));
-        if (typeof flagged === 'boolean') signals.washFlagged = flagged;
-        if (share !== undefined) signals.washShareBps = share;
-      }
-      out.set(seller, signals);
-    });
+      const flagged = round1.value(call.washFlagged);
+      if (typeof flagged === 'boolean') signals.washFlagged = flagged;
+      const share = toSafeNumber(round1.value(call.washShare));
+      if (share !== undefined) signals.washShareBps = share;
+      out.set(call.seller, signals);
+    }
     if (agentIds.size === 0) return out;
 
-    // Round 2: channel stats, pool power, recognized usage.
+    // Round 2: channel stats, pool power, last epoch's recognized usage.
     const poolsEnabled = Boolean(sellerPools) && epoch !== undefined;
     const usageEnabled = Boolean(usageAccounting) && epoch !== undefined;
-    const lastEpoch = epoch !== undefined ? Math.max(0, epoch - 1) : 0;
-    const round2: MulticallRequest[] = [];
-    if (poolsEnabled) round2.push({ target: sellerPools!, iface: POOLS_IFACE, method: 'totalPowerWeightAtEpoch', args: [epoch] });
-    if (usageEnabled) round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'totalPoolPointsByEpoch', args: [lastEpoch] });
-    const round2Offset = round2.length;
-    const perSeller2 = 1 + (poolsEnabled ? 2 : 0) + (usageEnabled ? 1 : 0);
-    const ordered = [...agentIds];
-    for (const [seller, agentId] of ordered) {
-      round2.push({ target: channels, iface: CHANNELS_IFACE, method: 'getAgentStats', args: [agentId] });
-      if (poolsEnabled) {
-        round2.push({ target: sellerPools!, iface: POOLS_IFACE, method: 'poolWeightAtEpoch', args: [agentId, epoch] });
-        round2.push({ target: sellerPools!, iface: POOLS_IFACE, method: 'poolActiveStakeAtEpoch', args: [agentId, epoch] });
-      }
-      if (usageEnabled) {
-        round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'sellerPointsByEpoch', args: [lastEpoch, seller] });
-      }
-    }
-    const results2 = await this._read(round2);
-    const totalPower = poolsEnabled ? (first(results2[0] ?? null) as bigint | undefined) : undefined;
-    const totalPoints = usageEnabled ? (first(results2[poolsEnabled ? 1 : 0] ?? null) as bigint | undefined) : undefined;
-    ordered.forEach(([seller], index) => {
-      const signals = out.get(seller)!;
-      let cursor = round2Offset + index * perSeller2;
-      const stats = results2[cursor++];
+    const lastEpoch = epoch === undefined ? 0 : Math.max(0, epoch - 1);
+    const round2 = new Round();
+    const totalPowerCall = poolsEnabled ? round2.add(sellerPools!, POOLS_IFACE, 'totalPowerWeightAtEpoch', [epoch]) : undefined;
+    const totalPointsCall = usageEnabled ? round2.add(usageAccounting!, USAGE_IFACE, 'totalPoolPointsByEpoch', [lastEpoch]) : undefined;
+    const round2Calls = [...agentIds].map(([seller, agentId]) => ({
+      seller,
+      stats: round2.add(channels, CHANNELS_IFACE, 'getAgentStats', [agentId]),
+      power: poolsEnabled ? round2.add(sellerPools!, POOLS_IFACE, 'poolWeightAtEpoch', [agentId, epoch]) : undefined,
+      stake: poolsEnabled ? round2.add(sellerPools!, POOLS_IFACE, 'poolActiveStakeAtEpoch', [agentId, epoch]) : undefined,
+      points: usageEnabled ? round2.add(usageAccounting!, USAGE_IFACE, 'sellerPointsByEpoch', [lastEpoch, seller]) : undefined,
+    }));
+    await round2.run((requests) => this._read(requests));
+
+    const totalPower = round2.value(totalPowerCall);
+    const totalPoints = round2.value(totalPointsCall);
+    for (const call of round2Calls) {
+      const signals = out.get(call.seller)!;
+      const stats = round2.values(call.stats);
       if (stats && stats.length >= 4) {
         signals.channelCount = toSafeNumber(stats[0]);
         signals.ghostCount = toSafeNumber(stats[1]);
         signals.totalVolumeUsdcMicros = toSafeNumber(stats[2]);
         signals.lastSettledAtSec = toSafeNumber(stats[3]);
       }
-      if (poolsEnabled) {
-        const power = first(results2[cursor++] ?? null);
-        const stake = first(results2[cursor++] ?? null);
-        if (typeof power === 'bigint' && typeof totalPower === 'bigint') {
-          signals.poolPowerShareBps = totalPower > 0n ? Number((power * 10_000n) / totalPower) : 0;
-        }
-        if (typeof stake === 'bigint') signals.poolStakeAnts = Number(stake / ANTS_WEI) + Number(stake % ANTS_WEI) / 1e18;
+      const power = round2.value(call.power);
+      if (typeof power === 'bigint' && typeof totalPower === 'bigint') signals.poolPowerShareBps = shareBps(power, totalPower);
+      const stake = round2.value(call.stake);
+      if (typeof stake === 'bigint') signals.poolStakeAnts = weiToAnts(stake);
+      const points = round2.value(call.points);
+      if (typeof points === 'bigint' && typeof totalPoints === 'bigint' && epoch !== undefined) {
+        signals.usageEpoch = epoch;
+        // Epoch 0 has no previous epoch to score.
+        signals.usageLastEpochUsdcMicros = epoch === 0 ? 0 : toSafeNumber(points);
+        signals.usageShareBps = epoch === 0 ? 0 : shareBps(points, totalPoints);
       }
-      if (usageEnabled) {
-        const points = first(results2[cursor++] ?? null);
-        if (typeof points === 'bigint' && typeof totalPoints === 'bigint') {
-          signals.usageEpoch = epoch;
-          signals.usageLastEpochUsdcMicros = epoch === 0 ? 0 : toSafeNumber(points);
-          signals.usageShareBps = epoch === 0 || totalPoints === 0n ? 0 : Number((points * 10_000n) / totalPoints);
-        }
-      }
-    });
+    }
     return out;
   }
 }
