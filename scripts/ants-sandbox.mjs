@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Local-only dashboard sandbox. Requires built node/ants packages and Anvil.
- * node scripts/ants-sandbox.mjs [--check] [--restricted] [--port 3122]
+ * node scripts/ants-sandbox.mjs [--check] [--restricted] [--browser] [--port 3122]
  * BASE_MAINNET_RPC_URL overrides the public fork source; FORK_BLOCK overrides the pinned block.
  * Ctrl+C stops the owned processes. Run again for a fresh test wallet and chain.
  * --restricted keeps transfers disabled; temporary setup allowlisting is removed before tests.
@@ -12,7 +12,7 @@ import { mkdtemp, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
-import { Contract, Interface, JsonRpcProvider, parseUnits, formatUnits } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, parseUnits, formatUnits, id as hashId } from 'ethers';
 import { getChainConfig, loadOrCreateIdentity } from '../packages/node/dist/index.js';
 import { createAntsServer } from '../apps/ants/dist/server.js';
 import { stake, registerBinding, rewards } from '../apps/ants/dist/service/index.js';
@@ -20,15 +20,17 @@ import { availablePort } from './deployments/runtime/anvil.mjs';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('node scripts/ants-sandbox.mjs [--check] [--restricted] [--port 3122]\nOptional: BASE_MAINNET_RPC_URL, FORK_BLOCK. Requires pnpm --filter=@antseed/ants run build and built @antseed/node.');
+  console.log('node scripts/ants-sandbox.mjs [--check] [--restricted] [--browser] [--port 3122]\nOptional: BASE_MAINNET_RPC_URL, FORK_BLOCK. Requires pnpm --filter=@antseed/ants run build and built @antseed/node.');
   process.exit(0);
 }
 const check = args.includes('--check');
 const restricted = args.includes('--restricted');
+const browserWallet = args.includes('--browser');
+assert(!(browserWallet && check), 'Use the browser e2e driver with --browser, not the local-signing --check.');
 let port = 3122;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port') port = Number(args[++i]);
-  else if (!['--check', '--restricted'].includes(args[i])) throw new Error(`Unknown argument: ${args[i]}`);
+  else if (!['--check', '--restricted', '--browser'].includes(args[i])) throw new Error(`Unknown argument: ${args[i]}`);
 }
 assert(Number.isInteger(port) && port > 0 && port < 65536, 'Invalid dashboard port');
 const base = getChainConfig('base-mainnet');
@@ -136,7 +138,7 @@ try {
   const identity = await loadOrCreateIdentity(dataDir);
   const second = await loadOrCreateIdentity(path.join(dataDir, 'second-seller'));
   for (const address of [identity.wallet.address, second.wallet.address]) await rpc('anvil_setBalance', [address, '0x56BC75E2D63100000']);
-  server = await createAntsServer({ port, chain, dataDir, signer: identity.wallet, address: identity.wallet.address });
+  server = await createAntsServer({ port, chain, dataDir, browserWallet: false, signer: identity.wallet, address: identity.wallet.address });
   const tokenAbi = new Interface(['function owner() view returns(address)', 'function enableTransfers()', 'function transfer(address,uint256)', 'function setTransferWhitelist(address,bool)']);
   const token = new Contract(chain.antsTokenAddress, ['function owner() view returns(address)', 'function balanceOf(address) view returns(uint256)', 'function transfersEnabled() view returns(bool)', 'function transferWhitelist(address) view returns(bool)', 'function transfer(address,uint256)'], provider);
   const tokenOwner = await token.owner();
@@ -161,6 +163,7 @@ try {
   const bctx = new AntsContext({ chain, address: second.wallet.address, signer: second.wallet });
   const b = await registerBinding(bctx, undefined, report);
   for (const amount of ['1000', '500']) await stake(server.context, { agentId: a.agentId, amount, epochs: 12 }, report);
+  if (browserWallet) await stake(server.context, { agentId: b.agentId, amount: '100', epochs: 12 }, report);
   if (restricted) {
     await sendAs(tokenOwner, chain.antsTokenAddress, tokenAbi, 'setTransferWhitelist', [identity.wallet.address, false]);
     if (!escrowWasWhitelisted) await sendAs(tokenOwner, chain.antsTokenAddress, tokenAbi, 'setTransferWhitelist', [chain.legacyEmissionsEscrowAddress, false]);
@@ -170,7 +173,7 @@ try {
   }
   await advance(2);
   const accountingAbi = new Interface(['function accruePoints(bytes32,address,address,uint256)']);
-  await sendAs(chain.channelsContractAddress, chain.usageAccountingAddress, accountingAbi, 'accruePoints', [`0x${'11'.repeat(32)}`, second.wallet.address, identity.wallet.address, 5000000000n]);
+  await sendAs(chain.channelsContractAddress, chain.usageAccountingAddress, accountingAbi, 'accruePoints', [hashId(`ants-sandbox:${identity.wallet.address}:${second.wallet.address}`), second.wallet.address, identity.wallet.address, 5000000000n]);
   await advance();
   let initial;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -186,6 +189,17 @@ try {
   }
   assert(BigInt(initial.staker.total) > 0n, 'No staker rewards created');
   assert(BigInt(initial.sellerUsage.total) > 0n, 'No seller rewards created');
+  if (browserWallet) {
+    const { makeDepositsDomain, signSetOperator } = await import('../packages/node/dist/payments/index.js');
+    const deposits = new Contract(chain.depositsContractAddress, ['function getOperatorNonce(address) view returns(uint256)', 'function setOperator(address,address,uint256,bytes)'], identity.wallet.connect(provider));
+    const nonce = await deposits.getOperatorNonce(second.wallet.address);
+    const signature = await signSetOperator(second.wallet, makeDepositsDomain(31337, chain.depositsContractAddress), { operator: identity.wallet.address, nonce });
+    await (await deposits.setOperator(second.wallet.address, identity.wallet.address, nonce, signature)).wait();
+    await server.close();
+    server = await createAntsServer({ port, chain, dataDir, browserWallet: true, address: second.wallet.address });
+    // Only the ephemeral Anvil wallet is exposed to the browser test provider.
+    await rpc('anvil_impersonateAccount', [identity.wallet.address]);
+  }
   await server.listen();
   console.log(`Claimable: ${formatUnits(initial.total, 18)} test ANTS`);
   if (check && restricted) {
@@ -195,7 +209,7 @@ try {
       assert.equal(await rpc('evm_revert', [snapshot]), true);
       snapshot = await rpc('evm_snapshot');
       await server.close();
-      server = await createAntsServer({ port, chain, dataDir: path.join(dataDir, `restricted-session-${++resetCount}`), signer: identity.wallet, address: identity.wallet.address });
+      server = await createAntsServer({ port, chain, browserWallet: false, dataDir: path.join(dataDir, `restricted-session-${++resetCount}`), signer: identity.wallet, address: identity.wallet.address });
       await server.listen();
     }
     const wallet = identity.wallet.address;
@@ -272,13 +286,13 @@ try {
     server.context.invalidate();
     // Recreate the server so neither cached views nor old jobs survive a chain reset.
     await server.close();
-    server = await createAntsServer({ port, chain, dataDir: path.join(dataDir, 'browser-session'), signer: identity.wallet, address: identity.wallet.address });
+    server = await createAntsServer({ port, chain, browserWallet: false, dataDir: path.join(dataDir, 'browser-session'), signer: identity.wallet, address: identity.wallet.address });
     await server.listen();
     assert(BigInt((await api('rewards')).total) > 0n);
     console.log('HTTP lifecycle checks passed; restored fresh claimable rewards for browser tests.');
   }
-  await writeFile(path.join(dataDir, 'scenario.json'), JSON.stringify({ rpcUrl, forkBlock, restricted, chainId: 31337, dashboardUrl: server.url, address: identity.wallet.address, agentId: a.agentId, otherAgentId: b.agentId }, null, 2), { mode: 0o600 });
-  console.log(`LOCAL TEST ONLY (transfers ${restricted ? 'restricted' : 'enabled'}) — ${server.url}\nRPC: ${rpcUrl}\nWallet: ${identity.wallet.address}\nCtrl+C stops this sandbox. Rerun to reset. Production indexer disabled; closed-position history is not included.`);
+  await writeFile(path.join(dataDir, 'scenario.json'), JSON.stringify({ rpcUrl, forkBlock, restricted, browserWallet, buyerAddress: second.wallet.address, chainId: 31337, dashboardUrl: server.url, address: identity.wallet.address, agentId: a.agentId, otherAgentId: b.agentId }, null, 2), { mode: 0o600 });
+  console.log(`LOCAL TEST ONLY (transfers ${restricted ? 'restricted' : 'enabled'}) — ${server.url}\nRPC: ${rpcUrl}\nWallet: ${identity.wallet.address}\nCtrl+C stops this sandbox. Rerun to reset. Production indexer disabled; local transaction history tracks positions changed in this session.`);
   clearTimeout(setupTimer);
   await once(anvil, 'exit');
   if (!stopping) throw new Error('Anvil stopped unexpectedly');

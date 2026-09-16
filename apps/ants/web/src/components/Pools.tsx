@@ -1,9 +1,11 @@
+import { referenceProjection, formatProjectionPercent as percent, PROJECTION_ASSUMPTIONS, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../stake-projection';
+import { usePageData } from '../data';
+import { api } from '../api';
 import { Button, IconButton } from './ui';
 import { useEffect, useMemo, useState } from 'react';
 import type { PoolView, PoolsView } from '../../../src/api-types';
 import { cmpBig, formatAnts, formatBps, formatInt, formatUsdc, formatUsdcCompact, formatUtc, shortAddress, toBigInt } from '../format';
 import { AddressLink } from './AddressLink';
-import { Details } from './Details';
 import { EpochCell } from './Epoch';
 import { CloseIcon } from './icons';
 import { Input } from './Field';
@@ -11,16 +13,14 @@ import { Facts } from './Panel';
 import { Pill } from './Pill';
 import { Table, type Column } from './Table';
 
-/** Display name for a pool: explorer profile name, else the short seller address, else the agent id. */
+/** Seller name when indexed; otherwise an explicit pool identifier, never a wallet address as its name. */
 export function poolName(pool: PoolView): string {
-  if (pool.profile?.name) return pool.profile.name;
-  if (pool.seller) return shortAddress(pool.seller);
-  return `Agent ${pool.agentId}`;
+  return pool.profile?.name?.trim() || `Seller pool #${pool.agentId}`;
 }
 
 /** Select-option label: name plus agent id. */
 export function poolLabel(pool: PoolView): string {
-  return `${poolName(pool)} · agent ${pool.agentId}`;
+  return pool.profile?.name?.trim() ? `${poolName(pool)} · agent ${pool.agentId}` : poolName(pool);
 }
 
 export const POOL_ROW_CAP = 20;
@@ -42,31 +42,28 @@ export function sortPools(pools: PoolView[]): PoolView[] {
   });
 }
 
+type PoolSortMetric = 'month' | 'year' | 'volume';
+type SortDirection = 'ascending' | 'descending';
+
+/** Sort the displayed metric, keeping unavailable values last in either direction. */
+export function sortPoolsByMetric(pools: PoolView[], metric: PoolSortMetric, direction: SortDirection): PoolView[] {
+  const value = (pool: PoolView): number | bigint | null => metric !== 'volume'
+    ? referenceProjection(pool.yield, metric === 'month' ? 30 : 365).projection?.apy ?? null
+    : pool.volumeStatus === 'available' && pool.volumes.some(v => v.epoch === pool.yield?.epoch)
+      ? BigInt(pool.volumes.find(v => v.epoch === pool.yield?.epoch)!.usdc) : null;
+  return [...pools].sort((a, b) => {
+    const av = value(a), bv = value(b);
+    if (av === null) return bv === null ? 0 : 1;
+    if (bv === null) return -1;
+    const order = av < bv ? -1 : av > bv ? 1 : 0;
+    return direction === 'ascending' ? order : -order;
+  });
+}
+
 function matchesFilter(pool: PoolView, needle: string): boolean {
   if (!needle) return true;
   const q = needle.toLowerCase();
   return String(pool.agentId) === needle || (pool.profile?.name ?? '').toLowerCase().includes(q) || (pool.seller ?? '').toLowerCase().includes(q);
-}
-
-function rewardCell(pool: PoolView) {
-  const last = pool.lastEpochRewardPer1kPower;
-  const proj = pool.projectedRewardPer1kPower;
-  return (
-    <span className="cell-stack">
-      <span>{last !== null ? <>{formatAnts(last, 4)}{pool.lastEpochEmissionSettled ? null : <span className="dim"> est.</span>}</> : <span className="dim">—</span>}</span>
-      {proj !== null ? <span className="cell-sub">proj. {formatAnts(proj, 4)}</span> : null}
-    </span>
-  );
-}
-
-function volumeCell(pool: PoolView) {
-  const [current, last] = pool.volumes;
-  return (
-    <span className="cell-stack">
-      <span>{current ? formatUsdcCompact(current.usdc) : <span className="dim">—</span>}</span>
-      <span className="cell-sub">{last ? `last ${formatUsdcCompact(last.usdc)}` : '—'}</span>
-    </span>
-  );
 }
 
 interface TableProps {
@@ -80,8 +77,17 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [stakeableOnly, setStakeableOnly] = useState(true);
+  const [sortBy, setSortBy] = useState<PoolSortMetric>('month');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('descending');
+  const sortHeader = (metric: PoolSortMetric, label: string) => (
+    <button type="button" className="table-sort" aria-label={`Sort by ${label}, ${sortBy === metric && sortDirection === 'descending' ? 'ascending' : 'descending'}`} onClick={() => {
+      setSortDirection(sortBy === metric && sortDirection === 'descending' ? 'ascending' : 'descending');
+      setSortBy(metric);
+      setShowAll(false);
+    }}>{label} <span aria-hidden="true">{sortBy === metric ? sortDirection === 'descending' ? '↓' : '↑' : '↕'}</span></button>
+  );
   const needle = filter.trim();
-  const filtered = useMemo(() => pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), [pools, needle, stakeableOnly]);
+  const filtered = useMemo(() => sortPoolsByMetric(pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), sortBy, sortDirection), [pools, needle, stakeableOnly, sortBy, sortDirection]);
   const capped = !showAll && filtered.length > POOL_ROW_CAP;
   const visible = capped ? filtered.slice(0, POOL_ROW_CAP) : filtered;
   const columns: Array<Column<PoolView>> = [
@@ -101,36 +107,21 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
         </span>
       ),
     },
-    {
-      key: 'power',
-      label: 'Power',
-      align: 'right',
-      mono: true,
-      title: 'Pool power this epoch and its share of all pools',
-      render: (p) => (
-        <span className="cell-stack">
-          <span>{formatAnts(p.weight)}</span>
-          <span className="cell-sub">{formatBps(p.powerShareBps)} of network</span>
-        </span>
-      ),
-    },
-    { key: 'volume', label: 'Volume', align: 'right', mono: true, title: 'Settled USDC this epoch / last epoch', render: volumeCell },
-    { key: 'reward', label: 'Reward / 1k power', align: 'right', mono: true, title: 'Staker ANTS per 1,000 power last epoch; projected for this epoch below', render: rewardCell },
-    {
-      key: 'yours',
-      label: 'Your power',
-      align: 'right',
-      mono: true,
-      render: (p) =>
-        toBigInt(p.yourPower) ? (
-          <span className="cell-stack">
-            <span>{formatAnts(p.yourPower)}</span>
-            <span className="cell-sub">{formatBps(p.yourPoolShareBps)} of pool</span>
-          </span>
-        ) : (
-          <span className="dim">—</span>
-        ),
-    },
+    ...(['month', 'year'] as const).map(metric => ({
+      key: metric, label: sortHeader(metric, metric === 'month' ? 'APY · 1 month' : 'APY · 1 year'),
+      sortDirection: sortBy === metric ? sortDirection : 'none' as const,
+      align: 'right' as const, mono: true,
+      render: (p: PoolView) => {
+        const { epochs, projection } = referenceProjection(p.yield, metric === 'month' ? 30 : 365);
+        const duration = p.yield ? p.yield.endsAt - p.yield.startsAt : 0;
+        const title = !projection || epochs === null ? 'Projection unavailable: historical rewards, power or supported lock duration is missing.'
+          : `1,000 ANTS reference stake · ${epochs} epochs (${epochs * duration / 86400} days). Source epoch ${p.yield!.epoch}: ${formatUtc(p.yield!.startsAt)} – ${formatUtc(p.yield!.endsAt)}. ${PROJECTION_ASSUMPTIONS}${p.yield!.status === 'estimated' ? ' Source rewards are not yet settled.' : ''}`;
+        return <span className="yield-percent" title={projection?.apy != null && projection.apy > YIELD_DISPLAY_LIMIT ? `${EXTREME_YIELD_NOTE} ${title}` : title}>{percent(projection?.apy)}{projection && p.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}</span>;
+      },
+    })),
+    { key: 'stake', label: 'Active stake (ANTS)', align: 'right', mono: true, render: p => formatAnts(p.activeStake) },
+    { key: 'volume', label: sortHeader('volume', 'Last epoch (USDC)'), sortDirection: sortBy === 'volume' ? sortDirection : 'none', align: 'right', mono: true, render: p => { const v = p.volumes.find(v => v.epoch === p.yield?.epoch); return v && p.volumeStatus === 'available' ? formatUsdcCompact(v.usdc) : '—'; } },
+    { key: 'stakers', label: 'Stakers', align: 'right', mono: true, render: p => p.stakers == null ? '—' : formatInt(p.stakers) },
     {
       key: 'actions',
       label: '',
@@ -148,6 +139,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   ];
   return (
     <>
+      <p className="hint">Projected APYs use a 1,000 ANTS reference stake and the last completed epoch. Locks use the nearest supported whole epoch; hover for exact days and assumptions.</p>
       <div className="pools-toolbar">
         {pools.length > 5 ? (
           <Input label="" mono={false} width="md" placeholder="Filter by name or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
@@ -183,7 +175,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
 }
 
 /** Right-hand drawer: explorer profile, 3-epoch volume against the network, pool facts, your positions. */
-export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; view: PoolsView; onClose: () => void; onStake: (pool: PoolView) => void }) {
+export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool: PoolView; view: PoolsView; onClose: () => void; onStake: (pool: PoolView) => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -192,8 +184,12 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const detail = usePageData(`pool:${initialPool.agentId}`, () => api.pool(initialPool.agentId));
+  const pool = detail.data ?? initialPool;
+  const completedVolumes = pool.volumes.filter(v => v.epoch < view.currentEpoch);
+  const maxVolume = completedVolumes.reduce((max, v) => BigInt(v.usdc) > max ? BigInt(v.usdc) : max, 0n);
   const profile = pool.profile;
-  const explorerUrl = view.explorer && pool.seller ? `${view.explorer.replace(/\/$/, '')}/sellers/${pool.seller}` : null;
+  const explorerUrl = view.explorer && pool.seller ? `${view.explorer.replace(/\/$/, '')}/account/${pool.seller}` : null;
   const networkByEpoch = new Map(view.networkVolumes.map((v) => [v.epoch, v.usdc]));
 
   return (
@@ -243,18 +239,24 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
             <Facts
               items={[
                 ['Power', `${formatAnts(pool.weight)} · ${formatBps(pool.powerShareBps)} of network`],
+                ['APY', <span title={yieldDescription(pool)}>{percent(pool.yield?.apy)}{pool.yield?.status === 'estimated' ? ' (est.)' : ''}</span>],
+                ['APR', percent(pool.yield?.apr)],
                 ['Active stake', `${formatAnts(pool.activeStake, 4)} ANTS`],
-                ['Security share', formatBps(pool.securityShareBps)],
-                ['Reward / 1k power (last)', pool.lastEpochRewardPer1kPower !== null ? `${formatAnts(pool.lastEpochRewardPer1kPower, 4)} ANTS${pool.lastEpochEmissionSettled ? '' : ' (estimated until settled)'}` : '—'],
-                ['Reward / 1k power (proj.)', pool.projectedRewardPer1kPower !== null ? `${formatAnts(pool.projectedRewardPer1kPower, 4)} ANTS` : '—'],
-                ['Usage points (this / last)', `${formatInt(pool.usagePoints)} / ${formatInt(pool.lastEpochUsagePoints)}`],
+                ['Stakers', pool.stakers == null ? '—' : formatInt(pool.stakers)],
                 ['Last epoch emission', pool.lastEpochEmission !== null ? `${formatAnts(pool.lastEpochEmission, 4)} ANTS` : '—'],
               ]}
             />
           </section>
 
           <section className="drawer-section">
-            <h3 className="drawer-section-title">Volume</h3>
+            <h3 className="drawer-section-title">Settled volume · completed epochs</h3>
+            <p className="hint">{yieldDescription(pool)}</p>
+            {detail.error && <p className="hint">Seller details could not refresh. Showing previously loaded data.</p>}
+            {pool.statsUpdatedAt && <p className="small muted">Fetched {formatUtc(Math.floor(pool.statsUpdatedAt / 1000))}</p>}
+            {pool.volumeStatus !== 'available' && <p className="hint">Settlement volume {pool.volumeStatus === 'stale' ? 'is stale' : 'is unavailable'}. Usage points are not revenue.</p>}
+            <div className="volume-bars" role="img" aria-label="Settled USDC volume by completed epoch">
+              {completedVolumes.slice().reverse().map(v => <div className="volume-bar-row" key={v.epoch}><span>Epoch {v.epoch}</span><div className="volume-bar-track"><div style={{ width: `${maxVolume > 0n ? Number(BigInt(v.usdc) * 10000n / maxVolume) / 100 : 0}%` }} /></div><span>{formatUsdc(v.usdc)} USDC</span></div>)}
+            </div>
             <div className="table-wrap" style={{ marginBottom: 0 }}>
               <table className="table">
                 <thead>
@@ -266,21 +268,21 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
                   </tr>
                 </thead>
                 <tbody>
-                  {pool.volumes.length === 0 ? (
+                  {completedVolumes.length === 0 ? (
                     <tr>
                       <td className="empty" colSpan={4}>
-                        No settled volume yet.
+                        Settlement volume unavailable for completed epochs.
                       </td>
                     </tr>
                   ) : null}
-                  {pool.volumes.map((v, i) => {
+                  {completedVolumes.map((v, i) => {
                     const net = networkByEpoch.get(v.epoch) ?? null;
                     const share = net && toBigInt(net) ? Number((BigInt(v.usdc) * 10_000n) / BigInt(net)) : null;
                     return (
                       <tr key={v.epoch}>
                         <td>
                           <EpochCell epoch={v.epoch} />
-                          {i === 0 ? <span className="dim small"> current</span> : null}
+
                         </td>
                         <td className="num">{formatUsdc(v.usdc)}</td>
                         <td className="num">{net !== null ? formatUsdc(net) : '—'}</td>
@@ -294,7 +296,9 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
           </section>
 
           <section className="drawer-section">
-            <h3 className="drawer-section-title">Seller profile</h3>
+            <h3 className="drawer-section-title">Seller profile · lifetime activity</h3>
+            {profile?.stale && <p className="hint">Seller activity is stale; the indexer could not refresh.</p>}
+            {profile?.fetchedAt && <p className="small muted">Fetched {formatUtc(Math.floor(profile.fetchedAt / 1000))}</p>}
             {profile ? (
               <Facts
                 items={[
@@ -313,26 +317,15 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
             )}
           </section>
 
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Your positions</h3>
-            {pool.yourPositionIds.length > 0 ? (
-              <Facts
-                items={[
-                  ['Positions', <span className="mono">{pool.yourPositionIds.map((id) => `#${id}`).join(', ')}</span>],
-                  ['Your stake', `${formatAnts(pool.yourStake, 4)} ANTS`],
-                  ['Your power', `${formatAnts(pool.yourPower, 4)} · ${formatBps(pool.yourPoolShareBps)} of pool`],
-                ]}
-              />
-            ) : (
-              <span className="muted small">You have no positions in this pool.</span>
-            )}
-          </section>
-
-          <Details summary="Weighted points">
-            <Facts items={[['Weighted usage points', formatInt(pool.weightedUsagePoints)]]} />
-          </Details>
         </div>
       </aside>
     </>
   );
+}
+
+
+function yieldDescription(pool: PoolView): string {
+  const y = pool.yield;
+  if (!y || y.status === 'unavailable') return 'Last-epoch yield is unavailable.';
+  return `Pool average for epoch ${y.epoch}: ${formatUtc(y.startsAt)} – ${formatUtc(y.endsAt)}. APR ${percent(y.apr)}. APY assumes this rate repeats and compounds every epoch; compounding is not automatic. Your return depends on lock duration, staking power, activation delays and future activity.${y.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
 }

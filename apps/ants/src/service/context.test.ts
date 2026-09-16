@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AntsContext, type AntsChainConfig } from './context.js';
 import { epochInfo } from './overview.js';
 
@@ -81,9 +81,17 @@ describe('AntsContext.stack', () => {
     expect(await ctx.stack()).not.toBe(first);
   });
 
+  it('shares stack resolution across independent simultaneous page loads', async () => {
+    const ctx = new FakeContext(chain, { emissions: chain.emissionsContractAddress!, staking: chain.stakingContractAddress! });
+    const registry = vi.spyOn(ctx, 'registry');
+    const results = await Promise.all([ctx.stack(), ctx.stack(), ctx.stack(), ctx.stack()]);
+    expect(registry).toHaveBeenCalledTimes(1);
+    expect(results.every(result => result === results[0])).toBe(true);
+  });
+
   it('refuses signing actions without a signer', () => {
     const ctx = new FakeContext(chain, { emissions: chain.emissionsContractAddress!, staking: chain.stakingContractAddress! });
-    expect(() => ctx.requireSigner()).toThrow(/read-only/);
+    expect(() => ctx.requireSigner()).toThrow(/Connect a wallet/);
   });
 });
 

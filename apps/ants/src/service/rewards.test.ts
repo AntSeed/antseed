@@ -1,3 +1,4 @@
+import { ZeroAddress } from 'ethers';
 import { describe, expect, it, vi } from 'vitest';
 import type { AntsContext } from './context.js';
 import { claim, compound, restake, rewards } from './rewards.js';
@@ -21,7 +22,7 @@ function fixture(indexed = true) {
     restakeStakerRewardsBatch: vi.fn(async () => 'restake-hash'),
   };
   const ctx = {
-    address,
+    address, buyerAddress: address, localPositionIds: new Map(),
     stack: async () => ({ phase: 'legacy', currentEpoch: 6 }),
     claimableEpochs: async () => ({ legacy: [], recognized: [] }),
     pools: () => pools,
@@ -83,5 +84,107 @@ describe('closed-position rewards', () => {
   it('includes closed-position rewards in compound', async () => {
     const { ctx } = fixture();
     expect(await compound(ctx, { epochs: 4 })).toMatchObject({ restakedPositionIds: [7], transactions: ['restake-hash'] });
+  });
+});
+
+
+describe('buyer rewards before browser wallet connection', () => {
+  function buyerFixture() {
+    const { ctx } = fixture();
+    ctx.address = ZeroAddress;
+    ctx.stack = async () => ({ phase: 'active', currentEpoch: 23, effectiveEpoch: 22 }) as never;
+    ctx.claimableEpochs = async () => ({ legacy: [21], recognized: [22] }) as never;
+    const walletRead = vi.fn(() => { throw new Error('Unexpected disconnected wallet read'); });
+    ctx.sellerRegistry = () => ({ getAgentId: walletRead }) as never;
+    ctx.pools = () => ({ allStakerPositionIds: walletRead }) as never;
+    ctx.lockedPoolAt = () => ({ claimable: walletRead }) as never;
+    ctx.usageAccounting = () => ({ pendingEmissions: walletRead }) as never;
+    const buyerClaimed = vi.fn(async () => false);
+    const buyerReward = vi.fn(async () => 7n * 10n ** 18n);
+    ctx.usageRewards = () => ({ buyerEpochClaimed: buyerClaimed, pendingBuyerReward: buyerReward }) as never;
+    const pendingLegacy = vi.fn(async () => ({ seller: 99n, buyer: 5n * 10n ** 18n }));
+    ctx.legacyEmissionsAt = () => ({ pendingEmissions: pendingLegacy }) as never;
+    const participant = vi.fn(async () => ({ seller: [], buyer: [{ epoch: 22 }] }));
+    ctx.indexer = () => ({ participant, positions: walletRead }) as never;
+    const getOperator = vi.fn(async () => foreign);
+    ctx.deposits = () => ({ getOperator }) as never;
+    return { ctx, walletRead, buyerClaimed, buyerReward, pendingLegacy, participant, getOperator };
+  }
+
+  it('reads recognized and legacy rewards for the originating buyer, without zero-address wallet reads', async () => {
+    const f = buyerFixture();
+    const view = await rewards(f.ctx);
+    expect(view).toMatchObject({
+      scope: 'buyer', total: '12000000000000000000',
+      staker: { total: '0', positions: [] }, sellerUsage: { total: '0' },
+      buyerUsage: { total: '7000000000000000000', operator: foreign, claimable: false },
+      legacy: { seller: '0', buyer: '5000000000000000000', buyerClaimable: false },
+      locked: { claimable: '0' },
+    });
+    expect(f.participant).toHaveBeenCalledWith(address, 1);
+    expect(f.getOperator).toHaveBeenCalledWith(address);
+    expect(f.buyerClaimed).toHaveBeenCalledWith(address, 22);
+    expect(f.buyerReward).toHaveBeenCalledWith(address, 22);
+    expect(f.pendingLegacy).toHaveBeenCalledWith(address, [21]);
+    expect(f.walletRead).not.toHaveBeenCalled();
+  });
+
+  it('keeps buyer reads tied to the buyer when a separate authorized wallet connects', async () => {
+    const { ctx } = fixture(false);
+    ctx.address = foreign;
+    ctx.stack = async () => ({ phase: 'active', currentEpoch: 23 }) as never;
+    ctx.claimableEpochs = async () => ({ legacy: [], recognized: [22] }) as never;
+    ctx.usageAccounting = () => ({ pendingEmissions: async () => ({ seller: 0n, buyer: 999n }) }) as never;
+    const buyerReward = vi.fn(async () => 7n);
+    ctx.usageRewards = () => ({ buyerEpochClaimed: async () => false, pendingBuyerReward: buyerReward }) as never;
+    ctx.deposits = () => ({ getOperator: async () => foreign }) as never;
+    expect(await rewards(ctx)).toMatchObject({ scope: 'all', buyerUsage: { total: '7', claimable: true } });
+    expect(buyerReward).toHaveBeenCalledWith(address, 22);
+    ctx.deposits = () => ({ getOperator: async () => address }) as never;
+    expect(await rewards(ctx)).toMatchObject({ buyerUsage: { total: '7', claimable: false } });
+  });
+
+  it('propagates buyer read failures instead of reporting zero rewards', async () => {
+    const { ctx, buyerReward } = buyerFixture();
+    buyerReward.mockRejectedValueOnce(new Error('Buyer RPC unavailable'));
+    await expect(rewards(ctx)).rejects.toThrow('Buyer RPC unavailable');
+  });
+});
+
+describe('explicit buyer and wallet claim scopes', () => {
+  function claimFixture() {
+    const { ctx, poolRewards } = fixture(false);
+    ctx.address = foreign;
+    ctx.stack = async () => ({ phase: 'active', currentEpoch: 23 }) as never;
+    ctx.claimableEpochs = async () => ({ legacy: [21], recognized: [22] }) as never;
+    ctx.deposits = () => ({ getOperator: async () => foreign }) as never;
+    const currentBuyer = vi.fn(async () => 'buyer-current');
+    const oldBuyer = vi.fn(async () => 'buyer-legacy');
+    const seller = vi.fn(async () => 'seller');
+    ctx.usageRewards = () => ({ buyerEpochClaimed: async () => false, pendingBuyerReward: async () => 5n, claimBuyerReward: currentBuyer }) as never;
+    ctx.usageAccounting = () => ({ pendingEmissions: async () => ({ seller: 5n }), claimSellerEmissions: seller }) as never;
+    ctx.legacyEmissionsAt = () => ({ pendingEmissions: async () => ({ buyer: 5n, seller: 5n }), claimBuyerEmissions: oldBuyer, claimSellerEmissions: seller }) as never;
+    return { ctx, currentBuyer, oldBuyer, seller, poolRewards };
+  }
+  it('claims current and legacy buyer rewards without touching wallet-owned categories', async () => {
+    const f = claimFixture();
+    const result = await claim(f.ctx, { buckets: [], scope: 'buyer' });
+    expect(result.transactions).toEqual(['buyer-current', 'buyer-legacy']);
+    expect(f.currentBuyer).toHaveBeenCalledWith({}, address, 22);
+    expect(f.oldBuyer).toHaveBeenCalledWith({}, address, [21]);
+    expect(f.seller).not.toHaveBeenCalled();
+    expect(f.poolRewards.claimStakerRewardsBatch).not.toHaveBeenCalled();
+  });
+  it('rejects unauthorized buyer claims before any transaction, including legacy-only claims', async () => {
+    const f = claimFixture();
+    f.ctx.deposits = () => ({ getOperator: async () => ZeroAddress }) as never;
+    await expect(claim(f.ctx, { buckets: [], scope: 'buyer' })).rejects.toThrow('authorized wallet');
+    expect(f.currentBuyer).not.toHaveBeenCalled(); expect(f.oldBuyer).not.toHaveBeenCalled(); expect(f.seller).not.toHaveBeenCalled();
+  });
+  it('wallet-scoped claims exclude both current and legacy buyer rewards', async () => {
+    const f = claimFixture();
+    await claim(f.ctx, { buckets: ['buyer', 'legacy', 'seller'], scope: 'wallet' });
+    expect(f.currentBuyer).not.toHaveBeenCalled(); expect(f.oldBuyer).not.toHaveBeenCalled();
+    expect(f.seller).toHaveBeenCalledTimes(2);
   });
 });

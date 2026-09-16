@@ -72,6 +72,7 @@ export interface ResolvedStack {
 }
 
 export interface AntsContextOptions {
+  buyerAddress?: string;
   chain: AntsChainConfig;
   address: string;
   signer?: AbstractSigner;
@@ -99,10 +100,14 @@ export class MissingContractError extends Error {
  */
 export class AntsContext {
   chain: AntsChainConfig;
-  readonly address: string;
-  readonly signer: AbstractSigner | undefined;
+  address: string;
+  readonly buyerAddress: string;
+  readonly localPositionIds = new Map<number, string>();
+  signer: AbstractSigner | undefined;
   private readonly stackTtlMs: number;
   private stackCache: ResolvedStack | null = null;
+  private stackInflight: Promise<ResolvedStack> | null = null;
+  private stackGeneration = 0;
   private readonly clients = new Map<string, unknown>();
   private readonly probeRpc: (url: string) => Promise<number | null>;
   private rpcSelection: Promise<void> | null = null;
@@ -113,6 +118,7 @@ export class AntsContext {
   constructor(options: AntsContextOptions) {
     this.chain = options.chain;
     this.address = options.address;
+    this.buyerAddress = options.buyerAddress ?? options.address;
     this.signer = options.signer;
     this.stackTtlMs = options.stackTtlMs ?? 15_000;
     this.probeRpc = options.probeRpc ?? probeRpcEndpoint;
@@ -155,7 +161,7 @@ export class AntsContext {
   }
 
   requireSigner(): AbstractSigner {
-    if (!this.signer) throw new Error('This action needs the node wallet; no signer is available in read-only mode.');
+    if (!this.signer) throw new Error('Connect a wallet to approve this action.');
     return this.signer;
   }
 
@@ -297,11 +303,24 @@ export class AntsContext {
     return Object.fromEntries(entries.filter((entry): entry is [string, string] => !!entry[1]));
   }
 
-  invalidate(): void { this.stackCache = null; }
+  invalidate(): void { this.stackGeneration++; this.stackCache = null; this.stackInflight = null; }
 
   /** Determine which protocol phase the chain is in and where legacy claims live. */
   async stack(): Promise<ResolvedStack> {
     if (this.stackCache && Date.now() - this.stackCache.resolvedAt < this.stackTtlMs) return this.stackCache;
+    if (this.stackInflight) return this.stackInflight;
+    const generation = this.stackGeneration;
+    const task = this.resolveStack().then(result => {
+      if (generation === this.stackGeneration) this.stackCache = result;
+      return result;
+    });
+    this.stackInflight = task;
+    const clear = () => { if (this.stackInflight === task) this.stackInflight = null; };
+    task.then(clear, clear);
+    return task;
+  }
+
+  private async resolveStack(): Promise<ResolvedStack> {
     await this.selectRpc();
     const registry = this.registry();
     const [emissions, staking] = await Promise.all([registry.emissions(), registry.staking()]);
@@ -345,11 +364,10 @@ export class AntsContext {
       const pool = await legacy.sellerRewardsPool();
       lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
     }
-    this.stackCache = {
+    return {
       phase, currentEpoch, effectiveEpoch, genesis, epochDuration, registryPointers,
       legacyEmissions, legacyStaking, legacyEmissionsV1, lockedRewardsPool, resolvedAt: Date.now(),
     };
-    return this.stackCache;
   }
 
   /** Epoch ranges that can be claimed: legacy epochs end at the effective epoch; recognized epochs start there. */

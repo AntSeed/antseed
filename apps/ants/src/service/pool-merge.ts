@@ -20,18 +20,18 @@ function bps(part: bigint, whole: bigint): number {
 /** The pool summary carries volume for the current (index 0) and previous (index 1) epoch only. */
 function poolVolumeAt(pool: IndexedPool | undefined, index: number): string | null {
   if (!pool) return null;
-  if (index === 0) return pool.volumeUsdc;
-  if (index === 1) return pool.lastVolumeUsdc;
+  if (index === 0) return pool.volumeAvailable === false ? null : pool.volumeUsdc;
+  if (index === 1) return pool.lastVolumeAvailable === false ? null : pool.lastVolumeUsdc;
   return null;
 }
 
 function volumesFor(seller: string | null, epochs: number[], sellerEpochs: Map<string, IndexedSellerEpoch[]>, pool?: IndexedPool): EpochVolume[] {
   const rows = seller ? sellerEpochs.get(seller.toLowerCase()) ?? [] : [];
-  return epochs.map((epoch, index) => {
+  return epochs.flatMap((epoch, index) => {
     const sellerVolume = rows.find((entry) => entry.epoch === epoch)?.volumeUsdc;
     if (sellerVolume) return { epoch, usdc: sellerVolume };
     const poolVolume = poolVolumeAt(pool, index);
-    return { epoch, usdc: poolVolume && poolVolume !== '0' ? poolVolume : '0' };
+    return poolVolume === null ? [] : [{ epoch, usdc: poolVolume }];
   });
 }
 
@@ -53,6 +53,7 @@ export function mergePools(input: MergeInput): PoolView[] {
     const weight = BigInt(pool.weight);
     rows.set(pool.agentId, {
       agentId: pool.agentId,
+      stakers: pool.stakers ?? null,
       seller,
       profile: profileFor(seller),
       hasPool: weight !== 0n || pool.openPositions > 0,

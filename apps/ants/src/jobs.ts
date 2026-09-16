@@ -14,6 +14,7 @@ const JOB_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 export class JobRunner {
   private readonly jobs = new Map<string, JobView>();
   private active: string | null = null;
+  private acceptingWrites = true;
 
   /** `onFinish` runs after every job, successful or not, before its final status is visible. */
   constructor(private readonly options: { onFinish?: () => void; journalPath?: string } = {}) {
@@ -60,8 +61,19 @@ export class JobRunner {
     return this.jobs.get(id);
   }
 
+  get busy(): boolean {
+    return this.active !== null;
+  }
+
+  /** Atomically stop new jobs before replacing a wallet or network. */
+  pauseWrites(): void {
+    if (this.busy) throw new Error('A staking action is still running. Wait for it to finish before changing wallets or networks.');
+    this.acceptingWrites = false;
+  }
+
   /** Run `work` as a job. Only one signing job runs at a time so nonces stay ordered. */
   start(kind: string, work: (report: StepReporter) => Promise<unknown>): JobView {
+    if (!this.acceptingWrites) throw new Error('This staking session has ended. Reopen Staking to continue.');
     if (this.active && this.jobs.get(this.active)?.status === 'running') {
       throw new Error(`Another action (${this.jobs.get(this.active)?.kind}) is still running. Wait for it to finish.`);
     }

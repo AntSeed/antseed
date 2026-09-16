@@ -10,6 +10,7 @@ const FETCH_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 15_000;
 
 export interface IndexedStakingEpoch {
+  complete?: boolean;
   epoch: number;
   totalPowerWeight: string;
   totalActiveStake: string;
@@ -39,8 +40,13 @@ export interface IndexedPool {
   lastUsagePoints: string;
   volumeUsdc: string;
   lastVolumeUsdc: string;
+  volumeAvailable?: boolean;
+  lastVolumeAvailable?: boolean;
   lastEmission: string;
   lastEmissionSettled: boolean;
+  /** Preserve absent/invalid historical inputs instead of treating them as a real zero. */
+  historicalYield?: { power: string; reward: string; settled: boolean } | null;
+  stakers?: number | null;
   lastRewardPer1kPower: string | null;
   projectedEmission: string;
   projectedRewardPer1kPower: string | null;
@@ -68,7 +74,7 @@ export interface IndexedPoolDetail {
   pool: (IndexedPool & { firstStakeAt: number | null }) | null;
   epochs: IndexedPoolEpoch[];
   openPositions: number;
-  stakers: number;
+  stakers: number | null;
 }
 
 export interface IndexedPosition {
@@ -130,6 +136,7 @@ const CLOSE_REASONS = ['split', 'merge', 'move', 'withdraw'] as const;
 function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoch | null {
   if (!row) return null;
   return {
+    complete: ['epoch', 'totalPowerWeight', 'stakerBudget', 'totalWeightedPoolPoints'].every(key => /^\d+$/.test(String(row[key] ?? ''))),
     epoch: num(row['epoch']),
     totalPowerWeight: str(row['totalPowerWeight']),
     totalActiveStake: str(row['totalActiveStake']),
@@ -161,8 +168,13 @@ function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: num
     lastUsagePoints: str(row['lastUsagePoints']),
     volumeUsdc: str(row['volumeUsdc']),
     lastVolumeUsdc: str(row['lastVolumeUsdc']),
+    volumeAvailable: row['volumeUsdc'] != null,
+    lastVolumeAvailable: row['lastVolumeUsdc'] != null,
     lastEmission: str(row['lastEmission']),
     lastEmissionSettled: row['lastEmissionSettled'] === true,
+    historicalYield: /^\d+$/.test(String(row['lastWeight'] ?? '')) && /^\d+$/.test(String(row['lastEmission'] ?? '')) && typeof row['lastEmissionSettled'] === 'boolean'
+      ? { power: String(row['lastWeight']), reward: String(row['lastEmission']), settled: row['lastEmissionSettled'] } : null,
+    stakers: row['stakers'] != null && Number.isSafeInteger(Number(row['stakers'])) && Number(row['stakers']) >= 0 ? Number(row['stakers']) : null,
     lastRewardPer1kPower: optional(row['lastRewardPer1kPower'], str),
     projectedEmission: str(row['projectedEmission']),
     projectedRewardPer1kPower: optional(row['projectedRewardPer1kPower'], str),
@@ -252,12 +264,12 @@ export class AntscanIndexer implements Indexer {
     const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
     return {
       pool: raw.pool ? toPool(raw.pool) : null,
-      epochs: (raw.epochs ?? []).map((row) => ({
+      epochs: (raw.epochs ?? []).filter(row => row['volumeUsdc'] != null).map((row) => ({
         epoch: num(row['epoch']), weight: str(row['weight']), activeStake: str(row['activeStake']), usagePoints: str(row['usagePoints']), weightedUsagePoints: str(row['weightedUsagePoints']),
         volumeUsdc: str(row['volumeUsdc']), requests: str(row['requests']), settledEmission: str(row['settledEmission']), settled: row['settled'] === true,
       })),
       openPositions: num(raw.openPositions),
-      stakers: num(raw.stakers),
+      stakers: raw.stakers != null && Number.isSafeInteger(Number(raw.stakers)) && Number(raw.stakers) >= 0 ? Number(raw.stakers) : null,
     };
   }
 

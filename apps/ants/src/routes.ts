@@ -5,7 +5,7 @@ import type { ViewCache } from './view-cache.js';
 import type { StepReporter } from './service/steps.js';
 import {
   overview, positions, stake, move, split, merge, extend, maxLock, previewWithdraw, withdraw,
-  rewards, claim, restake, stakeUsageRewards, compound, poolsView, singlePool, usage, emissions,
+  rewards, claim, restake, stakeUsageRewards, compound, poolsView, poolStakerCounts, singlePool, usage, emissions,
   verification, proofStatus, submitProof, seller, registerBinding, claimStarter,
 } from './service/index.js';
 import type {
@@ -19,6 +19,9 @@ export interface RouteContext {
   views: ViewCache;
   readOnly: boolean;
   dataDir: string | null;
+  browserSigning?: import('./browser-signer.js').BrowserSigning;
+  onAuthorize?: () => Promise<void>;
+  rememberTransaction?: (hash: string) => Promise<void>;
 }
 
 async function respond(reply: FastifyReply, read: () => Promise<unknown>): Promise<void> {
@@ -35,13 +38,19 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   app.get('/api/config', async () => ({
     ok: true,
-    data: { address: ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, readOnly: context.readOnly, dataDir: context.dataDir },
+    data: { address: ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize, dataDir: context.dataDir },
+  }));
+
+  app.post('/api/wallet/authorize', (_request, reply) => respond(reply, async () => {
+    if (!context.onAuthorize) throw new Error('Open the VPR wallet authorization setup to authorize a wallet.');
+    await context.onAuthorize(); return {};
   }));
 
   app.get('/api/overview', (_request, reply) => respond(reply, () => cached('overview', () => overview(ctx))));
   app.get('/api/positions', (_request, reply) => respond(reply, () => cached('positions', () => positions(ctx))));
   app.get('/api/rewards', (_request, reply) => respond(reply, () => cached('rewards', () => rewards(ctx))));
-  app.get('/api/pools', (_request, reply) => respond(reply, () => cached('pools', () => poolsView(ctx))));
+  app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000)));
+  app.get('/api/pools/stakers', (_request, reply) => respond(reply, () => views.read('pool-stakers', () => poolStakerCounts(ctx), 60_000)));
   app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));
@@ -59,9 +68,12 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   const action = <Body>(path: string, kind: string, run: (body: Body, report: StepReporter) => Promise<unknown>) => {
     app.post(path, async (request, reply) => {
-      if (context.readOnly) return reply.status(403).send({ ok: false, error: 'The dashboard is running in read-only mode (no wallet available).' });
+      if (!ctx.signer) return reply.status(403).send({ ok: false, error: 'The dashboard is running in read-only mode (no wallet available).' });
       try {
-        const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, report));
+        const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, async (label, hash) => {
+          await report(label, hash);
+          if (hash) await context.rememberTransaction?.(hash);
+        }));
         return { ok: true, data: job };
       } catch (error) {
         return reply.status(409).send({ ok: false, error: describeError(error) });

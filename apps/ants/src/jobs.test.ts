@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { JobRunner, describeError } from './jobs.js';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -117,4 +117,20 @@ describe('JobRunner', () => {
     expect(runner.get(job.id)?.error).toBe('execution reverted (NothingToClaim())');
     expect(describeError('plain')).toBe('plain');
   });
+});
+
+it('refuses session replacement during work and prevents new jobs after pausing', async () => {
+  const runner = new JobRunner();
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => { finish = resolve; });
+  runner.start('claim', () => completion);
+  expect(runner.busy).toBe(true);
+  expect(() => runner.pauseWrites()).toThrow(/still running/);
+  finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(runner.busy).toBe(false);
+  runner.pauseWrites();
+  const work = vi.fn();
+  expect(() => runner.start('stake', work)).toThrow(/session has ended/);
+  expect(work).not.toHaveBeenCalled();
 });

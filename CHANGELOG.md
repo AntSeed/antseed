@@ -6,7 +6,23 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+- ANTS dashboard: stake eligible unclaimed buyer, seller, or position rewards directly from the staking form while wallet ANTS transfers are restricted. Explain early-exit penalties with tooltips, show seller pool names, and bound extreme APY displays above 10,000.00%.
+
+- VPR: route Claim rewards and Manage staking into the shared browser dashboard. Separate buyer and wallet reward actions, retain wallet authorization, and replace the old payments claim screen with a dashboard handoff.
+
+- ANTS dashboard: show the originating VPR/CLI buyer’s rewards before browser wallet connection, without querying disconnected-wallet positions. Claims still require the authorized wallet.
+
+- ANTS dashboard: remove standalone network/read-only header badges; load page sections independently, batch overview reads, reuse matching Antscan epoch data, skip yield reads for sellers without pools, and fill staker counts after the pool table loads.
+
+- CLI/VPR: open the localhost staking dashboard in the system browser with connected-wallet approvals and verified transaction results. Keep terminal signing local, preserve the originating buyer separately from its authorized wallet, and retain explicit buyer-wallet authorization and one Manage staking entry.
+- ANTS dashboard: compare sortable one-month and one-year APY projections for a 1,000 ANTS reference stake; update projected APY and first-epoch rewards with the staking amount and lock slider, with whole-epoch shortcuts and explicit historical-rate assumptions.
+- ANTS dashboard: compare pool-average estimated APY and APR from the last completed epoch, sort by yield or settled volume, and inspect seller activity with unavailable/stale-data labels. Model revenue breakdown remains unavailable.
+- ANTS dashboard: promote Move allocation, preview split-then-move approvals and lock/power effects, and separate withdrawal principal, penalties, outstanding rewards and transfer restrictions. Preserve recent closed-position rewards through chain-verified local history.
+- Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
+
 ### Fixed
+
+- Payments: resolve legacy reward reads and browser claim targets separately from the current Usage Accounting address; read the current emission schedule from the Emissions Gate after the protocol upgrade.
 
 - ANTS dashboard: open staking in a centered modal from the main button or a seller row, with stacked fields, a separate review/confirmation step, keyboard focus handling, and a scrollable layout on small screens.
 - ANTS dashboard: complete new-seller identity creation and binding, distinguish legacy identity lookup from explicit seller binding, display locked rewards even with zero claimable, correct lock dates and seller units, and report failed financial reads instead of zero balances. Add paced RPC reads, transaction readiness checks, stakeable-pool filtering, read-only withdrawal previews, and saved activity with interrupted-action recovery guidance.

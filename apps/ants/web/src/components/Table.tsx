@@ -8,6 +8,7 @@ export interface Column<T> {
   align?: 'left' | 'right';
   mono?: boolean;
   title?: string;
+  sortDirection?: 'ascending' | 'descending' | 'none';
   className?: string;
 }
 
@@ -35,7 +36,7 @@ export function Table<T>({ columns, rows, rowKey, empty, loading, onRowClick, is
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className={[column.align === 'right' ? 'num' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined} title={column.title}>
+              <th key={column.key} className={[column.align === 'right' ? 'num' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined} title={column.title} aria-sort={column.sortDirection}>
                 {column.label}
               </th>
             ))}

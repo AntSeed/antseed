@@ -1,3 +1,4 @@
+import { WalletProvider } from './wallet';
 import { Card } from './components/ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getToken, onUnauthorized } from './api';
@@ -102,13 +103,13 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
   }
 
   return (
-    <AppContext.Provider value={value}>
+    <WalletProvider config={value.config}><AppContext.Provider value={value}>
       <JobsProvider>
         <Layout page={route.page} updatedAt={overview.updatedAt} loading={overview.loading}>
           <PageView page={route.page} />
         </Layout>
       </JobsProvider>
-    </AppContext.Provider>
+    </AppContext.Provider></WalletProvider>
   );
 }
 

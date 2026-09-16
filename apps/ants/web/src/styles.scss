@@ -1074,3 +1074,61 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   .hero-value { font-size: 32px; line-height: 38px; }
   .facts { grid-template-columns: 1fr; dt { padding-bottom: 0; } dd { border-top: 0; padding-top: 2px; text-align: left; } }
 }
+
+.browser-wallet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wallet-approval { position: fixed; z-index: 10000; bottom: 24px; right: 24px; width: min(400px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--border, #d8ded9); border-radius: 16px; background: var(--panel, #fff); color: #17231c; box-shadow: 0 12px 48px #0003; display: grid; gap: 12px; }
+
+.volume-bars { display: grid; gap: 10px; margin: 16px 0; }
+.volume-bar-row { display: grid; grid-template-columns: 70px 1fr 120px; gap: 10px; align-items: center; font-size: 12px; }
+.volume-bar-track { height: 10px; background: #dde6df; border-radius: 4px; overflow: hidden; }
+.volume-bar-track > div { height: 100%; background: #5b896b; }
+
+.table-sort {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+  &:hover { color: var(--pc-ink); }
+  &:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; border-radius: 2px; }
+}
+
+.stake-lock-settings { flex: 1 1 280px; min-width: 0; .lock-slider { width: 100%; } }
+.stake-projection { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+
+.early-exit-help {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 0.35rem;
+}
+.early-exit-help__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--pc-sub);
+  font: 600 0.75rem/1 var(--font-sans);
+  cursor: help;
+  &:focus-visible { outline: 2px solid var(--pc-ink); outline-offset: 3px; }
+}
+.early-exit-help__tooltip {
+  position: fixed;
+  z-index: 30000;
+  width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--pc-line);
+  border-radius: 10px;
+  background: var(--pc-panel);
+  color: var(--pc-ink);
+  box-shadow: var(--pc-shadow-float);
+  font: 400 13px/1.5 var(--font-sans);
+  text-align: left;
+  white-space: normal;
+  pointer-events: auto;
+}
+
+/* Full decimal APYs can be long in seeded test pools; keep them within the layout. */
+.yield-percent { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
+.stake-projection, .stake-review .facts dd { min-width: 0; overflow-wrap: anywhere; }

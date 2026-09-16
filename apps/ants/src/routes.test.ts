@@ -16,7 +16,7 @@ const apps: ReturnType<typeof Fastify>[] = [];
 function setup(readOnly = false) {
   const app = Fastify();
   apps.push(app);
-  const ctx = { address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337 } } as AntsContext;
+  const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337 } } as unknown as AntsContext;
   registerRoutes(app, { ctx, jobs: new JobRunner(), views: new ViewCache(), readOnly, dataDir: null });
   return app;
 }

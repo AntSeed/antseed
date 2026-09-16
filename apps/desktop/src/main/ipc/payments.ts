@@ -1,3 +1,7 @@
+import { readBuyerRewardsSummary } from '../staking/buyer-rewards.js';
+import { resolveStakingChain } from '../staking/configuration.js';
+import { readConfig } from '../runtime/config-io.js';
+import { ACTIVE_CONFIG_PATH } from '../runtime/active-config.js';
 /**
  * IPC surface for deposits, balances, channels and the wallet-signing pages.
  */
@@ -20,7 +24,6 @@ import {
   EMPTY_REWARDS_SUMMARY,
   MAX_SPENDING_AUTH_BASE_UNITS,
   fetchBuyerProxyJson,
-  formatAnts,
   loadBuyerChannels,
   normalizeBuyerUsageTotals,
   notePendingSpend,
@@ -29,12 +32,8 @@ import {
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
   type CreditsInfo,
-  getCachedAntsTokenClient,
-  getCachedEmissionsClient,
   loadCachedCryptoConfig,
   refreshCreditsInfo,
-  setCachedAntsTokenClient,
-  setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
   buildLocalBuyerSpendHistory,
@@ -66,8 +65,6 @@ import {
   refreshPeerCache,
 } from '../runtime/peer-cache.js';
 import {
-  ANTSTokenClient,
-  EmissionsClient,
   makeChannelsDomain,
   peerIdToAddress,
   signSpendingAuth,
@@ -86,6 +83,11 @@ export function registerPaymentsIpc(): void {
   ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKind; amountUsdc?: string; channelId?: string }) => {
     try {
       const kind: PayPageKind = opts?.kind && PAY_PAGE_KINDS.includes(opts.kind) ? opts.kind : 'deposit';
+      if (kind === 'claim') {
+        const { stakingSessions } = await import('../staking/portal.js');
+        await stakingSessions.open('rewards');
+        return { ok: true };
+      }
       await startPaymentsPortal();
       const token = getPaymentsPortalToken();
       const params = new URLSearchParams();
@@ -446,53 +448,9 @@ export function registerPaymentsIpc(): void {
     try {
       await ensureSecureIdentity();
       const identity = getSecureIdentity();
-      const cc = await loadCachedCryptoConfig();
-      if (!identity || !cc?.emissionsAddress) {
-        return { ok: true, data: EMPTY_REWARDS_SUMMARY, error: null };
-      }
-
-      let emissionsClient = getCachedEmissionsClient();
-      if (!emissionsClient) {
-        emissionsClient = new EmissionsClient({
-          rpcUrl: cc.rpcUrl,
-          ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
-          contractAddress: cc.emissionsAddress,
-          evmChainId: cc.chainId,
-        });
-        setCachedEmissionsClient(emissionsClient);
-      }
-      if (cc.antsTokenAddress && !getCachedAntsTokenClient()) {
-        setCachedAntsTokenClient(new ANTSTokenClient({
-          rpcUrl: cc.rpcUrl,
-          ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
-          contractAddress: cc.antsTokenAddress,
-          evmChainId: cc.chainId,
-        }));
-      }
-      const tokenClient = getCachedAntsTokenClient();
-      // transfersEnabled only depends on the token address — run it in parallel
-      // with the epoch + pending-emissions chain.
-      const [{ currentEpoch, pending }, transfersEnabled] = await Promise.all([
-        (async () => {
-          const info = await emissionsClient.getEpochInfo();
-          const startEpoch = Math.max(0, info.epoch - 9);
-          const epochs = Array.from({ length: info.epoch - startEpoch + 1 }, (_, index) => startEpoch + index);
-          return { currentEpoch: info.epoch, pending: await emissionsClient.pendingEmissions(identity.wallet.address, epochs) };
-        })(),
-        tokenClient ? tokenClient.transfersEnabled() : Promise.resolve(false),
-      ]);
-
-      return {
-        ok: true,
-        data: {
-          available: true,
-          pendingAnts: formatAnts(pending.seller + pending.buyer),
-          currentEpoch,
-          transfersEnabled,
-          error: null,
-        },
-        error: null,
-      };
+      if (!identity) return { ok: true, data: EMPTY_REWARDS_SUMMARY, error: null };
+      const chain = resolveStakingChain(await readConfig(ACTIVE_CONFIG_PATH));
+      return { ok: true, data: await readBuyerRewardsSummary(chain, identity.wallet.address), error: null };
     } catch (err) {
       return {
         ok: true,

@@ -13,14 +13,26 @@ export function registerAntsDashboardAction(antsCmd: Command): void {
       const port = Number(options.port) || DEFAULT_ANTS_PORT;
       try {
         const { ctx, chain, dataDir, configPath } = await loadAntsContext(antsCmd);
-        const server = await createAntsServer({ port, dataDir, configPath, chain, signer: ctx.signer!, address: ctx.address });
+        let payments: Awaited<ReturnType<typeof import('@antseed/payments').createServer>> | undefined;
+        const server = await createAntsServer({ port, dataDir, configPath, chain, browserWallet: true, address: ctx.address, onAuthorize: async () => {
+          if (!payments) {
+            const { createServer } = await import('@antseed/payments');
+            payments = await createServer({ port: 0, dataDir, configPath, chainOverrides: { ...chain } });
+            await payments.listen({ port: 0, host: '127.0.0.1' });
+          }
+          const bound = payments.server.address();
+          if (!bound || typeof bound === 'string') throw new Error('Payments server is not listening.');
+          const params = new URLSearchParams({ token: (payments as unknown as { bearerToken: string }).bearerToken, page: 'pay', action: 'authorize' });
+          const { default: open } = await import('open');
+          await open(`http://127.0.0.1:${bound.port}?${params}`);
+        } });
         const url = await server.listen();
         console.log('');
         console.log(chalk.bold('ANTS staking dashboard'));
-        console.log(`  Wallet:  ${ctx.address}`);
+        console.log(`  Buyer account: ${ctx.address}`);
         console.log(`  Chain:   ${chain.chainId} (${chain.rpcUrl})`);
         console.log(`  URL:     ${chalk.cyan(url)}`);
-        console.log(chalk.dim('  The URL carries a one-time session token; only this browser session can act with your wallet.'));
+        console.log(chalk.dim('  The URL carries a one-time session token; connect your wallet in the browser to approve transactions.'));
         console.log(chalk.dim('  Every dashboard action has a CLI equivalent: antseed ants --help. Press Ctrl+C to stop.'));
         console.log('');
         if (options.open) {
@@ -33,6 +45,7 @@ export function registerAntsDashboardAction(antsCmd: Command): void {
         }
         const shutdown = async () => {
           await server.close();
+          await payments?.close();
           process.exit(0);
         };
         process.on('SIGINT', () => { void shutdown(); });

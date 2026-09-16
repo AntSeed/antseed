@@ -1,3 +1,4 @@
+import { overviewReads } from './overview-reads.js';
 import type { AntsContext } from './context.js';
 import type { OverviewView, EpochInfo } from '../api-types.js';
 import { toJson } from './json.js';
@@ -17,37 +18,13 @@ export function epochInfo(stack: { currentEpoch: number; effectiveEpoch: number 
 
 export async function overview(ctx: AntsContext): Promise<OverviewView> {
   const stack = await ctx.stack();
-  const token = ctx.antsToken();
   const pools = ctx.pools();
   const sellerRegistry = ctx.sellerRegistry();
-  const legacyStaking = ctx.legacyStakingAt(stack.legacyStaking);
-
-  const [ants, eth, transfersEnabled, whitelisted, totalActiveStake, positionCount, registryAgentId, legacyAgentId, totalSupply, maxSupply] = await Promise.all([
-    token.balanceOf(ctx.address),
-    token.provider.getBalance(ctx.address),
-    token.transfersEnabled(),
-    token.transferWhitelist(ctx.address),
-    pools ? pools.stakerTotalActiveStake(ctx.address) : Promise.resolve(0n),
-    pools ? pools.stakerPositionCount(ctx.address) : Promise.resolve(0),
-    sellerRegistry ? sellerRegistry.getAgentId(ctx.address) : Promise.resolve(0),
-    legacyStaking ? legacyStaking.getAgentId(ctx.address) : Promise.resolve(0),
-    token.totalSupply(),
-    token.maxSupply(),
-  ]);
+  const { ants, eth, transfersEnabled, whitelisted, totalActiveStake, positionCount, registryAgentId, legacyAgentId,
+    totalSupply, maxSupply, networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets } = await overviewReads(ctx, stack);
 
   let network: OverviewView['network'] = null;
   if (pools) {
-    const gate = ctx.gate();
-    const poolRewards = ctx.poolRewards();
-    const usageRewards = ctx.usageRewards();
-    const epoch = stack.currentEpoch;
-    const [networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets] = await Promise.all([
-      pools.totalActiveStakeAtEpoch(epoch),
-      pools.totalPowerWeightAtEpoch(epoch),
-      gate ? gate.getEpochEmission(epoch) : Promise.resolve(0n),
-      poolRewards ? poolRewards.stakerEpochBudget(epoch) : Promise.resolve(0n),
-      usageRewards ? usageRewards.usageEpochBudgets(epoch) : Promise.resolve({ buyer: 0n, seller: 0n }),
-    ]);
     network = {
       totalActiveStake: networkStake.toString(),
       totalPowerWeight: networkWeight.toString(),

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SellerView } from '../../../src/api-types';
 import { api } from '../api';
+import { useConfig } from '../app-context';
 import { AddressLink } from '../components/AddressLink';
 import { ActionButton } from '../components/Confirm';
 import { Details } from '../components/Details';
@@ -15,14 +16,30 @@ import { usePageData } from '../data';
 import { formatAnts, formatUsdc, formatInt, isPositiveInt } from '../format';
 
 export function SellerPage() {
-  const page = usePageData('seller', api.seller);
+  const config = useConfig();
+  const disconnected = /^0x0{40}$/i.test(config.address);
+  const page = usePageData(disconnected ? null : `seller:${config.address.toLowerCase()}`, api.seller);
   const data = page.data;
+
+  if (disconnected || (data && data.agentId === 0)) {
+    return (
+      <Panel title="Open your seller dashboard">
+        <p className="muted">
+          Open this dashboard from your seller’s CLI with <code>antseed ants</code>, then connect the wallet registered to your seller.
+        </p>
+        {!disconnected && (
+          <p className="muted">The connected wallet is not registered as a seller on this network. Switch to your seller wallet to view its details.</p>
+        )}
+      </Panel>
+    );
+  }
+  if (!data) {
+    return page.error ? <ErrorBox error={page.error} onRetry={page.refresh} /> : <Skeleton rows={6} />;
+  }
   return (
     <>
-      {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
-      {!data && page.loading ? <Skeleton rows={6} /> : null}
-      {data ? <SellerBody data={data} /> : null}
+      <SellerBody data={data} />
 
       <Panel title="Wash-trading status">
         <OwnSellerStatus />

@@ -91,7 +91,7 @@ export interface PoolConfigView {
   moveWeightPenaltyBps: number;
 }
 
-export type DataSource = 'indexer' | 'chain';
+export type DataSource = 'indexer' | 'chain' | 'local';
 
 export interface PositionsView {
   currentEpoch: number;
@@ -106,6 +106,8 @@ export interface PositionsView {
 export interface EpochAmount { epoch: number; amount: string; claimed?: boolean; }
 
 export interface RewardsView {
+  /** Before browser wallet connection, only the originating buyer account is read. */
+  scope?: 'buyer' | 'all';
   historySource?: DataSource;
   currentEpoch: number;
   firstRewardedEpoch: number | null;
@@ -122,6 +124,8 @@ export interface EpochVolume { epoch: number; usdc: string; }
 
 /** Explorer-sourced seller profile (Antscan); null fields when the explorer has no record. */
 export interface SellerProfile {
+  fetchedAt?: number;
+  stale?: boolean;
   name: string | null;
   providers: string[];
   modelsServed: number | null;
@@ -132,7 +136,24 @@ export interface SellerProfile {
   lastSettledAt: number | null;
 }
 
+export interface PoolYield {
+  /** Same completed epoch inputs for hypothetical new-position projections. */
+  reward?: string | null;
+  power?: string | null;
+  minLockEpochs?: number | null;
+  maxLockEpochs?: number | null;
+  epoch: number;
+  startsAt: number;
+  endsAt: number;
+  apr: number | null;
+  apy: number | null;
+  status: 'settled' | 'estimated' | 'unavailable';
+}
 export interface PoolView {
+  yield?: PoolYield;
+  stakers?: number | null;
+  statsUpdatedAt?: number;
+  volumeStatus?: 'available' | 'unavailable' | 'stale';
   agentId: number;
   seller: string | null;
   profile: SellerProfile | null;
@@ -279,16 +300,16 @@ export interface JobView {
 
 // ── action payloads ────────────────────────────────────────────────────
 export interface StakeRequest { agentId: number; amount: string; epochs: number; }
-export interface MoveRequest { positionIds: number[]; toAgentId: number; }
+export interface MoveRequest { positionIds: number[]; toAgentId: number; amount?: string; }
 export interface SplitRequest { positionId: number; amount: string; }
 export interface MergeRequest { positionIds: number[]; }
 export interface ExtendRequest { positionId: number; epochs: number; }
 export interface MaxLockRequest { positionId: number; enable: boolean; }
 export interface WithdrawRequest { positionIds: number[]; acceptSlashing: boolean; maxSlashedAmount?: string; }
 export type RewardBucket = 'staker' | 'seller' | 'buyer' | 'legacy' | 'locked';
-export interface ClaimRequest { buckets: RewardBucket[]; recipient?: string; }
+export interface ClaimRequest { buckets: RewardBucket[]; recipient?: string; scope?: 'buyer' | 'wallet'; }
 export interface RestakeRequest { positionIds?: number[]; epochs: number; }
 export interface StakeUsageRequest { side: 'seller' | 'buyer'; epochs: number; stakeAgentId?: number; }
 /** Restake staker + seller usage (+ buyer usage when operator) rewards in one job; `targetAgentId` moves the new positions into that pool. */
-export interface CompoundRequest { epochs: number; targetAgentId?: number; stakeAgentId?: number; }
+export interface CompoundRequest { includeBuyer?: boolean; epochs: number; targetAgentId?: number; stakeAgentId?: number; }
 export interface SubmitProofRequest { artifact: unknown; }

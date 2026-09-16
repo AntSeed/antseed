@@ -1,7 +1,8 @@
 import { Card } from '../components/ui';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ClaimRequest, CompoundRequest, PoolView, RestakeRequest, RewardBucket, RewardsView, StakeUsageRequest } from '../../../src/api-types';
-import { api } from '../api';
+import { request, api } from '../api';
+import { BuyerWalletAction } from '../wallet';
 import { useConfig, useEpochInfo } from '../app-context';
 import { AddressLink } from '../components/AddressLink';
 import { ActionButton } from '../components/Confirm';
@@ -25,7 +26,14 @@ export function RewardsPage() {
           <Skeleton rows={6} />
         </>
       ) : null}
-      {data ? <RewardsBody data={data} /> : null}
+      {data ? <>
+        <BuyerRewardsCard data={data} />
+        {data.scope !== 'buyer' ? <RewardsBody data={{ ...data,
+          total: sumBig([data.staker.total, data.sellerUsage.total, data.legacy.seller, data.locked.claimable]),
+          buyerUsage: { ...data.buyerUsage, total: '0', epochs: [], claimable: false },
+          legacy: { ...data.legacy, buyer: '0', buyerClaimable: false },
+        }} /> : null}
+      </> : null}
     </>
   );
 }
@@ -40,18 +48,61 @@ function split(data: RewardsView) {
   return { restakable, claimOnly, legacy, buyerRestakable };
 }
 
+function BuyerRewardsCard({ data }: { data: RewardsView }) {
+  const dashboard = useConfig();
+  const [authorizationError, setAuthorizationError] = useState<string | null>(null);
+  const [authorizing, setAuthorizing] = useState(false);
+  const amount = sumBig([data.buyerUsage.total, data.legacy.buyer]);
+  const operator = data.buyerUsage.operator;
+  const authorized = !!operator && operator.toLowerCase() === dashboard.address.toLowerCase() && !dashboard.readOnly;
+  const config = usePageData(authorized && !isZero(data.buyerUsage.total) ? 'positions:current' : null, api.positions);
+  const authorize = async () => {
+    setAuthorizing(true); setAuthorizationError(null);
+    try { await request('/api/wallet/authorize', { method: 'POST' }); }
+    catch (error) { setAuthorizationError(error instanceof Error ? error.message : String(error)); }
+    finally { setAuthorizing(false); }
+  };
+  return <Card className="hero">
+    <div className="tile-label">Buyer rewards</div>
+    <p className="hint">Earned by buyer account <AddressLink value={dashboard.buyerAddress ?? dashboard.address} />.</p>
+    <div className="hero-value">{formatAnts(amount, 4)}<span className="unit">ANTS</span></div>
+    {!isZero(data.legacy.buyer) ? <p className="hint">Includes {formatAnts(data.legacy.buyer, 4)} ANTS from legacy buyer rewards. Legacy rewards can be claimed but cannot be restaked.</p> : null}
+    {isZero(amount) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : null}
+    {!operator ? <p className="hint">Authorize a wallet to claim or restake this buyer’s rewards.</p> : !authorized ? <p className="hint">Connect the authorized wallet <AddressLink value={operator} /> on {dashboard.chainId} to claim or restake.</p> : null}
+    <div className="hero-actions">
+      {!operator && dashboard.canAuthorize ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
+      {operator && !authorized && dashboard.browserWallet ? <BuyerWalletAction /> : null}
+      <ActionButton label="Claim buyer rewards" variant="primary" title="Claim buyer rewards" path="/api/rewards/claim"
+        body={{ buckets: [], scope: 'buyer' } satisfies ClaimRequest}
+        disabled={!authorized || isZero(amount)} disabledReason={!authorized ? 'Connect the authorized wallet for this buyer account.' : 'Nothing to claim.'}
+        summary={[
+          ['Buyer account', <AddressLink value={dashboard.buyerAddress ?? dashboard.address} />],
+          ['Recipient', operator ? <AddressLink value={operator} /> : 'Authorize a wallet first'],
+          ['Amount', `${formatAnts(amount, 4)} ANTS`],
+          ['Includes', 'Current and legacy buyer rewards. Each required transaction needs wallet approval.'],
+        ]} />
+      {authorized && data.buyerUsage.claimable && !isZero(data.buyerUsage.total) ? <RestakeButton kind="buyer" data={data} maxEpochs={config.data?.config.maxStakeEpochs ?? null} /> : null}
+    </div>
+    {authorizationError ? <p role="alert" className="hint">{authorizationError}</p> : null}
+  </Card>;
+}
+
 function RewardsBody({ data }: { data: RewardsView }) {
-  const { restakable, claimOnly, legacy, buyerRestakable } = split(data);
-  const config = usePageData('positions:current', api.positions);
+  const { restakable, claimOnly, legacy: claimableLegacy } = split(data);
+  const legacy = sumBig([data.legacy.seller, data.legacy.buyer]);
+  const buyerOnly = data.scope === 'buyer';
+  const config = usePageData(buyerOnly ? null : 'positions:current', api.positions);
   const maxEpochs = config.data?.config.maxStakeEpochs ?? null;
   const nothing = isZero(data.total);
+  const rewardsForOtherWallet = !isZero(data.buyerUsage.total) || !isZero(data.sellerUsage.total);
   const canRestake = !isZero(restakable);
 
   return (
     <>
       <Card className="hero">
         {data.historySource === 'chain' ? <p className="status-line">No indexer is configured. These are known rewards; rewards from closed positions may be missing.</p> : null}
-        <div className="tile-label">Claimable</div>
+        {data.historySource === 'local' ? <p className="status-line">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
+        <div className="tile-label">Wallet rewards</div>
         <div className="hero-value">
           {formatAnts(data.total, 4)}
           <span className="unit">ANTS</span>
@@ -62,16 +113,16 @@ function RewardsBody({ data }: { data: RewardsView }) {
           </div>
         ) : null}
         {nothing ? (
-          <div className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</div>
+          <div className="hero-sub muted">{rewardsForOtherWallet ? 'Rewards are available to a different authorized wallet. See the categories below.' : 'Nothing to claim yet. Rewards accrue at each epoch boundary.'}</div>
         ) : (
           <div className="hero-actions">
             {canRestake ? <CompoundButton data={data} maxEpochs={maxEpochs} /> : null}
-            <ClaimButton bucket="all" amount={data.total} label="Claim" primary={!canRestake} />
+            <ClaimButton bucket="all" amount={data.total} label="Claim wallet rewards" primary={!canRestake} />
           </div>
         )}
       </Card>
 
-      {nothing && isZero(data.locked.locked) ? null : (
+      {nothing && !rewardsForOtherWallet && isZero(data.locked.locked) ? null : (
         <Card className="buckets">
           <BucketRow
             visible={!isZero(data.staker.total)}
@@ -103,28 +154,15 @@ function RewardsBody({ data }: { data: RewardsView }) {
             }
           />
           <BucketRow
-            visible={!isZero(data.buyerUsage.total)}
-            name="Buyer usage"
-            note={<BuyerNote data={data} />}
-            amount={data.buyerUsage.total}
-            actions={
-              <>
-                {buyerRestakable ? <RestakeButton kind="buyer" data={data} maxEpochs={maxEpochs} /> : null}
-                <ClaimButton bucket="buyer" amount={data.buyerUsage.total} disabled={!data.buyerUsage.claimable} reason="Buyer usage rewards are claimed by the operator, not this wallet." />
-              </>
-            }
-          />
-          <BucketRow
             visible={!isZero(data.legacy.seller) || !isZero(data.legacy.buyer)}
             name="Legacy V2"
             note={
               <>
-                seller <span className="mono">{formatAnts(data.legacy.seller, 4)}</span> · buyer <span className="mono">{formatAnts(data.legacy.buyer, 4)}</span>
-                {data.legacy.buyerClaimable ? null : ' (buyer share claimed by operator)'} · claim only
+                Seller rewards · claim only
               </>
             }
             amount={legacy}
-            actions={<ClaimButton bucket="legacy" amount={legacy} />}
+            actions={<ClaimButton bucket="legacy" amount={claimableLegacy} />}
           />
           <BucketRow
             visible={!isZero(data.locked.claimable) || !isZero(data.locked.locked)}
@@ -160,41 +198,21 @@ function BucketRow({ visible, name, note, amount, actions }: { visible: boolean;
   );
 }
 
-function BuyerNote({ data }: { data: RewardsView }) {
-  const { address } = useConfig();
-  const b = data.buyerUsage;
-  const foreignRecipient = b.recipient && b.recipient.toLowerCase() !== address.toLowerCase();
-  if (!b.claimable) {
-    return (
-      <>
-        belongs to the operator{b.operator ? <> <AddressLink value={b.operator} /></> : null}
-        {foreignRecipient && b.recipient ? <> · recipient <AddressLink value={b.recipient} /></> : null}
-      </>
-    );
-  }
-  return (
-    <>
-      this wallet is the operator
-      {foreignRecipient && b.recipient ? <> · recipient <AddressLink value={b.recipient} /></> : null}
-    </>
-  );
-}
-
 function ClaimButton({ bucket, amount, label, disabled, reason, primary }: { bucket: RewardBucket | 'all'; amount: string; label?: string; disabled?: boolean; reason?: string; primary?: boolean }) {
-  const body: ClaimRequest = { buckets: bucket === 'all' ? [] : [bucket] };
+  const body: ClaimRequest = { buckets: bucket === 'all' ? [] : [bucket], scope: 'wallet' };
   const empty = isZero(amount);
   return (
     <ActionButton
       label={label ?? 'Claim'}
       size={bucket === 'all' ? undefined : 'sm'}
       variant={primary ? 'primary' : 'default'}
-      title={bucket === 'all' ? 'Claim all rewards' : `Claim ${bucket} rewards`}
+      title={bucket === 'all' ? 'Claim wallet rewards' : `Claim ${bucket} rewards`}
       path="/api/rewards/claim"
       body={body}
       disabled={disabled || empty}
       disabledReason={reason ?? (empty ? 'Nothing to claim.' : undefined)}
       summary={[
-        ['Buckets', bucket === 'all' ? 'all claimable buckets' : bucket],
+        ['Buckets', bucket === 'all' ? 'Connected-wallet rewards; excludes buyer rewards' : bucket],
         ['Amount', <span className="mono">{formatAnts(amount, 4)} ANTS</span>],
       ]}
     />
@@ -231,7 +249,7 @@ function CompoundButton({ data, maxEpochs }: { data: RewardsView; maxEpochs: num
     if (!target && poolList.length > 0) setTarget(defaultTarget(poolList, data.sellerUsage.agentId));
   }, [target, poolList, data.sellerUsage.agentId]);
   const targetPool = poolList.find((p) => String(p.agentId) === target) ?? null;
-  const body: CompoundRequest = { epochs, ...(target ? { targetAgentId: Number(target) } : {}) };
+  const body: CompoundRequest = { epochs, includeBuyer: false, ...(target ? { targetAgentId: Number(target) } : {}) };
   const { restakable, buyerRestakable } = split(data);
 
   const parts: string[] = [];
