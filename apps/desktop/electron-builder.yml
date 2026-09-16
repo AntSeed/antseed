@@ -77,17 +77,6 @@ extraResources:
       - "**/*.js"
   - from: ../../plugins/router-local/package.json
     to: bundled-plugins/@antseed/router-local/package.json
-  # router-levanto has no dependencies of its own beyond the @antseed/node
-  # peer already bundled below, so dist + package.json is the whole plugin.
-  # The package.json is not optional: it carries "type": "module", and
-  # without it Node resolves the ESM dist as CommonJS and the plugin fails
-  # to load with "Cannot use import statement outside a module".
-  - from: ../../plugins/router-levanto/dist
-    to: bundled-plugins/@antseed/router-levanto/dist
-    filter:
-      - "**/*.js"
-  - from: ../../plugins/router-levanto/package.json
-    to: bundled-plugins/@antseed/router-levanto/package.json
   - from: ../../plugins/router-local/node_modules/@antseed/router-core/dist
     to: bundled-plugins/@antseed/router-core/dist
     filter:

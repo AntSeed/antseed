@@ -10,7 +10,6 @@ import { registerBuyerChannelsCommand } from './channels.js';
 import { registerBuyerActivityCommand } from './activity.js';
 import { registerBuyerMeteringCommand } from './metering.js';
 import { registerBuyerEmissionsCommand } from './emissions.js';
-import { registerBuyerAccessCommand } from './access.js';
 
 export function registerBuyerCommands(program: Command): void {
   const buyerCmd = program
@@ -28,5 +27,4 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerActivityCommand(buyerCmd);
   registerBuyerMeteringCommand(buyerCmd);
   registerBuyerEmissionsCommand(buyerCmd);
-  registerBuyerAccessCommand(buyerCmd);
 }

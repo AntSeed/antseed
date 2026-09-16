@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { resolveChainConfig } from '@antseed/node';
-import { registerRoutes, renderSavingsDashboardHtml } from './routes.js';
+import { registerRoutes } from './routes.js';
 import { loadCryptoContext, type CryptoContext, type PaymentCryptoConfig } from './crypto-context.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -120,28 +120,6 @@ export async function createServer(options: PaymentsServerOptions) {
     channelsContractAddress: chainConfig.channelsContractAddress,
     usdcContractAddress: chainConfig.usdcContractAddress,
   };
-
-  // `?page=savings-dash` reads like every other page this portal already
-  // knows (`?page=pay&action=...`), but the savings dashboard is a
-  // separate, self-contained HTML page (routing-savings-dashboard.ts, via
-  // renderSavingsDashboardHtml in routes.ts) rather than a React view --
-  // App.tsx deliberately has no page-routing left at all ("the portal
-  // dashboard is retired"), and re-implementing that page as React just to
-  // fit this URL shape isn't worth it. There is deliberately no separate
-  // /_antseed/routing-decisions/dashboard route -- this is the only way to
-  // reach it. Registered before the SPA fallback below so it takes
-  // priority over index.html for this one query shape; every other request
-  // to `/` still serves the app exactly as before.
-  if (staticRegistered) {
-    fastify.get('/', async (request, reply) => {
-      const query = request.query as Record<string, string | undefined>;
-      if (query.page === 'savings-dash') {
-        const html = await renderSavingsDashboardHtml(proxyPort);
-        return reply.type('text/html; charset=utf-8').send(html);
-      }
-      return reply.sendFile('index.html');
-    });
-  }
 
   registerRoutes(fastify, { cryptoCtx, cryptoConfig, chainConfig, proxyPort });
 

@@ -1,30 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@antseed/ui';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { GlobalIcon, Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { peerAccessSummaryLabel } from '../../../modules/routing/peer-access';
 import { buildVprPeerOptions } from '../../../modules/routing/tools';
 import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
-import { RouterSettings } from '../chat/RouterSettings';
-import { useCachedResource } from '../../../modules/app/cached-resource';
-import { installedRouterPluginsResource } from '../../../modules/app/vpr-resources';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
 import type { TelemetryStatus } from '../../../../shared/telemetry';
-import { formatUsdShort, VprBadge, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
+import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import { VprPeerAccessDialog } from './VprPeerAccessDialog';
-import { RouterInfoDialog } from '../chat/RouterInfoDialog';
-import type { RouterPluginInfo } from '../../../types/bridge';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const TELEMETRY_DOC_URL = 'https://github.com/AntSeed/antseed/blob/main/docs/telemetry.md';
-
-const GENERIC_ROUTER_DESCRIPTION = 'Select an auto model router to optimise your spend and performance.';
 
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
@@ -68,9 +60,6 @@ export function VprPreferencesView({ onSelectView }: Props) {
       })
       .catch(() => setTelemetryStatus(previousStatus));
   };
-  const [pendingRouterPlugin, setPendingRouterPlugin] = useState<RouterPluginInfo | null>(null);
-  const { data: routerPlugins } = useCachedResource(installedRouterPluginsResource);
-  const availableRouters = routerPlugins ?? [];
 
   const peerOptions = useMemo(
     () => buildVprPeerOptions(snap.lastPeers, snap.discoverRows),
@@ -78,22 +67,11 @@ export function VprPreferencesView({ onSelectView }: Props) {
   );
   const { allowedPeerIds, blockedPeerIds } = snap.preferences;
   const accessSummary = peerAccessSummaryLabel(allowedPeerIds.length, blockedPeerIds.length);
-  // Real gate on the daily day pass and the CQT dial -- a standing,
-  // explicit toggle, not a proxy for whatever model happens to be selected
-  // at this moment.
-  const routerEnabled = snap.preferences.routerEnabled ?? false;
 
   const selectTheme = (mode: ThemeMode) => {
     applyThemeMode(mode);
     setThemeMode(mode);
   };
-
-  const selectedRouterPackage = routerEnabled ? (snap.preferences.selectedRouterPackage ?? null) : null;
-  const routerDescription = useMemo(() => {
-    if (!selectedRouterPackage) return GENERIC_ROUTER_DESCRIPTION;
-    const plugin = availableRouters.find((router) => router.package === selectedRouterPackage);
-    return plugin?.preferencesSummary ?? plugin?.autoRouteInfo?.body ?? plugin?.description ?? GENERIC_ROUTER_DESCRIPTION;
-  }, [selectedRouterPackage, availableRouters]);
 
   const pinnedRoute = useMemo(() => {
     if (snap.selection.mode !== 'pinned-peer' || !snap.selection.peerId) return null;
@@ -111,7 +89,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <VprSettingRow
             title="Auto select seller"
             caption="(Price + Trust preference)"
-            hint="Applies to every model set to Auto. Off pauses routing everywhere - providers stay on their last pick, and also stops the daily router charge below."
+            hint="Applies to every model set to Auto. Off pauses routing everywhere - providers stay on their last pick."
             control={(
               <VprToggle
                 checked={snap.preferences.autoRouting}
@@ -120,50 +98,6 @@ export function VprPreferencesView({ onSelectView }: Props) {
               />
             )}
           />
-
-          <div className={styles.routerGroup}>
-            <div className={styles.routerHead}>
-              <span className={styles.routerTitle}>Select model router</span>
-              {routerEnabled ? <VprBadge tone="green">Router enabled</VprBadge> : null}
-            </div>
-            <select
-              className={styles.routerSelect}
-              value={routerEnabled ? (snap.preferences.selectedRouterPackage ?? 'none') : 'none'}
-              onChange={(event) => {
-                const nextPackage = event.target.value;
-                if (nextPackage === 'none') {
-                  actions.updateVprRoutingPreferences({ routerEnabled: false, selectedRouterPackage: null });
-                  return;
-                }
-                const plugin = availableRouters.find((router) => router.package === nextPackage);
-                if (!plugin) return;
-                // Enabling costs real, recurring money -- explain and
-                // confirm before it takes effect. The <select> itself
-                // reverts to "None" on the next render if the user
-                // cancels, since routerEnabled never changed.
-                setPendingRouterPlugin(plugin);
-              }}
-              aria-label="Select model router"
-            >
-              <option value="none">None</option>
-              {availableRouters.filter((router) => router.autoRouteServiceId).map((router) => (
-                <option key={router.package} value={router.package}>{router.displayName}</option>
-              ))}
-            </select>
-            <div className={styles.routerDescription}>{routerDescription}</div>
-            {selectedRouterPackage && <Button variant="ghost" onClick={() => {
-              const plugin = availableRouters.find((router) => router.package === selectedRouterPackage);
-              if (plugin) setPendingRouterPlugin(plugin);
-            }}>Review router access</Button>}
-          </div>
-
-          {selectedRouterPackage ? <RouterSettings
-            schema={availableRouters.find((router) => router.package === selectedRouterPackage)?.routingSettingsSchema ?? []}
-            values={snap.preferences.routerSettings?.[`plugin:${selectedRouterPackage}`] ?? {}}
-            onChange={(values) => actions.updateVprRoutingPreferences({ routerSettings: {
-              ...snap.preferences.routerSettings, [`plugin:${selectedRouterPackage}`]: values,
-            } })}
-          /> : null}
 
           <VprSettingRow
             title="Prefer free peers when available"
@@ -193,9 +127,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
               onChange={(next) => actions.updateVprRoutingPreferences({ minTrustScore: next })}
               ariaLabel="Minimum trust score"
             />
-            <div className={styles.sliderHint}>
-              Providers rated below this are never used
-            </div>
+            <div className={styles.sliderHint}>Providers rated below this are never used</div>
           </div>
 
           <div className={styles.sliderGroup}>
@@ -368,17 +300,6 @@ export function VprPreferencesView({ onSelectView }: Props) {
         peerOptions={peerOptions}
         onSetListing={actions.setVprPeerListing}
         onClearAllowlist={() => actions.updateVprRoutingPreferences({ allowedPeerIds: [] })}
-      />
-
-      <RouterInfoDialog
-        isOpen={pendingRouterPlugin !== null}
-        plugin={pendingRouterPlugin}
-        onClose={() => setPendingRouterPlugin(null)}
-        onConfirm={() => {
-          if (!pendingRouterPlugin) return;
-          actions.updateVprRoutingPreferences({ routerEnabled: true, selectedRouterPackage: pendingRouterPlugin.package });
-          setPendingRouterPlugin(null);
-        }}
       />
     </section>
   );

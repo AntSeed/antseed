@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNetworkServiceOffers, compareNetworkServiceOfferPrice, selectLowestPricedNetworkServiceOffer } from './service-catalog.js';
+import { buildNetworkServiceOffers } from './service-catalog.js';
 
 describe('buildNetworkServiceOffers', () => {
   it('projects provider-specific services, pricing, protocols, and image billing', () => {
@@ -71,51 +71,5 @@ describe('buildNetworkServiceOffers', () => {
       protocol: 'openai-chat-completions',
       type: 'text',
     }]);
-  });
-
-  it('derives type "day-pass" for the antseed-day-pass protocol and carries a flat price', () => {
-    const offers = buildNetworkServiceOffers([{
-      peerId: 'c'.repeat(40),
-      displayName: 'Routing Peer',
-      providerPricing: {
-        'acme-routing': {
-          services: { 'antseed-day-pass': { inputUsdPerMillion: 0.59 } },
-        },
-      },
-      providerServiceApiProtocols: {
-        'acme-routing': { services: { 'antseed-day-pass': ['antseed-day-pass'] } },
-      },
-    }]);
-
-    expect(offers).toHaveLength(1);
-    expect(offers[0]).toMatchObject({
-      serviceId: 'antseed-day-pass',
-      protocol: 'antseed-day-pass',
-      type: 'day-pass',
-      flatUsdPrice: 0.59,
-    });
-  });
-
-  it('never lets a day-pass offer sort as "cheapest" against real per-token model offers', () => {
-    const offers = buildNetworkServiceOffers([{
-      peerId: 'd'.repeat(40),
-      providerPricing: {
-        'acme-routing': {
-          services: { 'antseed-day-pass': { inputUsdPerMillion: 0.59 } },
-        },
-        openai: {
-          services: { 'gpt-real-model': { inputUsdPerMillion: 10, outputUsdPerMillion: 30 } },
-        },
-      },
-      providerServiceApiProtocols: {
-        'acme-routing': { services: { 'antseed-day-pass': ['antseed-day-pass'] } },
-        openai: { services: { 'gpt-real-model': ['openai-chat-completions'] } },
-      },
-    }]);
-
-    expect(offers).toHaveLength(2);
-    const sorted = [...offers].sort(compareNetworkServiceOfferPrice);
-    expect(sorted[0]?.serviceId).toBe('gpt-real-model');
-    expect(selectLowestPricedNetworkServiceOffer(offers)?.serviceId).toBe('gpt-real-model');
   });
 });

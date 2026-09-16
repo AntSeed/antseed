@@ -44,22 +44,19 @@ export function estimateAnthropicPromptTokens(body: Uint8Array): number {
   return text.length > 0 ? estimateTokensFromText(text) : 0
 }
 
-const MAX_COLLECT_DEPTH = 500
-
 /** Walk any Anthropic content shape (string, block, array of blocks) for text. */
-function collectText(value: unknown, out: string[], depth = 0): void {
-  if (depth > MAX_COLLECT_DEPTH) return
+function collectText(value: unknown, out: string[]): void {
   if (typeof value === 'string') {
     if (value.length > 0) out.push(value)
     return
   }
   for (const item of asArray(value)) {
-    collectText(item, out, depth + 1)
+    collectText(item, out)
   }
   const record = asRecord(value)
   if (!record) return
   for (const key of ['text', 'content', 'thinking'] as const) {
-    if (record[key] !== undefined) collectText(record[key], out, depth + 1)
+    if (record[key] !== undefined) collectText(record[key], out)
   }
   // tool_use arguments and tool_result payloads are prompt text too.
   if (record['input'] !== undefined) out.push(JSON.stringify(record['input']))

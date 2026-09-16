@@ -1,5 +1,4 @@
-import { validateAccessTerms, sameAccessTerms, type AccessTerms, type AccessAgreement, type AccessPurchase, type AccessAuthorization } from './access-billing.js';
-import { AbiCoder, hexlify, randomBytes, keccak256 } from 'ethers';
+import { hexlify, randomBytes } from 'ethers';
 import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
@@ -17,9 +16,7 @@ import {
   makeChannelsDomain,
   computeMetadataHash,
   encodeMetadata,
-  withServiceMetadata,
   OUTPUT_IMAGE_TOKEN_EQUIVALENT,
-  CHARGE_TYPE_DAY_PASS_ON_DEMAND,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
   computeChannelId,
@@ -30,8 +27,6 @@ import { peerIdToAddress, type PeerId } from '@antseed/protocol/peer-id';
 import type { SellerAddressResolver } from './seller-address-resolver.js';
 import type { PeerMetadata } from '@antseed/protocol/peer-metadata';
 import { BuyerChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store-types.js';
-import { classifyOnChainChannel } from './channel-session-state.js';
-import type { ChannelsClient } from './channels-client.js';
 import {
   advanceUsageMetadata,
   CountedRequestTracker,
@@ -101,18 +96,6 @@ export interface BuyerPaymentConfig {
 export interface PerRequestAuthResult {
   payload: SpendingAuthPayload;
   topUpNeeded: boolean;
-}
-
-/**
- * Host-configured bound for signCumulativeAuth (flat daily-fee signing).
- * Set once by trusted host code, not by the plugin requesting a signature —
- * see signCumulativeAuth's own doc comment for why.
- */
-export interface FlatFeeSigningConfig {
-  /** e.g. $0.89/day as 890000n (6-decimal USDC). */
-  dailyAmountUsdc: bigint;
-  durationSeconds?: number;
-  serviceId: string;
 }
 
 export interface BuyerRequestBillingEntry {
@@ -199,21 +182,7 @@ export class BuyerPaymentManager {
     };
   }
 
-  private _isAccessChannel(session: StoredChannel | null): boolean {
-    if (!session?.latestMetadata) return false;
-    try {
-      return AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'string'], session.latestMetadata)[5] === CHARGE_TYPE_DAY_PASS_ON_DEMAND;
-    } catch {
-      return false;
-    }
-  }
-
   private _assertRoutingRequest(sellerPeerId: string, requestId?: string, service?: string): void {
-    const session = this.getActiveSession(sellerPeerId);
-    if (this._flatFeeConfig.has(sellerPeerId)
-      || this._isAccessChannel(session)) {
-      throw buyerFault('Access and metered usage require separate seller channels', 'buyer-session-state');
-    }
     if (!this._routingPeers.has(sellerPeerId)) return;
     const grant = this._routingGrants.get(sellerPeerId);
     if (!grant || grant.signal.aborted || grant.requestId !== requestId || grant.service !== service) {
@@ -263,8 +232,6 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
 
-  /** sellerPeerId -> flat daily-fee signing bound (model-routing day pass). Host-set only. */
-  private readonly _flatFeeConfig = new Map<string, FlatFeeSigningConfig>();
 
 
   /** requestId -> service/model the buyer requested (from its own request body).
@@ -871,7 +838,6 @@ export class BuyerPaymentManager {
   private async _commitAuthorization(
     channel: StoredChannel,
     metadata: SpendingAuthMetadata,
-    access?: AccessAuthorization,
   ): Promise<void> {
     this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
     const grant = this._routingGrants.get(channel.peerId);
@@ -888,12 +854,6 @@ export class BuyerPaymentManager {
       latestMetadata: channel.latestMetadata ?? encodeMetadata(sanitized),
     };
     try {
-      if (access) {
-        if (!this._channelStore.commitAccessAuthorization) throw new Error('Durable access billing is not supported by this store');
-        await this._channelStore.commitAccessAuthorization(snapshot, services, access);
-        await this._channelStore.flush?.();
-        return;
-      }
       if (this._channelStore.commitAuthorization) {
         await this._channelStore.commitAuthorization(snapshot, services);
         return;
@@ -1557,159 +1517,6 @@ export class BuyerPaymentManager {
     return { payload, topUpNeeded };
   }
 
-  // ── Flat-fee cumulative signing (model-routing day pass) ───
-
-  /**
-   * One-time host-level setup for a seller the buyer will sign flat daily
-   * fees against. Must be called before signCumulativeAuth; not something
-   * request-time plugin code can do to itself, since it's exactly what
-   * bounds signCumulativeAuth's trust in that plugin's requests.
-   */
-  configureFlatFeeSigning(sellerPeerId: string, config: FlatFeeSigningConfig): void {
-    if (!config.serviceId) throw new Error('Access signing requires an explicit service');
-    validateAccessTerms({ amountMicroUsdc: config.dailyAmountUsdc.toString(), durationSeconds: config.durationSeconds ?? 86_400 });
-    this._flatFeeConfig.set(sellerPeerId, config);
-  }
-
-  private _accessScope(sellerPeerId: string, serviceId: string): string {
-    return JSON.stringify([this._config.chainId, this._config.channelsContractAddress.toLowerCase(),
-      this._identity.wallet.address.toLowerCase(), sellerPeerId.toLowerCase(), serviceId]);
-  }
-
-  getAccessAgreement(sellerPeerId: string, serviceId: string): AccessAgreement | null {
-    return this._channelStore.getAccessAgreement?.(this._accessScope(sellerPeerId, serviceId)) ?? null;
-  }
-
-  acceptAccessTerms(sellerPeerId: string, serviceId: string, terms: AccessTerms): void {
-    validateAccessTerms(terms);
-    if (!serviceId || !this._channelStore.setAccessAgreement) throw new Error('Durable access billing is unavailable');
-    this._channelStore.setAccessAgreement(this._accessScope(sellerPeerId, serviceId), { ...terms, enabled: true, pauseReason: null });
-  }
-
-  pauseAccess(sellerPeerId: string, serviceId: string, reason = 'disabled'): void {
-    const agreement = this.getAccessAgreement(sellerPeerId, serviceId);
-    if (agreement) this._channelStore.setAccessAgreement?.(this._accessScope(sellerPeerId, serviceId), { ...agreement, enabled: false, pauseReason: reason });
-  }
-
-  getAccessPurchase(sellerPeerId: string, serviceId: string): AccessPurchase | null {
-    return this._channelStore.getAccessPurchase?.(this._accessScope(sellerPeerId, serviceId)) ?? null;
-  }
-
-  /**
-   * Sign a flat daily day-pass cumulative, given an amount the calling
-   * plugin already decided. Unlike signPerRequestAuth, there is no
-   * responseStats to compute a cost from — a day-pass fee isn't metered
-   * per-request usage.
-   *
-   * requestedCumulativeAmount is a REQUEST, not a command: this method never
-   * signs more than one dailyAmountUsdc increment beyond the previous
-   * signature, no matter how many calendar days have actually elapsed since
-   * it last signed for this seller (see maxAllowedIncrement below) — computed
-   * from this manager's own clock and its own persisted state, never from
-   * anything the caller says. This mirrors _maxSignableForVerified's role for
-   * metered billing (bounding by independently-verified cost, not the
-   * caller's claim); a routing-client plugin is explicitly allowed to be
-   * third-party code sharing this process, so this method can't extend it
-   * more trust than that.
-   */
-  async signCumulativeAuth(
-    sellerPeerId: string,
-    requestedCumulativeAmount: bigint,
-    signal?: AbortSignal,
-  ): Promise<PerRequestAuthResult> {
-    if (this._routingPeers.has(sellerPeerId)) throw buyerFault('Day-pass signing is not authorized for a metered routing seller', 'buyer-session-state');
-    const session = this.getActiveSession(sellerPeerId);
-    if (!session) {
-      throw buyerFault(
-        `[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`,
-        'buyer-session-state',
-      );
-    }
-    const config = this._flatFeeConfig.get(sellerPeerId);
-    if (!config) {
-      throw buyerFault(
-        `[BuyerPayment] No flat-fee config for seller ${sellerPeerId.slice(0, 12)}... — call configureFlatFeeSigning() first`,
-        'buyer-session-state',
-      );
-    }
-
-    const serviceId = config.serviceId;
-    const durationSeconds = config.durationSeconds ?? 86_400;
-    const agreement = this.getAccessAgreement(sellerPeerId, serviceId);
-    const terms = { amountMicroUsdc: config.dailyAmountUsdc.toString(), durationSeconds };
-    if (!agreement?.enabled || !sameAccessTerms(agreement, terms)) throw new Error('BILLING_APPROVAL_REQUIRED');
-    if (!this._channelStore.getAccessPurchase || !this._channelStore.commitAccessAuthorization) throw new Error('Durable access billing is unavailable');
-    const purchase = this.getAccessPurchase(sellerPeerId, serviceId);
-    const now = Date.now();
-    const active = purchase !== null && now < purchase.authorizedAtMs + purchase.durationSeconds * 1000;
-    const prevAmount = BigInt(session.authMax);
-    const increment = !active && requestedCumulativeAmount > prevAmount ? config.dailyAmountUsdc : 0n;
-    const newAmount = prevAmount + increment;
-    if (increment > 0n && requestedCumulativeAmount < newAmount) throw new Error('ACCESS_PRICE_MISMATCH');
-    if (increment > 0n && newAmount > this._getCeiling(sellerPeerId)) throw new Error('ACCESS_RESERVE_INSUFFICIENT');
-    signal?.throwIfAborted();
-    const previousMetadata = this._channelStore.getChannelMetadata(session);
-    if (previousMetadata.cumulativeInputTokens > 0n || previousMetadata.cumulativeOutputTokens > 0n
-      || previousMetadata.cumulativeRequestCount > 0n
-      || (prevAmount > 0n && !this._isAccessChannel(session))) {
-      throw buyerFault('Access and metered usage require separate seller channels', 'buyer-session-state');
-    }
-    if (increment === 0n && session.latestSpendingAuthSig && session.latestMetadata) {
-      return { payload: { channelId: session.sessionId, cumulativeAmount: session.authMax,
-        metadata: session.latestMetadata, metadataHash: keccak256(session.latestMetadata),
-        spendingAuthSig: session.latestSpendingAuthSig }, topUpNeeded: false };
-    }
-
-    const flatMeta: SpendingAuthMetadata = withServiceMetadata<SpendingAuthMetadata>(
-      {
-        ...previousMetadata,
-        cumulativeInputTokens: 0n,
-        cumulativeOutputTokens: 0n,
-        cumulativeRequestCount: 0n,
-        chargeType: CHARGE_TYPE_DAY_PASS_ON_DEMAND,
-      },
-      config.serviceId,
-      { amount: increment, inputTokens: 0n, cachedInputTokens: 0n, outputTokens: 0n, requests: 0n, outputImages: 0n },
-    );
-    const metadataHashHex = computeMetadataHash(flatMeta);
-    const encodedMetadata = encodeMetadata(flatMeta);
-
-    const channelsDomain = this._channelsDomain;
-    const metadataMsg: SpendingAuthMessage = {
-      channelId: session.sessionId,
-      cumulativeAmount: newAmount,
-      metadataHash: metadataHashHex,
-    };
-    const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
-
-    signal?.throwIfAborted();
-    if (increment > 0n) await this._commitAuthorization({
-      ...session,
-      authMax: newAmount.toString(),
-      latestBuyerSig: spendingAuthSig,
-      latestSpendingAuthSig: spendingAuthSig,
-      latestMetadata: encodedMetadata,
-      updatedAt: now,
-    }, flatMeta, {
-      scope: this._accessScope(sellerPeerId, serviceId),
-      previousAuthorizedAtMs: purchase?.authorizedAtMs ?? null,
-      purchase: { ...terms, authorizedAtMs: now, channelId: session.sessionId, cumulativeAmount: newAmount.toString() },
-    });
-
-    this._cumulativeAmount.set(sellerPeerId, newAmount);
-    this._metadata.set(sellerPeerId, flatMeta);
-
-    const payload: SpendingAuthPayload = {
-      channelId: session.sessionId,
-      cumulativeAmount: newAmount.toString(),
-      metadataHash: metadataHashHex,
-      metadata: encodedMetadata,
-      spendingAuthSig,
-    };
-
-    return { payload, topUpNeeded: this._needsTopUp(sellerPeerId) };
-  }
-
   // ── NeedAuth handler ───────────────────────────────────────────
 
   /**
@@ -2002,19 +1809,10 @@ export class BuyerPaymentManager {
    * Sign a new ReserveAuth with a higher maxAmount to extend the session's reserve ceiling.
    * The seller must call reserve() on-chain again with the new signature.
    * Note: requires contract support for top-up (increaseDeposit on existing channelId).
-   *
-   * `incrementUsdc` defaults to the buyer-wide per-request reserve default
-   * (`_config.maxReserveAmountUsdc`) for the metered per-request negotiation
-   * path this was originally written for. A flat daily day-pass caller
-   * MUST pass its own `dailyAmountUsdc` explicitly here instead of relying
-   * on this default: silently topping up by the per-request default instead
-   * of the day pass's own daily amount would give the reserve ceiling far
-   * more headroom than one day's charge ever needs.
    */
   async topUpReserve(
     sellerPeerId: string,
     paymentMux: PaymentMux,
-    incrementUsdc: bigint = this._config.maxReserveAmountUsdc,
   ): Promise<void> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
@@ -2023,7 +1821,7 @@ export class BuyerPaymentManager {
     }
 
     const prevCeiling = this._getCeiling(sellerPeerId);
-    const newCeiling = prevCeiling + incrementUsdc;
+    const newCeiling = prevCeiling + this._config.maxReserveAmountUsdc;
     const additionalReserve = newCeiling - prevCeiling;
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
@@ -2043,7 +1841,7 @@ export class BuyerPaymentManager {
       // blind: warning-and-continuing would let an RPC outage leave every
       // retry re-deriving newCeiling from the same stale, unreconciled
       // prevCeiling -- each attempt would sign another full increment on
-      // top, stacking days of day-pass fee for as long as the read kept
+      // top, stacking reserve increments for as long as the read kept
       // failing and requests kept retrying. The caller
       // (_topUpAfterSpendAuthBestEffort) already treats topUpReserve as
       // best-effort and just logs, so aborting here is safe -- the next
@@ -2083,133 +1881,6 @@ export class BuyerPaymentManager {
       initialReserveAmount: session.initialReserveAmount ?? prevCeiling.toString(),
     });
     debugLog(`[BuyerPayment] topUpReserve sent: newCeiling=${newCeiling}`);
-  }
-
-  /**
-   * Sign a fresh ReserveAuth at the SAME maxAmount as the current ceiling,
-   * purely to push the deadline out -- unlike topUpReserve, this never grows
-   * the ceiling. A channel with infrequent activity (a daily day pass
-   * with no other per-request traffic to this seller) can otherwise sit on
-   * an expired deadline indefinitely: topUpReserve/the ceiling-shortfall
-   * check that calls it only ever fires when the ceiling itself is running
-   * low, which has nothing to do with whether the deadline covering that
-   * ceiling has lapsed. Once expired, signCumulativeAuth still "succeeds"
-   * locally (it has no notion of the reserve deadline at all) but the seller
-   * can no longer settle against it, so the signature never lands.
-   *
-   * No on-chain confirmation to wait for here (unlike topUpReserve): the
-   * deposit backing this channel doesn't change, so there is nothing new for
-   * a channelsClient poll to observe on-chain -- the new signature just needs
-   * to reach the seller, which sendSpendingAuth already does.
-   */
-  async renewReserveDeadline(
-    sellerPeerId: string,
-    paymentMux: PaymentMux,
-  ): Promise<void> {
-    const session = this.getActiveSession(sellerPeerId);
-    if (!session) {
-      debugWarn(`[BuyerPayment] renewReserveDeadline: no active session for ${sellerPeerId.slice(0, 12)}...`);
-      return;
-    }
-
-    const ceiling = this._getCeiling(sellerPeerId);
-    const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
-
-    const channelsDomain = this._channelsDomain;
-    const reserveMsg: ReserveAuthMessage = {
-      channelId: session.sessionId,
-      maxAmount: ceiling,
-      deadline: BigInt(deadline),
-    };
-    const reserveAuthSig = await signReserveAuth(this._signer, channelsDomain, reserveMsg);
-
-    const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
-    const salt = this._reserveSalt.get(sellerPeerId) ?? '0x' + '00'.repeat(32);
-    const pending: PendingReserveAuthorization = {
-      signature: reserveAuthSig,
-      salt,
-      maxAmount: ceiling,
-      deadline,
-      // Not a growth: the amount was already reserved before this renewal,
-      // so there's no new deposit for an on-chain read to confirm.
-      confirmedAmount: ceiling,
-    };
-
-    await this._commitAndSendReserveAuth(session, sellerPeerId, pending, paymentMux, {
-      cumulativeAmount: currentCumulative.toString(),
-      initialReserveAmount: session.initialReserveAmount ?? ceiling.toString(),
-    });
-    debugLog(`[BuyerPayment] renewReserveDeadline sent: channel=${session.sessionId.slice(0, 18)}... ceiling unchanged at ${ceiling}, deadline=${deadline}`);
-  }
-
-  /**
-   * Check the seller's channel against on-chain truth before signing
-   * anything more into it, retiring it locally if on-chain state says it's
-   * dead. Mirrors BuyerPaymentNegotiator._recoverExistingSession's
-   * on-chain-status ladder -- same classifyOnChainChannel classification,
-   * same retire semantics -- scoped down to just "is this channel still
-   * usable," since a caller like the day-pass-signing path has no
-   * per-request budget/lock-confirmation concerns of its own.
-   *
-   * Without this check, signDailyIfNeeded would only ever consult the LOCAL
-   * store (getActiveSession), which can still say "active" long after the
-   * channel was cooperatively closed on-chain -- signing into a dead
-   * channel forever with no self-heal, no matter how many retries.
-   *
-   * Returns 'no-session' if there's nothing to check, 'active' if the
-   * channel is genuinely usable (its ceiling has also been reconciled from
-   * the on-chain deposit), or 'retired' if it was dead and has now been
-   * retired locally -- callers should treat 'retired' the same as
-   * 'no-session' and bootstrap a fresh channel.
-   */
-  async reconcileOnChainChannelStatus(
-    sellerPeerId: string,
-    channelsClient: ChannelsClient,
-    paymentMux: PaymentMux,
-  ): Promise<'active' | 'no-session' | 'retired'> {
-    const session = this.getActiveSession(sellerPeerId);
-    if (!session) return 'no-session';
-
-    let onChain: ReturnType<typeof classifyOnChainChannel>;
-    try {
-      onChain = classifyOnChainChannel(await channelsClient.getSession(session.sessionId));
-    } catch (err) {
-      debugWarn(
-        `[BuyerPayment] reconcileOnChainChannelStatus: failed to read on-chain channel ` +
-        `${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`,
-      );
-      // Can't tell -- assume active rather than retiring a possibly-healthy
-      // channel on a transient RPC hiccup. Matches _recoverExistingSession's
-      // own `onChain === null` short-circuit (it returns false/no-op there).
-      return 'active';
-    }
-
-    if (!onChain.exists) {
-      if (this.canReplayReserveAuth(sellerPeerId)) {
-        await this.resendReserveAuth(sellerPeerId, paymentMux);
-        return 'active';
-      }
-      this.retireSession(sellerPeerId, CHANNEL_STATUS.GHOST);
-      return 'retired';
-    }
-
-    if (onChain.status === CHANNEL_STATUS.SETTLED) {
-      this.retireSession(sellerPeerId, CHANNEL_STATUS.SETTLED, onChain.channel.settled);
-      return 'retired';
-    }
-
-    if (onChain.status === CHANNEL_STATUS.TIMEOUT) {
-      this.retireSession(sellerPeerId, CHANNEL_STATUS.TIMEOUT);
-      return 'retired';
-    }
-
-    if (onChain.status !== CHANNEL_STATUS.ACTIVE) {
-      this.retireSession(sellerPeerId, CHANNEL_STATUS.GHOST);
-      return 'retired';
-    }
-
-    await this.reconcileReserveAmount(sellerPeerId, onChain.channel.deposit);
-    return 'active';
   }
 
   // ── Queries ───────────────────────────────────────────────────

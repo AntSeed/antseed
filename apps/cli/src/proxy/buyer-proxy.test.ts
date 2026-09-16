@@ -117,13 +117,16 @@ function makeBuyerProxyWithPeers(
   routingPreferences?: ModelRoutingPreferences,
 ): BuyerProxy {
   const proxy = new BuyerProxy({
+    autoRouteServiceId: 'router-test',
     port: 0,
     dataDir: join(tmpdir(), `antseed-proxy-${randomUUID()}`),
     node: {
       router,
     } as any,
     ...(now ? { now } : {}),
-    ...(routingPreferences ? { routingPreferences } : {}),
+    ...(routingPreferences || (router as any)?.selectRoute
+      ? { routingPreferences: { ...priceAndTrustPreferences, routerEnabled: true, ...routingPreferences } }
+      : {}),
   })
   ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) =>
     options?.forceRefresh ? refreshedPeers : initialPeers
@@ -223,11 +226,10 @@ test('host classifies only the initial model and ignores later rewrite and refre
     ...permissiveRouter(),
     selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
       seen.push(context.routing)
-      if (context.routing.shouldRoute) classifications++
-      return [context.routing.previousRoute ?? { peerId: peer.peerId, serviceId: 'test-model' }]
+      classifications++
+      return [{ peerId: peer.peerId, serviceId: 'test-model' }]
     },
   }, undefined, priceAndTrustPreferences)
-  ;(proxy as any)._routingCadence = 'session'
   ;(proxy as any)._autoRouteServiceId = 'router-test'
   ;(proxy as any)._recordRoutingOperation = async (record: any) => { audit.push(record) }
   ;(proxy as any)._node.sendRequest = async (_peer: any, request: any) => {
@@ -548,8 +550,6 @@ test('BuyerProxy reloads model routing preferences from config', async (t) => {
     allowedPeerIds: [allowedPeerId],
     blockedPeerIds: [],
     routerEnabled: false,
-    autoRouting: undefined,
-    selectedRouterPackage: null,
   })
 })
 
@@ -3114,32 +3114,6 @@ test('route control endpoint sets, persists, and returns the default routed mode
   assert.deepEqual(JSON.parse(cleared.body), { ok: true, model: null })
 })
 
-test('savings-baseline endpoint sets, persists, and returns the chosen baseline model', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-baseline-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: dir,
-    node: { router: null } as any,
-  })
-
-  const initial = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/routing-decisions/baseline' }))
-  assert.deepEqual(JSON.parse(initial.body), { ok: true, baseline: null })
-
-  const set = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/routing-decisions/baseline', body: { baseline: 'gpt-5.6-sol' } }))
-  assert.equal(set.statusCode, 200)
-  assert.deepEqual(JSON.parse(set.body), { ok: true, baseline: 'gpt-5.6-sol' })
-
-  const get = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/routing-decisions/baseline' }))
-  assert.deepEqual(JSON.parse(get.body), { ok: true, baseline: 'gpt-5.6-sol' })
-
-  const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
-  assert.equal(persisted['savingsBaselineModel'], 'gpt-5.6-sol')
-
-  const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/routing-decisions/baseline', body: { baseline: '' } }))
-  assert.deepEqual(JSON.parse(cleared.body), { ok: true, baseline: null })
-})
-
 test('buyer-usage endpoint reports lastActivityAt, null until a request is dispatched', async () => {
   const proxy = new BuyerProxy({
     port: 0,
@@ -3158,50 +3132,6 @@ test('buyer-usage endpoint reports lastActivityAt, null until a request is dispa
   assert.equal(parsed.ok, true)
   assert.equal(typeof parsed.lastActivityAt, 'number')
   assert.ok((parsed.lastActivityAt ?? 0) > 0)
-})
-
-test('routing-decisions endpoint returns the registered router\'s ledger', async () => {
-  const rows = [{
-    atMs: 1, actualModel: 'gpt-5.6-luna', actualPeer: '0xAAA', actualPromptTokens: 100,
-    actualCachedTokens: 0, actualCompletionTokens: 40, actualUsdcPaid: 0.001,
-    predictedCostUsd: 0.001, predictedInputTokens: 100, predictedCachedInputTokens: 0,
-    predictedOutputTokens: 40, cqt: 5, routingLatencyMs: 50,
-  }]
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: { getRoutingDecisions: () => rows } } as any,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/routing-decisions' }))
-  assert.equal(res.statusCode, 200)
-  const parsed = JSON.parse(res.body) as { ok: boolean; rows: unknown[] }
-  assert.equal(parsed.ok, true)
-  assert.deepEqual(parsed.rows, rows)
-})
-
-test('routing-decisions endpoint returns an empty list, not an error, for a router without getRoutingDecisions', async () => {
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: { selectPeer: () => null, onResult: () => {} } } as any,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/routing-decisions' }))
-  assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, rows: [] })
-})
-
-test('routing-decisions endpoint returns an empty list when there is no registered router at all', async () => {
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: null } as any,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/routing-decisions' }))
-  assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, rows: [] })
 })
 
 test('requests with the routed-model alias fail clearly when no default route is set', async () => {

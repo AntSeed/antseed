@@ -23,14 +23,6 @@ export default defineConfig({
         target: paymentsProxyTarget,
         changeOrigin: true,
       },
-      // The savings dashboard and its data routes -- registered on the
-      // Fastify server outside /api/* (see routes.ts) so they stay
-      // unauthenticated like the rest of static/index.html, not because
-      // they're unrelated to the backend.
-      '/_antseed': {
-        target: paymentsProxyTarget,
-        changeOrigin: true,
-      },
     },
   },
 });

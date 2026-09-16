@@ -22,50 +22,6 @@ import styles from './ChatListPanel.module.scss';
 
 type ConvRecord = Record<string, unknown>;
 
-type NewChatTargetOption = { value: string; peerId: string; id?: string; provider?: string };
-type NewChatTargetDiscoverRow = { peerId: string; serviceId?: string; provider?: string; selectionValue?: string };
-
-/** Exported for unit testing -- see ChatListPanel.test.ts. Only carries a peer
- *  into a new chat when the active conversation was explicitly pinned by the
- *  user; an auto-routed conversation ends up with a concrete peerId too
- *  (wherever the router last sent it), and inheriting that into a fresh chat
- *  would silently pin it before the user typed anything. */
-export function computeNewChatTarget(
-  activeConversation: ConvRecord | null,
-  chatSelectedPeerId: string,
-  chatServiceOptions: NewChatTargetOption[],
-  chatSelectedServiceValue: string,
-  discoverRows: NewChatTargetDiscoverRow[],
-): { peerId: string; serviceValue: string } | null {
-  if (!activeConversation) return null;
-
-  if (activeConversation.routeMode !== 'pinned') return null;
-
-  const peerId = String(activeConversation.peerId || chatSelectedPeerId || '').trim();
-  if (!peerId) return null;
-
-  const serviceId = String(activeConversation.service || '').trim();
-  const provider = String(activeConversation.provider || '').trim();
-  const selectedForPeer = chatServiceOptions.find(
-    (option) => option.peerId === peerId && option.value === chatSelectedServiceValue,
-  );
-  const matchingOption = selectedForPeer ?? chatServiceOptions.find((option) => (
-    option.peerId === peerId
-    && (!serviceId || option.id === serviceId)
-    && (!provider || option.provider === provider)
-  )) ?? chatServiceOptions.find((option) => option.peerId === peerId && (!serviceId || option.id === serviceId));
-
-  if (matchingOption?.value) return { peerId, serviceValue: matchingOption.value };
-
-  const matchingRow = discoverRows.find((row) => (
-    row.peerId === peerId
-    && (!serviceId || row.serviceId === serviceId)
-    && (!provider || row.provider === provider)
-  )) ?? discoverRows.find((row) => row.peerId === peerId && (!serviceId || row.serviceId === serviceId));
-
-  return matchingRow?.selectionValue ? { peerId, serviceValue: matchingRow.selectionValue } : null;
-}
-
 const EMPTY_CONVERSATIONS: unknown[] = [];
 const RECENT_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RECENT_SESSION_CLOCK_MS = 60 * 1000;
@@ -608,12 +564,33 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     [allConversations, chatActiveConversation],
   );
 
-  const newChatTarget = useMemo(
-    () => computeNewChatTarget(
-      activeConversation, chatSelectedPeerId, chatServiceOptions, chatSelectedServiceValue, discoverRows,
-    ),
-    [activeConversation, chatSelectedPeerId, chatServiceOptions, chatSelectedServiceValue, discoverRows],
-  );
+  const newChatTarget = useMemo(() => {
+    if (!activeConversation) return null;
+
+    const peerId = String(activeConversation.peerId || chatSelectedPeerId || '').trim();
+    if (!peerId) return null;
+
+    const serviceId = String(activeConversation.service || '').trim();
+    const provider = String(activeConversation.provider || '').trim();
+    const selectedForPeer = chatServiceOptions.find(
+      (option) => option.peerId === peerId && option.value === chatSelectedServiceValue,
+    );
+    const matchingOption = selectedForPeer ?? chatServiceOptions.find((option) => (
+      option.peerId === peerId
+      && (!serviceId || option.id === serviceId)
+      && (!provider || option.provider === provider)
+    )) ?? chatServiceOptions.find((option) => option.peerId === peerId && (!serviceId || option.id === serviceId));
+
+    if (matchingOption?.value) return { peerId, serviceValue: matchingOption.value };
+
+    const matchingRow = discoverRows.find((row) => (
+      row.peerId === peerId
+      && (!serviceId || row.serviceId === serviceId)
+      && (!provider || row.provider === provider)
+    )) ?? discoverRows.find((row) => row.peerId === peerId && (!serviceId || row.serviceId === serviceId));
+
+    return matchingRow?.selectionValue ? { peerId, serviceValue: matchingRow.selectionValue } : null;
+  }, [activeConversation, chatSelectedPeerId, chatServiceOptions, chatSelectedServiceValue, discoverRows]);
 
   const handleCloseChannel = useCallback(() => {
     // Channel management moved in-app: the activity view lists channels and

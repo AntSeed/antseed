@@ -37,15 +37,6 @@ export type ToolResultBlock = {
 };
 export type ContentBlock = TextBlock | FileBlock | ImageBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
-/** One router-ranked candidate, for client disclosure alongside the pick
- *  that was actually used — not a billing record. */
-export type RouteAlternative = {
-  peerId: string;
-  service: string;
-  inputUsdPerMillion: number | null;
-  outputUsdPerMillion: number | null;
-};
-
 export type AiMessageMeta = {
   peerId?: string;
   peerAddress?: string;
@@ -66,9 +57,6 @@ export type AiMessageMeta = {
   outputUsdPerMillion?: number;
   estimatedCostUsd?: number;
   outputImages?: number;
-  /** Top few candidates the router ranked this request against, in order —
-   *  absent for a directly pinned model (nothing was "considered"). */
-  routeAlternatives?: RouteAlternative[];
 };
 
 export type AiChatMessage = {

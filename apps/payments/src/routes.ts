@@ -7,7 +7,6 @@ import {
   formatUsdc,
   signSetOperator,
   makeDepositsDomain,
-  getRoutingSavingsDashboardHtml,
   type ChainConfig,
   type BuyerUsageTotals,
 } from '@antseed/node';
@@ -61,57 +60,6 @@ function createClient(config: PaymentCryptoConfig, evmChainId?: number): Deposit
     usdcAddress: config.usdcContractAddress,
     evmChainId,
   });
-}
-
-/**
- * Model-routing savings dashboard support -- previously served directly by
- * the buyer-proxy control plane (apps/cli's GET
- * /_antseed/routing-decisions/dashboard) -- moved here so a
- * browser-rendered page never shares an origin with the buyer-proxy's
- * action-taking routes (sweep, close-channel, deposit-watch, ...). This is
- * the smaller-blast-radius origin: even without a bearer token on these
- * specific routes (deliberately kept unauthenticated, matching the
- * dashboard's original no-new-auth design -- registered outside /api/* so
- * the onRequest hook doesn't apply), the worst a bug here could reach is
- * this portal's own already-token-gated actions, not the buyer-proxy's
- * unauthenticated ones.
- *
- * Module-level (not closed over `registerRoutes`' `ctx`) so `server.ts` can
- * call `renderSavingsDashboardHtml` directly for its `?page=savings-dash`
- * handling on `/` -- there is deliberately no separate
- * `/_antseed/routing-decisions/dashboard` route; `?page=savings-dash` is
- * the only way to reach this page, matching how every other portal view is
- * addressed (`?page=pay&action=...`).
- */
-export async function proxyToBuyer(proxyPort: number, path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
-  const url = `http://127.0.0.1:${proxyPort}${path}`;
-  const resp = await fetch(url, {
-    method: init?.method ?? 'GET',
-    ...(init?.body !== undefined
-      ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(init.body) }
-      : {}),
-  });
-  let body: unknown;
-  try {
-    body = await resp.json();
-  } catch {
-    body = { ok: false, error: 'Invalid response from buyer proxy' };
-  }
-  return { status: resp.status, body };
-}
-
-export async function renderSavingsDashboardHtml(proxyPort: number): Promise<string> {
-  let routerName: string | undefined;
-  try {
-    const { body } = await proxyToBuyer(proxyPort, '/_antseed/router-name');
-    const parsed = body as { ok?: boolean; routerName?: string | null };
-    routerName = parsed.ok && parsed.routerName ? parsed.routerName : undefined;
-  } catch {
-    // Buyer proxy unreachable -- dashboard still renders (with the generic
-    // title) and will show its own "could not load" state once its own
-    // data fetches fail the same way.
-  }
-  return getRoutingSavingsDashboardHtml(routerName);
 }
 
 export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): void {
@@ -281,65 +229,6 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     } catch (err) {
       fastify.log.warn(`[/api/buyer-usage] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
       return EMPTY_BUYER_USAGE;
-    }
-  });
-
-  // ─── Model-routing savings dashboard data ────────────────────────
-  //
-  // The dashboard page itself lives at GET / with ?page=savings-dash (see
-  // server.ts) -- no separate /_antseed/routing-decisions/dashboard route.
-  // These are just its data fetches, proxied through to the buyer-proxy
-  // under the exact same /_antseed/* paths the dashboard's own
-  // client-side JS already calls, so that file needed zero changes.
-
-  fastify.get('/_antseed/routing-decisions', async (_request, reply) => {
-    try {
-      const { status, body } = await proxyToBuyer(ctx.proxyPort, '/_antseed/routing-decisions');
-      return reply.status(status).send(body);
-    } catch (err) {
-      fastify.log.warn(`[/_antseed/routing-decisions] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return reply.status(502).send({ ok: false, error: 'Buyer proxy unreachable' });
-    }
-  });
-
-  fastify.get('/_antseed/routing-decisions/baseline', async (_request, reply) => {
-    try {
-      const { status, body } = await proxyToBuyer(ctx.proxyPort, '/_antseed/routing-decisions/baseline');
-      return reply.status(status).send(body);
-    } catch (err) {
-      fastify.log.warn(`[/_antseed/routing-decisions/baseline] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return reply.status(502).send({ ok: false, error: 'Buyer proxy unreachable' });
-    }
-  });
-
-  fastify.post('/_antseed/routing-decisions/baseline', async (request, reply) => {
-    try {
-      const { status, body } = await proxyToBuyer(ctx.proxyPort, '/_antseed/routing-decisions/baseline', { method: 'POST', body: request.body });
-      return reply.status(status).send(body);
-    } catch (err) {
-      fastify.log.warn(`[/_antseed/routing-decisions/baseline POST] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return reply.status(502).send({ ok: false, error: 'Buyer proxy unreachable' });
-    }
-  });
-
-  fastify.get('/_antseed/conversations', async (_request, reply) => {
-    try {
-      const { status, body } = await proxyToBuyer(ctx.proxyPort, '/_antseed/conversations');
-      return reply.status(status).send(body);
-    } catch (err) {
-      fastify.log.warn(`[/_antseed/conversations] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return reply.status(502).send({ ok: false, error: 'Buyer proxy unreachable' });
-    }
-  });
-
-  fastify.get('/_antseed/openrouter-reference-prices', async (request, reply) => {
-    try {
-      const qs = new URLSearchParams(request.query as Record<string, string>).toString();
-      const { status, body } = await proxyToBuyer(ctx.proxyPort, `/_antseed/openrouter-reference-prices${qs ? `?${qs}` : ''}`);
-      return reply.status(status).send(body);
-    } catch (err) {
-      fastify.log.warn(`[/_antseed/openrouter-reference-prices] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return reply.status(502).send({ ok: false, error: 'Buyer proxy unreachable' });
     }
   });
 

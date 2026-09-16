@@ -23,7 +23,6 @@ import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { createVprRouteSelection, findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
-import { isAutoRouterEntry } from './modules/routing/auto-router';
 import {
   applyPeerListing,
   buyerModelRoutingPreferences,
@@ -170,46 +169,18 @@ const {
 
 let lastQueuedBuyerRoutingPreferences = '';
 let buyerRoutingPreferencesSyncVersion = 0;
-function syncBuyerRoutingPreferences(): Promise<void> {
-  if (!bridge?.updateConfig) return Promise.resolve();
+function syncBuyerRoutingPreferences(): void {
+  if (!bridge?.updateConfig) return;
   const routingPreferences = buyerModelRoutingPreferences(uiState.vprRoutingPreferences);
   const serialized = JSON.stringify(routingPreferences);
-  if (serialized === lastQueuedBuyerRoutingPreferences) return Promise.resolve();
+  if (serialized === lastQueuedBuyerRoutingPreferences) return;
   lastQueuedBuyerRoutingPreferences = serialized;
   const version = ++buyerRoutingPreferencesSyncVersion;
-  return updateDashboardConfig({ buyer: { routingPreferences } }).then((result) => {
+  void updateDashboardConfig({ buyer: { routingPreferences } }).then((result) => {
     if (result.ok || version !== buyerRoutingPreferencesSyncVersion) return;
     lastQueuedBuyerRoutingPreferences = '';
     appendSystemLog(`Buyer routing preferences were not saved: ${result.error ?? 'unknown error'}`);
   });
-}
-
-/**
- * Restarts the buyer daemon after the selected router package changes.
- *
- * Which router plugin the daemon loads is decided once, at spawn time, by
- * process-manager reading `selectedRouterPackage` off disk -- there is no
- * hot-reload path for it (buyer-proxy's live preference reload covers billing
- * behaviour *inside* an already-loaded plugin, not which plugin is loaded).
- * Without this, picking a router in Preferences saved the setting and changed
- * nothing: the daemon kept whatever it started with, and a chat routed to the
- * new router's Auto entry died on a 502 "No policy-allowed peer currently
- * serves model <sentinel>" with nothing telling the user a restart was
- * needed. Documented as a known trap in process-manager.ts; this closes it.
- *
- * Awaits the config write first -- the daemon reads the file on spawn, so
- * restarting before it lands would just reload the old package.
- */
-async function restartBuyerForRouterChange(): Promise<void> {
-  if (!bridge?.start || !bridge?.stop) return;
-  try {
-    await bridge.stop('connect');
-    await bridge.start({ mode: 'connect', router: 'local' });
-  } catch {
-    // Surfaced by the runtime module's own error handling; a failed restart
-    // leaves the previous daemon's router in place, which is the pre-existing
-    // behaviour rather than a new failure mode.
-  }
 }
 syncBuyerRoutingPreferences();
 
@@ -313,32 +284,6 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     return;
   }
   uiState.chatImageRouteSelection = null;
-
-  if (isAutoRouterEntry(entry)) {
-    // No fixed peer: unlike every other model, Auto's whole design is that
-    // model AND peer are both chosen per-request by the routing peer
-    // (buyer-proxy's selectRoute, gated on no explicit peer already pinning
-    // the request) -- resolveVprChatOption's normal peer-scoring path below
-    // doesn't apply here, since no real seller advertises the active
-    // router's auto-sentinel serviceId for it to find a route through.
-    // encodeChatServiceSelection with no peerId keeps handleServiceChange's
-    // own `peerId` empty, which is what already makes it choose 'auto'
-    // route mode and leave the conversation's peer unset.
-    const selection = createVprRouteSelection(entry, null);
-    chatApi.handleServiceChange(
-      chatApi.encodeChatServiceSelection(entry.serviceId, entry.provider),
-      undefined,
-      false,
-      'auto',
-    );
-    uiState.vprRouteSelection = selection;
-    saveVprRouteSelection(selection);
-    notifyUiStateChanged();
-    void vprFloatApi?.refresh();
-    void applyVprRouteToConnectedProxy(bridge, uiState);
-    return;
-  }
-
   // A bare model switch restores that model's own pin instead of dropping to
   // auto — pinning one model then browsing others must not unpin it. Only
   // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
@@ -722,25 +667,12 @@ registerActions({
   },
   updateVprRoutingPreferences: (patch) => {
     recordUserActionCoalesced('routing_preferences_change', 'preferences');
-    const previousRouterPackage = uiState.vprRoutingPreferences.selectedRouterPackage ?? null;
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
-    const synced = syncBuyerRoutingPreferences();
-    // Changing the router package only takes effect on a fresh daemon spawn.
-    if (
-      patch.selectedRouterPackage !== undefined
-      && (patch.selectedRouterPackage ?? null) !== previousRouterPackage
-    ) {
-      void synced.then(restartBuyerForRouterChange);
-    }
+    syncBuyerRoutingPreferences();
     // Peer rules gate which sellers and models are visible at all, so a patch
-    // touching them has to re-derive the catalog, not just repaint. Same for
-    // routerEnabled: it gates whether the Auto entry is even
-    // present in the catalog (auto-router.ts's withAutoRouterCatalogEntry),
-    // so flipping it has to take effect immediately, not wait for the next
-    // unrelated recompute. `!== undefined` (not truthy) because turning the
-    // toggle off is `patch.routerEnabled === false`.
-    if (patch.allowedPeerIds || patch.blockedPeerIds || patch.routerEnabled !== undefined) {
+    // touching them has to re-derive the catalog, not just repaint.
+    if (patch.allowedPeerIds || patch.blockedPeerIds) {
       chatApi.applyPeerAccessRules();
     }
     notifyUiStateChanged();

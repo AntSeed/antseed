@@ -54,8 +54,6 @@ test('ensureConfig creates config with desktop buyer max pricing defaults', asyn
     minTrustScore: 60,
     allowedPeerIds: [],
     blockedPeerIds: [],
-    routerEnabled: false,
-    selectedRouterPackage: null,
   });
   assert.equal(
     (config.seller as { maxConcurrentBuyers?: number }).maxConcurrentBuyers,
@@ -192,31 +190,6 @@ test('ensureConfig preserves valid buyer routing preferences', async (t) => {
     allowedPeerIds: [peerId],
     blockedPeerIds: [],
   });
-});
-
-test('ensureConfig preserves routerEnabled even when the migration touches other routing preferences', async (t) => {
-  const { dir, configPath } = await makeTempConfigPath();
-  t.after(() => rm(dir, { recursive: true, force: true }));
-
-  await writeFile(configPath, JSON.stringify({
-    buyer: {
-      routingPreferences: {
-        preferFreePeers: true,
-        maxInputUsdPerMillion: 8,
-        minTrustScore: 150, // out of range -- forces the migration path to fire
-        allowedPeerIds: [],
-        blockedPeerIds: [],
-        routerEnabled: true,
-      },
-    },
-  }, null, 2));
-
-  await ensureConfig(configPath);
-
-  const config = await readConfig(configPath);
-  const prefs = readBuyerRoutingPreferences(config);
-  assert.equal(prefs.minTrustScore, 60, 'sanity check: the migration actually fired and corrected the out-of-range value');
-  assert.equal(prefs.routerEnabled, true, 'the Auto toggle must survive a migration triggered by an unrelated field');
 });
 
 test('ensureConfig preserves buyer max pricing at or below desktop defaults', async (t) => {

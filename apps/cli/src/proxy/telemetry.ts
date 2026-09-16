@@ -31,17 +31,6 @@ export type ResponseTelemetry = {
   estimatedCostUsd: number | null
 }
 
-/** One router-ranked candidate the client can compare the actual pick
- *  against — a disclosure, not a billing record. Only meaningful for a
- *  request the router actually picked (`selectRoute` returned candidates);
- *  absent for a directly pinned peer. */
-export type RouteAlternative = {
-  peerId: string
-  service: string
-  inputUsdPerMillion: number | null
-  outputUsdPerMillion: number | null
-}
-
 type UsageCounts = {
   inputTokens: number
   freshInputTokens: number
@@ -242,14 +231,6 @@ function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: P
   }
 }
 
-function setRouteAlternativesHeader(
-  headers: Record<string, string>,
-  routeAlternatives: RouteAlternative[] | null | undefined,
-): void {
-  if (!routeAlternatives || routeAlternatives.length === 0) return
-  headers['x-antseed-route-alternatives'] = JSON.stringify(routeAlternatives)
-}
-
 type ResolvedPricing = {
   inputUsdPerMillion: number | null
   outputUsdPerMillion: number | null
@@ -339,13 +320,11 @@ export function attachAntseedTelemetryHeaders(
   telemetry: ResponseTelemetry,
   requestId: string,
   latencyMs: number,
-  routeAlternatives?: RouteAlternative[] | null,
 ): Record<string, string> {
   const headers: Record<string, string> = { ...upstreamHeaders }
   headers['x-antseed-request-id'] = requestId
   headers['x-antseed-latency-ms'] = String(Math.max(0, Math.floor(latencyMs)))
   setPeerIdentityHeaders(headers, selectedPeer)
-  setRouteAlternativesHeader(headers, routeAlternatives)
   setFiniteNumberHeader(headers, 'x-antseed-peer-reputation', selectedPeer.reputationScore)
   setFiniteNumberHeader(headers, 'x-antseed-peer-current-load', selectedPeer.currentLoad)
   setFiniteNumberHeader(headers, 'x-antseed-peer-max-concurrency', selectedPeer.maxConcurrency)
@@ -371,22 +350,9 @@ export function attachStreamingAntseedHeaders(
   upstreamHeaders: Record<string, string>,
   selectedPeer: PeerInfo,
   requestId: string,
-  request: SerializedHttpRequest,
-  routeAlternatives?: RouteAlternative[] | null,
 ): Record<string, string> {
   const headers: Record<string, string> = { ...upstreamHeaders }
   headers['x-antseed-request-id'] = requestId
   setPeerIdentityHeaders(headers, selectedPeer)
-  setRouteAlternativesHeader(headers, routeAlternatives)
-  // Without these headers, a routed (auto-sentinel) message would have
-  // nothing for the client to read "which model actually answered" from.
-  // `request` is already the resolved/substituted request by this call
-  // site (withRoutedModel), not the auto-sentinel serviceId, matching the
-  // non-streaming path below.
-  headers['x-antseed-provider'] = pickProviderForPeer(selectedPeer, request)
-  const service = extractRequestedService(request)
-  if (service) {
-    headers['x-antseed-service'] = service
-  }
   return headers
 }

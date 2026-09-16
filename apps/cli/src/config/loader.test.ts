@@ -97,8 +97,6 @@ test('createDefaultConfig includes shared model routing preferences', () => {
     minTrustScore: 60,
     allowedPeerIds: [],
     blockedPeerIds: [],
-    routerEnabled: false,
-    selectedRouterPackage: null,
   });
 });
 
@@ -121,8 +119,6 @@ test('loadConfig merges partial model routing preferences with defaults', async 
         allowedPeerIds: ['0x' + 'a'.repeat(40)],
         blockedPeerIds: [],
         routerEnabled: false,
-        autoRouting: undefined,
-        selectedRouterPackage: null,
       });
     },
   );

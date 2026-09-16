@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { ProcessManager, resolveCommandArgs, applyRouterDemoOverride } from './process-manager.js';
-import { LEVANTO_ROUTER_PACKAGE } from '../../shared/router-plugin-defaults.js';
+import { ProcessManager, resolveCommandArgs } from './process-manager.js';
 
 test('resolveCommandArgs launches the grouped buyer runtime command without forcing the default router', () => {
   const args = resolveCommandArgs({
@@ -34,47 +33,6 @@ test('resolveCommandArgs forwards non-default routers', () => {
     '--data-dir', join(homedir(), '.antseed'),
     'buyer', 'start', '--router', 'custom-router',
   ]);
-});
-
-test('applyRouterDemoOverride sets router to whichever package the buyer selected on connect-mode starts, regardless of the caller-requested router', () => {
-  // The renderer's own boot-time auto-start (app.ts's ensureConnectRuntimeStarted)
-  // requests whatever router the user has configured, racing the main
-  // process's own attempt to set the selected package -- this has to hold
-  // regardless of what a caller asks for, not just when nothing is
-  // specified. No package gets special-cased env injection here -- a plugin
-  // needing chain-specific setup (e.g. its own local test-network
-  // addressing) is responsible for handling that itself.
-  for (const selectedPackage of [LEVANTO_ROUTER_PACKAGE, '@antseed/router-other']) {
-    for (const requestedRouter of [undefined, 'local', 'custom-router']) {
-      const result = applyRouterDemoOverride({
-        mode: 'connect',
-        router: requestedRouter,
-        env: { EXISTING: '1' },
-      }, () => selectedPackage);
-      assert.equal(result.router, selectedPackage, `router should be set to ${selectedPackage} when requested router was ${String(requestedRouter)}`);
-      assert.deepEqual(result.env, {
-        EXISTING: '1',
-        ANTSEED_ROUTER_DATA_DIR: process.env['ANTSEED_ROUTER_DATA_DIR']
-          ?? join(homedir(), '.antseed', selectedPackage === LEVANTO_ROUTER_PACKAGE ? 'router-levanto' : 'router-other'),
-      });
-    }
-  }
-});
-
-test('applyRouterDemoOverride leaves connect-mode starts untouched when the router dropdown is explicitly set to None', () => {
-  // "None" is an explicit choice (VprPreferencesView.tsx writes
-  // selectedRouterPackage: null for it), distinct from the field never
-  // having been set at all -- resolveRouterPackage returning null models
-  // exactly that.
-  const opts = { mode: 'connect' as const, router: 'local', env: { EXISTING: '1' } };
-  const result = applyRouterDemoOverride(opts, () => null);
-  assert.deepEqual(result, opts);
-});
-
-test('applyRouterDemoOverride leaves non-connect modes untouched', () => {
-  const opts = { mode: 'system-proxy' as const, systemProxyPort: 8080 };
-  const result = applyRouterDemoOverride(opts);
-  assert.deepEqual(result, opts);
 });
 
 test('resolveCommandArgs launches the System Proxy runtime with selected profiles and models', () => {

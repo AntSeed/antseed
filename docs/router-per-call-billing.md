@@ -109,8 +109,8 @@ Buyer configuration:
 AntSeed authorizes the exact advertised fee, not the full configured allowance.
 The fee must fit both caps. Mixed token charges and fixed routing fees are
 rejected. Without `billing`, existing token-priced routing remains the default.
-This does not add a desktop billing selector or convert Levanto's private
-day-pass integration into a per-call service automatically.
+This does not add a desktop billing selector or automatically convert any
+private vendor billing implementation into a per-call service.
 
 ## Invalid responses: stop safely, do not pay to unblock
 
@@ -158,11 +158,4 @@ classification, HTTP error, blocked retry, and reused decision add no fee.
 
 The simplified shipping fixture keeps the original model across continuation,
 context rewrite, and explicit refresh. Additional classifications use new
-conversation identities. See `router-shipping-handoff.md` for the current policy.
-
-Validation on September 14, 2026: buyer-core/SDK/CLI builds and workspace
-typechecks passed; SDK 1,168 tests passed, buyer-core 11 passed, Levanto plugin
-106 passed. CLI 583 passed with the previously documented conversation-affinity
-failure (`conversation routing keeps the actual peer as a soft preference and
-fails over when needed`). All three local-chain scenarios passed. Desktop UI and
-production deployment validation remain outside this billing change.
+conversation identities. See `router-network-integration.md` for the current policy.

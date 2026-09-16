@@ -51,14 +51,9 @@ export class DepositsClient extends BaseEvmClient {
 
   // ─── View Functions ─────────────────────────────────────────────────
 
-  // Routed through _readWithFallback rather than `this._provider` directly:
-  // callers (BuyerPaymentManager.topUpReserve) treat a failed balance read
-  // as "abort, don't sign blind" -- see base-evm-client.ts's doc comment for
-  // why the ensemble alone wasn't enough during a real primary-RPC outage.
   async getBuyerBalance(buyerAddr: string): Promise<BuyerBalanceInfo> {
-    const result = await this._readWithFallback((provider) =>
-      new Contract(this._contractAddress, DEPOSITS_ABI, provider).getFunction('getBuyerBalance')(buyerAddr),
-    );
+    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
+    const result = await contract.getFunction('getBuyerBalance')(buyerAddr);
     return {
       available: result[0] as bigint,
       reserved: result[1] as bigint,
@@ -67,9 +62,8 @@ export class DepositsClient extends BaseEvmClient {
   }
 
   async getBuyerCreditLimit(buyerAddr: string): Promise<bigint> {
-    return this._readWithFallback((provider) =>
-      new Contract(this._contractAddress, DEPOSITS_ABI, provider).getFunction('getBuyerCreditLimit')(buyerAddr) as Promise<bigint>,
-    );
+    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
+    return contract.getFunction('getBuyerCreditLimit')(buyerAddr) as Promise<bigint>;
   }
 
   // ─── Operator Management ─────────────────────────────────────────

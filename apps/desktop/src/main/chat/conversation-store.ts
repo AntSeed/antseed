@@ -302,7 +302,7 @@ export class PiConversationStore {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     // Persist '' (not the local proxy sentinel) when no real upstream
-    // provider is known -- the sentinel would otherwise leak through to the
+    // provider is known. The sentinel used to leak through to the
     // `x-antseed-provider` header on send and trip the buyer proxy's
     // pinned-peer provider check, returning a confusing 502.
     const providerId = sanitizeProviderHint(provider) ?? '';

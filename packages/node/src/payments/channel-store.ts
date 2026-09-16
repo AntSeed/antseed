@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3';
-import { validateAccessTerms, sameAccessTerms, type AccessAgreement, type AccessAuthorization, type AccessPurchase } from '@antseed/buyer-core';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runMigrations } from '../storage/migrate.js';
@@ -55,38 +54,6 @@ export interface BuyerServiceUsageTotal {
 
 export class ChannelStore {
   private _db: Database.Database;
-
-  getAccessAgreement(scope: string): AccessAgreement | null {
-    const row = this._db.prepare('SELECT agreement_json FROM access_agreements WHERE scope = ?').get(scope) as { agreement_json: string } | undefined;
-    return row ? JSON.parse(row.agreement_json) as AccessAgreement : null;
-  }
-
-  setAccessAgreement(scope: string, agreement: AccessAgreement): void {
-    validateAccessTerms(agreement);
-    this._db.prepare('INSERT INTO access_agreements (scope, agreement_json) VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET agreement_json = excluded.agreement_json')
-      .run(scope, JSON.stringify(agreement));
-  }
-
-  getAccessPurchase(scope: string): AccessPurchase | null {
-    const row = this._db.prepare('SELECT purchase_json FROM access_purchases WHERE scope = ? ORDER BY authorized_at_ms DESC LIMIT 1').get(scope) as { purchase_json: string } | undefined;
-    return row ? JSON.parse(row.purchase_json) as AccessPurchase : null;
-  }
-
-  commitAccessAuthorization(channel: StoredChannel, services: readonly SpendingAuthServiceMetadata[] | undefined, access: AccessAuthorization): void {
-    this._db.transaction(() => {
-      const agreement = this.getAccessAgreement(access.scope);
-      if (!agreement?.enabled || !sameAccessTerms(agreement, access.purchase)) throw new Error('BILLING_APPROVAL_REQUIRED');
-      const previous = this.getAccessPurchase(access.scope);
-      if ((previous?.authorizedAtMs ?? null) !== access.previousAuthorizedAtMs) throw new Error('ACCESS_PURCHASE_CONFLICT');
-      if (previous && access.purchase.authorizedAtMs < previous.authorizedAtMs + previous.durationSeconds * 1000) throw new Error('ACCESS_ALREADY_AUTHORIZED');
-      const stored = this.getChannel(channel.sessionId);
-      if (!stored || BigInt(channel.authMax) - BigInt(stored.authMax) !== BigInt(access.purchase.amountMicroUsdc)) throw new Error('ACCESS_AUTHORIZATION_CONFLICT');
-      if (access.purchase.channelId !== channel.sessionId || access.purchase.cumulativeAmount !== channel.authMax) throw new Error('ACCESS_AUTHORIZATION_CONFLICT');
-      this.commitAuthorization(channel, services);
-      this._db.prepare('INSERT INTO access_purchases (scope, authorized_at_ms, purchase_json) VALUES (?, ?, ?)')
-        .run(access.scope, access.purchase.authorizedAtMs, JSON.stringify(access.purchase));
-    }).immediate();
-  }
 
   // ── Cached prepared statements (compiled once, reused every call) ──
   /** Cached transaction function for updateDeliveredAndInsertReceipt (compiled once). */

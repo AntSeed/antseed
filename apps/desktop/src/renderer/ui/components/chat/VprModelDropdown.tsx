@@ -12,7 +12,6 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
-import { isAutoRouterEntry } from '../../../modules/routing/auto-router';
 import { BrandIcon } from '../brand/BrandIcon';
 import styles from './VprModelDropdown.module.scss';
 
@@ -83,37 +82,23 @@ export function VprModelDropdown({
     [catalog, kind],
   );
 
-  // The Auto entry gets its own dedicated slot above
-  // Favorites/Recommended, not mixed into the curated lineup below -- it's a
-  // flat day pass, not one model priced across N sellers, so it's pulled
-  // out before the ranking/favoriting logic (built for real catalog entries)
-  // ever sees it.
-  const autoEntry = useMemo(
-    () => modeCatalog.find(isAutoRouterEntry) ?? null,
-    [modeCatalog],
-  );
-  const rankableCatalog = useMemo(
-    () => modeCatalog.filter((entry) => !isAutoRouterEntry(entry)),
-    [modeCatalog],
-  );
-
   const favoriteEntries = useMemo(
-    () => selectFavoriteVprCatalog(rankableCatalog, favorites),
-    [favorites, rankableCatalog],
+    () => selectFavoriteVprCatalog(modeCatalog, favorites),
+    [favorites, modeCatalog],
   );
 
   // Curated recommended lineup (minus favorites, which get their own group),
   // with the current selection always present so the active model never
   // disappears from its own switcher.
   const recommendedEntries = useMemo(() => {
-    const top = (kind === 'image' ? rankableCatalog : selectRecommendedVprCatalog(rankableCatalog))
+    const top = (kind === 'image' ? modeCatalog : selectRecommendedVprCatalog(modeCatalog))
       .filter((entry) => !favorites.has(catalogEntryKey(entry)))
-      .slice(0, kind === 'image' ? rankableCatalog.length : TOP_MODEL_COUNT);
-    if (selectedEntry?.kind === kind && !isAutoRouterEntry(selectedEntry) && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
+      .slice(0, kind === 'image' ? modeCatalog.length : TOP_MODEL_COUNT);
+    if (selectedEntry?.kind === kind && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, TOP_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, favoriteEntries, kind, rankableCatalog, selectedEntry]);
+  }, [favorites, favoriteEntries, kind, modeCatalog, selectedEntry]);
 
   useEffect(() => {
     if (!open) return;
@@ -167,33 +152,6 @@ export function VprModelDropdown({
     );
   }
 
-  function renderAutoRouterEntry(entry: VprModelCatalogEntry) {
-    const active = isSelected(entry, selectedProvider, selectedServiceId);
-    return (
-      <button
-        key={`${entry.provider}${entry.serviceId}`}
-        type="button"
-        className={`${styles.modelDropdownItem}${active ? ` ${styles.active}` : ''}`}
-        role="option"
-        aria-selected={active}
-        onClick={() => {
-          setOpen(false);
-          if (!active) onSelect(entry);
-        }}
-      >
-        <span className={styles.itemTopRow}>
-          <span className={styles.itemNameGroup}>
-            <BrandIcon name={entry.provider} hints={[entry.label]} size={16} />
-            <span className={styles.itemName}>{entry.label}</span>
-          </span>
-        </span>
-        <span className={styles.itemMeta}>
-          <span>Automatically optimises your spend and performance</span>
-        </span>
-      </button>
-    );
-  }
-
   return (
     <div className={styles.modelDropdown} ref={ref}>
       <button
@@ -212,7 +170,6 @@ export function VprModelDropdown({
       </button>
       {open && (
         <div className={styles.modelDropdownMenu} role="listbox">
-          {autoEntry && renderAutoRouterEntry(autoEntry)}
           {favoriteEntries.length > 0 && (
             <>
               <div className={styles.modelDropdownSection}>

@@ -31,7 +31,6 @@ export interface AntseedProviderPlugin extends AntseedPluginBase {
 export interface AntseedRouterPlugin extends AntseedPluginBase {
   type: 'router'
   routingSettingsSchema?: import('../routing/router-settings.js').RouterSettingField[]
-  routingCadence?: import('../routing/routing-context.js').RoutingCadence
   createRouter(config: Record<string, string>): Router | Promise<Router>
   /**
    * The `serviceId` this router's "auto" model-picker entry responds to --
@@ -41,32 +40,6 @@ export interface AntseedRouterPlugin extends AntseedPluginBase {
    * dedicated auto-routing sentinel model.
    */
   autoRouteServiceId?: string
-  /** Display copy for a generic "what does auto-routing do" info dialog. */
-  autoRouteInfo?: { title: string; body: string }
-  /**
-   * A short, one-line summary of what this router does, for the Preferences
-   * page's compact router-description text -- distinct from
-   * `autoRouteInfo.body`, which is the longer explanation a one-time
-   * confirmation dialog shows. Falls back to `autoRouteInfo.body`, then
-   * `description`, when omitted.
-   */
-  preferencesSummary?: string
-  /**
-   * A flagship model id this router's ranked candidates commonly quote a
-   * real price for, suitable as a host UI's default "what would this have
-   * cost at retail" comparison when no more specific one is picked. Omit if
-   * this plugin doesn't have an opinion.
-   */
-  savingsBaselineModel?: string
-  /**
-   * The serviceId this router's recurring flat-fee/day-pass charge (if any)
-   * should be attributed to in SpendingAuthMetadata.services[] (v4) -- host
-   * code building that signing closure (`createSignDailyIfNeeded`) reads
-   * this instead of hardcoding a specific plugin's own attribution string.
-   * Omit if this plugin has no flat-fee charge to attribute, or doesn't care
-   * about attribution.
-   */
-  accessServiceId?: string
 }
 
 export interface ClaimResult {
@@ -116,33 +89,6 @@ export const ANTSEED_ATTEST_PATH = '/_antseed/attest'
 export interface Prover extends AntseedPluginBase {
   type: 'prover'
   prove(req: SellerRequest): SellerResponse | Promise<SellerResponse>
-}
-
-export const ANTSEED_ROUTE_PATH = '/_antseed/route'
-
-/**
- * Digest submissions get their own suffix path under the reserved routing
- * path -- the caller states its intent explicitly via the URL, no
- * shape-based body-sniffing to distinguish a digest from a routing request.
- * Both paths delegate to the same `RoutingServerHandler.handleRoute` --
- * `req.path` is already part of `SellerRequest`, so the handler
- * implementation can distinguish them itself; no new interface method or
- * dispatch contract.
- */
-export const ANTSEED_ROUTE_DIGEST_PATH = '/_antseed/route/digest'
-
-/**
- * A seller-side handler for the reserved model-routing-decision path
- * (single instance per node, unlike Prover which is looked up by name --
- * there's only one routing peer identity per seller). Registered the same
- * way a Prover is: the actual implementation (day-pass gating, calling
- * out to a ranking sidecar, computing the response) is entirely the host's
- * business -- this interface is just the generic dispatch contract
- * seller-request-handler.ts calls into, so that logic never has to live in
- * this package.
- */
-export interface RoutingServerHandler {
-  handleRoute(buyerPeerId: string, req: SellerRequest): SellerResponse | Promise<SellerResponse>
 }
 
 export type AntseedPlugin = AntseedProviderPlugin | AntseedRouterPlugin | AntseedVerifierPlugin | Prover

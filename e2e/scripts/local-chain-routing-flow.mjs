@@ -142,7 +142,6 @@ try {
     async selectRoute(request, _available, _conversation, _preferences, _default, context) {
       if (JSON.parse(new TextDecoder().decode(request.body)).model !== 'fixture-auto') return null;
       assert.equal(context.candidates.length, 1);
-      if (!context.routing.shouldRoute && context.routing.previousRoute) return [context.routing.previousRoute];
       const parseResponse = (response) => {
         const model = JSON.parse(new TextDecoder().decode(response.body)).choices[0].message.content;
         const choice = context.candidates.find((candidate) => candidate.serviceId === model);
@@ -157,7 +156,7 @@ try {
   const events = [];
   buyer.on('payment:spend', (event) => events.push(event));
   proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:fixture', autoRouteServiceId: 'fixture-auto',
-    routerTimeoutMs: 60_000, routingCadence: 'session', routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
+    routerTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
       allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
     routingService: { routerKey: 'plugin:fixture', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
@@ -198,7 +197,7 @@ try {
   assert.ok(records.some((record) => record.parentRequestId === routeEvent.parentRequestId && record.outcome === 'succeeded'));
   const decisions = records.filter((record) => record.kind === 'selection');
   assert.deepEqual(decisions.map((record) => record.trigger), ['new-session']);
-  assert.deepEqual(decisions.map((record) => record.reuseSuggested), [false]);
+  assert.equal(decisions.length, 1);
   const operations = records.filter((record) => record.purpose === 'routing' && record.outcome === 'succeeded');
   assert.equal(operations.length, 1);
   assert.equal(new Set(operations.map((record) => record.requestId)).size, 1);

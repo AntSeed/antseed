@@ -479,64 +479,6 @@ export function registerPiChatHandlers({
     };
   });
 
-  ipcMain.handle('chat:ai-list-routing-decisions', async () => {
-    // routing_decisions local ledger, for VPR's savings dashboard. Proxies
-    // straight to buyer-proxy's own /_antseed/routing-decisions -- same
-    // localhost-fetch pattern as /_antseed/metering and /_antseed/route
-    // above, no new transport. Empty rows (not an error) whenever the
-    // registered router doesn't implement getRoutingDecisions (e.g. the
-    // default router-local) or the buyer runtime isn't up yet.
-    try {
-      const port = await resolveProxyPort(configPath);
-      const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/routing-decisions`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!response.ok) return { ok: true, data: [] };
-      const body = await response.json() as { ok?: boolean; rows?: unknown[] };
-      return { ok: true, data: Array.isArray(body.rows) ? body.rows : [] };
-    } catch {
-      return { ok: true, data: [] };
-    }
-  });
-
-  ipcMain.handle('chat:ai-access-billing', async (_event, input: import('../../shared/access-billing.js').AccessBillingRequest) => {
-    try {
-      if (!input || !['status', 'activate', 'pause'].includes(input.action) || typeof input.serviceId !== 'string') throw new Error('Invalid access request');
-      const port = await resolveProxyPort(configPath);
-      const url = new URL(`${LOCALHOST_URL}:${port}/_antseed/access-billing`);
-      url.searchParams.set('serviceId', input.serviceId);
-      if (input.sellerPeerId) url.searchParams.set('sellerPeerId', input.sellerPeerId);
-      const response = await fetch(url, input.action === 'status' ? { signal: AbortSignal.timeout(5_000) } : {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input), signal: AbortSignal.timeout(5_000),
-      });
-      const body = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || !body.ok) return { ok: false, error: body.error ?? 'Access request failed' };
-      return { ok: true, data: body };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : 'Access request failed' };
-    }
-  });
-
-  ipcMain.handle('chat:ai-get-routing-savings-baseline', async () => {
-    // The model id last chosen in the savings dashboard's baseline dropdown
-    // (apps/cli/src/proxy/buyer-proxy.ts's `_savingsBaselineModel`), so the
-    // Profile view's "Auto-routing savings" text compares against the same
-    // model the user picked there instead of silently using its own default.
-    // `null` (not an error) whenever no explicit choice has been made yet.
-    try {
-      const port = await resolveProxyPort(configPath);
-      const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/routing-decisions/baseline`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!response.ok) return { ok: true, data: null };
-      const body = await response.json() as { ok?: boolean; baseline?: string | null };
-      return { ok: true, data: body.baseline ?? null };
-    } catch {
-      return { ok: true, data: null };
-    }
-  });
-
   ipcMain.handle('api:try-proxy-request', async (
     _event,
     params: { port: number; path: string; method: string; headers: Record<string, string>; body: string },
@@ -693,19 +635,7 @@ export function registerPiChatHandlers({
             );
           }
         }
-        // Bounded, not awaited unconditionally: each task already carries its
-        // own 2.5s per-domain AbortSignal timeout (domain-site-metadata.ts),
-        // but a domain that black-holes at the network level (packets
-        // dropped, not refused) can outlast that -- found live: 4 of 18
-        // seller-advertised verification domains did this, hanging
-        // Promise.all indefinitely and leaving chat:ai-list-discover-rows
-        // (and the whole catalog) stuck with nothing to return. Enrichment
-        // is cosmetic favicon/verification-badge data, never something the
-        // catalog itself should block on -- any task still pending past this
-        // just keeps its pre-enrichment default (peerIconUrl: null, links
-        // unchanged) rather than holding up real, non-cosmetic catalog data.
-        // Budgeted via the same raceBudget helper the catalog/metering phases
-        // above use: already-cached domains resolve instantly; first-seen
+        // Budgeted: already-cached domains resolve instantly; first-seen
         // domains keep resolving in the background and land in the
         // per-domain cache for the next cycle.
         await raceBudget(Promise.all(enrichmentTasks), ENRICHMENT_BUDGET_MS, () => []);
@@ -878,7 +808,6 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
     cachedPaymentRequired.delete(id);
-    await abortConversations(id);
     await store.delete(id);
     // Best effort: wipe any raw attachment bytes we persisted for this
     // conversation. Failures are swallowed so a stuck directory doesn't
@@ -1052,7 +981,6 @@ export function registerPiChatHandlers({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ peerId: pinnedPeerId }),
-        signal: AbortSignal.timeout(2_000),
       });
       const result = await response.json() as { ok: boolean; error?: string };
       return { ok: result.ok, error: result.error };
@@ -1080,7 +1008,6 @@ export function registerPiChatHandlers({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model }),
-        signal: AbortSignal.timeout(2_000),
       });
       const result = await response.json() as { ok?: boolean; error?: string };
       if (result.ok) {
@@ -1109,35 +1036,6 @@ export function registerPiChatHandlers({
     }
     return { ok: true };
   });
-
-  // Auto routing has no fixed peer/model to post as the default route --
-  // `setBuyerDefaultRoute` above correctly declines to update it while Auto
-  // is selected, but "decline to update" leaves whatever concrete route was
-  // set before Auto was chosen sitting there indefinitely, since nothing
-  // else clears it. The `antseed` alias and the Telegram bridge then keep
-  // silently resolving to that stale model, invisibly to the user. A
-  // dedicated clear (POST an empty model) is the only way back to "no
-  // default route" -- distinct from `setBuyerDefaultRoute`, which rejects an
-  // empty service as a malformed call rather than an intentional clear.
-  const clearBuyerDefaultRoute = async (): Promise<{ ok: boolean; error?: string }> => {
-    if (lastPostedDefaultRoute === '') return { ok: true };
-    try {
-      const proxyPort = await resolveProxyPort(configPath);
-      const response = await fetch(`${LOCALHOST_URL}:${proxyPort}/_antseed/route`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: '' }),
-        signal: AbortSignal.timeout(2_000),
-      });
-      const result = await response.json() as { ok?: boolean; error?: string };
-      if (result.ok) lastPostedDefaultRoute = '';
-      return { ok: result.ok ?? false, error: result.error };
-    } catch (err) {
-      return { ok: false, error: asErrorMessage(err) };
-    }
-  };
-
-  ipcMain.handle('chat:clear-buyer-default-route', async () => clearBuyerDefaultRoute());
 
   return {
     createConversation,

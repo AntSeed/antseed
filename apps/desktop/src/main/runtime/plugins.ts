@@ -5,9 +5,7 @@ import { promisify } from 'node:util';
 import { builtinModules } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type { BrowserWindow } from 'electron';
-import type { AntseedRouterPlugin, ConfigField } from '@antseed/node';
 import type { AppendLogFn } from '../utils.js';
 import { WORKSPACE_APPS_DIR } from '../paths.js';
 
@@ -195,74 +193,6 @@ export async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
   }
 }
 
-export type RouterPluginMetadata = {
-  package: string;
-  version: string;
-  /** The plugin's own short `name` (AntseedPluginBase.name, e.g. 'acme-router') -- used as the synthetic auto-route catalog entry's `provider` so a stored selection survives this metadata becoming plugin-driven. */
-  name: string;
-  displayName: string;
-  description: string;
-  autoRouteServiceId?: string;
-  accessServiceId?: string;
-  autoRouteInfo?: { title: string; body: string };
-  preferencesSummary?: string;
-  savingsBaselineModel?: string;
-  configSchema?: ConfigField[];
-  routingSettingsSchema?: AntseedRouterPlugin['routingSettingsSchema'];
-};
-
-/**
- * Reads router-type plugin metadata (display name, auto-route sentinel,
- * config schema) straight from each installed plugin's own module export --
- * static data the plugin author already declares (packages/node's
- * AntseedRouterPlugin) -- instead of the desktop hardcoding a second copy of
- * it per plugin. Reads from disk, not a live buyer-proxy process, since
- * callers need this before that process has even started (the Preferences
- * dropdown, process-manager's startup config). On demand, not polled --
- * installed router plugins change rarely enough that callers can cache the
- * result themselves (same pattern as this app's other `useCachedResource`
- * IPC reads) rather than this function maintaining its own cache.
- */
-export async function listInstalledRouterPluginMetadata(): Promise<RouterPluginMetadata[]> {
-  const installed = await listInstalledPlugins();
-  const results: RouterPluginMetadata[] = [];
-  for (const { package: pkgName, version } of installed) {
-    const entryPath = path.resolve(path.join(DEFAULT_PLUGINS_DIR, 'node_modules', pkgName, 'dist', 'index.js'));
-    if (!entryPath.startsWith(path.resolve(DEFAULT_PLUGINS_DIR)) || !existsSync(entryPath)) continue;
-    try {
-      // eslint-disable-next-line no-await-in-loop -- small, rarely-called list; sequential imports keep failures isolated per plugin.
-      const mod = await import(pathToFileURL(entryPath).href) as Record<string, unknown>;
-      const candidates = Array.from(new Set([mod['default'], ...Object.values(mod)]))
-        .filter((value): value is Record<string, unknown> => !!value && typeof value === 'object');
-      const plugin = candidates.find(
-        (value) => value['type'] === 'router' && typeof value['createRouter'] === 'function',
-      ) as (AntseedRouterPlugin & Record<string, unknown>) | undefined;
-      if (!plugin) continue;
-      results.push({
-        package: pkgName,
-        version,
-        name: plugin.name,
-        displayName: plugin.displayName,
-        description: plugin.description,
-        autoRouteServiceId: plugin.autoRouteServiceId,
-        accessServiceId: plugin.accessServiceId,
-        autoRouteInfo: plugin.autoRouteInfo,
-        preferencesSummary: plugin.preferencesSummary,
-        savingsBaselineModel: plugin.savingsBaselineModel,
-        configSchema: plugin.configSchema,
-        routingSettingsSchema: plugin.routingSettingsSchema,
-      });
-    } catch (err) {
-      // A plugin that fails to import (missing deps, broken build) doesn't
-      // show up as an option -- same as if it were uninstalled -- but the
-      // reason is logged, since a router this silent about can be actively
-      // routing a user's money while absent from every list in the UI.
-      _appendLog('connect', 'system', `Router plugin "${pkgName}" not listed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return results;
-}
-
 interface NpmInvocation { bin: string; leadingArgs: string[] }
 
 export function resolveNpmInvocation(): NpmInvocation {
@@ -386,73 +316,8 @@ export async function installPluginFromBundle(packageName: string): Promise<bool
     }
   }
 
-  await recordInstalledPluginsInManifest(destRoot);
-
   return existsSync(path.join(destRoot, ...packageName.split('/'), 'package.json'))
     && !hasMissingInstalledDependencyTree(packageName);
-}
-
-/**
- * Records every plugin package sitting in the plugins dir into that dir's
- * own `package.json` `dependencies` field -- the field `listInstalledPlugins`
- * reads, and the one a bundle-copy install (above) never writes on its own,
- * since it places files directly into `node_modules` without touching any
- * manifest. An install left unrecorded there sits fully on disk with the
- * router dropdown (which goes through `listInstalledPlugins`) showing
- * nothing for it, while `process-manager` reads the selected package
- * straight from config.json and routes through it correctly regardless --
- * so the app can appear to have no routers installed while one is actively
- * routing.
- *
- * Plugin-ness is decided by what each module actually exports, same as
- * `listInstalledRouterPluginMetadata` does it, so the shared infrastructure
- * packages the bundle also ships (@antseed/node, router-core, buyer-core,
- * protocol, api-adapter) aren't mistaken for installable plugins.
- */
-async function recordInstalledPluginsInManifest(destRoot: string): Promise<void> {
-  const found: Record<string, string> = {};
-  const scopeDir = path.join(destRoot, '@antseed');
-  if (!existsSync(scopeDir)) return;
-  const scopeEntries = await readdir(scopeDir, { withFileTypes: true });
-
-  for (const entry of scopeEntries.filter((e) => e.isDirectory())) {
-    const pkgName = `@antseed/${entry.name}`;
-    const pkgDir = path.join(destRoot, '@antseed', entry.name);
-    // eslint-disable-next-line no-await-in-loop -- a handful of packages, once per install; sequential keeps failures isolated.
-    if (!await exportsAntseedPlugin(pkgDir)) continue;
-    // eslint-disable-next-line no-await-in-loop -- same.
-    found[pkgName] = await readPackageVersion(pkgDir) ?? '*';
-  }
-
-  if (Object.keys(found).length === 0) return;
-
-  let manifest: { dependencies?: Record<string, string> } & Record<string, unknown> = {};
-  try {
-    manifest = JSON.parse(await readFile(DEFAULT_PLUGINS_PACKAGE_JSON, 'utf-8')) as typeof manifest;
-  } catch {
-    manifest = { name: 'antseed-plugins', version: '1.0.0', private: true };
-  }
-  // A plugin installed from npm or a local path keeps its own recorded spec;
-  // only a package missing from the manifest gets this entry.
-  manifest.dependencies = { ...found, ...(manifest.dependencies ?? {}) };
-  await writeFile(DEFAULT_PLUGINS_PACKAGE_JSON, JSON.stringify(manifest, null, 2), 'utf-8');
-  _appendLog('connect', 'system', `Recorded ${Object.keys(found).length} bundled plugin(s) in the plugins manifest.`);
-}
-
-/** True when the package's entry module exports an AntSeed provider/router plugin. */
-async function exportsAntseedPlugin(packageDir: string): Promise<boolean> {
-  const entryPath = path.join(packageDir, 'dist', 'index.js');
-  if (!existsSync(entryPath)) return false;
-  try {
-    const mod = await import(pathToFileURL(entryPath).href) as Record<string, unknown>;
-    return Array.from(new Set([mod['default'], ...Object.values(mod)]))
-      .filter((value): value is Record<string, unknown> => !!value && typeof value === 'object')
-      .some((value) =>
-        (value['type'] === 'router' && typeof value['createRouter'] === 'function')
-        || (value['type'] === 'provider' && typeof value['createProvider'] === 'function'));
-  } catch {
-    return false;
-  }
 }
 
 async function copyBundledPackage(src: string, dest: string, label: string): Promise<void> {
@@ -570,15 +435,7 @@ export async function ensureDefaultPlugin(
   ctx: EnsureDefaultPluginContext,
 ): Promise<void> {
   const installed = isPluginInstalled(packageName);
-  // Present on disk but missing from the plugins manifest -- a bundle-copy
-  // install can land in exactly this state (recordInstalledPluginsInManifest
-  // above closes the gap that let it happen, but an install made before that
-  // existed can still be sitting here). isPluginInstalled only checks files,
-  // so leaving this out would treat the install as complete and never repair
-  // the manifest, leaving the router dropdown with nothing in it.
-  const unlistedInstall = installed
-    && !(await listInstalledPlugins()).some((plugin) => plugin.package === packageName);
-  const incompleteInstall = installed ? unlistedInstall || hasMissingInstalledDependencyTree(packageName) : false;
+  const incompleteInstall = installed ? hasMissingInstalledDependencyTree(packageName) : false;
   const refreshFromBundle = installed ? incompleteInstall || await isBundledPluginRefreshNeeded(packageName) : false;
   if (installed && !refreshFromBundle) {
     ctx.setAppSetupNeeded(false);

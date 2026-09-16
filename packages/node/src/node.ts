@@ -1,3 +1,4 @@
+import { perCallPriceMicroUsdc, validateUnitBillingModelV1, isFreeUnitBillingModel } from '@antseed/protocol/billing';
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,6 @@ import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
-import { perCallPriceMicroUsdc, isFreeUnitBillingModel, validateUnitBillingModelV1 } from './billing/unit.js';
 import { peerIdToAddress } from "./types/peer.js";
 import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
 import type {
@@ -71,7 +71,7 @@ import type {
   ProviderStreamCallbacks,
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
-import type { Prover, RoutingServerHandler } from "./interfaces/plugin.js";
+import type { Prover } from "./interfaces/plugin.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8 } from "./p2p/identity.js";
 import {
@@ -179,7 +179,7 @@ export interface NodePaymentsConfig {
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
   defaultMaxAmountUsdc?: string;
-  /** Default auth duration in seconds. Default: 900 (15 min) -- seller must call reserve() promptly. */
+  /** Default auth duration in seconds. Default: 90000 */
   defaultAuthDurationSecs?: number;
   /** Minimum USDC per request (base units) for seller. Default: "10000" ($0.01). */
   minBudgetPerRequest?: string;
@@ -187,46 +187,11 @@ export interface NodePaymentsConfig {
   minSettleDelta?: string;
   /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
   serveWhileClosePending?: boolean;
-  /**
-   * Seller-side: rejects any single SpendingAuth whose cumulativeAmount jumps
-   * more than this many base units above the previously accepted cumulative
-   * for that channel. Undefined (default) means no cap -- ordinary metered
-   * per-request billing can legitimately jump by any amount in a burst of
-   * real usage, so this must stay opt-in, not a blanket default. A seller
-   * offering a flat daily/periodic day-pass price should set this to that
-   * price: it's an independent server-side backstop against a single
-   * signature ever claiming several days' worth in one call, so the seller
-   * never has to trust the buyer's arithmetic alone.
-   */
-  maxCumulativeIncreasePerAuth?: string;
-  /**
-   * Seller-side: settle and close a channel the instant its buyer's live
-   * connection drops. Default: true — correct for ordinary per-session
-   * inference, where a dropped connection means the conversation is over.
-   * Wrong for a day-pass-priced channel meant to persist across many
-   * short connect/disconnect cycles between infrequent requests — set false
-   * there, or a signed day pass gets torn down the moment the buyer's
-   * connection goes idle, before the next real request ever arrives.
-   */
-  settleOnDisconnect?: boolean;
-  /**
-   * Seller-side: settle (keep channel open) immediately after accepting a
-   * subsequent SpendingAuth. Default: false/undefined -- ordinary metered
-   * per-request billing signs a fresh cumulative on every response, so this
-   * must stay opt-in or every request would trigger an on-chain tx. Meant
-   * for a day-pass-priced channel (roughly one signature per ~24h window),
-   * where neither of the two existing settlement triggers ever fires:
-   * SellerSessionTracker's idle-settle only activates for channels served
-   * through the metered request path, and settleOnDisconnect is correctly
-   * false for this kind of channel already -- without this, an accepted
-   * cumulative amount can sit authorized-but-never-settled indefinitely.
-   */
-  settleOnAcceptedSpendingAuth?: boolean;
   /** Optional seller-side slack for estimate-only reserve preflight checks. Unset disables estimate-only rejection. */
   reserveEstimateOverdraftUsdc?: string;
   /** Maximum USDC the buyer authorizes per single request (base units). Default: "500000" ($0.50). */
   maxPerRequestUsdc?: string;
-  /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "1000000" ($1.00) -- matches FIRST_SIGN_CAP. */
+  /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "10000000" ($10.00). */
   maxReserveAmountUsdc?: string;
   /** Disable per-service buyer attribution in metadata v2. Default: false. */
   disableMetadataV2Services?: boolean;
@@ -364,7 +329,6 @@ export class AntseedNode extends EventEmitter {
   private _connectionManager: ConnectionManager | null = null;
   private _providers: Provider[] = [];
   private _provers: Prover[] = [];
-  private _routingServerHandler: RoutingServerHandler | null = null;
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
@@ -486,15 +450,6 @@ export class AntseedNode extends EventEmitter {
     this._provers.push(prover);
   }
 
-  /** Register the seller-side handler for the reserved model-routing-decision path (single instance). */
-  registerRoutingServerHandler(handler: RoutingServerHandler): void {
-    this._routingServerHandler = handler;
-  }
-
-  get routingServerHandler(): RoutingServerHandler | null {
-    return this._routingServerHandler;
-  }
-
   setRouter(router: Router): void {
     this._router = router;
   }
@@ -511,19 +466,6 @@ export class AntseedNode extends EventEmitter {
   /** Buyer-side payment negotiator (null if payments not configured for buyer). */
   get buyerNegotiator(): BuyerPaymentNegotiator | null {
     return this._buyerNegotiator;
-  }
-
-  /**
-   * Real on-chain channels client (null if payments not configured). Exposed
-   * for buyer-side code outside this class that needs a genuine on-chain
-   * read after a `topUpReserve()` call -- `topUpReserve`'s own AuthAck
-   * doesn't update the buyer's cached reserve ceiling for anything but the
-   * very first reserve (confirmed by reading `BuyerPaymentManager.handleAuthAck`);
-   * `reconcileReserveAmount(sellerPeerId, onChainAmount)` is the way to
-   * resync from here.
-   */
-  get channelsClient(): ChannelsClient | null {
-    return this._channelsClient;
   }
 
   /**
@@ -1112,11 +1054,9 @@ export class AntseedNode extends EventEmitter {
           ? Number(volumeMicros)
           : Number.MAX_SAFE_INTEGER;
         p.onChainLastSettledAtSec = stats.lastSettledAt;
-        // Some migrated/facade staking accounts return zero for `stakedAt`.
-        // A zero read must not erase a previously verified positive
-        // timestamp (an RPC failure is caught to `null` above and returns
-        // before reaching here, so this guard only needs to cover that
-        // zero-account case).
+        // Some migrated/facade staking accounts return zero for `stakedAt`,
+        // and transient RPC failures used to be coerced to zero as well. A
+        // zero read must not erase a previously verified positive timestamp.
         if (typeof stakedAt === 'number' && Number.isFinite(stakedAt) && stakedAt > 0) {
           p.onChainStakedAtSec = stakedAt;
         }
@@ -1172,31 +1112,6 @@ export class AntseedNode extends EventEmitter {
     if (negotiator) {
       this._paymentMuxes.set(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
-  }
-
-  /**
-   * Get (connecting first if needed) a real `PaymentMux` for a specific
-   * peer, for buyer-side code outside this class that needs to sign and
-   * send payment messages to a peer it isn't necessarily chatting through --
-   * e.g. a routing-client host paying a flat daily day-pass fee to a
-   * routing peer, as opposed to per-request billing to a chat-completion
-   * seller. `_paymentMuxes` has no public getter otherwise; mirrors
-   * `requestChannelClose`'s own
-   * find-then-`connectToPeer` pattern.
-   */
-  async getOrConnectPaymentMux(peerId: string): Promise<PaymentMux> {
-    const existing = this._paymentMuxes.get(peerId as PeerId);
-    if (existing) return existing;
-    const peer = await this.findPeer(peerId);
-    if (!peer) {
-      throw new Error(`Peer ${peerId.slice(0, 12)}... could not be found on the network.`);
-    }
-    await this.connectToPeer(peer);
-    const mux = this._paymentMuxes.get(peerId as PeerId);
-    if (!mux) {
-      throw new Error(`Failed to establish a payment channel with peer ${peerId.slice(0, 12)}...`);
-    }
-    return mux;
   }
 
   /**
@@ -1792,7 +1707,6 @@ export class AntseedNode extends EventEmitter {
       identity,
       providers: this._providers,
       provers: this._provers,
-      routingServerHandler: this._routingServerHandler,
       sellerPaymentManager: this._sellerPaymentManager,
       sellerFreeUsageManager: this._sellerFreeUsageManager,
       sessionTracker: this._sessionTracker,
@@ -2191,9 +2105,6 @@ export class AntseedNode extends EventEmitter {
         ...(payments.serveWhileClosePending !== undefined
           ? { serveWhileClosePending: payments.serveWhileClosePending }
           : {}),
-        ...(payments.settleOnDisconnect !== undefined ? { settleOnDisconnect: payments.settleOnDisconnect } : {}),
-        ...(payments.settleOnAcceptedSpendingAuth !== undefined ? { settleOnAcceptedSpendingAuth: payments.settleOnAcceptedSpendingAuth } : {}),
-        ...(payments.maxCumulativeIncreasePerAuth ? { maxCumulativeIncreasePerAuth: payments.maxCumulativeIncreasePerAuth } : {}),
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);

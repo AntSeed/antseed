@@ -1,4 +1,3 @@
-import { handleAccessBilling } from './access-billing.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
@@ -14,7 +13,6 @@ import {
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
-  getOpenRouterReferencePrices,
   isModelRouteEligible,
   modelRouteTotalPrice,
   peerSupportsCooperativeClose,
@@ -80,7 +78,6 @@ import {
   computeResponseTelemetry,
   attachAntseedTelemetryHeaders,
   attachStreamingAntseedHeaders,
-  type RouteAlternative,
 } from './telemetry.js'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
@@ -89,7 +86,6 @@ import {
   isCompletionRequestPath,
   isTitleGenerationRequest,
   parseRequestBodyObject,
-  type ConversationIdentity,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
 import type { DepositWatcher } from './deposit-watcher.js'
@@ -108,12 +104,10 @@ import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 import { loadConfig } from '../config/loader.js'
-import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js'
 import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
 import { validateRouterCandidate } from './router-policy.js'
 import { executeRouter, RouterExecutionError } from './router-execution.js'
 import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
-import { RoutingContextTracker, type RoutingCadence } from '@antseed/node'
 import { RoutingLog } from './routing-log.js'
 import { RoutingServiceExecutor } from './routing-service.js'
 
@@ -151,7 +145,6 @@ export interface BuyerProxyConfig {
   routerKey?: string
   routingService?: RoutingServiceConfig
   routingSettingsSchema?: RouterSettingField[]
-  routingCadence?: RoutingCadence
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -174,13 +167,6 @@ export interface BuyerProxyConfig {
   now?: () => number
   /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
   verifier?: VerifierPolicy
-  /**
-   * The active router plugin's short id (`AntseedRouterPlugin.name`, e.g.
-   * `acme`) -- title-cased for display on the routing-savings dashboard
-   * (`GET /_antseed/routing-decisions/dashboard`), e.g. "Model-routing
-   * savings (Acme)". Undefined falls back to a generic title.
-   */
-  routerName?: string
 }
 
 // 401/403 are included: sellers relay upstream auth failures (revoked or
@@ -192,7 +178,6 @@ export interface BuyerProxyConfig {
 const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
 /** Client disclosure only (x-antseed-route-alternatives) -- not a limit on
  *  how many candidates the router itself ranks or dispatch tries. */
-const MAX_DISCLOSED_ROUTE_ALTERNATIVES = 10
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
@@ -784,7 +769,6 @@ export class BuyerProxy {
   private readonly _stateDir: string
   private readonly _stateFile: string
   private readonly _configPath: string | null
-  private readonly _routerName: string | undefined
   private _stateFileWatching = false
   private _configFileWatching = false
   private _pinnedPeer: string | null
@@ -795,27 +779,8 @@ export class BuyerProxy {
    * selection) and persisted in buyer.state.json like the session peer pin.
    */
   private _defaultRoutedModel: string | null = null
-  /**
-   * The model id last chosen in the savings dashboard's baseline dropdown
-   * (`GET`/`POST /_antseed/routing-decisions/baseline`) -- shared, via this
-   * one persisted value, between that standalone browser page and the
-   * desktop app's own "Auto-routing savings" text (VprCreditsView), which
-   * would otherwise have no way to see a choice made in a different process.
-   * `null` means "no explicit choice yet," not "zero baseline" -- callers
-   * fall back to their own auto-picked default.
-   */
-  private _savingsBaselineModel: string | null = null
   private readonly _initialConversationRequests = new Map<string, Promise<void>>()
   private _conversations!: ConversationStore
-  /**
-   * Last router-ranked candidate list per conversation, for client disclosure
-   * only (`GET /_antseed/conversations/:id`'s `routeAlternatives`) — not
-   * persisted with the rest of `ConversationStore`, since it's meaningful
-   * only for the most recent response and stale on every new one. Capped by
-   * simple insertion-order eviction; a UI nicety doesn't need real LRU.
-   */
-  private _lastRouteAlternativesByConversation = new Map<string, RouteAlternative[]>()
-  private static readonly MAX_TRACKED_ROUTE_ALTERNATIVES = 50
   /**
    * Wall-clock of the last model-request activity (dispatch or streamed
    * frame). Exposed on /_antseed/buyer-usage so the desktop pill can show a
@@ -836,8 +801,6 @@ export class BuyerProxy {
   private _routingServiceConfig: RoutingServiceConfig | undefined
   private readonly _routingSettingsSchema: RouterSettingField[]
   private readonly _routerKey: string
-  private readonly _routingContext = new RoutingContextTracker()
-  private readonly _routingCadence: RoutingCadence
   private readonly _routingLog: RoutingLog
   private readonly _routingServiceExecutor: RoutingServiceExecutor
   private readonly _routingPeerIds = new Set<string>()
@@ -895,7 +858,6 @@ export class BuyerProxy {
     this._routingServiceConfig = config.routingService
     this._routingSettingsSchema = config.routingSettingsSchema ?? []
     this._routerKey = config.routerKey ?? ''
-    this._routingCadence = config.routingCadence ?? 'request'
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
@@ -912,7 +874,6 @@ export class BuyerProxy {
     if (config.routingService) this._protectRoutingPeer(config.routingService.peerId)
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._configPath = config.configPath ?? null
-    this._routerName = config.routerName
     this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._routingPreferences = config.routingPreferences
@@ -922,9 +883,6 @@ export class BuyerProxy {
           blockedPeerIds: [...config.routingPreferences.blockedPeerIds],
         }
       : null
-    if (this._routingPreferences) {
-      this._node.router?.updateRoutingPreferences?.(this._routingPreferences)
-    }
     this._now = config.now ?? (() => Date.now())
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -1159,8 +1117,6 @@ export class BuyerProxy {
       }
       const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
       this._defaultRoutedModel = routedModel.length > 0 && isValidRoutedModelTarget(routedModel) ? routedModel : null
-      const savingsBaseline = typeof parsed.savingsBaselineModel === 'string' ? parsed.savingsBaselineModel.trim() : ''
-      this._savingsBaselineModel = savingsBaseline.length > 0 ? savingsBaseline : null
       log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
@@ -1199,15 +1155,11 @@ export class BuyerProxy {
         allowedPeerIds: [...next.allowedPeerIds],
         blockedPeerIds: [...next.blockedPeerIds],
       }
-      this._node.router?.updateRoutingPreferences?.(this._routingPreferences)
       log(
         `Routing preferences reloaded: minTrust=${next.minTrustScore} maxInput=${next.maxInputUsdPerMillion} `
         + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length} `
         + `routerEnabled=${next.routerEnabled ?? false}`,
       )
-      // Toggling the day pass on/off, by itself, causes zero network or
-      // signing activity -- the only trigger is a real routing dispatch
-      // caused by an actual prompt.
     } catch (err) {
       log(`Routing preferences reload ignored: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -1241,7 +1193,6 @@ export class BuyerProxy {
       ? {
         pinnedPeerId: this._pinnedPeer,
         defaultRoutedModel: this._defaultRoutedModel,
-        savingsBaselineModel: this._savingsBaselineModel,
       }
       : {}
     await this._mergeStateFile({
@@ -1854,7 +1805,7 @@ export class BuyerProxy {
       const conversation = this._conversations.get(id)
       res.writeHead(conversation ? 200 : 404, { 'content-type': 'application/json' })
       res.end(JSON.stringify(conversation
-        ? { ok: true, conversation, routeAlternatives: this._lastRouteAlternativesByConversation.get(id) ?? null }
+        ? { ok: true, conversation }
         : { ok: false, error: 'Unknown conversation' }))
       return
     }
@@ -1990,97 +1941,6 @@ export class BuyerProxy {
       const totals = this._node.getBuyerUsageTotals()
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, totals, lastActivityAt: this._lastModelActivityAt || null }))
-      return
-    }
-
-    if (path === '/_antseed/routing-decisions' && method === 'GET') {
-      // routing_decisions local ledger -- generic read of whatever the
-      // registered router's own getRoutingDecisions() reports, for VPR's
-      // savings dashboard. Empty for a router that doesn't implement
-      // selectRoute (e.g. the default router-local), not an error.
-      const router = this._node.router
-      const rows = router?.getRoutingDecisions?.() ?? []
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, rows }))
-      return
-    }
-
-    if (path === '/_antseed/routing-decisions/baseline' && method === 'GET') {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, baseline: this._savingsBaselineModel }))
-      return
-    }
-
-    if (path === '/_antseed/routing-decisions/baseline' && method === 'POST') {
-      // Persists the savings dashboard's baseline-dropdown choice so the
-      // desktop app's own savings text (VprCreditsView) can show the same
-      // model -- see `_savingsBaselineModel`'s doc comment.
-      const chunks: Buffer[] = []
-      let totalSize = 0
-      for await (const chunk of req) {
-        totalSize += (chunk as Buffer).length
-        if (totalSize > 8192) {
-          res.writeHead(413, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
-          return
-        }
-        chunks.push(chunk as Buffer)
-      }
-      let baseline: string
-      try {
-        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
-        baseline = typeof body.baseline === 'string' ? body.baseline.trim() : ''
-      } catch {
-        res.writeHead(400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
-        return
-      }
-      this._savingsBaselineModel = baseline.length > 0 ? baseline : null
-      await this._mergeStateFile({ savingsBaselineModel: this._savingsBaselineModel })
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, baseline: this._savingsBaselineModel }))
-      return
-    }
-
-    if (path === '/_antseed/router-name' && method === 'GET') {
-      // The active router plugin's short id, so a host rendering the
-      // savings dashboard elsewhere (apps/payments' portal) can title it
-      // "Model-routing savings (Acme)" instead of the generic fallback.
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, routerName: this._routerName ?? null }))
-      return
-    }
-
-    if (path.split('?')[0] === '/_antseed/access-billing') {
-      await handleAccessBilling(req, res, this._node.buyerPaymentManager, () => this._getPeers({ forceRefresh: true }))
-      return
-    }
-
-    if (path.startsWith('/_antseed/openrouter-reference-prices') && method === 'GET') {
-      // Retail-price comparison for the savings dashboard's "vs OpenRouter"
-      // figure -- kept separate from routing_decisions' own baselinePrices
-      // (AntSeed's own network price),
-      // since conflating the two would credit the router for savings that
-      // actually come from AntSeed's marketplace undercutting OpenRouter
-      // retail. Resolved server-side (not exposing the raw canonical map)
-      // so the dashboard's client-side JS never needs to replicate
-      // canonicalModelKey's normalization rules itself.
-      const url = new URL(path, 'http://localhost')
-      const requested = (url.searchParams.get('models') ?? '').split(',').map((m) => m.trim()).filter(Boolean)
-      // Same baked-default file `antseed buyer activity`'s Saved tile already
-      // reads (apps/cli/src/cli/commands/buyer/activity.ts) -- null for a
-      // from-source build, a real URL once scripts/bake-comparable-prices-url.mjs
-      // has run for a release. ANTSEED_COMPARABLE_PRICES_URL always overrides it.
-      const referenceMap = await getOpenRouterReferencePrices(BAKED_COMPARABLE_PRICES_URL)
-      const prices: Record<string, { inUsdPerM: number | null; outUsdPerM: number | null; cachedInUsdPerM: number | null } | null> = {}
-      for (const model of requested) {
-        const ref = referenceMap[canonicalModelKey(model)]
-        prices[model] = ref
-          ? { inUsdPerM: ref.input, outUsdPerM: ref.output, cachedInUsdPerM: ref.cachedInput }
-          : null
-      }
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, prices }))
       return
     }
 
@@ -2651,29 +2511,18 @@ export class BuyerProxy {
     }
 
     let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
-    const routingSettings = this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}
+    const routingContext = { trigger: conversationIdentity ? 'new-session' as const : 'request' as const }
     const routingStartedAt = Date.now()
-    const routingContext = this._routingContext.observe(serializedReq, conversationIdentity, {
-      cadence: this._routingCadence, settings: routingSettings,
-      isRouteAvailable: (recommendation) => {
-        const candidate = validateRouterCandidate({ recommendation, peers, request: serializedReq,
-          protocol: requestProtocol, provider: explicitProvider, requiredParameters,
-          preferences: this._routingPreferences, maxPricing: this._maxPricing,
-          minPeerReputation: this._minPeerReputation, now: this._now() })
-        return !!candidate && !this._routingPeerIds.has(candidate.peerId)
-          && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
-      },
-    })
     if (requestedService === this._autoRouteServiceId
-      && (this._routingPreferences?.routerEnabled === false || this._routingPreferences?.autoRouting === false)) {
+      && this._routingPreferences?.routerEnabled !== true) {
       res.writeHead(503, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { type: 'router_disabled', code: 'router_disabled', message: 'The selected model router is disabled.' } }))
       return
     }
     try {
-      if (requestedService && !initialModel && !chatPinnedModel && !explicitPeerId && this._node.router?.selectRoute
+      if (requestedService && requestedService === this._autoRouteServiceId && !initialModel && !chatPinnedModel && !explicitPeerId && this._node.router?.selectRoute
         && !buildNetworkServiceOffers(peers).some((offer) => offer.serviceId === requestedService && offer.type === 'text')
-        && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
+        && this._routingPreferences?.routerEnabled === true) {
         const sharedPreferences = structuredClone(this._routingPreferences)
         if (sharedPreferences) delete sharedPreferences.routerSettings
         routeSelected = await executeRouter((context) => {
@@ -2707,8 +2556,7 @@ export class BuyerProxy {
         if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
         if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
         void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,
-          routerKey: this._routerKey, trigger: routingContext.trigger, contextRewritten: routingContext.contextRewritten,
-          reuseSuggested: !routingContext.shouldRoute, latencyMs: Date.now() - routingStartedAt,
+          routerKey: this._routerKey, trigger: routingContext.trigger, latencyMs: Date.now() - routingStartedAt,
           outcome: routeSelected === null ? 'declined' : 'selected', candidates: routeSelected?.length ?? 0 })
       }
     } catch (error) {
@@ -2758,7 +2606,6 @@ export class BuyerProxy {
       // router's actual ranking rather than the host's cache-affinity bump.
       // Stays null for the fixed-model (non-routed) branch: a directly
       // requested model has no "alternatives" the router considered.
-      let routeAlternatives: RouteAlternative[] | null = null
 
       if (routeSelected) {
         // The routing peer's returned order already *is* the score/quality/
@@ -2780,12 +2627,6 @@ export class BuyerProxy {
           const health = this._peerHealth.get(candidate.peerId)
           return [{ ...candidate, peerCooldownUntil: health?.cooldownUntil ?? null, peerFailureStreak: health?.failureStreak ?? 0 }]
         })
-        routeAlternatives = candidates.slice(0, MAX_DISCLOSED_ROUTE_ALTERNATIVES).map((candidate) => ({
-          peerId: candidate.peerId,
-          service: candidate.serviceId,
-          inputUsdPerMillion: candidate.inputUsdPerMillion,
-          outputUsdPerMillion: candidate.outputUsdPerMillion,
-        }))
       } else {
         const selectModelPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection =>
           selectCandidatePeersForRouting(candidateSources, requestProtocol, requestedService, explicitProvider, 'strict')
@@ -2950,12 +2791,9 @@ export class BuyerProxy {
             RETRYABLE_STATUS_CODES,
             false,
             clientAbortController.signal,
-            routeAlternatives,
-            conversationIdentity,
           )
           if (result.done) {
             if (routeSelected && !clientAbortController.signal.aborted && res.statusCode < 400 && result.latencyMs !== undefined) {
-              this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, selected)
               void this._recordRoutingOperation({ kind: 'dispatch', purpose: 'routing-decision', requestId: serializedReq.requestId,
                 routerKey: this._routerKey, trigger: routingContext.trigger, peerId: selected.peerId, serviceId: selected.serviceId,
                 outcome: 'succeeded', inferenceLatencyMs: result.latencyMs })
@@ -2964,11 +2802,7 @@ export class BuyerProxy {
               this._conversations.recordRoutedModel(
                 trackedConversationId,
                 `${selected.peer.peerId}@${selected.serviceId}`,
-                { costUsd: result.costUsd, latencyMs: result.latencyMs },
               )
-              if (routeAlternatives) {
-                this._recordRouteAlternatives(trackedConversationId, routeAlternatives)
-              }
             }
             return
           }
@@ -2991,7 +2825,6 @@ export class BuyerProxy {
       }
 
       if (lastRetry) {
-        this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, null)
         res.writeHead(lastRetry.statusCode, lastRetry.responseHeaders)
         res.end(lastRetry.responseBody)
       } else {
@@ -3199,14 +3032,11 @@ export class BuyerProxy {
       RETRYABLE_STATUS_CODES,
       true,
       clientAbortController.signal,
-      undefined,
-      conversationIdentity,
     )
     if (result.done && trackedConversationId && pinnedServiceId) {
       this._conversations.recordRoutedModel(
         trackedConversationId,
         `${selectedPeer.peerId}@${pinnedServiceId}`,
-        { costUsd: result.costUsd, latencyMs: result.latencyMs },
       )
     }
     if (!result.done) {
@@ -3290,16 +3120,6 @@ export class BuyerProxy {
     }
   }
 
-  private _recordRouteAlternatives(conversationId: string, alternatives: RouteAlternative[]): void {
-    this._lastRouteAlternativesByConversation.delete(conversationId)
-    this._lastRouteAlternativesByConversation.set(conversationId, alternatives)
-    while (this._lastRouteAlternativesByConversation.size > BuyerProxy.MAX_TRACKED_ROUTE_ALTERNATIVES) {
-      const oldestKey = this._lastRouteAlternativesByConversation.keys().next().value
-      if (oldestKey === undefined) break
-      this._lastRouteAlternativesByConversation.delete(oldestKey)
-    }
-  }
-
   private _formatBytes(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size'
     const mib = bytes / (1024 * 1024)
@@ -3326,12 +3146,6 @@ export class BuyerProxy {
     retryableStatusCodes: Set<number>,
     pinned: boolean,
     requestSignal: AbortSignal,
-    /** Router-ranked candidates to disclose to the client (top few, client
-     *  display only) — undefined/null for a directly pinned peer. */
-    routeAlternatives?: RouteAlternative[] | null,
-    /** For the router's cache-warmth feed (recordObservedCache) below --
-     *  null for a non-conversation request (no `conversation` to key by). */
-    conversation?: ConversationIdentity | null,
   ): Promise<
     | { done: true; costUsd?: number | null; latencyMs?: number }
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
@@ -3462,8 +3276,6 @@ export class BuyerProxy {
               adaptedStartResponse.headers,
               selectedPeer,
               requestForPeer.requestId,
-              requestForPeer,
-              routeAlternatives,
             )
             // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
             // omit it, which can cause the client's fetch body reader to not
@@ -3537,18 +3349,6 @@ export class BuyerProxy {
             estimatedCostUsd: telemetry.estimatedCostUsd,
             requestId: requestForPeer.requestId,
           })
-          // Cache "warmth" feed -- not part of the generic onResult() shape
-          // above, since most routers have no use for it; an optional
-          // per-plugin extension, called only when a router implements it.
-          if (conversation && requestedService) {
-            router.recordObservedCache?.(
-              conversation,
-              requestedService,
-              selectedPeer.peerId,
-              telemetry.usage.freshInputTokens + telemetry.usage.cachedInputTokens,
-              telemetry.usage.cachedInputTokens,
-            )
-          }
         }
 
         if (responseFault === 'buyer') {
@@ -3574,7 +3374,6 @@ export class BuyerProxy {
           telemetry,
           requestForPeer.requestId,
           latencyMs,
-          routeAlternatives,
         )
         if (retryableStatusCodes.has(responseForClient.statusCode)) {
           return {
@@ -3627,7 +3426,6 @@ export class BuyerProxy {
           telemetry,
           requestForPeer.requestId,
           latencyMs,
-          routeAlternatives,
         )
 
         const responseFault = responseFaultAttribution(response)
@@ -3649,18 +3447,6 @@ export class BuyerProxy {
             estimatedCostUsd: telemetry.estimatedCostUsd,
             requestId: requestForPeer.requestId,
           })
-          // Cache "warmth" feed -- not part of the generic onResult() shape
-          // above, since most routers have no use for it; an optional
-          // per-plugin extension, called only when a router implements it.
-          if (conversation && requestedService) {
-            router.recordObservedCache?.(
-              conversation,
-              requestedService,
-              selectedPeer.peerId,
-              telemetry.usage.freshInputTokens + telemetry.usage.cachedInputTokens,
-              telemetry.usage.cachedInputTokens,
-            )
-          }
         }
 
         if (responseFault === 'buyer') {
@@ -3727,14 +3513,6 @@ export class BuyerProxy {
         fault === 'buyer' ? 'buyer-local' : 'request-failed',
         fault,
       )
-      // No routeAlternatives gate here -- a transport-level failure (timeout,
-      // ECONNREFUSED) must reach the router the same way an HTTP-level
-      // failure already does via the success-path onResult calls above,
-      // regardless of whether this dispatch went through selectRoute() or a
-      // plain pinned peer. Gating this on routeAlternatives would silently
-      // hide transport failures from a router plugin for any non-selectRoute
-      // dispatch, while it still sees the same failure when it arrives as a
-      // non-2xx HTTP response instead of a thrown error.
       if (router && fault !== 'buyer') {
         router.onResult(selectedPeer, {
           success: false,

@@ -32,12 +32,6 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
     minPeerReputation: DESKTOP_DEFAULT_MIN_PEER_REPUTATION,
     routingPreferences: {
       ...DEFAULT_MODEL_ROUTING_PREFERENCES,
-      // selectedRouterPackage stays DEFAULT_MODEL_ROUTING_PREFERENCES's own
-      // null on a fresh profile -- no router plugin is loaded, and no
-      // connect-mode Auto entry is offered, until the user picks one in
-      // Preferences. Every reader of this field (process-manager.ts,
-      // auto-router.ts, preferences.ts's own migration path below) treats an
-      // absent/null value the same way: nothing selected.
       allowedPeerIds: [],
       blockedPeerIds: [],
     },
@@ -164,7 +158,6 @@ function migrateDesktopBuyerDefaults(config: Record<string, unknown>): {
   const allowedPeerIds = validRoutingPeerIds(routingPreferences.allowedPeerIds);
   const blockedPeerIds = validRoutingPeerIds(routingPreferences.blockedPeerIds);
   const nextRoutingPreferences = {
-    ...routingPreferences,
     preferFreePeers: typeof routingPreferences.preferFreePeers === 'boolean'
       ? routingPreferences.preferFreePeers
       : DEFAULT_MODEL_ROUTING_PREFERENCES.preferFreePeers,

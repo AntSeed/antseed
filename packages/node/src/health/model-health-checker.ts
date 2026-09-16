@@ -317,10 +317,7 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  // 'antseed-day-pass' isn't inference at all -- a synthetic completion
-  // request has nothing to answer it, so probing it would fail every sweep
-  // and eventually auto-remove the (correctly working) service advertisement.
-  return protocol !== 'openai-images' && protocol !== 'antseed-day-pass';
+  return protocol !== 'openai-images';
 }
 
 /**
@@ -361,8 +358,6 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       break;
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
-    case 'antseed-day-pass':
-      throw new Error('Health probes are not supported for antseed-day-pass services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

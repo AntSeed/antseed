@@ -410,8 +410,6 @@ function mergeBuyerRoutingPreferences(
   const preferFreePeers = value['preferFreePeers'];
   const maxInputUsdPerMillion = value['maxInputUsdPerMillion'];
   const minTrustScore = value['minTrustScore'];
-  const autoRouting = value['autoRouting'];
-  const selectedRouterPackage = value['selectedRouterPackage'];
   return {
     preferFreePeers: preferFreePeers === undefined
       ? fallback.preferFreePeers
@@ -426,10 +424,6 @@ function mergeBuyerRoutingPreferences(
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
     ...(value['routerSettings'] !== undefined ? { routerSettings: readRouterSettings(value['routerSettings']) } : {}),
     routerEnabled: value['routerEnabled'] === undefined ? fallback.routerEnabled ?? false : value['routerEnabled'] as boolean,
-    autoRouting: autoRouting === undefined ? fallback.autoRouting : autoRouting as boolean,
-    selectedRouterPackage: selectedRouterPackage === undefined
-      ? fallback.selectedRouterPackage
-      : (typeof selectedRouterPackage === 'string' ? selectedRouterPackage : null),
   };
 }
 

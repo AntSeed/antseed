@@ -167,12 +167,6 @@ export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): Cha
   const peersById = new Map(peers.map((peer) => [peer.peerId, peer]));
   return buildNetworkServiceOffers(peers).flatMap((offer) => {
     if (!offer.protocol) return [];
-    // Not a model at all -- a flat, non-metered day-pass fee, advertised
-    // via the same discovery pipeline purely for price visibility (decisions
-    // doc SS14 item 31). Excluded here the same way apps/cli's network-models.ts
-    // already excludes it from the chat model-picker: this Discover page is
-    // "browse pickable models," not something the day-pass fee belongs in.
-    if (offer.type === 'day-pass') return [];
     const peer = peersById.get(offer.peerId);
     const effectiveReputationScore = peer ? normalizedModelReputationScore(peer) : null;
     return [{

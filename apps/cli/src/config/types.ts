@@ -262,8 +262,6 @@ export interface PaymentsCLIConfig {
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
   maxReserveAmountUsdc?: string;
-  /** Seconds a signed ReserveAuth/SpendingAuth deadline stays valid before the seller must land it on-chain. Default: 900 (15 min). */
-  defaultAuthDurationSecs?: number;
   /**
    * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
    * peer publishes it in metadata; buyers verify the binding via

@@ -1,6 +1,5 @@
 import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
-import { readRouterSettings } from '@antseed/node/router-settings';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
@@ -35,12 +34,6 @@ function loadJson(storageKey: string): unknown {
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
-}
-
-function readNullableString(value: unknown, fallback: string | null): string | null {
-  if (typeof value === 'string' && value.trim().length > 0) return value;
-  if (value === null) return null;
-  return fallback;
 }
 
 function readNonNegativeFiniteNumber(value: unknown, fallback: number): number {
@@ -95,13 +88,6 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
     minTrustScore = fallback.minTrustScore;
   }
 
-  // Real-money consent: defaults to off on any unrecognized/missing stored
-  // value, never on -- readBoolean's `fallback` here must itself be `false`
-  // (see DEFAULT_MODEL_ROUTING_PREFERENCES), not inherited from some other
-  // truthy default.
-  let routerSettings: ModelRoutingPreferences['routerSettings'];
-  try { routerSettings = readRouterSettings(parsed.routerSettings); } catch { routerSettings = {}; }
-
   return {
     autoRouting: readBoolean(parsed.autoRouting, fallback.autoRouting),
     preferFreePeers: readBoolean(parsed.preferFreePeers, fallback.preferFreePeers),
@@ -116,15 +102,6 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
     blockedPeerIds: Array.isArray(parsed.blockedPeerIds)
       ? normalizePeerIdList(parsed.blockedPeerIds)
       : fallback.blockedPeerIds,
-    ...(Object.keys(routerSettings).length ? { routerSettings } : {}),
-    routerEnabled: readBoolean(parsed.routerEnabled, false),
-    // Nothing is selected until the user explicitly picks a router, whether
-    // the field is absent or explicitly `null` (VprPreferencesView writes
-    // `null` for the user's "None" choice) -- both resolve the same way.
-    selectedRouterPackage: readNullableString(
-      parsed.selectedRouterPackage,
-      fallback.selectedRouterPackage ?? null,
-    ),
   };
 }
 
@@ -149,10 +126,6 @@ export function buyerModelRoutingPreferences(
     minTrustScore: value.minTrustScore,
     allowedPeerIds: validPeerIds(value.allowedPeerIds),
     blockedPeerIds: validPeerIds(value.blockedPeerIds),
-    ...(value.routerSettings ? { routerSettings: readRouterSettings(value.routerSettings) } : {}),
-    routerEnabled: value.routerEnabled ?? false,
-    selectedRouterPackage: value.selectedRouterPackage ?? null,
-    autoRouting: value.autoRouting,
   };
 }
 

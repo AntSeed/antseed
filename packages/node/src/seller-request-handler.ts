@@ -3,7 +3,7 @@ import type {
   Provider,
   ProviderStreamCallbacks,
 } from './interfaces/seller-provider.js';
-import { ANTSEED_ATTEST_PATH, ANTSEED_ROUTE_DIGEST_PATH, ANTSEED_ROUTE_PATH, type Prover, type RoutingServerHandler } from './interfaces/plugin.js';
+import { ANTSEED_ATTEST_PATH, type Prover } from './interfaces/plugin.js';
 import type { SellerSessionTracker } from './metering/seller-session-tracker.js';
 import type { PaymentMux } from './p2p/payment-mux.js';
 import type { Identity } from './p2p/identity.js';
@@ -48,7 +48,6 @@ export interface SellerRequestHandlerDeps {
   identity: Identity;
   providers: Provider[];
   provers?: Prover[];
-  routingServerHandler?: RoutingServerHandler | null;
   sellerPaymentManager: SellerPaymentManager | null;
   sellerFreeUsageManager?: SellerFreeUsageManager | null;
   sessionTracker: SellerSessionTracker | null;
@@ -134,50 +133,6 @@ export class SellerRequestHandler {
       if (request.method === 'GET' && (pathOnly === '/v1/models' || pathOnly.startsWith('/v1/models/'))) {
         const modelsResponse = this._handleModelsRequest(request);
         mux.sendProxyResponse(modelsResponse);
-        return;
-      }
-
-      // Reserved model-routing-decision path -- entirely delegated to
-      // whatever RoutingServerHandler the host registered (if any). No
-      // routing/ranking logic lives in this package; a 404 here just means
-      // this seller isn't a routing peer.
-      if (request.method === 'POST' && (pathOnly === ANTSEED_ROUTE_PATH || pathOnly === ANTSEED_ROUTE_DIGEST_PATH)) {
-        const handler = this._deps.routingServerHandler;
-        if (!handler) {
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 404,
-            headers: { 'content-type': 'application/json' },
-            body: new TextEncoder().encode(JSON.stringify({
-              error: { message: 'Not a routing peer.', type: 'not_found', code: 'not_routing_peer' },
-            })),
-          });
-          return;
-        }
-        try {
-          const resp = await handler.handleRoute(buyerPeerId, {
-            method: request.method,
-            path: request.path,
-            headers: request.headers,
-            body: request.body,
-          });
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: resp.statusCode,
-            headers: resp.headers,
-            body: resp.body,
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 500,
-            headers: { 'content-type': 'application/json' },
-            body: new TextEncoder().encode(JSON.stringify({
-              error: { message: `Routing handler failed: ${message}`, type: 'routing_error' },
-            })),
-          });
-        }
         return;
       }
 
@@ -896,7 +851,6 @@ export class SellerRequestHandler {
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
     const usage: UnitBillingUsage = {
       units: {
-        ...(model.components.some((component) => component.unit === 'successful_requests') ? { successful_requests: 1 } : {}),
         output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
       },
     };

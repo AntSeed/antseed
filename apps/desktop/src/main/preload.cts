@@ -85,23 +85,6 @@ type PluginListResult = {
   error: string | null;
 };
 
-type RouterPluginInfo = {
-  package: string;
-  version: string;
-  name: string;
-  displayName: string;
-  description: string;
-  autoRouteServiceId?: string;
-  autoRouteInfo?: { title: string; body: string };
-  savingsBaselineModel?: string;
-};
-
-type RouterPluginListResult = {
-  ok: boolean;
-  routers: RouterPluginInfo[];
-  error: string | null;
-};
-
 type RawChatAttachment = {
   id: string;
   name: string;
@@ -230,9 +213,6 @@ const api = {
   pluginsList(): Promise<PluginListResult> {
     return ipcRenderer.invoke('plugins:list') as Promise<PluginListResult>;
   },
-  pluginsListRouters(): Promise<RouterPluginListResult> {
-    return ipcRenderer.invoke('plugins:list-routers') as Promise<RouterPluginListResult>;
-  },
   pluginsInstall(packageName: string): Promise<PluginInstallResult> {
     return ipcRenderer.invoke('plugins:install', packageName) as Promise<PluginInstallResult>;
   },
@@ -293,15 +273,6 @@ const api = {
   chatAiListDiscoverRows(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
     return ipcRenderer.invoke('chat:ai-list-discover-rows');
   },
-  chatAiListRoutingDecisions(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-list-routing-decisions');
-  },
-  chatAiAccessBilling(input: import('../shared/access-billing').AccessBillingRequest): Promise<import('../shared/access-billing').AccessBillingResult> {
-    return ipcRenderer.invoke('chat:ai-access-billing', input);
-  },
-  chatAiGetRoutingSavingsBaseline(): Promise<{ ok: boolean; data?: string | null; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-get-routing-savings-baseline');
-  },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
   },
@@ -340,9 +311,6 @@ const api = {
   },
   chatSetBuyerDefaultRoute(payload: { peerId?: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
-  },
-  chatClearBuyerDefaultRoute(): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:clear-buyer-default-route');
   },
   chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:sync-model-picker', payload);
@@ -589,7 +557,6 @@ const api = {
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
-  paymentsOpenSavingsPage: () => ipcRenderer.invoke('payments:open-savings-page'),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
   paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),

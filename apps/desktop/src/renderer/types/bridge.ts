@@ -183,26 +183,6 @@ export type PluginListResult = {
   error: string | null;
 };
 
-export type RouterPluginInfo = {
-  routingSettingsSchema?: import('@antseed/node').RouterSettingField[];
-  package: string;
-  version: string;
-  name: string;
-  displayName: string;
-  description: string;
-  autoRouteServiceId?: string;
-  accessServiceId?: string;
-  autoRouteInfo?: { title: string; body: string };
-  preferencesSummary?: string;
-  savingsBaselineModel?: string;
-};
-
-export type RouterPluginListResult = {
-  ok: boolean;
-  routers: RouterPluginInfo[];
-  error: string | null;
-};
-
 export type PluginInstallResult = {
   ok: boolean;
   package: string;
@@ -334,7 +314,6 @@ export type DesktopBridge = {
   clearLogs?: () => Promise<{ ok: true }>;
 
   pluginsList?: () => Promise<PluginListResult>;
-  pluginsListRouters?: () => Promise<RouterPluginListResult>;
   pluginsInstall?: (packageName: string) => Promise<PluginInstallResult>;
 
   getNetwork?: (port?: number) => Promise<{ ok: boolean; peers?: unknown[]; error?: string | null; [key: string]: unknown }>;
@@ -354,9 +333,6 @@ export type DesktopBridge = {
 
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
-  chatAiListRoutingDecisions?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
-  chatAiAccessBilling?: (input: import('../../shared/access-billing').AccessBillingRequest) => Promise<import('../../shared/access-billing').AccessBillingResult>;
-  chatAiGetRoutingSavingsBaseline?: () => Promise<{ ok: boolean; data?: string | null; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
@@ -376,10 +352,6 @@ export type DesktopBridge = {
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
   chatSetBuyerDefaultRoute?: (payload: { peerId?: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
-  /** Clears the buyer proxy's default route (posts an empty model) -- used
-   *  while Auto routing is selected, since it has no fixed peer/model to set
-   *  as the default and `chatSetBuyerDefaultRoute` requires a non-empty one. */
-  chatClearBuyerDefaultRoute?: () => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
@@ -466,7 +438,6 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-  paymentsOpenSavingsPage?: () => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;

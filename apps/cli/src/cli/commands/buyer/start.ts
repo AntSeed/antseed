@@ -7,17 +7,15 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DEFAULT_CHAIN_ID, DepositRelayClient, DepositsClient, getInstance, loadOrCreateIdentity, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositRelayClient, DepositsClient, getInstance, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
-import { OFFICIAL_BOOTSTRAP_NODES, buildNetworkServiceOffers, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
+import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy, type DepositWatcherAbsenceReason } from '../../../proxy/buyer-proxy.js'
 import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
-import { createSignAccessIfNeeded } from '../../../proxy/access-signing.js'
-import { createSignRouteAuth } from '../../../proxy/route-auth-signing.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
@@ -228,19 +226,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         buyerOverrides: runtimeOverrides,
       })
 
-      // Loaded early, before the node itself starts, purely so router plugins
-      // (via ANTSEED_BUYER_PEER_ID) can be told this buyer's own peerId at
-      // construction time -- idempotent, the node's own startup reads the
-      // same identity file again later.
-      const buyerIdentity = await loadOrCreateIdentity(globalOpts.dataDir)
-
       let router
-      let activeRouterPackage: string | undefined
       let toolHints: Array<{ name: string; envVar: string }> = []
-      let accessServiceId: string | undefined
       let autoRouteServiceId: string | undefined
       let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
-      let routingCadence: import('@antseed/node').RoutingCadence | undefined
       const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
       if (options.instance) {
@@ -260,20 +249,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         const spinner = ora(`Loading router plugin "${instance.package}"...`).start()
         try {
           const plugin = await loadRouterPlugin(instance.package)
-          activeRouterPackage = resolvePluginPackage(instance.package)
-          const runtimeEnv = {
-            ...buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig),
-            ANTSEED_BUYER_PEER_ID: buyerIdentity.peerId,
-            ANTSEED_CHAIN_ID: config.payments?.crypto?.chainId ?? DEFAULT_CHAIN_ID,
-          }
+          const runtimeEnv = buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig)
           const pluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], runtimeEnv, instance.config as Record<string, string>)
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          accessServiceId = plugin.accessServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
-          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -285,20 +267,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         const spinner = ora(`Loading router plugin "${routerName}"...`).start()
         try {
           const plugin = await loadRouterPlugin(routerName)
-          activeRouterPackage = resolvePluginPackage(routerName)
-          const runtimeEnv = {
-            ...buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig),
-            ANTSEED_BUYER_PEER_ID: buyerIdentity.peerId,
-            ANTSEED_CHAIN_ID: config.payments?.crypto?.chainId ?? DEFAULT_CHAIN_ID,
-          }
+          const runtimeEnv = buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig)
           const pluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], runtimeEnv)
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          accessServiceId = plugin.accessServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
-          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -366,9 +341,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           // seller can extract via an inflated 402 target (per 402 round trip).
           maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '300000',
           maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
-          ...(config.payments?.defaultAuthDurationSecs !== undefined
-            ? { defaultAuthDurationSecs: config.payments.defaultAuthDurationSecs }
-            : {}),
           disableMetadataV2Services: effectiveBuyerConfig.disableMetadataV2Services,
         }
       }
@@ -376,12 +348,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       const resolvedRouterName = options.instance
         ? (await getInstance(join(homedir(), '.antseed', 'config.json'), options.instance))?.package
         : routerName
-      // Only a short plugin id (e.g. "levanto") reads as a real name once
-      // title-cased for the routing-savings dashboard header -- an
-      // --instance package string (e.g. "@antseed/router-levanto" or a
-      // local path) doesn't, so leave it out and let the dashboard fall
-      // back to its generic title in that case.
-      const dashboardRouterName = resolvedRouterName && /^[a-z0-9-]+$/i.test(resolvedRouterName) ? resolvedRouterName : undefined
       const versions = getPackageVersions(resolvedRouterName ?? undefined)
       if (Object.keys(versions).length > 0) {
         console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
@@ -438,60 +404,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to connect: ${(err as Error).message}`))
         process.exit(1)
-      }
-
-      if (router.configureAccessSigning && accessServiceId && paymentsConfig?.enabled) {
-        const serviceId = accessServiceId
-        router.configureAccessSigning(createSignAccessIfNeeded(node, {
-          serviceId,
-          isEnabled: async () => {
-            const preferences = (await loadConfig(globalOpts.config)).buyer.routingPreferences
-            return preferences.routerEnabled === true && preferences.autoRouting !== false
-              && (!preferences.selectedRouterPackage || preferences.selectedRouterPackage === activeRouterPackage)
-          },
-          resolveDiscoveredPriceUsdc: async (sellerPeerId) => {
-            const peer = await node.findPeer(sellerPeerId)
-            if (!peer) return null
-            const offer = buildNetworkServiceOffers([peer]).find((offer) =>
-              offer.type === 'day-pass' && offer.peerId === sellerPeerId && offer.serviceId === serviceId)
-            const price = offer?.flatUsdPrice
-            if (price === undefined || !Number.isFinite(price) || price < 0 || !Number.isSafeInteger(Math.round(price * 1_000_000))) return null
-            return BigInt(Math.round(price * 1_000_000))
-          },
-        }))
-      }
-
-      // Optional Router capability: a router that talks to a bare,
-      // unauthenticated routing-peer HTTP endpoint implements
-      // configureRouteAuthSigning to receive a real
-      // signing closure, proving requests actually come from this buyer's
-      // own PeerId. Independent of paymentsConfig?.enabled -- this proves
-      // identity, not a payment; the buyer's Identity/wallet exists
-      // regardless of whether payments are configured.
-      if (router.configureRouteAuthSigning && node.identity) {
-        router.configureRouteAuthSigning(createSignRouteAuth(node.identity, {
-          evmChainId: chainConfig.evmChainId,
-          channelsContractAddress: chainConfig.channelsContractAddress,
-        }))
-      }
-
-      // Optional Router capability: a router that discovers its own routing
-      // peer's address via P2P/DHT instead of requiring a pre-configured URL
-      // implements configureRoutingPeerHostResolution to receive a real
-      // lookup. Built here, after node.start(), for the same reason as the
-      // two capabilities above -- findPeer needs a running, networked node,
-      // which doesn't exist yet when the router itself is constructed.
-      // Independent of paymentsConfig?.enabled -- this resolves where to
-      // send routing requests, not a payment concern. Generic on purpose
-      // (same node.findPeer call resolveDiscoveredPriceUsdc above already
-      // uses): the router owns what it does with the resolved host (e.g.
-      // its own well-known port), this just answers "where is this peerId."
-      if (router.configureRoutingPeerHostResolution) {
-        router.configureRoutingPeerHostResolution(async (peerId) => {
-          const peer = await node.findPeer(peerId)
-          if (!peer?.publicAddress) return null
-          return peer.publicAddress.split(':')[0] ?? null
-        })
       }
 
       if (paymentsConfig?.enabled) {
@@ -557,10 +469,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routerTimeoutMs: Math.min(effectiveBuyerConfig.routerTimeoutMs ?? 10_000, effectiveBuyerConfig.requestTimeoutMs),
         routerFailureFallback: effectiveBuyerConfig.routerFailureFallback,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
-        routerName: dashboardRouterName,
         autoRouteServiceId,
         routingSettingsSchema,
-        routingCadence,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         routingService: effectiveBuyerConfig.routingService,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),

@@ -119,33 +119,6 @@ export function registerPaymentsIpc(): void {
     }
   });
 
-  // Read-only sessions/metrics page, served via the payments portal rather
-  // than the buyer-proxy control plane, so a browser-rendered page never
-  // shares an origin with the buyer-proxy's actual action-taking routes
-  // (sweep, close-channel, deposit-watch, ...). Needs no wallet signature
-  // and no bearer token -- the portal's dashboard routes are registered
-  // outside its /api/* prefix, so this page (and its data fetches) load
-  // unauthenticated, on a smaller-blast-radius origin than the buyer-proxy.
-  ipcMain.handle('payments:open-savings-page', async () => {
-    try {
-      await startPaymentsPortal()
-      const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined
-      const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`
-      const url = `${base}/?page=savings-dash`;
-      try {
-        await shell.openExternal(url);
-        return { ok: true, url };
-      } catch (err) {
-        console.warn('[payments] system browser launch failed:', err instanceof Error ? err.message : String(err));
-      }
-      console.log('[payments] no system browser available — using Electron popup');
-      openPaymentsPopup(url);
-      return { ok: true, url };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
   ipcMain.handle('payments:card-providers', async () => {
     try {
       const providers = await readCardProviders();

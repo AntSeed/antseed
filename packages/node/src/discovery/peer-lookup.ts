@@ -53,9 +53,9 @@ export const DEFAULT_LOOKUP_CONFIG: Omit<LookupConfig, "dht" | "metadataResolver
   // responses include a seller-side Date header; if buyer-vs-seller clock skew
   // is larger than this, trust the seller Date for freshness instead.
   maxClientServerClockSkewMs: 5 * 60 * 1000,
-  // With subnet fan-out and larger live networks, keep browse/discovery
-  // truncation comfortably above current scale while still bounding
-  // downstream enrichment/rendering work.
+  // Old cap was 50, then 200; with subnet fan-out and larger live networks,
+  // keep browse/discovery truncation comfortably above current scale while
+  // still bounding downstream enrichment/rendering work.
   maxResults: 1000,
   // Do not make buyer startup wait for every empty shard in the foreground.
   // A shard we do run still gets the full DHT operation timeout, but the

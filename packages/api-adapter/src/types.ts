@@ -25,12 +25,6 @@ export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'openai-completions',
   'openai-responses',
   'openai-images',
-  // Not a real HTTP request shape -- kept in sync with
-  // @antseed/protocol's WELL_KNOWN_SERVICE_API_PROTOCOLS purely so this
-  // package's ServiceApiProtocol type stays assignable to/from that one.
-  // detectRequestServiceApiProtocol never returns it (no real request maps
-  // to it), and it needs no adapter-fallback entry.
-  'antseed-day-pass',
 ] as const;
 
 export type ServiceApiProtocol = (typeof WELL_KNOWN_SERVICE_API_PROTOCOLS)[number];

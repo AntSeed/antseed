@@ -8,16 +8,11 @@ import { findSensitiveChatArtifacts } from './chat-safety';
 import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
 import { ChatCopyButton } from './ChatCopyButton';
-import { ChatRoutingBadge, type ChatRoutingDetail, type ChatRoutingAlternativeRow } from './ChatRoutingBadge';
-import { displayModelLabel } from '../../../modules/catalog/model-identity';
-import { formatUsd } from '../../../core/format';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
-  formatChatTime,
-  formatCompactNumber,
+  buildChatMetaParts,
   formatToolExecutionLabel,
   getMyrmecochoryLabel,
-  normalizeAssistantMeta,
   toToolDisplayName,
 } from './chat-shared';
 
@@ -889,74 +884,11 @@ type ChatBubbleProps = {
   conversationId?: string;
   searchQuery?: string;
   searchActive?: boolean;
-  /** Only a router-picked response has alternatives worth disclosing --
-   *  a manually-pinned model's "Routed to" would just repeat the picker. */
-  showRoutingBadge?: boolean;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive, showRoutingBadge = false }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
-  const assistantMeta = useMemo(() => normalizeAssistantMeta(message), [message]);
-  const topMetaParts = useMemo(() => {
-    const parts: string[] = [];
-    const timeLabel = message.createdAt ? formatChatTime(message.createdAt) : '';
-    if (timeLabel) parts.push(timeLabel);
-    if (assistantMeta) {
-      if (assistantMeta.outputImages > 0) {
-        parts.push(`${assistantMeta.outputImages} ${assistantMeta.outputImages === 1 ? 'image' : 'images'}`);
-      }
-      if (assistantMeta.totalTokens > 0) {
-        const tokenParts = [`${formatCompactNumber(assistantMeta.totalTokens)} tok`];
-        if (assistantMeta.inputTokens > 0 || assistantMeta.outputTokens > 0) {
-          tokenParts.push(
-            `(${formatCompactNumber(assistantMeta.inputTokens)} in / ${formatCompactNumber(assistantMeta.outputTokens)} out)`,
-          );
-        }
-        parts.push(tokenParts.join(' '));
-      }
-    }
-    return parts;
-  }, [message.createdAt, assistantMeta]);
-  const routingDetails = useMemo<ChatRoutingDetail[]>(() => {
-    if (!assistantMeta) return [];
-    const rows: ChatRoutingDetail[] = [];
-    // The collapsed pill shows displayModelLabel's friendly form; expanded is
-    // where the precise, full serviceId belongs (e.g. "deepseek-v4-flash-0731"
-    // rather than "DeepSeek V4 Flash 0731").
-    if (assistantMeta.service) rows.push({ label: 'Model', value: assistantMeta.service, copyValue: assistantMeta.service });
-    if (assistantMeta.peerId) rows.push({ label: 'Seller', value: assistantMeta.peerId.slice(0, 8), copyValue: assistantMeta.peerId });
-    if (assistantMeta.costUsd > 0) rows.push({ label: 'Cost', value: `$${formatUsd(assistantMeta.costUsd)}` });
-    if (assistantMeta.latencyMs > 0) rows.push({ label: 'Latency', value: `${Math.round(assistantMeta.latencyMs)}ms` });
-    return rows;
-  }, [assistantMeta]);
-  const routeAlternatives = useMemo(() => {
-    if (!assistantMeta || assistantMeta.routeAlternatives.length === 0) {
-      return { rows: [] as ChatRoutingAlternativeRow[], modelCaption: undefined as string | undefined };
-    }
-    // Alternatives are usually the same model from different sellers -- when
-    // that holds, showing it once above the table (instead of truncating an
-    // identical, near-illegible string on every row) leaves the row width
-    // for what actually differs: seller and price.
-    const services = new Set(assistantMeta.routeAlternatives.map((c) => c.service));
-    const sameModel = services.size === 1;
-    const rows = assistantMeta.routeAlternatives.map((candidate) => ({
-      ...(sameModel ? {} : { model: displayModelLabel(candidate.service) }),
-      peerId: candidate.peerId,
-      // Input and output price per million tokens, shown as separate columns
-      // under their own "In"/"Out" headers rather than one slash-joined
-      // string -- a bare "$X / $Y" reads as two arbitrary numbers with no
-      // indication which is which, which is exactly what led to a real
-      // misread of the ranking here (comparing input price alone missed that
-      // the other candidate's output price was the one driving its total up).
-      priceIn: candidate.inputUsdPerMillion !== null ? `$${formatUsd(candidate.inputUsdPerMillion)}` : '—',
-      priceOut: candidate.outputUsdPerMillion !== null ? `$${formatUsd(candidate.outputUsdPerMillion)}` : '—',
-      isPicked: candidate.peerId === assistantMeta.peerId && candidate.service === assistantMeta.service,
-    }));
-    return {
-      rows,
-      modelCaption: sameModel ? displayModelLabel([...services][0]!) : undefined,
-    };
-  }, [assistantMeta]);
+  const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
     () =>
       Array.isArray(message.content) &&
@@ -993,8 +925,8 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
   }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive]);
 
   const bubbleMeta =
-    topMetaParts.length > 0 && !isStreamingBubble ? (
-      <span className={styles.chatBubbleStats}>{topMetaParts.join(' · ')}</span>
+    metaParts.length > 0 && !isStreamingBubble ? (
+      <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
   return (
@@ -1004,14 +936,6 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
       {message.role !== 'user' && !isStreamingBubble ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
-          {showRoutingBadge && assistantMeta?.service && (
-            <ChatRoutingBadge
-              modelLabel={displayModelLabel(assistantMeta.service)}
-              details={routingDetails}
-              alternatives={routeAlternatives.rows}
-              alternativesModelCaption={routeAlternatives.modelCaption}
-            />
-          )}
         </div>
       ) : null}
     </div>

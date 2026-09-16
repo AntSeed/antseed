@@ -5,7 +5,6 @@ import {
   ipcMain,
 } from 'electron';
 import { execFileSync, spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -141,20 +140,6 @@ disableSandboxIfAppImageCannotSandbox();
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
 
-// Durable sink for every runtime log line (connect/system-proxy/seller
-// stdout+stderr), alongside the in-memory logBuffer above -- that buffer is
-// capped at 1200 entries and only reachable via the running renderer, so a
-// buyer session doing real (mainnet) routing/payment decisions had no record
-// left to inspect once the window closed or the buffer rolled over. One file
-// per app launch is enough for a review-after-the-fact use case; no rotation.
-const LOG_FILE_DIR = path.join(app.getPath('userData'), 'logs');
-mkdirSync(LOG_FILE_DIR, { recursive: true });
-const LOG_FILE_PATH = path.join(LOG_FILE_DIR, `runtime-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
-const logFileStream = createWriteStream(LOG_FILE_PATH, { flags: 'a' });
-logFileStream.on('error', (err) => {
-  console.error(`[main] runtime log file write failed (${LOG_FILE_PATH}):`, err);
-});
-
 /**
  * Kill any leftover process still listening on the buyer proxy port after the
  * desktop's own runtime child was stopped. The CLI reuses a compatible
@@ -262,7 +247,6 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
   if (logBuffer.length > 1200) {
     logBuffer.splice(0, logBuffer.length - 1200);
   }
-  logFileStream.write(`${new Date(event.timestamp).toISOString()} [${mode}:${stream}] ${line}\n`);
 
   getMainWindow()?.webContents.send('runtime:log', event);
   const activity = parseRuntimeActivityFromLog(event);
@@ -360,13 +344,9 @@ const piChatEngine = registerPiChatHandlers({
 
     await ensureSecureIdentity();
 
-    // The router demo override (router id + routing-peer env vars) is
-    // applied centrally in ProcessManager.start() for every connect-mode
-    // start, not here -- see applyRouterDemoOverride's own comment for
-    // why: duplicating it at each call site risks drifting out of sync with
-    // the renderer's own separate auto-start call site.
     const startOptions: StartOptions = {
       mode: 'connect',
+      router: 'local',
       ...(isDesktopDebugEnabled() ? { verbose: true } : {}),
       env: {
         ...(isDesktopDebugEnabled() ? { ANTSEED_DEBUG: '1' } : {}),

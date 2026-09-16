@@ -275,8 +275,8 @@ test('a cooling-down peer loses even when it is cheaper and more trusted', () =>
 });
 
 test('a cooling-down priced peer loses to a healthy unknown-price peer', () => {
-  // The score is compared before the price tier, so a cooldown penalty can
-  // always outrank a cheaper price.
+  // Guards the compare-order fix: the known-price tier used to be evaluated
+  // before the score, so no cooldown penalty could ever outrank it.
   const best = chooseBestVprRoute(
     [
       discoverRow({ peerId: 'cooling', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
@@ -309,11 +309,8 @@ test('an expired or absent cooldown is ignored', () => {
   assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 1_000 }), NOW), true);
 });
 
-test('a distant cooldown still counts as cooling down', () => {
-  // Any future cooldown counts as cooling down, however far out -- an upper
-  // bound would let the worst-offending peers (the ones with the longest
-  // backoffs) skip the cooldown penalty entirely.
-  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 86_400_000 }), NOW), true);
+test('an impossibly distant cooldown is treated as no cooldown', () => {
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 86_400_000 }), NOW), false);
 });
 
 test('failure streak breaks a tie between otherwise identical peers', () => {

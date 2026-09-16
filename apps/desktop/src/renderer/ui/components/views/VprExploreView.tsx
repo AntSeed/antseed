@@ -42,7 +42,6 @@ import { BrandIcon } from '../brand/BrandIcon';
 import { VprFilterDropdown, VprMultiFilterDropdown, type VprFilterOption } from '../vpr/VprFilterDropdown';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { VprPage, VprSearch } from '../vpr/VprKit';
-import { isAutoRouterEntry } from '../../../modules/routing/auto-router';
 import styles from './VprExploreView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
@@ -101,22 +100,10 @@ export function VprExploreView({ onSelectView }: Props) {
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
 
-  // "Auto" is a chat-time routing mode, not a browsable model --
-  // it has no real sellers, no price, no capabilities to filter/sort by.
-  // withAutoRouterCatalogEntry (modules/chat/controller.ts) prepends it to
-  // the shared vprModelCatalog state specifically so chat pickers offer it;
-  // this page (nav label "Models") lists what a buyer can actually inspect
-  // and pin, so it's filtered back out here rather than removed from the
-  // shared state chat depends on.
-  const catalog = useMemo(
-    () => snap.catalog.filter((entry) => !isAutoRouterEntry(entry)),
-    [snap.catalog],
-  );
-
-  const availableFamilies = useMemo(() => availableModelFamilies(catalog), [catalog]);
+  const availableFamilies = useMemo(() => availableModelFamilies(snap.catalog), [snap.catalog]);
   const tags = useMemo(
-    () => availableModelTags(catalog.map((entry) => entry.serviceId)),
-    [catalog],
+    () => availableModelTags(snap.catalog.map((entry) => entry.serviceId)),
+    [snap.catalog],
   );
   const typeOptions = useMemo<readonly VprFilterOption<string>[]>(() => [
     { value: 'kind:text', label: 'Text', description: 'Chat and language models', icon: <FilterIconView icon={TextIcon} /> },
@@ -144,7 +131,7 @@ export function VprExploreView({ onSelectView }: Props) {
     { value: 'Name', label: 'Name', description: 'Alphabetical order', icon: <FilterIconView icon={AlphabetGreekIcon} /> },
   ], []);
   const entries = useMemo(() => sortVprCatalog(
-    filterVprCatalog(catalog, {
+    filterVprCatalog(snap.catalog, {
       search: listInputs.search,
       kinds: listInputs.types
         .filter((value) => value.startsWith('kind:'))
@@ -156,11 +143,11 @@ export function VprExploreView({ onSelectView }: Props) {
       freeOnly: listInputs.types.includes('free'),
     }),
     listInputs.sort,
-  ), [listInputs, catalog]);
+  ), [listInputs, snap.catalog]);
 
   const selectedModel = snap.selection.model;
   const selectedEntry = selectedModel
-    ? findCatalogEntry(catalog, selectedModel.provider, selectedModel.serviceId)
+    ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId)
     : null;
 
   // The default view leads with three framed rows. The moment the user has
@@ -173,8 +160,8 @@ export function VprExploreView({ onSelectView }: Props) {
     || listInputs.types.length > 0
     || listInputs.families.length > 0;
   const favoriteEntries = useMemo(
-    () => selectFavoriteVprCatalog(catalog, favorites),
-    [favorites, catalog],
+    () => selectFavoriteVprCatalog(snap.catalog, favorites),
+    [favorites, snap.catalog],
   );
   const recommendedEntries = useMemo(() => {
     if (filtersActive) return [];
@@ -183,13 +170,13 @@ export function VprExploreView({ onSelectView }: Props) {
     const source = favoriteEntries.length > 0
       ? favoriteEntries
       : (everFunded
-          ? sortVprCatalog(catalog, 'Popular')
+          ? sortVprCatalog(snap.catalog, 'Popular')
           // hasEligibleFreeSeller, not the price-based Free filter: entry
           // prices fall back to untrusted rows when no seller passes the
           // routing gate, so a $0 offer from a low-reputation seller must
           // not put its model in the recommended frame.
           : sortFreeModelsByPriority(
-              sortVprCatalog(catalog.filter((entry) => entry.hasEligibleFreeSeller), 'Popular'),
+              sortVprCatalog(snap.catalog.filter((entry) => entry.hasEligibleFreeSeller), 'Popular'),
             ));
     const picks = source.slice(0, RECOMMENDED_COUNT);
     // The selected model leads the frame only when it's naturally one of the
@@ -199,7 +186,7 @@ export function VprExploreView({ onSelectView }: Props) {
       return [selectedEntry, ...picks.filter((entry) => entry !== selectedEntry)];
     }
     return picks;
-  }, [everFunded, favoriteEntries, filtersActive, selectedEntry, catalog]);
+  }, [everFunded, favoriteEntries, filtersActive, selectedEntry, snap.catalog]);
 
   // One flat list, no duplicate rows: the framed picks lead, then the
   // selected model when it isn't one of them, then the rest of the catalog in

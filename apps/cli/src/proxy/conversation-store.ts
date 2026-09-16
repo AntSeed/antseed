@@ -24,23 +24,15 @@ export type StoredConversation = {
   label: string | null
   /** Per-chat route as `<peerId>@<service>`, only ever set for a genuine
       user pin (via setPinnedModel(id, model, 'user')). Null for an
-      auto-routed chat -- that continuation stability lives in the router
-      plugin's own ConversationState, not here. */
+      auto-routed chat -- the host uses lastModel for continuation. */
   pinnedModel: string | null
   /** How the route's peer was chosen. 'auto' means the chat has never been
-      explicitly pinned (routing decides fresh every request); 'user' means
+      explicitly pinned (the host reuses the initial model); 'user' means
       the user chose this seller for this specific chat, which nothing
       overrides until they clear it. */
   peerSource: 'auto' | 'user'
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
-  /** Cost and latency of the single most recent request -- not cumulative
-      (see spentUsdc for that). Surfaced to the desktop's per-turn routing
-      badge, which has no other source for real per-request cost/latency
-      once the request has already completed (apps/desktop's chat SDK
-      abstraction exposes no response-header hook during streaming). */
-  lastCostUsd: number | null
-  lastLatencyMs: number | null
   /** USDC base units authorized for this chat's requests (bigint as string).
       Subagent traffic rolls up into the parent chat, same as everything else
       here. This is what the chat has cost, not what has settled on-chain. */
@@ -100,8 +92,6 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
-    lastCostUsd: typeof record.lastCostUsd === 'number' && Number.isFinite(record.lastCostUsd) ? record.lastCostUsd : null,
-    lastLatencyMs: typeof record.lastLatencyMs === 'number' && Number.isFinite(record.lastLatencyMs) ? record.lastLatencyMs : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
     inputTokens: sanitizeCounter(record.inputTokens),
     cachedInputTokens: sanitizeCounter(record.cachedInputTokens),
@@ -205,11 +195,8 @@ export class ConversationStore {
    * snippet only sticks at creation — later turns keep the original label.
    *
    * `pinnedModel` is never seeded or touched here for an auto-routed chat --
-   * only `setPinnedModel(id, model, 'user')` may set it. Auto continuation
-   * stability (staying on the same seller mid tool-loop) is the router
-   * plugin's own job via its ConversationState.isNewUserMessage/getPinned,
-   * not this store's; a host-side pin here would race and permanently
-   * override it.
+   * only `setPinnedModel(id, model, 'user')` may set it. The host uses
+   * lastModel to reuse the initial model while allowing same-model peer failover.
    */
   touch(input: { tool: string; sessionKey: string; snippet?: string | null; lastModel?: string | null }): StoredConversation {
     const id = conversationId(input.tool, input.sessionKey)
@@ -233,8 +220,6 @@ export class ConversationStore {
         pinnedModel: null,
         peerSource: 'auto',
         lastModel: input.lastModel ?? null,
-        lastCostUsd: null,
-        lastLatencyMs: null,
         spentUsdc: '0',
         inputTokens: '0',
         cachedInputTokens: '0',
@@ -313,22 +298,18 @@ export class ConversationStore {
   /**
    * Records what actually served this chat, for display/history only.
    * Never touches `pinnedModel` -- a genuine pin only ever comes from
-   * `setPinnedModel(id, model, 'user')`. An auto-routed chat keeps sending
-   * its sentinel model on every request; continuation stability within one
-   * tool-loop is the router plugin's job, not this store's.
+   * `setPinnedModel(id, model, 'user')`. The host reuses lastModel
+   * for later requests; only explicit user pins require the same peer.
    */
   recordRoutedModel(
     id: string,
     routedModel: string,
-    turn?: { costUsd?: number | null; latencyMs?: number | null },
   ): StoredConversation | null {
     const existing = this._byId.get(id)
     if (!existing) return null
     const record = {
       ...existing,
       lastModel: routedModel,
-      lastCostUsd: turn?.costUsd ?? null,
-      lastLatencyMs: turn?.latencyMs ?? null,
       lastActiveAt: Date.now(),
     }
     this._byId.set(id, record)

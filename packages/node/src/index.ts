@@ -33,10 +33,8 @@ export {
 // Re-exported so CLI callers can format/parse gas balances without depending
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
-export type { Router, RouteCandidate, RoutingDecisionRow, RouteAuthHeaders, RouteSelectionContext } from './interfaces/buyer-router.js';
+export type { Router, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
 export type { ConversationIdentity } from './routing/conversation-identity.js';
-export { RoutingDecisionsStore, ROUTING_DECISIONS_DB_FILE } from './routing/routing-decisions-store.js';
-export { getRoutingSavingsDashboardHtml } from './routing/routing-savings-dashboard.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
@@ -177,8 +175,6 @@ export {
   signFreeUsageOpen,
   signFreeUsageAuth,
   signSetOperator,
-  signRouteRequestAuth,
-  recoverRouteRequestAuthSigner,
   buildReceiveAuthorization,
   makeChannelsDomain,
   makeDepositsDomain,
@@ -189,7 +185,6 @@ export {
   FREE_USAGE_OPEN_TYPES,
   FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
-  ROUTE_REQUEST_AUTH_TYPES,
   RECEIVE_WITH_AUTHORIZATION_TYPES,
   computeMetadataHash,
   encodeMetadata,
@@ -210,7 +205,6 @@ export type {
   SetOperatorMessage,
   FreeUsageOpenMessage,
   FreeUsageAuthMessage,
-  RouteRequestAuthMessage,
   ReceiveAuthorizationMessage,
   SignedReceiveAuthorization,
   SpendingAuthMetadata,
@@ -218,13 +212,10 @@ export type {
   FreeUsageMetadata,
   FreeUsageServiceMetadata,
 } from './payments/evm/signatures.js';
-export type { SpendingAuthPayload, AuthAckPayload } from '@antseed/protocol/messages';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
-export type { FlatFeeSigningConfig, PerRequestAuthResult } from './payments/buyer-payment-manager.js';
-export type { AccessTerms, AccessAgreement, AccessPurchase, AccessAuthorization } from '@antseed/buyer-core';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';
 export { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';
@@ -237,7 +228,6 @@ export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } f
 export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
-export { PaymentMux } from './p2p/payment-mux.js';
 export { SweepMux, type SweepMessageHandler } from './p2p/sweep-mux.js';
 export { encodeSweepRequest, decodeSweepRequest, encodeSweepReceipt, decodeSweepReceipt } from './p2p/sweep-codec.js';
 export {
@@ -284,8 +274,8 @@ export {
   type ScoredModelRoute,
 } from './routing/model-route-ranking.js';
 
-export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, RoutingServerHandler, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
-export { ANTSEED_ATTEST_PATH, ANTSEED_ROUTE_DIGEST_PATH, ANTSEED_ROUTE_PATH } from './interfaces/plugin.js'
+export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
@@ -354,4 +344,4 @@ export {
   type LoadedRouter,
 } from './config/plugin-loader.js'
 export { readRouterSettings, validateRouterSettings, type RouterSettingField } from './routing/router-settings.js';
-export { RoutingContextTracker, type RoutingCadence, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
+export { type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';

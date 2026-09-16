@@ -8,8 +8,6 @@ export type ModelRoutingPreferences = {
   allowedPeerIds: string[];
   blockedPeerIds: string[];
   routerEnabled?: boolean;
-  selectedRouterPackage?: string | null;
-  autoRouting?: boolean;
 };
 
 export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {
@@ -18,8 +16,6 @@ export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {
   minTrustScore: 60,
   allowedPeerIds: [],
   blockedPeerIds: [],
-  routerEnabled: false,
-  selectedRouterPackage: null,
 };
 
 export type ModelRouteCandidate = {

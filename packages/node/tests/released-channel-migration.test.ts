@@ -4,7 +4,7 @@ import { runMigrations } from '../src/storage/migrate.js';
 import { channelMigrations } from '../src/storage/migrations/channels/index.js';
 
 describe('published channel schema upgrade', () => {
-  it('preserves v5 payment records and signatures while applying the additive v6 and v7 migrations', () => {
+  it('preserves v5 payment records and signatures while applying the additive v6 migration', () => {
     const db = new Database(':memory:');
     try {
       runMigrations(db, channelMigrations.filter((migration) => migration.version <= 5));
@@ -43,7 +43,7 @@ describe('published channel schema upgrade', () => {
         reserve_salt: 'salt', latest_reserve_auth_sig: 'reserve-signature',
       });
       expect(db.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual(
-        [1, 2, 3, 4, 5, 6, 7].map((version) => ({ version })),
+        [1, 2, 3, 4, 5, 6].map((version) => ({ version })),
       );
     } finally {
       db.close();

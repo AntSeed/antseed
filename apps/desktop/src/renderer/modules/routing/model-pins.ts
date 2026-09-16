@@ -1,16 +1,14 @@
 /**
  * Per-model seller pins.
  *
- * The route selection holds only one model and one peer at a time, so a
- * model switch would otherwise throw away the pin the previous model had.
- * Pins live here instead — keyed by model — so a model you pinned to a
- * seller comes back pinned to that seller when you select it again. The
- * selection still carries the *active* pin; this store is what re-fills it
- * on a model switch.
+ * The route selection holds one model and one peer, so switching models used
+ * to throw away the pin the old model had. Pins live here instead — keyed by
+ * model — so a model you pinned to a seller comes back pinned to that seller
+ * when you select it again. The selection still carries the *active* pin; this
+ * store is what re-fills it on a model switch.
  */
 
 import { canonicalModelKey, canonicalPersistedModelKey } from '../catalog/model-identity.js';
-import { isAutoRouterEntry } from './auto-router.js';
 
 export const VPR_MODEL_PINS_STORAGE_KEY = 'antseed.desktop.vpr.modelPins';
 
@@ -56,12 +54,6 @@ export function vprModelPinFor(
   provider: string,
   serviceId: string,
 ): string | null {
-  // The Auto sentinel must never resolve to a fixed peer -- its whole design
-  // is that model AND peer are chosen per-request by the routing peer. Ignore
-  // any existing entry here (rather than only guarding the write below) so a
-  // corrupted store self-heals on read, instead of requiring an affected
-  // user to manually clear localStorage.
-  if (isAutoRouterEntry({ provider, serviceId })) return null;
   return pins[modelPinKey(provider, serviceId)] ?? null;
 }
 
@@ -73,10 +65,6 @@ export function setVprModelPin(
 ): VprModelPins {
   const id = peerId.trim();
   if (id.length === 0) return pins;
-  if (isAutoRouterEntry({ provider, serviceId })) {
-    console.warn(`[VprModelPins] refusing to pin the Auto sentinel (${provider}/${serviceId}) to peer ${peerId.slice(0, 12)} -- this would silently strand every Auto-routed chat on one fixed seller. Caller should be fixed to never reach this with the sentinel.`);
-    return pins;
-  }
   return { ...pins, [modelPinKey(provider, serviceId)]: id };
 }
 

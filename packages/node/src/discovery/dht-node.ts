@@ -23,8 +23,8 @@ export const DEFAULT_DHT_CONFIG: Omit<DHTNodeConfig, "peerId"> = {
   port: 6881,
   bootstrapNodes: toBootstrapConfig(OFFICIAL_BOOTSTRAP_NODES),
   // 5 min — short enough that a missed reannounce is recovered well before
-  // most BEP-5 storage nodes expire the value (~30 min). A value sitting
-  // right at that edge causes intermittent visibility gaps.
+  // most BEP-5 storage nodes expire the value (~30 min). Used to be 15 min,
+  // which sat right at the edge and caused intermittent visibility gaps.
   reannounceIntervalMs: 5 * 60 * 1000,
   // 25s — long enough for a cold routing table to fan out and for the DHT
   // to drain its 'peer' events. With 10s we frequently observed lookups
@@ -159,7 +159,7 @@ export class DHTNode {
         clearTimeout(timeout);
       };
 
-      const onListening = (): void => {
+      this.dht.listen(this.config.port, () => {
         // Socket is bound; now wait for DHT bootstrap to complete.
         // The 'ready' event fires when the routing table has been populated.
         this.dht!.on("ready", () => {
@@ -167,9 +167,7 @@ export class DHTNode {
           this.events.emit("ready");
           resolve();
         });
-      };
-
-      this.dht.listen(this.config.port, onListening);
+      });
 
       this.dht.on("error", (err: Error) => {
         cleanup();

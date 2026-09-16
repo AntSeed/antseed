@@ -5,7 +5,6 @@
  */
 
 import type { SpendingAuthMetadata, SpendingAuthServiceMetadata } from '@antseed/protocol/signatures';
-import type { AccessAgreement, AccessAuthorization, AccessPurchase } from './access-billing.js';
 
 export const CHANNEL_STATUS = {
   ACTIVE: 'active',
@@ -86,14 +85,6 @@ export interface StoredChannelServiceTotal {
  * backing store.
  */
 export interface BuyerChannelStore {
-  getAccessAgreement?(scope: string): AccessAgreement | null;
-  setAccessAgreement?(scope: string, agreement: AccessAgreement): void;
-  getAccessPurchase?(scope: string): AccessPurchase | null;
-  commitAccessAuthorization?(
-    channel: StoredChannel,
-    services: readonly SpendingAuthServiceMetadata[] | undefined,
-    access: AccessAuthorization,
-  ): void | Promise<void>;
   upsertChannel(channel: StoredChannel): void;
   getChannel(sessionId: string): StoredChannel | null;
   getActiveChannelByPeerAndBuyer(

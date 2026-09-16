@@ -81,11 +81,9 @@ import {
 } from '../runtime/peer-cache.js';
 import {
   type InstalledPlugin,
-  type RouterPluginMetadata,
   installPluginDependency,
   isSafePluginPackageName,
   listInstalledPlugins,
-  listInstalledRouterPluginMetadata,
   normalizePluginPackageName,
   resolveLegacyPluginPackage,
   resolveLocalPluginSource,
@@ -187,19 +185,6 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
       return {
         ok: false,
         plugins: [] as InstalledPlugin[],
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-  });
-
-  ipcMain.handle('plugins:list-routers', async () => {
-    try {
-      const routers = await listInstalledRouterPluginMetadata();
-      return { ok: true, routers, error: null };
-    } catch (err) {
-      return {
-        ok: false,
-        routers: [] as RouterPluginMetadata[],
         error: err instanceof Error ? err.message : String(err),
       };
     }

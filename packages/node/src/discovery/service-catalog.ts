@@ -5,8 +5,7 @@ export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses'
-  | 'openai-images'
-  | 'antseed-day-pass';
+  | 'openai-images';
 
 export type CatalogServiceCapabilities = {
   contextWindow?: number;
@@ -63,7 +62,7 @@ export type NetworkServiceOffer = {
   provider: string;
   protocols: string[];
   protocol: CatalogServiceProtocol | null;
-  type: 'text' | 'image' | 'day-pass';
+  type: 'text' | 'image';
   capabilities?: CatalogServiceCapabilities;
   categories?: string[];
   peerId: string;
@@ -74,16 +73,6 @@ export type NetworkServiceOffer = {
   cachedInputUsdPerMillion?: number;
   minImageUsdPerImage?: number;
   maxImageUsdPerImage?: number;
-  /**
-   * Flat, non-metered USD price for a `type: 'day-pass'` offer (e.g. a
-   * recurring daily fee) -- not present on 'text'/'image' offers. On the
-   * wire this rides the same generic `inputUsdPerMillion` numeric field
-   * ordinary token pricing uses (no dedicated flat-price field exists in
-   * the announce/metadata-codec protocol, and adding one is out of scope
-   * here); `outputUsdPerMillion` is unused for this type. Exposed under its
-   * own name so callers never need to know that wire-level convention.
-   */
-  flatUsdPrice?: number;
 };
 
 const VALID_PROTOCOLS = new Set<string>([
@@ -91,10 +80,9 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-chat-completions',
   'openai-responses',
   'openai-images',
-  'antseed-day-pass',
 ]);
 
-export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images' | 'antseed-day-pass'> | null {
+export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
   if (provider === 'openai-responses') return 'openai-responses';
   if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
     return 'openai-chat-completions';
@@ -182,9 +170,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type = protocol === 'antseed-day-pass'
-          ? 'day-pass'
-          : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+        const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
             ? 'image'
             : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
@@ -205,9 +191,6 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           ...(pricing.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
           ...(pricing.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
           ...(pricing.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
-          ...(type === 'day-pass' && pricing.inputUsdPerMillion !== undefined
-            ? { flatUsdPrice: pricing.inputUsdPerMillion }
-            : {}),
           ...resolveImagePriceRange(peer, provider, serviceId),
         });
       }
@@ -219,9 +202,6 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
 function comparableOfferPrice(offer: NetworkServiceOffer): number {
   if (offer.billing?.kind === 'per_call') return Number.POSITIVE_INFINITY;
   if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
-  // A flat daily fee isn't commensurable with per-token model pricing --
-  // never let it sort as "cheapest" against real inference offers.
-  if (offer.type === 'day-pass') return Number.POSITIVE_INFINITY;
   if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
     return Number.POSITIVE_INFINITY;
   }

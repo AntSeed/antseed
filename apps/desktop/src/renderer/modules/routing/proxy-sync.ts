@@ -4,7 +4,6 @@ import { chooseBestVprRoute } from './select';
 import { routesForSelectedModel } from '../catalog/view-models';
 import { CODING_ONLY_SUFFIX_RE } from '../catalog/model-identity';
 import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './tools';
-import { isAutoRouterSelected } from './auto-router';
 
 declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
 
@@ -30,16 +29,6 @@ export function buyerDefaultRoutePayload(
 function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   const selection = uiState.vprRouteSelection;
   if (!selection.model) return null;
-  // Auto has no real advertised service and must never resolve to a
-  // peer-pinned default route -- the active router plugin's own
-  // `selectRoute` makes this conversation's routing decision itself, per
-  // real request. Without this guard, a stale `mode: 'pinned-peer'`
-  // selection left over from an earlier explicit peer pin (selection.model
-  // already back to the Auto sentinel) falls through this function's
-  // peerId fallback below and posts a bogus `<peerId>@<sentinel>` default
-  // route, which every peer correctly rejects as "Service <sentinel> is
-  // not served by this peer".
-  if (isAutoRouterSelected(selection.model)) return null;
   const selectedEntry = uiState.vprModelCatalog.find((entry) => (
     entry.provider === selection.model?.provider && entry.serviceId === selection.model.serviceId
   ));
@@ -69,19 +58,13 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
 }
 
 async function activeProfileNames(bridge: DesktopBridge): Promise<string[]> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const state = (await bridge.systemProxyGetState?.()) ?? null;
-      return [...(activeProfilesFromRuntimeState(state) ?? [])];
-    } catch {
-      if (attempt === 1) return [];
-    }
+  try {
+    const state = (await bridge.systemProxyGetState?.()) ?? null;
+    return [...(activeProfilesFromRuntimeState(state) ?? [])];
+  } catch {
+    return [];
   }
-  return [];
 }
-
-let routeSyncGeneration = 0;
-let routeSyncChain: Promise<void> = Promise.resolve();
 
 async function startProfilesOnRoute(
   bridge: DesktopBridge,
@@ -113,38 +96,17 @@ async function startProfilesOnRoute(
  * resolve their peer from this route instead of re-deriving it. Best-effort —
  * main dedupes repeat values and the buyer proxy may not be running yet, so
  * this is safe to call from polling refreshes.
- *
- * Auto routing has no fixed peer/model `resolveRouteTarget` can return, so it
- * actively clears the route instead of merely skipping the update -- without
- * this, a route set before Auto was selected (or written by the null-selection
- * auto-fill's free-model fallback) sits there indefinitely, and the `antseed`
- * alias/Telegram bridge keep silently resolving to it. Scoped to exactly the
- * Auto-selected case, not every other reason `resolveRouteTarget` can return
- * null (an image-kind selection, a real model with no route found yet), which
- * must leave the existing route untouched as before.
  */
 export async function syncBuyerDefaultRoute(
   bridge: DesktopBridge | undefined,
   uiState: RendererUiState,
 ): Promise<void> {
-  const setBuyerDefaultRoute = bridge?.chatSetBuyerDefaultRoute;
-  if (!setBuyerDefaultRoute) return;
-  const generation = ++routeSyncGeneration;
-  const run = routeSyncChain.then(async () => {
-    if (generation !== routeSyncGeneration) return;
-    const target = resolveRouteTarget(uiState);
-    if (!target) {
-      if (isAutoRouterSelected(uiState.vprRouteSelection.model)) {
-        await bridge.chatClearBuyerDefaultRoute?.().catch(() => undefined);
-      }
-      return;
-    }
-    await setBuyerDefaultRoute(
-      buyerDefaultRoutePayload(uiState.vprRouteSelection, target),
-    ).catch(() => undefined);
-  });
-  routeSyncChain = run;
-  await run;
+  if (!bridge?.chatSetBuyerDefaultRoute) return;
+  const target = resolveRouteTarget(uiState);
+  if (!target) return;
+  await bridge.chatSetBuyerDefaultRoute(
+    buyerDefaultRoutePayload(uiState.vprRouteSelection, target),
+  ).catch(() => undefined);
 }
 
 /**

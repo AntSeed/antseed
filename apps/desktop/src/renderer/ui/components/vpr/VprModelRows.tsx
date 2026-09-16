@@ -3,7 +3,6 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, Settings02Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
-import { isAutoRouterEntry } from '../../../modules/routing/auto-router';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
 import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
 import { modelTagsFor } from '../../../modules/catalog/model-metadata';
@@ -91,36 +90,6 @@ function ModelRow({ entry, checked, favorite, badge, compact, dense, chevron = t
   /** Trailing config button (per-context model settings). */
   onConfigure?: () => void;
 }): JSX.Element {
-  // The Auto sentinel has no real price/sellers/capabilities to report --
-  // the normal row below would render "Price unknown"/"0 sellers" for it.
-  // A simplified row instead: icon + name + the same one-line explainer used
-  // in the chat composer's own dropdown (VprModelDropdown.tsx), no
-  // price/peer/discount/capability content that doesn't apply to it.
-  if (isAutoRouterEntry(entry)) {
-    return (
-      <button
-        type="button"
-        className={[styles.row, compact ? styles.rowCompact : '', dense ? styles.rowDense : ''].filter(Boolean).join(' ')}
-        aria-pressed={checked}
-        onClick={onClick}
-      >
-        {checked && (
-          <span className={styles.checkSlot} aria-hidden="true">
-            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
-          </span>
-        )}
-        <span className={styles.rowMain}>
-          <span className={styles.titleLine}>
-            <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />
-            <span className={styles.label}>{entry.label}</span>
-          </span>
-          <span className={styles.metaLine}>
-            <span className={styles.capabilityMeta}>Automatically optimises your spend and performance</span>
-          </span>
-        </span>
-      </button>
-    );
-  }
   const free = isFreeEntry(entry);
   const hasPrice = entry.minInputUsdPerMillion !== null || entry.minOutputUsdPerMillion !== null;
   // Config-bearing rows (the chat detail's model list) trade the discount

@@ -40,37 +40,6 @@ export interface SellerPaymentConfig {
   minSettleDelta?: string;
   /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
   serveWhileClosePending?: boolean;
-  /**
-   * Rejects any single SpendingAuth whose cumulativeAmount jumps more than
-   * this many base units above the previously accepted cumulative for that
-   * channel. Undefined (default) means no cap. See node.ts's
-   * NodePaymentsConfig.maxCumulativeIncreasePerAuth for the full rationale --
-   * this is the independent seller-side backstop against a single signature
-   * ever claiming several days of a flat daily day pass at once. Applies
-   * only to the "subsequent SpendingAuth" path, not the initial one -- day
-   * 1's own charge is exactly one day's worth by construction, nothing to
-   * cap there.
-   */
-  maxCumulativeIncreasePerAuth?: string;
-  /**
-   * Settle (keep channel open) immediately after accepting a "subsequent"
-   * SpendingAuth. Undefined/false (default) means no change to existing
-   * behavior -- ordinary per-request metered billing signs a fresh
-   * cumulative on every response, so settling here unconditionally would
-   * mean an on-chain tx per request, defeating the point of a channel.
-   * Meant for infrequent-signature channels (a flat daily day pass signs
-   * roughly once per ~24h window) where neither of the two existing
-   * settlement triggers ever fires: SellerSessionTracker's idle-settle only
-   * activates for channels that go through the metered Provider.handleRequest
-   * path (a bare /_antseed/route-style handler never touches it), and
-   * checkTimeouts()'s disconnect-based settle is gated off by
-   * settleOnDisconnect for exactly this kind of channel (see that field's
-   * own doc comment) -- so without this, an accepted cumulative amount could
-   * sit authorized-but-never-realized-on-chain indefinitely as long as the
-   * channel keeps getting renewed. settleSession's own minSettleDelta still
-   * applies, so this doesn't submit dust settles either.
-   */
-  settleOnAcceptedSpendingAuth?: boolean;
 }
 
 /** Default minimum budget per request: $0.50 USDC (base units). */
@@ -775,24 +744,6 @@ export class SellerPaymentManager {
           return 'rejected';
         }
 
-        // Independent backstop ensuring a single signature never claims more
-        // than one legitimate cadence's worth -- the seller should never
-        // have to trust the buyer's day-counting alone for something this
-        // consequential. Opt-in: undefined config means no cap, so ordinary
-        // metered per-request billing (which can legitimately jump by any
-        // amount in a burst of real usage) is unaffected.
-        if (this._config.maxCumulativeIncreasePerAuth) {
-          const maxIncrease = BigInt(this._config.maxCumulativeIncreasePerAuth);
-          const increase = cumulativeAmount - existingCumulative;
-          if (increase > maxIncrease) {
-            debugWarn(
-              `[SellerPayment] Rejecting SpendingAuth exceeding max per-auth increase: ` +
-              `increase=${increase} > cap=${maxIncrease} (existing=${existingCumulative} new=${cumulativeAmount}) channel=${channelId.slice(0, 18)}...`,
-            );
-            return 'rejected';
-          }
-        }
-
         // Update tracking
         this._hydratedChannelIds.delete(channelId);
         this._acceptedCumulative.set(channelId, cumulativeAmount);
@@ -822,17 +773,6 @@ export class SellerPaymentManager {
         if (pendingTopUp) {
           const { amount: retrySettleAmount, metadata: retryMetadata, sig: retrySig } = this._getSettleParams(channelId);
           await this._retryPendingTopUp(buyerPeerId, channelId, pendingTopUp, retrySettleAmount, retryMetadata, retrySig);
-        }
-
-        // Opt-in (see settleOnAcceptedSpendingAuth's own doc comment) --
-        // fire-and-forget, same as the idle-settle event this substitutes
-        // for on a channel that never generates one. Never awaited: this
-        // handler's job is to accept the signature promptly, not to wait on
-        // an on-chain tx.
-        if (this._config.settleOnAcceptedSpendingAuth) {
-          this.settleSession(buyerPeerId, { settleOnly: true }).catch((err) => {
-            debugWarn(`[SellerPayment] settleOnAcceptedSpendingAuth settle failed for channel ${channelId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
-          });
         }
 
         return 'accepted';
@@ -1379,14 +1319,8 @@ export class SellerPaymentManager {
           && this._hydratedChannelIds.has(channel.sessionId)
           && nowSecs > channel.deadline;
 
-        // If we have auths and the buyer is disconnected, try to close --
-        // gated by the same settleOnDisconnect flag onBuyerDisconnect()
-        // respects (default true). A day-pass-style channel (config'd
-        // false) must survive its buyer's connection going idle between
-        // infrequent requests; without this gate, this periodic sweep would
-        // close it anyway even when the immediate disconnect handler
-        // correctly preserved it.
-        if (accepted > 0n && buyerDisconnected && (this._config.settleOnDisconnect ?? true)) {
+        // If we have auths and the buyer is disconnected, try to close
+        if (accepted > 0n && buyerDisconnected) {
           debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
           await this.settleSession(channel.peerId);
           continue;

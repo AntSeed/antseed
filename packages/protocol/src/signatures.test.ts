@@ -5,13 +5,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AbiCoder, Wallet, verifyTypedData } from 'ethers';
+import { Wallet, verifyTypedData } from 'ethers';
 import {
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   ZERO_METADATA_HASH,
-  CHARGE_TYPE_DAY_PASS_ON_DEMAND,
-  CHARGE_TYPE_METERED,
   computeChannelId,
   computeMetadataHash,
   encodeMetadata,
@@ -19,8 +17,6 @@ import {
   makeChannelsDomain,
   signSpendingAuth,
   signReserveAuth,
-  signRouteRequestAuth,
-  recoverRouteRequestAuthSigner,
 } from './signatures.js';
 import { buildConnectionAuthPayload } from './connection-auth.js';
 import { signUtf8, verifyUtf8 } from './signing.js';
@@ -31,11 +27,7 @@ const SALT = '0x' + 'ab'.repeat(32);
 
 describe('EIP-712 golden vectors', () => {
   it('pins ZERO_METADATA_HASH', () => {
-    // Updated for metadata v4 (chargeType field, appended after
-    // cumulativeOutputImages -- see SpendingAuthMetadata's own doc comment
-    // for why that position, not v3's, is the safe one). A deliberate
-    // version bump, not drift: pin the new value.
-    expect(ZERO_METADATA_HASH).toBe('0x571239954c4c9f5d484149eb7ac3ef41646e613374f55d4ca7ace6cb3e115a9d');
+    expect(ZERO_METADATA_HASH).toBe('0xd26da485bf13b78f40dee0909067460d0d8d2510431238d75f7971400b85e0e3');
   });
 
   it('pins channelId derivation', () => {
@@ -55,7 +47,7 @@ describe('EIP-712 golden vectors', () => {
       services: [],
     };
     expect(computeMetadataHash(metadata)).toBe(
-      '0x2ac526507f7691a1575dce0a3cfd9d746a605dd650eb51996550143359895702',
+      '0xb9b176a3f2735a8160329e354c7ba2f0a84b39258c479b441702c3126210301c',
     );
     // Omitted cumulativeOutputImages encodes identically to an explicit zero.
     expect(computeMetadataHash({ ...metadata, cumulativeOutputImages: 0n })).toBe(
@@ -80,48 +72,6 @@ describe('EIP-712 golden vectors', () => {
     expect(encodeMetadata(withService)).not.toBe(encodeMetadata(metadata));
   });
 
-  it('defaults chargeType to metered, and a day-pass-on-demand charge hashes differently', () => {
-    const base = { cumulativeInputTokens: 0n, cumulativeOutputTokens: 0n, cumulativeRequestCount: 0n, services: [] };
-    expect(computeMetadataHash(base)).toBe(computeMetadataHash({ ...base, chargeType: CHARGE_TYPE_METERED }));
-    expect(computeMetadataHash({ ...base, chargeType: CHARGE_TYPE_DAY_PASS_ON_DEMAND })).not.toBe(
-      computeMetadataHash(base),
-    );
-  });
-
-  it('never disturbs the legacy 4-word prefix a fixed on-chain decoder reads -- regression guard for the real load-bearing constraint chargeType\'s placement depends on', () => {
-    // AntseedStats.sol's _decodeMetadata does a fixed, non-version-aware
-    // abi.decode(metadata, (uint256,uint256,uint256,uint256)) -- it reads
-    // exactly the first 128 bytes of the head and ignores everything after,
-    // regardless of what comes later (dynamic types included, chargeType
-    // and services[] both). Any field ever added after cumulativeOutputImages
-    // must keep passing this exact check.
-    const metadata = {
-      cumulativeInputTokens: 111n,
-      cumulativeOutputTokens: 222n,
-      cumulativeRequestCount: 3n,
-      cumulativeOutputImages: 4n,
-      chargeType: CHARGE_TYPE_DAY_PASS_ON_DEMAND,
-      services: [{
-        serviceId: getServiceMetadataId('levanto-router-day-pass'),
-        cumulativeAmount: 890_000n,
-        cumulativeInputTokens: 0n,
-        cumulativeCachedInputTokens: 0n,
-        cumulativeOutputTokens: 0n,
-        cumulativeRequestCount: 0n,
-        cumulativeOutputImages: 0n,
-      }],
-    };
-    const encoded = encodeMetadata(metadata);
-    const [version, inputTokens, outputTokens, requestCount] = AbiCoder.defaultAbiCoder().decode(
-      ['uint256', 'uint256', 'uint256', 'uint256'],
-      encoded,
-    );
-    expect(version).toBe(4n);
-    expect(inputTokens).toBe(111n);
-    expect(outputTokens).toBe(222n);
-    expect(requestCount).toBe(3n);
-  });
-
   it('produces recoverable SpendingAuth and ReserveAuth signatures', async () => {
     const channelId = computeChannelId(wallet.address, SELLER, SALT);
     const domain = makeChannelsDomain(8453, '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d');
@@ -133,46 +83,6 @@ describe('EIP-712 golden vectors', () => {
     const reserve = { channelId, maxAmount: 1_000_000n, deadline: 1900000000n };
     const reserveSig = await signReserveAuth(wallet, domain, reserve);
     expect(verifyTypedData(domain, RESERVE_AUTH_TYPES, reserve, reserveSig)).toBe(wallet.address);
-  });
-});
-
-describe('RouteRequestAuth (buyer identity proof for /_antseed/route)', () => {
-  const domain = makeChannelsDomain(8453, '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d');
-  const routingPeer = '0x' + 'aa'.repeat(20);
-
-  it('signs and recovers to the signer address', async () => {
-    const msg = {
-      buyer: wallet.address,
-      routingPeer,
-      issuedAt: 1900000000n,
-      nonce: '0x' + '11'.repeat(32),
-    };
-    const sig = await signRouteRequestAuth(wallet, domain, msg);
-    expect(recoverRouteRequestAuthSigner(domain, msg, sig)).toBe(wallet.address);
-  });
-
-  it('recovers a different address for a tampered field (routingPeer swapped)', async () => {
-    const msg = {
-      buyer: wallet.address,
-      routingPeer,
-      issuedAt: 1900000000n,
-      nonce: '0x' + '22'.repeat(32),
-    };
-    const sig = await signRouteRequestAuth(wallet, domain, msg);
-    const tampered = { ...msg, routingPeer: '0x' + 'bb'.repeat(20) };
-    expect(recoverRouteRequestAuthSigner(domain, tampered, sig)).not.toBe(wallet.address);
-  });
-
-  it('recovers a different address under a different domain (chain-scoped, not replayable across chains)', async () => {
-    const msg = {
-      buyer: wallet.address,
-      routingPeer,
-      issuedAt: 1900000000n,
-      nonce: '0x' + '33'.repeat(32),
-    };
-    const sig = await signRouteRequestAuth(wallet, domain, msg);
-    const otherChainDomain = makeChannelsDomain(1, '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d');
-    expect(recoverRouteRequestAuthSigner(otherChainDomain, msg, sig)).not.toBe(wallet.address);
   });
 });
 

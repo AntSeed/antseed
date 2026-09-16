@@ -37,18 +37,6 @@ const WORKSPACE_PACKAGES = {
   '@antseed/ui': path.resolve(appDir, '..', '..', 'packages', 'ui'),
 };
 
-/**
- * `cpSync` filter that drops any nested `node_modules` from a copy.
- *
- * Compares the basename rather than a `path.join`ed absolute path: Node on
- * Windows hands filters extended-length paths (a "\\?\" prefix) while
- * `path.join` produces plain ones, so an absolute-path `===` comparison
- * never matches there.
- */
-function excludeNodeModules(src) {
-  return path.basename(String(src)) !== 'node_modules';
-}
-
 function isWorkspaceSymlink(fullPath) {
   try {
     if (!lstatSync(fullPath).isSymbolicLink()) return false;
@@ -65,16 +53,14 @@ function copyWorkspacePackage(linkPath, sourcePath, label) {
   // desktop dependency, so a fresh CI install creates no node_modules entry
   // for it; the copy below materializes it for the bundled-runtime walk.
   rmSync(linkPath, { recursive: true, force: true });
-  // Excludes the source package's own node_modules from the copy -- its deps
-  // are already hoisted into the desktop's own node_modules by pnpm. On
-  // Windows that directory is also full of pnpm symlinks pointing at other
-  // workspace packages, and recreating a symlink there needs Developer Mode
-  // or an elevated shell, so copying it (even to delete right after) fails
-  // the whole build with EPERM.
-  cpSync(sourcePath, linkPath, {
-    recursive: true,
-    filter: excludeNodeModules,
-  });
+  cpSync(sourcePath, linkPath, { recursive: true });
+
+  // Remove inner node_modules — the copied package's deps are already
+  // hoisted into the desktop's own node_modules by pnpm.
+  const innerNm = path.join(linkPath, 'node_modules');
+  if (existsSync(innerNm)) {
+    rmSync(innerNm, { recursive: true });
+  }
 }
 
 // --- 1. Replace workspace symlinks/stale copies with fresh copies from source ---
@@ -295,10 +281,11 @@ function copyDepTree(name, parentSourceDir, parentDestDir, topDestRoot, visited)
     // copying it and deleting it after: we re-place any conflicting nested
     // deps ourselves at the next recursion level, and dereference: true would
     // crash on the dangling .bin symlinks pnpm sometimes leaves in there.
+    const nestedNm = path.join(sourceDir, 'node_modules');
     cpSync(sourceDir, destDir, {
       recursive: true,
       dereference: true,
-      filter: excludeNodeModules,
+      filter: (src) => src !== nestedNm,
     });
   }
 

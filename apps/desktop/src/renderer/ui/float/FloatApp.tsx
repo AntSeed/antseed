@@ -190,9 +190,9 @@ export function FloatApp() {
   // AntSeed mark; model branding stays inside the dropdown rows.
   const badgeIcon = <VprMark size={26} />;
 
-  // Avoids "Ready" for the idle state -- people read it to mean the app was
-  // doing something, the one thing it doesn't mean. Names the connection
-  // instead, and spells out all three states in the tooltip.
+  // The idle state used to read "Ready", which people took to mean the app was
+  // doing something — the one thing it doesn't mean. Name the connection
+  // instead, and spell out all three states in the tooltip.
   const statusLabel = !runtimeOn
     ? 'Not connected'
     : data?.trafficActive

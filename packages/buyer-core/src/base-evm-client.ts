@@ -13,59 +13,27 @@ import {
 
 const FALLBACK_STALL_TIMEOUT_MS = 750;
 const JSON_RPC_REQUEST_TIMEOUT_MS = 2_500;
-/**
- * ethers' default JsonRpcProvider pollingInterval is 4000ms -- fine for a
- * real remote chain, but on a local anvil instance (which mines instantly)
- * that means every tx.wait() takes up to a full 4s even though the
- * transaction already has a real receipt. Confirmed live while seeding the
- * mock marketplace: a seller wallet's on-chain nonce was observed advancing
- * in real time while tx.wait() calls sat "stuck" for exactly this long --
- * not a hang, just an unnecessarily slow poll cadence. Scoped to
- * loopback URLs only so this never touches polling behavior (or request
- * volume/cost) against a real remote RPC endpoint.
- */
-const LOCAL_RPC_POLLING_INTERVAL_MS = 100;
-
-function isLoopbackUrl(url: string): boolean {
-  try {
-    const { hostname } = new URL(url);
-    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
-  } catch {
-    return false;
-  }
-}
 
 function createJsonRpcProvider(url: string, network?: Network, opts?: object): JsonRpcProvider {
   const request = new FetchRequest(url);
   request.timeout = JSON_RPC_REQUEST_TIMEOUT_MS;
-  const provider = new JsonRpcProvider(request, network, opts);
-  if (isLoopbackUrl(url)) {
-    provider.pollingInterval = LOCAL_RPC_POLLING_INTERVAL_MS;
-  }
-  return provider;
+  return new JsonRpcProvider(request, network, opts);
 }
 
-/**
- * Builds the ensemble provider AND keeps the individual per-URL providers
- * around (`raw`) so `_readWithFallback` has a manual, explicit backstop that
- * doesn't depend on FallbackProvider's own internal failover heuristics --
- * see `_readWithFallback`'s doc comment for why that backstop exists.
- */
-function buildProvider(rpcUrl: string, fallbackRpcUrls?: string[], evmChainId?: number): { provider: AbstractProvider; raw: AbstractProvider[] } {
+function buildProvider(rpcUrl: string, fallbackRpcUrls?: string[], evmChainId?: number): AbstractProvider {
   const network = evmChainId ? Network.from(evmChainId) : undefined;
   const opts = { batchMaxCount: 1, staticNetwork: network ? true : undefined };
-  const urls = [rpcUrl, ...(fallbackRpcUrls ?? [])];
-  const raw = urls.map((url) => createJsonRpcProvider(url, network, opts));
-  if (raw.length === 1) {
-    return { provider: raw[0]!, raw };
+  if (!fallbackRpcUrls || fallbackRpcUrls.length === 0) {
+    return createJsonRpcProvider(rpcUrl, network, opts);
   }
-  const configs = raw.map((provider, i) => ({
-    provider,
+  const urls = [rpcUrl, ...fallbackRpcUrls];
+  const configs = urls.map((url, i) => ({
+    provider: createJsonRpcProvider(url, network, opts),
     priority: i + 1,
     stallTimeout: FALLBACK_STALL_TIMEOUT_MS,
     weight: 1,
   }));
-  return { provider: new FallbackProvider(configs, network, { quorum: 1 }), raw };
+  return new FallbackProvider(configs, network, { quorum: 1 });
 }
 
 export const ERC20_ABI = [
@@ -86,51 +54,14 @@ export abstract class BaseEvmClient {
   protected readonly _contractAddress: string;
   protected readonly _nonceCursor = new Map<string, number>();
   private readonly _nonceLocks = new Map<string, Promise<void>>();
-  private readonly _rawProviders: AbstractProvider[];
 
   constructor(rpcUrl: string, contractAddress: string, fallbackRpcUrls?: string[], evmChainId?: number) {
-    const built = buildProvider(rpcUrl, fallbackRpcUrls, evmChainId);
-    this._provider = built.provider;
-    this._rawProviders = built.raw;
+    this._provider = buildProvider(rpcUrl, fallbackRpcUrls, evmChainId);
     this._contractAddress = contractAddress;
   }
 
   get provider(): AbstractProvider { return this._provider; }
   get contractAddress(): string { return this._contractAddress; }
-
-  /**
-   * Explicit, manual fallback for reads that must not silently proceed
-   * unverified -- a real incident (BuyerPaymentManager.topUpReserve) showed
-   * `this._provider`'s FallbackProvider ensemble not engaging a healthy
-   * configured fallback (base.drpc.org) while the primary (Tenderly) was
-   * returning sustained 503s: seven confirmed 503s in the runtime logs, zero
-   * uses of the fallback URL, while the fallback was independently confirmed
-   * healthy and faster. The exact ethers-internal reason FallbackProvider
-   * didn't broaden to the next priority backend for this failure class
-   * hasn't been root-caused -- rather than tune undocumented FallbackProvider
-   * heuristics blind, this adds a provably-correct manual backstop: try the
-   * ensemble first (unchanged, still the fast path for ordinary transient
-   * blips), and on failure, retry sequentially and directly against each
-   * individually-held per-URL provider before giving up. Use this for any
-   * read a caller must be able to trust failed only after every configured
-   * RPC was tried, not just the (evidently sometimes silent) ensemble.
-   */
-  protected async _readWithFallback<T>(perform: (provider: AbstractProvider) => Promise<T>): Promise<T> {
-    try {
-      return await perform(this._provider);
-    } catch (primaryErr) {
-      if (this._rawProviders.length <= 1) throw primaryErr;
-      let lastErr: unknown = primaryErr;
-      for (const provider of this._rawProviders) {
-        try {
-          return await perform(provider);
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-      throw lastErr;
-    }
-  }
 
   protected _ensureConnected(signer: AbstractSigner): AbstractSigner {
     if (signer.provider) return signer;

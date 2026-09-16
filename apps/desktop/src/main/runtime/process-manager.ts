@@ -5,7 +5,6 @@ import path from 'node:path';
 
 import { desktopSystemProxyCliDataDir } from '../dev-instance.js';
 import { WORKSPACE_APPS_DIR } from '../paths.js';
-import { ACTIVE_CONFIG_PATH } from './active-config.js';
 
 const { join, resolve } = path;
 
@@ -75,114 +74,6 @@ function normalizeRouterIdentifier(value: string | undefined): string {
   }
 
   return raw;
-}
-
-/**
- * Applies the buyer's selected model router (Preferences' "Select model
- * router" dropdown, persisted as `buyer.routingPreferences.
- * selectedRouterPackage` -- VprPreferencesView.tsx) to a connect-mode start.
- *
- * Loading a router package does not depend on `routerEnabled`.
- * `routerEnabled` can be live-synced to an already-running buyer daemon
- * via buyer-proxy's own hot-reload path, but nothing respawns the daemon --
- * gating plugin *loading* on it would mean a user who enables Auto after the
- * daemon already started (the common case, since it auto-starts before
- * Preferences is ever opened) gets stuck sending requests for the
- * auto-sentinel to a process that never loaded the selected router plugin at
- * all: a 502 "No policy-allowed peer currently serves model <sentinel>" with
- * no indication a restart was needed. Loading the plugin unconditionally is
- * harmless -- nothing can actually route through it unless the Auto catalog
- * entry is selectable at all, which is itself gated on the same preference
- * and reacts live (auto-router.ts's withAutoRouterCatalogEntry). What must
- * not happen unconditionally is forcing *every* connect-mode start
- * (including a genuine mainnet buyer with no router selected) onto some
- * particular package's own defaults -- `resolveSelectedRouterPackage()`
- * returning `null` (no package selected, for any reason) passes `opts`
- * through unchanged.
- *
- * Every selected package also gets a persistent per-plugin data directory
- * (`ANTSEED_ROUTER_DATA_DIR`, derived from its own package name so multiple
- * plugins don't collide on disk), for a plugin that wants to persist state
- * across a connect-mode subprocess restart. Beyond that, a package's name is
- * passed through as `opts.router` unchanged, and the CLI loads whatever
- * plugin that names using its own config -- this function has no
- * package-specific knowledge of any installed plugin, generic or otherwise.
- *
- * Applied here, at the single point every connect-mode `start()` call
- * ultimately funnels through (`ProcessManager.start` itself), rather than at
- * each individual caller -- there are at least two independent places that
- * start the connect runtime (a main-process auto-start on first chat message,
- * and a renderer-side auto-start on app boot that races ahead of it using its
- * own, unrelated router preference), and applying the override in only one of
- * them left the other silently winning the race with the wrong router. A
- * single choke point means neither caller needs to know this override exists.
- */
-/**
- * Reads `buyer.routingPreferences.selectedRouterPackage` straight off disk,
- * no caching -- the config file is the one source of truth the renderer's
- * dropdown, a config-file edit, and this main-process check all agree on,
- * and a start() call is infrequent enough that a sync file read here is not
- * a real cost. `null` for anything not a real package name -- an explicit
- * "None" (VprPreferencesView.tsx writes `selectedRouterPackage: null`), the
- * field never having been set, or the config file missing/unreadable -- all
- * mean the same thing to a caller: load no router plugin at all.
- */
-function resolveSelectedRouterPackage(): string | null {
-  try {
-    const raw = readFileSync(ACTIVE_CONFIG_PATH, 'utf8');
-    const parsed = JSON.parse(raw) as {
-      buyer?: { routingPreferences?: { selectedRouterPackage?: unknown } };
-    };
-    const pkg = parsed.buyer?.routingPreferences?.selectedRouterPackage;
-    return typeof pkg === 'string' && pkg.trim().length > 0 ? pkg : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Directory a router plugin can persist state in across connect-mode
- * subprocess restarts. Derived from the plugin's own package name, npm
- * scope stripped (`@scope/package-name` -> `package-name`) so different
- * plugins never share one directory.
- */
-function routerPluginDataDir(packageName: string): string {
-  const unscoped = packageName.replace(/^@[^/]+\//, '');
-  const safe = unscoped.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '');
-  return join(resolveConnectDataDir(), safe || 'router-plugin');
-}
-
-/**
- * For a connect-mode start, forces `opts.router` to whichever package the
- * buyer actually selected in Preferences and gives it a persistent data
- * directory to work with, regardless of what a caller happened to request --
- * see this function's own callers for why applying it centrally, once, beats
- * duplicating the same selection logic at each call site. A `null` selection
- * (nothing chosen, or explicitly set to "None") leaves `opts` untouched.
- *
- * A plugin needing environment tailored to the buyer's own configured chain
- * (e.g. its own local test-network addressing) is responsible for reading
- * that context and acting on it itself, the same way it reads any other
- * config the host passes into `createRouter`/`selectRoute` -- this function
- * has no host-side, package-specific knowledge of any installed plugin.
- */
-export function applyRouterDemoOverride(
-  opts: StartOptions,
-  resolveRouterPackage: () => string | null = resolveSelectedRouterPackage,
-): StartOptions {
-  if (opts.mode !== 'connect') return opts;
-
-  const selectedPackage = resolveRouterPackage();
-  if (selectedPackage === null) return opts;
-
-  return {
-    ...opts,
-    router: selectedPackage,
-    env: {
-      ...opts.env,
-      ANTSEED_ROUTER_DATA_DIR: process.env['ANTSEED_ROUTER_DATA_DIR'] ?? routerPluginDataDir(selectedPackage),
-    },
-  };
 }
 
 function resolveAlignedNodeFromMarker(): string | null {
@@ -272,8 +163,6 @@ function detectNodeArch(nodeBinary: string): string | null {
     const output = execFileSync(nodeBinary, ['-p', 'process.arch'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3_000,
-      killSignal: 'SIGKILL',
     }).trim();
     return output.length > 0 ? output : null;
   } catch {
@@ -286,8 +175,6 @@ function detectNodeMajorVersion(nodeBinary: string): number | null {
     const output = execFileSync(nodeBinary, ['-p', 'process.versions.node.split(".")[0]'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3_000,
-      killSignal: 'SIGKILL',
     }).trim();
     const major = Number(output);
     return Number.isFinite(major) && major > 0 ? major : null;
@@ -507,7 +394,6 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
 export class ProcessManager {
   private readonly processes = new Map<RuntimeMode, ChildProcessWithoutNullStreams>();
   private readonly attachedModes = new Set<RuntimeMode>();
-  private readonly startPromises = new Map<RuntimeMode, Promise<RuntimeProcessState>>();
   private runtimeNativeAligned = false;
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
@@ -565,25 +451,11 @@ export class ProcessManager {
     }
   }
 
-  async start(rawOpts: StartOptions): Promise<RuntimeProcessState> {
-    const opts = applyRouterDemoOverride(rawOpts);
+  async start(opts: StartOptions): Promise<RuntimeProcessState> {
     const mode = opts.mode;
     if (this.processes.has(mode)) {
       throw new Error(`${mode} is already running`);
     }
-    const inFlightStart = this.startPromises.get(mode);
-    if (inFlightStart) {
-      return inFlightStart;
-    }
-
-    const startPromise = this.spawnForMode(mode, opts).finally(() => {
-      this.startPromises.delete(mode);
-    });
-    this.startPromises.set(mode, startPromise);
-    return startPromise;
-  }
-
-  private async spawnForMode(mode: RuntimeMode, opts: StartOptions): Promise<RuntimeProcessState> {
     this.attachedModes.delete(mode);
 
     const cliExecution = resolveCliExecution();
@@ -663,12 +535,10 @@ export class ProcessManager {
     });
 
     child.on('exit', (code, signal) => {
-      if (this.processes.get(mode) === child) {
-        this.processes.delete(mode);
-        state.running = false;
-        state.pid = null;
-        state.lastExitCode = code;
-      }
+      this.processes.delete(mode);
+      state.running = false;
+      state.pid = null;
+      state.lastExitCode = code;
       const reason = signal ? `signal=${signal}` : `code=${String(code)}`;
       this.onLog(mode, 'system', `Process exited (${reason})`);
     });
@@ -921,12 +791,7 @@ export class ProcessManager {
         child.kill('SIGKILL');
       }, 5_000);
       const forceKillTimeout = timeout;
-      const resolveTimeout = setTimeout(() => {
-        this.processes.delete(mode);
-        state.running = false;
-        state.pid = null;
-        finish();
-      }, 7_500);
+      const resolveTimeout = setTimeout(finish, 7_500);
 
       child.once('exit', finish);
 

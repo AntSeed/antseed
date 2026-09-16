@@ -59,12 +59,3 @@ test('estimate is zero for a body with no prompt text', () => {
   assert.equal(estimateAnthropicPromptTokens(encode({ model: 'claude-sonnet-4-5' })), 0)
   assert.equal(estimateAnthropicPromptTokens(new TextEncoder().encode('not json')), 0)
 })
-
-test('deeply nested untrusted content cannot exhaust the token collector stack', () => {
-  const depth = 4000
-  const nested = '{"content":'.repeat(depth) + '"deep text"' + '}'.repeat(depth)
-  const body = new TextEncoder().encode(`{"system":"visible shallow text","messages":[${nested}]}`)
-  const tokens = estimateAnthropicPromptTokens(body)
-  assert.ok(Number.isSafeInteger(tokens))
-  assert.ok(tokens > 0)
-})

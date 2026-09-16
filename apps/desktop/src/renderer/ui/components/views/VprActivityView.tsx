@@ -6,10 +6,6 @@ import { useActions } from '../../hooks/useActions';
 import { shortAddress } from '../../../core/format';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
-import { computeRouterSavings } from '../../../modules/routing/router-savings';
-import { AUTO_ROUTER_LABEL } from '../../../modules/routing/auto-router';
-import { routingDecisionsResource } from '../../../modules/app/vpr-resources';
-import { useCachedResource } from '../../../modules/app/cached-resource';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import { VprSpendingChart } from './VprSpendingChart';
 import {
@@ -123,15 +119,6 @@ export function VprActivityView({ onSelectView }: Props) {
   const totalSavings = measuredSavings
     ? formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)
     : (snap.usage?.totalRequests ?? 0) === 0 ? '$0' : '-';
-  // Router savings is a separate figure scoped to Auto-routed requests
-  // specifically, shown alongside "Saved" rather than folded into it.
-  // Absent entirely for a buyer who never used Auto, same reasoning as
-  // VprHomeView's tile.
-  const routingDecisions = useCachedResource(routingDecisionsResource, true).data;
-  const routerSavings = useMemo(
-    () => computeRouterSavings(routingDecisions ?? undefined),
-    [routingDecisions],
-  );
 
   const openOnChainClose = (channelId: string) => {
     void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'close-channel', channelId });
@@ -181,16 +168,6 @@ export function VprActivityView({ onSelectView }: Props) {
               </span>
             )}
           />
-          {routerSavings && (
-            <VprStatTile
-              label="Router savings"
-              value={(
-                <span title={`${AUTO_ROUTER_LABEL} vs retail across ${routerSavings.matchedServices} routed models`}>
-                  {formatSavedUsd(routerSavings.baselineUsd - routerSavings.actualUsd)}
-                </span>
-              )}
-            />
-          )}
         </VprStatRow>
 
         <VprSpendingChart history={snap.spendHistory} loading={snap.loading} />
