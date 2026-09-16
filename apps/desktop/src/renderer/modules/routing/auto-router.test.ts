@@ -32,10 +32,10 @@ function realEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatal
   };
 }
 
-type AutoPreferences = Pick<VprRoutingPreferences, 'dayPassOnDemandEnabled' | 'selectedRouterPackage'>;
+type AutoPreferences = Pick<VprRoutingPreferences, 'routerEnabled' | 'selectedRouterPackage'>;
 
-const ENABLED_DEFAULT: AutoPreferences = { dayPassOnDemandEnabled: true, selectedRouterPackage: null };
-const DISABLED: AutoPreferences = { dayPassOnDemandEnabled: false, selectedRouterPackage: null };
+const ENABLED_DEFAULT: AutoPreferences = { routerEnabled: true, selectedRouterPackage: null };
+const DISABLED: AutoPreferences = { routerEnabled: false, selectedRouterPackage: null };
 
 const CUSTOM_ROUTER: RouterPluginInfo = {
   package: '@antseed/router-custom',
@@ -48,7 +48,7 @@ const CUSTOM_ROUTER: RouterPluginInfo = {
 
 test('a model router can be enabled without day-pass consent', () => {
   const catalog = withAutoRouterCatalogEntry([], {
-    routerEnabled: true, dayPassOnDemandEnabled: false, selectedRouterPackage: CUSTOM_ROUTER.package,
+    routerEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package,
   }, [CUSTOM_ROUTER]);
   assert.equal(catalog.length, 1);
   assert.equal(catalog[0]?.serviceId, CUSTOM_ROUTER.autoRouteServiceId);
@@ -56,7 +56,7 @@ test('a model router can be enabled without day-pass consent', () => {
 
 test('explicit router disable overrides legacy day-pass consent', () => {
   assert.deepEqual(withAutoRouterCatalogEntry([], {
-    routerEnabled: false, dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package,
+    routerEnabled: false, selectedRouterPackage: CUSTOM_ROUTER.package,
   }, [CUSTOM_ROUTER]), []);
 });
 
@@ -72,7 +72,7 @@ test('withAutoRouterCatalogEntry shows no Auto entry when no router plugin is ac
 });
 
 test('withAutoRouterCatalogEntry uses the selected plugin\'s own declared identity when installed', () => {
-  const preferences: AutoPreferences = { dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
+  const preferences: AutoPreferences = { routerEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
   const catalog = withAutoRouterCatalogEntry([realEntry()], preferences, [CUSTOM_ROUTER]);
   assert.equal(catalog.length, 2);
   assert.equal(catalog[0]!.provider, 'custom');
@@ -81,14 +81,14 @@ test('withAutoRouterCatalogEntry uses the selected plugin\'s own declared identi
 });
 
 test('withAutoRouterCatalogEntry is idempotent -- never duplicates the entry on repeated calls', () => {
-  const preferences: AutoPreferences = { dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
+  const preferences: AutoPreferences = { routerEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
   const once = withAutoRouterCatalogEntry([realEntry()], preferences, [CUSTOM_ROUTER]);
   const twice = withAutoRouterCatalogEntry(once, preferences, [CUSTOM_ROUTER]);
   assert.equal(twice.filter(isAutoRouterEntry).length, 1);
 });
 
 test('withAutoRouterCatalogEntry works on an empty catalog (no discovered sellers yet)', () => {
-  const preferences: AutoPreferences = { dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
+  const preferences: AutoPreferences = { routerEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
   const catalog = withAutoRouterCatalogEntry([], preferences, [CUSTOM_ROUTER]);
   assert.equal(catalog.length, 1);
   assert.ok(isAutoRouterEntry(catalog[0]!));
@@ -127,7 +127,7 @@ test('isAutoRouterSelected is false for a real, concretely-selected model', () =
 });
 
 test('isAutoRouterSelected is true when the currently-active Auto entry is the selected model', () => {
-  const preferences: AutoPreferences = { dayPassOnDemandEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
+  const preferences: AutoPreferences = { routerEnabled: true, selectedRouterPackage: CUSTOM_ROUTER.package };
   const catalog = withAutoRouterCatalogEntry([], preferences, [CUSTOM_ROUTER]);
   assert.equal(isAutoRouterSelected(catalog[0]!), true);
 });

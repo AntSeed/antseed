@@ -1,75 +1,70 @@
+import { useEffect, useState } from 'react';
 import { Button, Modal } from '@antseed/ui';
 import type { RouterPluginInfo } from '../../../types/bridge';
-import { useCachedResource } from '../../../modules/app/cached-resource';
-import { dayPassPriceResource, type DayPassPriceOffer } from '../../../modules/app/vpr-resources';
+import type { AccessBillingSnapshot } from '../../../../shared/access-billing';
 import styles from './RouterInfoDialog.module.scss';
 
 type Props = {
   isOpen: boolean;
-  /** The router plugin the user just picked from Preferences' dropdown --
-   *  not necessarily the currently-active one, since nothing is active yet
-   *  until `onConfirm`. `null` while no option is pending confirmation. */
   plugin: RouterPluginInfo | null;
   onClose: () => void;
-  /**
-   * `offer` is this dialog's own live day-pass price lookup at confirm time
-   * (`null` if the routing peer isn't currently advertising one) -- passed
-   * back so the caller can record it as the buyer's agreed price for that
-   * seller (`VprRoutingPreferences.agreedDayPassPricesUsdc`), keyed by the
-   * peer id the offer actually came from.
-   */
-  onConfirm: (offer: DayPassPriceOffer | null) => void;
+  onConfirm: () => void;
 };
 
-/**
- * "What does Auto do, and what does it cost" dialog for whichever router
- * plugin the user just picked in Preferences. Copy comes from that plugin's
- * own `autoRouteInfo` (packages/node's AntseedRouterPlugin), falling back to
- * its `displayName`/`description` if a plugin doesn't declare dedicated
- * dialog copy. The live daily price comes from `/_antseed/day-pass-price`,
- * a hardcoded admin route on the buyer-proxy (apps/cli/src/proxy/buyer-proxy.ts)
- * reading whatever peer advertises a `type: 'day-pass'` offer -- not
- * (yet) a member of the `Router` TS interface itself.
- */
 export function RouterInfoDialog({ isOpen, plugin, onClose, onConfirm }: Props) {
-  const usesDayPass = !!plugin?.dailyPassServiceId;
-  const { data: offer } = useCachedResource(dayPassPriceResource, isOpen && usesDayPass);
-  const dailyUsd = offer?.flatUsdPrice;
-  const title = plugin?.autoRouteInfo?.title ?? plugin?.displayName ?? 'Model router';
-  const body = plugin?.autoRouteInfo?.body ?? plugin?.description ?? '';
-
+  const [billing, setBilling] = useState<AccessBillingSnapshot | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const serviceId = plugin?.accessServiceId;
+  useEffect(() => {
+    let disposed = false;
+    setBilling(null);
+    setError('');
+    if (isOpen && serviceId) {
+      void window.antseedDesktop?.chatAiAccessBilling?.({ action: 'status', serviceId }).then((result) => {
+        if (disposed) return;
+        if (result.ok && result.data) setBilling(result.data);
+        else setError(result.error ?? 'Access pricing is unavailable.');
+      }).catch(() => { if (!disposed) setError('Access pricing is unavailable.'); });
+    }
+    return () => { disposed = true; };
+  }, [isOpen, serviceId]);
+  const offer = billing?.offer;
+  const submit = async (action: 'activate' | 'pause') => {
+    if (!serviceId) return onConfirm();
+    if (!offer || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.antseedDesktop?.chatAiAccessBilling?.({
+        action, serviceId, sellerPeerId: offer.peerId,
+        amountMicroUsdc: offer.amountMicroUsdc, durationSeconds: offer.durationSeconds,
+      });
+      if (!result?.ok) throw new Error(result?.error ?? 'Access approval failed');
+      if (action === 'activate') onConfirm();
+      else onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Access approval failed');
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Modal
-      bodyClassName={styles.dialogBody}
-      isOpen={isOpen}
-      onClose={onClose}
-      size="sm"
-      title={title}
-    >
-      <p className={styles.paragraph}>{body}</p>
-
-      {usesDayPass && <div className={styles.priceLine}>
-        {typeof dailyUsd === 'number'
-          ? (
-            <>
-              <span className={styles.priceAmount}>${dailyUsd.toFixed(2)}</span>
-              <span className={styles.priceSecondary}>
-                {' '}per day you use it
-              </span>
-            </>
-          )
-          : <span className={styles.priceAmount}>Billed per day used</span>}
+    <Modal bodyClassName={styles.dialogBody} size="sm" isOpen={isOpen} onClose={onClose} title={plugin?.displayName ?? 'Model router'}>
+      <p className={styles.paragraph}>{plugin?.description}</p>
+      <p className={styles.paragraph}>The router chooses the initial model for a conversation. Later turns reuse that model. Model inference is billed separately.</p>
+      {serviceId && <div className={styles.priceLine}>
+        {offer ? `$${(Number(offer.amountMicroUsdc) / 1_000_000).toFixed(6)} per ${offer.durationSeconds / 3600}-hour access pass` : 'No unambiguous current access price is available.'}
       </div>}
-      <p className={styles.paragraph}>
-        {usesDayPass
-          ? 'Only on the days you use it. Turn off any time from Preferences.'
-          : 'Enabling this router does not authorize a day pass or token charges for routing. Configure any paid routing service separately. Model inference is billed separately.'}
-      </p>
-
+      {serviceId && <p className={styles.paragraph}>Enabling approves purchase on use, not a purchase now. No idle-period charges. Changed terms pause new purchases until you accept them again.</p>}
+      {!serviceId && <p className={styles.paragraph}>Enabling does not approve paid classification. Configure any token-priced or per-call routing service separately.</p>}
+      {billing?.agreement?.pauseReason && <p className={styles.paragraph}>Purchases paused: {billing.agreement.pauseReason}.</p>}
+      {error && <p className={styles.paragraph} role="alert">{error}</p>}
       <div className={styles.actions}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => onConfirm(usesDayPass ? offer ?? null : null)}>
-          {usesDayPass && !offer ? 'Enable without day-pass consent' : 'Enable'}
+        {billing?.agreement?.enabled && <Button variant="ghost" disabled={busy} onClick={() => void submit('pause')}>Pause purchases</Button>}
+        <Button disabled={busy || (!!serviceId && !offer)} onClick={() => void submit('activate')}>
+          {serviceId ? 'Accept terms and enable' : 'Enable router'}
         </Button>
       </div>
     </Modal>

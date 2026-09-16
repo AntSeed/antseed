@@ -21,8 +21,7 @@ const fallbackPreferences: VprRoutingPreferences = {
   minTrustScore: 60,
   allowedPeerIds: [],
   blockedPeerIds: [],
-  cqt: 5,
-  dayPassOnDemandEnabled: false,
+  routerEnabled: false,
 };
 
 test('plugin settings round-trip independently without granting payment consent', () => {
@@ -31,21 +30,17 @@ test('plugin settings round-trip independently without granting payment consent'
   const loaded = loadVprRoutingPreferences(fallbackPreferences);
   assert.deepEqual(loaded.routerSettings, routerSettings);
   assert.deepEqual(buyerModelRoutingPreferences(loaded).routerSettings, routerSettings);
-  assert.equal(loaded.dayPassOnDemandEnabled, false);
+  assert.equal(loaded.routerEnabled, false);
 });
 
-test('legacy activation migrates without granting new day-pass consent', () => {
-  for (const consent of [true, false]) {
-    localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ dayPassOnDemandEnabled: consent, autoRouting: false }));
+test('explicit router activation round-trips independently from billing approval', () => {
+  for (const enabled of [true, false]) {
+    localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ routerEnabled: enabled, autoRouting: false }));
     const loaded = loadVprRoutingPreferences(fallbackPreferences);
-    assert.equal(loaded.routerEnabled, consent);
-    assert.equal(loaded.dayPassOnDemandEnabled, consent);
+    assert.equal(loaded.routerEnabled, enabled);
     assert.equal(loaded.autoRouting, false);
+    assert.equal('agreedDayPassPricesUsdc' in loaded, false);
   }
-  localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ routerEnabled: true }));
-  const loaded = loadVprRoutingPreferences(fallbackPreferences);
-  assert.equal(loaded.routerEnabled, true);
-  assert.equal(loaded.dayPassOnDemandEnabled, false);
 });
 
 test('migrates the previous zero default to the new 6.0 minimum', () => {
@@ -103,10 +98,8 @@ test('valid VPR preferences and route selection save and load', () => {
     minTrustScore: 62,
     allowedPeerIds: ['peer-1'],
     blockedPeerIds: ['peer-2', 'peer-3'],
-    cqt: 7,
-    dayPassOnDemandEnabled: true,
     selectedRouterPackage: '@antseed/router-custom',
-    agreedDayPassPricesUsdc: { cccccccccccccccccccccccccccccccccccccccc: 0.89 },
+    routerEnabled: true,
   };
   const routeSelection: VprRouteSelection = {
     model: {
@@ -126,31 +119,14 @@ test('valid VPR preferences and route selection save and load', () => {
   assert.deepEqual(loadVprRouteSelection(fallbackRouteSelection), routeSelection);
 });
 
-test('agreedDayPassPricesUsdc drops malformed entries instead of the whole map', () => {
+test('legacy pass consent is not imported as payment approval or router activation', () => {
   localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({
-    ...fallbackPreferences,
-    agreedDayPassPricesUsdc: {
-      cccccccccccccccccccccccccccccccccccccccc: 0.89,
-      dddddddddddddddddddddddddddddddddddddddd: 'not-a-number',
-      eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: -1,
-    },
+    ...fallbackPreferences, dayPassOnDemandEnabled: true,
+    agreedDayPassPricesUsdc: { cccccccccccccccccccccccccccccccccccccccc: 0.89 },
   }));
-
-  assert.deepEqual(
-    loadVprRoutingPreferences(fallbackPreferences).agreedDayPassPricesUsdc,
-    { cccccccccccccccccccccccccccccccccccccccc: 0.89 },
-  );
-});
-
-test('agreedDayPassPricesUsdc falls back to the fallback map when nothing is stored', () => {
-  const fallbackWithAgreedPrice: VprRoutingPreferences = {
-    ...fallbackPreferences,
-    agreedDayPassPricesUsdc: { cccccccccccccccccccccccccccccccccccccccc: 1.2 },
-  };
-  assert.deepEqual(
-    loadVprRoutingPreferences(fallbackWithAgreedPrice).agreedDayPassPricesUsdc,
-    { cccccccccccccccccccccccccccccccccccccccc: 1.2 },
-  );
+  const result = loadVprRoutingPreferences(fallbackPreferences);
+  assert.equal(result.routerEnabled, false);
+  assert.equal('agreedDayPassPricesUsdc' in result, false);
 });
 
 test('buyer config projection includes every field an installed router plugin\'s payment gate reads', () => {
@@ -160,19 +136,16 @@ test('buyer config projection includes every field an installed router plugin\'s
     minTrustScore: fallbackPreferences.minTrustScore,
     allowedPeerIds: fallbackPreferences.allowedPeerIds,
     blockedPeerIds: fallbackPreferences.blockedPeerIds,
-    cqt: fallbackPreferences.cqt,
-    dayPassOnDemandEnabled: fallbackPreferences.dayPassOnDemandEnabled,
     routerEnabled: false,
     selectedRouterPackage: null,
     autoRouting: fallbackPreferences.autoRouting,
-    agreedDayPassPricesUsdc: {},
   });
 });
 
 test('buyer config projection forwards autoRouting -- an installed router\'s real-money signing can gate on this too', () => {
   // Regression: a buyer trying to stop day-pass billing reasonably
   // reached for the "Auto select seller" switch instead of the separate
-  // control that owns dayPassOnDemandEnabled, and billing kept running
+  // control that owns routerEnabled, and billing kept running
   // because this field used to be dropped from the projection entirely.
   const projected = buyerModelRoutingPreferences({ ...fallbackPreferences, autoRouting: false });
   assert.equal(projected.autoRouting, false);
@@ -181,53 +154,41 @@ test('buyer config projection forwards autoRouting -- an installed router\'s rea
 test('buyer config projection forwards which router plugin is selected -- process-manager.ts reads this back to decide which router to start', () => {
   const projected = buyerModelRoutingPreferences({
     ...fallbackPreferences,
-    dayPassOnDemandEnabled: true,
     selectedRouterPackage: '@antseed/router-custom',
   });
   assert.equal(projected.selectedRouterPackage, '@antseed/router-custom');
 });
 
-test('selectedRouterPackage stays unselected when absent from stored preferences, regardless of dayPassOnDemandEnabled', () => {
-  for (const dayPassOnDemandEnabled of [true, false]) {
+test('selectedRouterPackage stays unselected when absent from stored preferences, regardless of routerEnabled', () => {
+  for (const routerEnabled of [true, false]) {
     localStorage.setItem(
       VPR_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ ...fallbackPreferences, dayPassOnDemandEnabled }),
+      JSON.stringify({ ...fallbackPreferences, routerEnabled }),
     );
     assert.equal(loadVprRoutingPreferences(fallbackPreferences).selectedRouterPackage, null);
   }
 });
 
-test('an explicit "None" (selectedRouterPackage: null) stays unselected regardless of dayPassOnDemandEnabled', () => {
-  for (const dayPassOnDemandEnabled of [true, false]) {
+test('an explicit "None" (selectedRouterPackage: null) stays unselected regardless of routerEnabled', () => {
+  for (const routerEnabled of [true, false]) {
     localStorage.setItem(
       VPR_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ ...fallbackPreferences, dayPassOnDemandEnabled, selectedRouterPackage: null }),
+      JSON.stringify({ ...fallbackPreferences, routerEnabled, selectedRouterPackage: null }),
     );
     assert.equal(loadVprRoutingPreferences(fallbackPreferences).selectedRouterPackage, null);
   }
 });
 
-test('buyer config projection forwards the day-pass-enable toggle -- real money gate, must not drop silently', () => {
-  const projected = buyerModelRoutingPreferences({ ...fallbackPreferences, dayPassOnDemandEnabled: true });
-  assert.equal(projected.dayPassOnDemandEnabled, true);
+test('buyer config projection forwards router activation without payment state', () => {
+  const projected = buyerModelRoutingPreferences({ ...fallbackPreferences, routerEnabled: true });
+  assert.equal(projected.routerEnabled, true);
 });
 
-test('cqt dial value round-trips through save/load', () => {
-  saveVprRoutingPreferences({ ...fallbackPreferences, cqt: 9 });
-  assert.equal(loadVprRoutingPreferences(fallbackPreferences).cqt, 9);
-});
-
-test('an invalid stored cqt value falls back to the default rather than an off-scale number', () => {
-  localStorage.setItem(
-    VPR_PREFERENCES_STORAGE_KEY,
-    JSON.stringify({ ...fallbackPreferences, cqt: 4 }), // not one of {1,3,5,7,9}
-  );
-  assert.equal(loadVprRoutingPreferences(fallbackPreferences).cqt, fallbackPreferences.cqt);
-});
-
-test('buyer config projection forwards the cqt dial value', () => {
-  const projected = buyerModelRoutingPreferences({ ...fallbackPreferences, cqt: 3 });
-  assert.equal(projected.cqt, 3);
+test('legacy universal cost quality settings are not loaded or projected', () => {
+  localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({ ...fallbackPreferences, cqt: 9 }));
+  const loaded = loadVprRoutingPreferences(fallbackPreferences);
+  assert.equal('cqt' in loaded, false);
+  assert.equal('cqt' in buyerModelRoutingPreferences(loaded), false);
 });
 
 test('buyer config projection drops malformed peer ids before writing config', () => {

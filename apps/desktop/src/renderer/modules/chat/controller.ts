@@ -1513,7 +1513,7 @@ export function initChatModule({
   function adoptDefaultVprModel(): VprSelectedModel | null {
     const defaultModel = selectDefaultVprModel(
       uiState.vprModelCatalog, null, freeEntryRouteReputation,
-      uiState.vprRoutingPreferences.routerEnabled ?? uiState.vprRoutingPreferences.dayPassOnDemandEnabled ?? false,
+      uiState.vprRoutingPreferences.routerEnabled ?? false,
     );
     if (!defaultModel) return null;
     const entry = findCatalogEntry(uiState.vprModelCatalog, defaultModel.provider, defaultModel.serviceId);

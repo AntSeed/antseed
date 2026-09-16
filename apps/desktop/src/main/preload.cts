@@ -296,11 +296,8 @@ const api = {
   chatAiListRoutingDecisions(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
     return ipcRenderer.invoke('chat:ai-list-routing-decisions');
   },
-  chatAiGetDayPassPrice(): Promise<{ ok: boolean; data?: { peerId?: string; flatUsdPrice?: number } | null; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-get-day-pass-price');
-  },
-  chatAiGetDayPassPriceIncrease(): Promise<{ ok: boolean; data?: { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-get-day-pass-price-increase');
+  chatAiAccessBilling(input: import('../shared/access-billing').AccessBillingRequest): Promise<import('../shared/access-billing').AccessBillingResult> {
+    return ipcRenderer.invoke('chat:ai-access-billing', input);
   },
   chatAiGetRoutingSavingsBaseline(): Promise<{ ok: boolean; data?: string | null; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-routing-savings-baseline');

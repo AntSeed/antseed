@@ -43,18 +43,8 @@ let active: ActiveAutoRouterPlugin | null = null;
 export let AUTO_ROUTER_LABEL: string = DEFAULT_AUTO_ROUTER_LABEL;
 
 /**
- * Minimum trust score enforced while `dayPassOnDemandEnabled` is on -- on the
- * *stored* 0-100 scale.
- * `reputationScaleLabel` (modules/catalog/seller-format.ts) displays this
- * scale as 0.0-10.0 (`score / 10`), so this constant is display "7.0". A
- * flat, host-side floor rather than per-plugin metadata -- not worth a new
- * `AntseedRouterPlugin` field for one UX guard.
- */
-export const AUTO_DAY_PASS_MIN_TRUST_SCORE = 70;
-
-/**
  * Resolves the Auto entry's *identity* -- independent of whether
- * `dayPassOnDemandEnabled` is currently on. `isAutoRouterEntry`/
+ * `routerEnabled` is currently on. `isAutoRouterEntry`/
  * `isAutoRouterSelected` need to keep recognizing an already-selected Auto
  * conversation/model even after the user flips the toggle off (e.g. so a
  * discover refresh doesn't silently rebind it to a concrete model) -- only
@@ -95,7 +85,7 @@ export function isAutoRouterEntry(entry: Pick<VprModelCatalogEntry, 'provider' |
  * Null-safe wrapper around `isAutoRouterEntry` for `vprRouteSelection.model`
  * (which is `null` before any model is chosen). The CQT dial's visibility
  * gates on a dedicated Preferences toggle instead
- * (`VprRoutingPreferences.dayPassOnDemandEnabled`) -- a momentary model
+ * (`VprRoutingPreferences.routerEnabled`) -- a momentary model
  * selection is not a real substitute for explicit,
  * standing consent to a real-money day-pass charge. Kept for any other
  * "is Auto the current selection" check that isn't a consent gate.
@@ -151,7 +141,7 @@ export function currentAutoRouteEntry(): VprModelCatalogEntry | null {
 
 /**
  * Idempotently prepends the Auto entry to a freshly-derived catalog, but only
- * when `preferences.dayPassOnDemandEnabled` is true -- the entry starts a
+ * when `preferences.routerEnabled` is true -- the entry starts a
  * real daily USDC charge, so it must not be offered as a pickable model until
  * the buyer has explicitly consented via the Preferences toggle (decisions
  * doc SS14 item 29). Also refreshes the shared "active router" cache that
@@ -167,13 +157,13 @@ export function currentAutoRouteEntry(): VprModelCatalogEntry | null {
  */
 export function withAutoRouterCatalogEntry(
   catalog: VprModelCatalogEntry[],
-  preferences: Pick<VprRoutingPreferences, 'routerEnabled' | 'dayPassOnDemandEnabled' | 'selectedRouterPackage'>,
+  preferences: Pick<VprRoutingPreferences, 'routerEnabled' | 'selectedRouterPackage'>,
   availableRouters: RouterPluginInfo[],
 ): VprModelCatalogEntry[] {
   active = resolveActiveAutoRouterPlugin(preferences, availableRouters);
   AUTO_ROUTER_LABEL = active?.label ?? DEFAULT_AUTO_ROUTER_LABEL;
 
-  if (!(preferences.routerEnabled ?? preferences.dayPassOnDemandEnabled ?? false) || !active) {
+  if (!(preferences.routerEnabled ?? false) || !active) {
     return catalog.some(isAutoRouterEntry) ? catalog.filter((entry) => !isAutoRouterEntry(entry)) : catalog;
   }
   if (catalog.some(isAutoRouterEntry)) return catalog;

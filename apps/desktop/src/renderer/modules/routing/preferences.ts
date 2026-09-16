@@ -47,23 +47,6 @@ function readNonNegativeFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-/** Seller peer id -> agreed day-pass price (whole USD), dropping any malformed entries rather than the whole map. */
-function readAgreedDayPassPrices(value: unknown, fallback: Record<string, number>): Record<string, number> {
-  if (!isStoredObject(value)) return fallback;
-  const out: Record<string, number> = {};
-  for (const [peerId, price] of Object.entries(value)) {
-    if (typeof price === 'number' && Number.isFinite(price) && price >= 0) out[peerId] = price;
-  }
-  return out;
-}
-
-/** CQT dial: only these five discrete positions are valid. */
-const VALID_CQT_VALUES = new Set([1, 3, 5, 7, 9]);
-
-function readCqt(value: unknown, fallback: number): number {
-  return typeof value === 'number' && VALID_CQT_VALUES.has(value) ? value : fallback;
-}
-
 /** Trimmed, de-duplicated, blank-free peer id list — order preserved. */
 export function normalizePeerIdList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -116,7 +99,6 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
   // value, never on -- readBoolean's `fallback` here must itself be `false`
   // (see DEFAULT_MODEL_ROUTING_PREFERENCES), not inherited from some other
   // truthy default.
-  const dayPassOnDemandEnabled = readBoolean(parsed.dayPassOnDemandEnabled, fallback.dayPassOnDemandEnabled ?? false);
   let routerSettings: ModelRoutingPreferences['routerSettings'];
   try { routerSettings = readRouterSettings(parsed.routerSettings); } catch { routerSettings = {}; }
 
@@ -134,20 +116,14 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
     blockedPeerIds: Array.isArray(parsed.blockedPeerIds)
       ? normalizePeerIdList(parsed.blockedPeerIds)
       : fallback.blockedPeerIds,
-    cqt: readCqt(parsed.cqt, fallback.cqt ?? 5),
     ...(Object.keys(routerSettings).length ? { routerSettings } : {}),
-    dayPassOnDemandEnabled,
-    routerEnabled: readBoolean(parsed.routerEnabled, dayPassOnDemandEnabled),
+    routerEnabled: readBoolean(parsed.routerEnabled, false),
     // Nothing is selected until the user explicitly picks a router, whether
     // the field is absent or explicitly `null` (VprPreferencesView writes
     // `null` for the user's "None" choice) -- both resolve the same way.
     selectedRouterPackage: readNullableString(
       parsed.selectedRouterPackage,
       fallback.selectedRouterPackage ?? null,
-    ),
-    agreedDayPassPricesUsdc: readAgreedDayPassPrices(
-      parsed.agreedDayPassPricesUsdc,
-      fallback.agreedDayPassPricesUsdc ?? {},
     ),
   };
 }
@@ -173,13 +149,10 @@ export function buyerModelRoutingPreferences(
     minTrustScore: value.minTrustScore,
     allowedPeerIds: validPeerIds(value.allowedPeerIds),
     blockedPeerIds: validPeerIds(value.blockedPeerIds),
-    cqt: value.cqt,
     ...(value.routerSettings ? { routerSettings: readRouterSettings(value.routerSettings) } : {}),
-    dayPassOnDemandEnabled: value.dayPassOnDemandEnabled,
-    routerEnabled: value.routerEnabled ?? value.dayPassOnDemandEnabled ?? false,
+    routerEnabled: value.routerEnabled ?? false,
     selectedRouterPackage: value.selectedRouterPackage ?? null,
     autoRouting: value.autoRouting,
-    agreedDayPassPricesUsdc: value.agreedDayPassPricesUsdc ?? {},
   };
 }
 

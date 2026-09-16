@@ -90,7 +90,7 @@ export function VprHomeView({ onSelectView }: Props) {
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
     showRoutedPeer: state.vprFloatShowRoutedPeer,
-    routerEnabled: state.vprRoutingPreferences.routerEnabled ?? state.vprRoutingPreferences.dayPassOnDemandEnabled ?? false,
+    routerEnabled: state.vprRoutingPreferences.routerEnabled ?? false,
   }), shallowEqual);
   const proxyResource = useCachedResource(systemProxyResource);
   const conversationsResource = useCachedResource(buyerConversationsResource);

@@ -499,42 +499,22 @@ export function registerPiChatHandlers({
     }
   });
 
-  ipcMain.handle('chat:ai-get-day-pass-price', async () => {
-    // The real, live-advertised `type: 'day-pass'` price, for the
-    // Auto-routing Preferences toggle's disclosure copy. Localhost-fetch to the buyer-proxy -- no new
-    // transport. `null` (not an error) whenever no routing peer has been
-    // discovered yet or none advertises a day-pass price; the toggle falls
-    // back to its generic copy in that case.
+  ipcMain.handle('chat:ai-access-billing', async (_event, input: import('../../shared/access-billing.js').AccessBillingRequest) => {
     try {
+      if (!input || !['status', 'activate', 'pause'].includes(input.action) || typeof input.serviceId !== 'string') throw new Error('Invalid access request');
       const port = await resolveProxyPort(configPath);
-      const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/day-pass-price`, {
-        signal: AbortSignal.timeout(2_000),
+      const url = new URL(`${LOCALHOST_URL}:${port}/_antseed/access-billing`);
+      url.searchParams.set('serviceId', input.serviceId);
+      if (input.sellerPeerId) url.searchParams.set('sellerPeerId', input.sellerPeerId);
+      const response = await fetch(url, input.action === 'status' ? { signal: AbortSignal.timeout(5_000) } : {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input), signal: AbortSignal.timeout(5_000),
       });
-      if (!response.ok) return { ok: true, data: null };
-      const body = await response.json() as { ok?: boolean; offer?: { peerId?: string; flatUsdPrice?: number } | null };
-      return { ok: true, data: body.offer ?? null };
-    } catch {
-      return { ok: true, data: null };
-    }
-  });
-
-  ipcMain.handle('chat:ai-get-day-pass-price-increase', async () => {
-    // Whether the connect daemon is currently capping some seller's
-    // day-pass signing below what it's actually advertising (buyer-proxy's
-    // own /_antseed/day-pass-price-increase, sourced from
-    // day-pass-signing.ts's onPriceCappedChange). `null` (not an error)
-    // whenever nothing is currently capped or the daemon isn't reachable --
-    // the caller just doesn't reopen the router dialog in that case.
-    try {
-      const port = await resolveProxyPort(configPath);
-      const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/day-pass-price-increase`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!response.ok) return { ok: true, data: null };
-      const body = await response.json() as { ok?: boolean; notice?: { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null };
-      return { ok: true, data: body.notice ?? null };
-    } catch {
-      return { ok: true, data: null };
+      const body = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !body.ok) return { ok: false, error: body.error ?? 'Access request failed' };
+      return { ok: true, data: body };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Access request failed' };
     }
   });
 

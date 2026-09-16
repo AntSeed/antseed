@@ -82,8 +82,8 @@ function normalizeRouterIdentifier(value: string | undefined): string {
  * router" dropdown, persisted as `buyer.routingPreferences.
  * selectedRouterPackage` -- VprPreferencesView.tsx) to a connect-mode start.
  *
- * Loading a router package does not depend on `dayPassOnDemandEnabled`.
- * `dayPassOnDemandEnabled` can be live-synced to an already-running buyer daemon
+ * Loading a router package does not depend on `routerEnabled`.
+ * `routerEnabled` can be live-synced to an already-running buyer daemon
  * via buyer-proxy's own hot-reload path, but nothing respawns the daemon --
  * gating plugin *loading* on it would mean a user who enables Auto after the
  * daemon already started (the common case, since it auto-starts before

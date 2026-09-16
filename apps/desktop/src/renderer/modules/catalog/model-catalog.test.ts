@@ -197,7 +197,7 @@ test('selectDefaultVprModel prefers the auto router when enabled, ahead of a fre
       inputUsdPerMillion: 0, outputUsdPerMillion: 0,
     }),
   ]);
-  const catalog = withAutoRouterCatalogEntry(withFreeModel, { dayPassOnDemandEnabled: true, selectedRouterPackage: LEVANTO_LIKE_ROUTER.package }, [LEVANTO_LIKE_ROUTER]);
+  const catalog = withAutoRouterCatalogEntry(withFreeModel, { routerEnabled: true, selectedRouterPackage: LEVANTO_LIKE_ROUTER.package }, [LEVANTO_LIKE_ROUTER]);
 
   const result = selectDefaultVprModel(catalog, null, undefined, true);
 

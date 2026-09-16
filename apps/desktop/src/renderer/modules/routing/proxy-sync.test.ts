@@ -20,7 +20,7 @@ const LEVANTO_LIKE_ROUTER: RouterPluginInfo = {
 };
 withAutoRouterCatalogEntry(
   [],
-  { dayPassOnDemandEnabled: true, selectedRouterPackage: LEVANTO_LIKE_ROUTER.package },
+  { selectedRouterPackage: LEVANTO_LIKE_ROUTER.package },
   [LEVANTO_LIKE_ROUTER],
 );
 

@@ -735,12 +735,12 @@ registerActions({
     }
     // Peer rules gate which sellers and models are visible at all, so a patch
     // touching them has to re-derive the catalog, not just repaint. Same for
-    // dayPassOnDemandEnabled: it gates whether the Auto entry is even
+    // routerEnabled: it gates whether the Auto entry is even
     // present in the catalog (auto-router.ts's withAutoRouterCatalogEntry),
     // so flipping it has to take effect immediately, not wait for the next
     // unrelated recompute. `!== undefined` (not truthy) because turning the
-    // toggle off is `patch.dayPassOnDemandEnabled === false`.
-    if (patch.allowedPeerIds || patch.blockedPeerIds || patch.routerEnabled !== undefined || patch.dayPassOnDemandEnabled !== undefined) {
+    // toggle off is `patch.routerEnabled === false`.
+    if (patch.allowedPeerIds || patch.blockedPeerIds || patch.routerEnabled !== undefined) {
       chatApi.applyPeerAccessRules();
     }
     notifyUiStateChanged();

@@ -191,7 +191,7 @@ export type RouterPluginInfo = {
   displayName: string;
   description: string;
   autoRouteServiceId?: string;
-  dailyPassServiceId?: string;
+  accessServiceId?: string;
   autoRouteInfo?: { title: string; body: string };
   preferencesSummary?: string;
   savingsBaselineModel?: string;
@@ -355,8 +355,7 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiListRoutingDecisions?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
-  chatAiGetDayPassPrice?: () => Promise<{ ok: boolean; data?: { peerId?: string; flatUsdPrice?: number } | null; error?: string }>;
-  chatAiGetDayPassPriceIncrease?: () => Promise<{ ok: boolean; data?: { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null; error?: string }>;
+  chatAiAccessBilling?: (input: import('../../shared/access-billing').AccessBillingRequest) => Promise<import('../../shared/access-billing').AccessBillingResult>;
   chatAiGetRoutingSavingsBaseline?: () => Promise<{ ok: boolean; data?: string | null; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
