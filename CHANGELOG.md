@@ -84,6 +84,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Development and CI/release builds now standardize on Node 24, with Node 24.21.0 pinned for nvm and Volta and Node 24-compatible SQLite prebuilds for Nix. Electron's bundled runtime, published package engine ranges, and application behavior are unchanged.
 - Desktop: "More options" in the Add Credits chooser gains a "Deposit using Outerfound" row that opens the AntSeed Pay page on its Stripe integration (card, US only), alongside Meridian.
 
 - Desktop: the Add Credits chooser now leads with the AntSeed Pay card checkout (Crossmint) for every region, opened in a narrow in-app popup. The Fun (fun.xyz) checkout, its API key (`payments.funkit.apiKey` / `ANTSEED_FUNKIT_API_KEY`), and the region probe that gated the primary CTA are removed; dev builds target a local pay page via `ANTSEED_PAY_URL`.

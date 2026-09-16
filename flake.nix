@@ -21,14 +21,14 @@
       prebuildInfo = {
         better-sqlite3 = {
           version = "12.6.2";
-          abi = "node-v127"; # nodejs_22
+          abi = "node-v137";
           repo = "WiseLibs/better-sqlite3";
           napi = false;
           hashes = {
-            x86_64-linux = "sha256-gpYGV8t3WNh4fNeoZgA8FwBcVCWZhuSBFuPA7GIZFTk=";
-            aarch64-linux = "sha256-4Yqhr7C3fshNYMSiaLOm6HEjvVxhS1fDrcwHHrKXa/A=";
-            x86_64-darwin = "sha256-0VwdLLHICREmMwUzDuVgcUHCQLjn134AJPp4GmVpWlI=";
-            aarch64-darwin = "sha256-1NbsR6ZuSqYop00uCT3EBsTxibFbJDB0sz4CusX7JE8=";
+            x86_64-linux = "sha256-MTi6apJotwoZSyEoCcEpZ7d6wobWVkX4+wFHJGS5hls=";
+            aarch64-linux = "sha256-TmbCwMviACBgCKNfvPuKiTqkdd8iOhEAzMUNbdLc6EQ=";
+            x86_64-darwin = "sha256-/gYtua8AzW1J5kd3vBuwkzZErhoQu6bZFi6DGRBoIno=";
+            aarch64-darwin = "sha256-ZkqBSpBFDrRy9yl9GZK33CtRLDfKu9mhAps+hY56mBw=";
           };
         };
         node-datachannel = {
@@ -76,7 +76,7 @@
               cmake
               git
               ninja
-              nodejs_22
+              nodejs_24
               pkg-config
               pnpm_9
               python311
@@ -96,7 +96,7 @@
           pkgs = import nixpkgs { inherit system; };
           inherit (pkgs) lib stdenv;
 
-          nodejs = pkgs.nodejs_22;
+          nodejs = pkgs.nodejs_24;
           pnpm = pkgs.pnpm_9;
           inherit (nodejs) version;
 
