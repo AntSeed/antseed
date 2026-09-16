@@ -213,6 +213,7 @@ describe('IndexedDbChannelStore', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, initialMux, 1_000n);
     await manager.handleAuthAck(sellerPeerId, { channelId });
 
+    vi.spyOn(manager, 'getBalance').mockResolvedValue({ available: 1_000_000n, reserved: 0n });
     const failedMux = paymentMux();
     failedMux.sendSpendingAuth = () => { throw new Error('connection closed'); };
     await expect(manager.topUpReserve(sellerPeerId, failedMux)).rejects.toThrow('connection closed');

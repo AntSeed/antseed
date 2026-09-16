@@ -13,6 +13,7 @@ import {
   adaptPeerFaultErrorResponse,
   buyerFault,
   computeOnChainReputationScore,
+  createPerCallBillingModel,
   type ModelRoutingPreferences,
   type PeerInfo,
   type SerializedHttpResponse,
@@ -183,6 +184,33 @@ test('disabled routers are blocked by the host without invoking a plugin', async
   assert.equal(calls, 0)
 })
 
+test('routers require explicit activation even when no preference object was supplied', async () => {
+  const peer = routerPeer('a')
+  let calls = 0
+  for (const preferences of [null, { ...priceAndTrustPreferences }]) {
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      selectRoute: async () => { calls++; return null },
+    })
+    ;(proxy as any)._routingPreferences = preferences
+    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(response.statusCode, 503)
+  }
+  assert.equal(calls, 0)
+})
+
+test('unknown model names never trigger a classifier operation', async () => {
+  const peer = routerPeer('a')
+  let calls = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async () => { calls++; return [{ peerId: peer.peerId, serviceId: 'test-model' }] },
+  })
+  ;(proxy as any)._node.sendRequest = async () => { throw new Error('must not dispatch') }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'mistyped-model', messages: [] } }))
+  assert.equal(response.statusCode, 502)
+  assert.equal(calls, 0)
+})
+
 test('selectRoute receives eligible candidate prices without requiring forecasts', async () => {
   const allowed = routerPeer('a')
   const blocked = routerPeer('b')
@@ -194,7 +222,45 @@ test('selectRoute receives eligible candidate prices without requiring forecasts
     },
   }, undefined, { ...priceAndTrustPreferences, blockedPeerIds: [blocked.peerId] })
   await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
-  assert.deepEqual(candidates, [{ peerId: allowed.peerId, serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }])
+  assert.deepEqual(candidates, [{ peerId: allowed.peerId, serviceId: 'test-model', inputUsdPerMillion: 1,
+    cachedInputUsdPerMillion: null, outputUsdPerMillion: 2 }])
+})
+
+test('router candidate snapshots preserve zero and nonzero cached-input prices', async () => {
+  for (const cachedPrice of [0, 0.25]) {
+    const peer = routerPeer('a')
+    peer.providerPricing!.openai!.services!['test-model']!.cachedInputUsdPerMillion = cachedPrice
+    let candidates: any[] = []
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      selectRoute: async (...args: any[]) => { candidates = args[5].candidates; return [] },
+    })
+    await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(candidates.length, 1)
+    assert.equal(candidates[0].cachedInputUsdPerMillion, cachedPrice)
+  }
+})
+
+test('a fixed-fee service is not offered or accepted as zero-token-price inference', async () => {
+  const allowed = routerPeer('a')
+  const fixedFee = routerPeer('b')
+  fixedFee.providerPricing!.openai!.services!['test-model'] = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
+  fixedFee.providerServiceUnitBillingModels = { openai: { services: {
+    'test-model': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+  } } }
+  let candidates: any[] = []
+  const proxy = makeBuyerProxyWithPeers([allowed, fixedFee], [allowed, fixedFee], {
+    ...permissiveRouter(),
+    selectRoute: async (...args: any[]) => {
+      candidates = args[5].candidates
+      return [{ peerId: fixedFee.peerId, serviceId: 'test-model' }]
+    },
+  })
+  let dispatches = 0
+  ;(proxy as any)._node.sendRequest = async () => { dispatches++; throw new Error('must not dispatch') }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+  assert.deepEqual(candidates.map((candidate) => candidate.peerId), [allowed.peerId])
+  assert.equal(response.statusCode, 502)
+  assert.equal(dispatches, 0)
 })
 
 test('host sends only the active router settings and rejects unknown fields before invoking it', async () => {
@@ -275,6 +341,61 @@ test('a valid first model remains selected when its first inference fails', asyn
   assert.equal((await send()).statusCode, 503)
   ;(proxy as any)._peerHealth.clear()
   assert.equal((await send()).statusCode, 200)
+  assert.equal(classifications, 1)
+})
+
+test('reused models enforce host price ceilings and fail over without reclassifying', async () => {
+  const firstPeer = routerPeer('a')
+  const secondPeer = routerPeer('b')
+  let classifications = 0
+  const forwarded: string[] = []
+  const proxy = makeBuyerProxyWithPeers([firstPeer, secondPeer], [firstPeer, secondPeer], {
+    ...permissiveRouter(),
+    selectRoute: async () => { classifications++; return [{ peerId: firstPeer.peerId, serviceId: 'test-model' }] },
+  })
+  ;(proxy as any)._maxPricing = { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 } }
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+    forwarded.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = () => invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-vpr-session-id': 'reuse-price-policy' }, body: { model: 'router-test', messages: [] },
+  }))
+  assert.equal((await send()).statusCode, 200)
+  firstPeer.providerPricing!.openai!.services!['test-model']!.inputUsdPerMillion = 10
+  assert.equal((await send()).statusCode, 200)
+  assert.deepEqual(forwarded, [firstPeer.peerId, secondPeer.peerId])
+  secondPeer.providerPricing!.openai!.services!['test-model']!.inputUsdPerMillion = 10
+  assert.equal((await send()).statusCode, 502)
+  assert.equal(classifications, 1)
+  assert.equal(forwarded.length, 2)
+})
+
+test('a persisted model choice survives proxy restart after unsuccessful inference', async (context) => {
+  const peer = routerPeer('a')
+  let classifications = 0
+  let dispatches = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async () => { classifications++; return [{ peerId: peer.peerId, serviceId: 'test-model' }] },
+  })
+  const dataDir = (proxy as any)._stateDir as string
+  context.after(() => rm(dataDir, { recursive: true, force: true }))
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
+    requestId: request.requestId, statusCode: ++dispatches === 1 ? 503 : 200, headers: {}, body: Buffer.from('{}'),
+  })
+  const request = () => makeProxyRequest({
+    headers: { 'x-vpr-session-id': 'persisted-selection' }, body: { model: 'router-test', messages: [] },
+  })
+  assert.equal((await invokeProxy(proxy, request())).statusCode, 503)
+  await (proxy as any)._conversations.flush()
+  const restarted = new BuyerProxy({
+    port: 0, dataDir, node: (proxy as any)._node, autoRouteServiceId: 'router-test',
+    routingPreferences: { ...priceAndTrustPreferences, routerEnabled: true },
+  })
+  ;(restarted as any)._getPeers = async () => [peer]
+  assert.equal((await invokeProxy(restarted, request())).statusCode, 200)
+  await (restarted as any)._conversations.flush()
   assert.equal(classifications, 1)
 })
 

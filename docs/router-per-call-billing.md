@@ -151,7 +151,7 @@ pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call
 pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-route
 ```
 
-Use Node 20 for the worktree's installed native dependencies. The two per-call
+Use the repository's pinned Node 24 runtime and matching native dependencies. The two per-call
 scenarios distinguish malformed JSON from a parseable but unadvertised model.
 Each settles two accepted classifications at 5,000 micro-USDC each; the rejected
 classification, HTTP error, blocked retry, and reused decision add no fee.

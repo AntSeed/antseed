@@ -49,6 +49,11 @@ The context supplies namespaced settings, an eligible candidate snapshot,
 identifies a new conversation or a request without a usable conversation ID;
 it does not ask the plugin to implement turn detection.
 
+Candidate prices include input, output, and cached-input rates. An unknown
+cached-input rate is `null`, not a fabricated zero or a token forecast.
+Fixed-per-call services are not eligible as token-priced inference candidates;
+their fee requires the separate classifier authorization described below.
+
 - `null`: decline; continue through ordinary fixed-model routing.
 - `[]`: claimed request with no route; fail closed.
 - Throw or timeout: fail closed unless the buyer explicitly configured a default
@@ -66,6 +71,10 @@ they do not buy another classification. Same-model peer failover remains possibl
 unless the user pinned a particular seller. With no stable conversation identity,
 each incoming request is a separate classification opportunity. This is not a
 cross-client idempotency guarantee.
+
+Reused models still pass current host price and trust checks. If a price rises
+above the buyer's ceiling, another eligible peer for the same model may serve
+the request. If none remains, the host fails without buying a new classification.
 
 ## Configuration example
 
@@ -140,6 +149,12 @@ Completed conversation model selections survive restart. Invalid-response debt
 is not paid merely to unblock a seller; that seller can consequently refuse
 future service. No refund or automatic paid retry workflow is added.
 
+Only one routing authorization can be active for a seller at a time. Overlapping
+classifications for different conversations can fail closed; there is no paid
+retry queue. Installed plugins are trusted in-process code, not a security
+sandbox: host validation constrains this routing/payment API, not arbitrary
+filesystem access by installed code.
+
 ## Verification
 
 Run builds before tests so dependent packages use current declarations:
@@ -161,7 +176,33 @@ and catch-up refusal, and actual settlement. Unit tests additionally cover
 policy enforcement, schema validation, deadlines, discovery compatibility,
 response isolation, authorization races, and migration from the v5 schema.
 
+Use the repository's pinned Node 24 runtime. When changing Node versions in an
+existing worktree, rebuild native SQLite bindings for the new runtime before
+running the tests.
+
 Before release: review the diff against current `origin/main`, run the suite on
 that integrated tree, and perform the normal package-version/release process.
 This PR does not activate a production router or validate a private vendor's
 seller. A later desktop or access-billing PR must be reviewed separately.
+
+### Local validation — September 16, 2026
+
+Validated after merging `origin/main` at `f2ee484a9`, using Node 24.21.0:
+
+| Check | Result |
+| --- | --- |
+| Dependency-tier builds and CLI build | Passed |
+| SDK tests | 1,156 passed |
+| CLI tests | 599 passed |
+| Buyer-core tests | 11 passed |
+| Browser SDK tests | 26 passed |
+| Workspace typechecks | Passed |
+| Unchanged desktop main and renderer typechecks | Passed |
+| Local-chain token classifier | Passed; 140 micro-USDC settled |
+| Local-chain fixed-fee classifier, malformed-response rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
+| Local-chain fixed-fee classifier, unadvertised-route rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
+
+The branch retains all commits from `codex/levanto-p1-local`. The final diff
+against the integrated main contains no desktop, Payments UI, or vendor-plugin
+files. No package publication, push, PR creation, or production deployment is
+part of this local validation.

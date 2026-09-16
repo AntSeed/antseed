@@ -24,7 +24,7 @@ export function validateRouterCandidate(options: {
   const plan = resolvePeerRoutePlan(peer, protocol, recommendation.serviceId, provider, 'strict')
   if (!plan?.serviceId || plan.serviceId !== recommendation.serviceId) return null
   const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
-  if (!offer) return null
+  if (!offer || offer.billing?.kind === 'per_call') return null
   const missing = plan.selection?.requiresTransform
     ? requiredParameters
     : findMissingRequiredParameters(peer, plan.provider, plan.serviceId, requiredParameters)
@@ -52,6 +52,7 @@ export function validateRouterCandidate(options: {
     effectiveReputationScore: reputation,
     hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
     inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
+    cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion ?? null,
     outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
     minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
   }

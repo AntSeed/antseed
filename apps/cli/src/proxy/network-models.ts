@@ -220,7 +220,7 @@ export function buildNetworkModels(
   }
 
   const allOffers = buildNetworkServiceOffers(peers)
-  const offersByPeerModel = new Map<string, Array<NetworkServiceOffer & { type: NetworkModelType }>>()
+  const offersByPeerModel = new Map<string, NetworkServiceOffer[]>()
   for (const offer of allOffers) {
     const key = canonicalModelKey(offer.serviceId)
     if (!key) continue

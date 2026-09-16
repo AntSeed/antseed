@@ -20,6 +20,7 @@ export type RouteCandidate = {
   reputation: number;
   hasCachedInputPricing: boolean;
   inputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion?: number | null;
   outputUsdPerMillion: number | null;
   minImageUsdPerImage: number | null;
 };
@@ -29,7 +30,7 @@ export type RouteSelectionContext = {
   settings?: Record<string, string>;
   signal: AbortSignal;
   deadlineMs: number;
-  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'outputUsdPerMillion'>>;
+  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion'>>;
   invokeService?: (
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
     parseResponse?: (response: SerializedHttpResponse) => Array<Pick<RouteCandidate, 'peerId' | 'serviceId'>>,

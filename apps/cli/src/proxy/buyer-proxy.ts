@@ -2535,7 +2535,8 @@ export class BuyerProxy {
             return candidate && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
               && peerAllowedByPolicy(this._node.router as BuyerPolicyRouter, candidate.request, candidate.peer)
               ? [{ peerId: candidate.peerId, serviceId: candidate.serviceId,
-                  inputUsdPerMillion: candidate.inputUsdPerMillion, outputUsdPerMillion: candidate.outputUsdPerMillion }]
+                  inputUsdPerMillion: candidate.inputUsdPerMillion, cachedInputUsdPerMillion: candidate.cachedInputUsdPerMillion,
+                  outputUsdPerMillion: candidate.outputUsdPerMillion }]
               : []
           })
           return this._node.router!.selectRoute!(
@@ -2600,13 +2601,6 @@ export class BuyerProxy {
       // falls back to resolving the route plan itself per peer+model when a
       // peer has no entry (existing 'lenient' fallback, buyer-proxy.ts _dispatchToPeer).
       let modelPlans: Map<string, PeerProtocolRoutePlan> = new Map()
-      // Snapshot of the router's own top few, for client disclosure
-      // (x-antseed-route-alternatives) — captured once, ahead of the
-      // preferredConversationPeerId reorder below, so it reflects the
-      // router's actual ranking rather than the host's cache-affinity bump.
-      // Stays null for the fixed-model (non-routed) branch: a directly
-      // requested model has no "alternatives" the router considered.
-
       if (routeSelected) {
         // The routing peer's returned order already *is* the score/quality/
         // cost decision -- walk it as given, no local re-ranking or
@@ -2648,6 +2642,12 @@ export class BuyerProxy {
             if (!plan?.serviceId) return null
             const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
             if (!offer) return null
+            if (initialModel && !validateRouterCandidate({
+              recommendation: { peerId: peer.peerId, serviceId: plan.serviceId },
+              peers: discoveredPeers, request: serializedReq, protocol: requestProtocol,
+              provider: explicitProvider, requiredParameters, preferences: this._routingPreferences,
+              maxPricing: this._maxPricing, minPeerReputation: this._minPeerReputation, now: this._now(),
+            })) return null
             const missingRequired = plan.selection?.requiresTransform
               ? requiredParameters
               : findMissingRequiredParameters(
@@ -2756,7 +2756,7 @@ export class BuyerProxy {
 
         for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
           if (clientAbortController.signal.aborted) return
-          if (routeSelected) {
+          if (routeSelected || initialModel) {
             const current = validateRouterCandidate({
               recommendation: selected, peers: await this._getPeers(), request: serializedReq,
               protocol: requestProtocol, provider: explicitProvider, requiredParameters,
