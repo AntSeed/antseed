@@ -1580,7 +1580,7 @@ export class BuyerProxy {
           const outcome = await this._teeVerification.verifyForDisplay(peer,
             () => runVerifier({ require: false, prefer: [TEE_VERIFIER_ID] }, peer.peerId, peer.capabilities,
               (chosen) => makeVerifierReach(this._node, peer, chosen, signal), signal))
-          if (outcome.reason === 'Verification busy; retry shortly') throw new Error(outcome.reason)
+          if (outcome.code === 'busy') throw new Error(outcome.reason)
         })
       return
     }

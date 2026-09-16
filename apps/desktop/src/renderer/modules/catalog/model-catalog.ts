@@ -7,7 +7,6 @@ import type {
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { entryMatchText, selectRecommendedVprCatalog } from './recommended';
 import { serviceModelKind } from './model-capabilities';
-import { advertisesTeeSupport } from '@antseed/node/verifier-capabilities';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
 
@@ -97,7 +96,6 @@ function projectGroupToEntry(
     serviceId: representative.serviceId,
     label,
     peerCount: peerIds.size,
-    teeSellerCount: new Set(group.rows.filter(advertisesTeeSupport).map((row) => row.peerId)).size,
     categories,
     kind,
     protocols,

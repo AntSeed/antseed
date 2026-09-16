@@ -208,7 +208,7 @@ test('invalidating pending queries releases waiters but retains the underlying c
   service.observePeers([]);
   assert.ok((await Promise.all(pending)).every((outcome) => !outcome.ok && outcome.transient));
   const busy = await service.verifyForDisplay(peer, async () => { assert.fail('exceeded concurrency limit'); });
-  assert.equal(busy.reason, 'Verification busy; retry shortly');
+  assert.equal(busy.code, 'busy');
   finishers.forEach((finish) => finish(pass));
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(service.snapshot([peer]).evidence, []);

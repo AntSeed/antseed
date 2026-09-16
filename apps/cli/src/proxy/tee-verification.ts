@@ -48,7 +48,7 @@ export class TeeVerification {
     const entry = previous?.state.data
     if (!pending && !force && entry?.outcome && !entry.outcome.transient && this.cacheExpiry(entry, maxAgeMs) > this.now()) return allow(entry.outcome)
     if (!pending && this.activeChecks >= 8) {
-      return { ok: !policy.require, verified: false, transient: true, reason: 'Verification busy; retry shortly' }
+      return { ok: !policy.require, verified: false, transient: true, code: 'busy', reason: 'Verification busy; retry shortly' }
     }
     if (!previous && cache.getAll().length >= 512) {
       const oldest = cache.getAll().find((query) => query.state.fetchStatus === 'idle')

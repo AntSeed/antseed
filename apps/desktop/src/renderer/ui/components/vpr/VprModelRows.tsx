@@ -10,10 +10,8 @@ import { BrandIcon } from '../brand/BrandIcon';
 import { InfoTooltip } from '../InfoTooltip';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
-import { VprTeeBadge } from './VprTeeAvailability';
 
 export type VprModelRowListProps = {
-  showTeeAvailability?: boolean;
   entries: VprModelCatalogEntry[];
   selectedProvider?: string;
   selectedServiceId?: string;
@@ -76,8 +74,7 @@ function formatPrice(price: number | null): string {
   return price === null ? '—' : formatUsdShort(price);
 }
 
-function ModelRow({ entry, checked, favorite, badge, compact, dense, chevron = true, pinnedPeerLabel, onClick, onConfigure, showTeeAvailability }: {
-  showTeeAvailability?: boolean;
+function ModelRow({ entry, checked, favorite, badge, compact, dense, chevron = true, pinnedPeerLabel, onClick, onConfigure }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
@@ -207,7 +204,6 @@ function ModelRow({ entry, checked, favorite, badge, compact, dense, chevron = t
             </span>
           )}
         </span>
-        {showTeeAvailability && entry.teeSellerCount > 0 && <VprTeeBadge sellerCount={entry.teeSellerCount} />}
         <span className={styles.metaLine}>
           {/* A pinned seller is the whole story of where the model routes —
               the seller's name replaces the peer count, unlabelled: naming a
@@ -241,7 +237,6 @@ function ModelRow({ entry, checked, favorite, badge, compact, dense, chevron = t
 }
 
 export function VprModelRowList({
-  showTeeAvailability,
   entries,
   selectedProvider,
   selectedServiceId,
@@ -294,7 +289,6 @@ export function VprModelRowList({
 
     return (
       <ModelRow
-        showTeeAvailability={showTeeAvailability}
         key={key}
         entry={entry}
         checked={selected}

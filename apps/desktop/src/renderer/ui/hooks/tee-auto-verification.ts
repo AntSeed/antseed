@@ -17,7 +17,6 @@ export class TeeAutoVerification {
     }
     for (const [peerId, fingerprint] of known) {
       if (this.entries.get(peerId)?.fingerprint === fingerprint) continue;
-      if (this.entries.size >= 512 && !this.entries.has(peerId)) continue;
       this.entries.set(peerId, { fingerprint, attempted: false, failures: 0, retryAt: 0 });
     }
   }
@@ -36,7 +35,7 @@ export class TeeAutoVerification {
     for (const [peerId, entry] of candidates) {
       const verdict = evidence.get(peerId);
       if (verdict?.checking) continue;
-      if (!verdict && entry.observedCheckedAt !== undefined && entry.failures === 0) {
+      if (!verdict && entry.observedCheckedAt !== undefined && entry.failures === 0 && interested.has(peerId)) {
         delete entry.observedCheckedAt;
         entry.attempted = false;
         entry.retryAt = 0;

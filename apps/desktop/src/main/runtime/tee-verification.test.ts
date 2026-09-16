@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { teeControlFileName } from '@antseed/node/tee-status';
 import { requestTeeSnapshot } from './tee-verification.js';
+
+test('missing credentials explain the existing directory setting without searching other directories', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'desktop-tee-directory-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const configured = join(directory, 'configured');
+  await mkdir(configured);
+  const port = 8377;
+  await writeFile(join(directory, teeControlFileName(port)), 'not a credential', { mode: 0o600 });
+  await assert.rejects(requestTeeSnapshot(configured, port), /credentials are missing.*ANTSEED_DESKTOP_CONNECT_DATA_DIR/);
+});
 
 test('main-process requests keep credentials private and reject unexpected buyer sessions', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'desktop-tee-client-'));

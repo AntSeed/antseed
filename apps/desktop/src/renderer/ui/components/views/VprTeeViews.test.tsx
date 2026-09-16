@@ -47,14 +47,11 @@ function initialize() {
   return state;
 }
 
-test('TEE model badges are opt-in and do not appear in Home/chat row lists', () => {
+test('TEE availability badges do not appear in Home/chat row lists', () => {
   const state = initialize();
   const props = { entries: state.vprModelCatalog, onSelect: action, emptyLabel: 'Empty' };
   assert.doesNotMatch(renderToStaticMarkup(<VprModelRowList {...props} />), /TEE available/);
-  const markup = renderToStaticMarkup(<VprModelRowList {...props} showTeeAvailability />);
-  assert.match(markup, /TEE available · 1 seller/);
-  assert.match(markup, /tabindex="0"/);
-  assert.match(markup, /not a verification verdict/);
+
 });
 
 test('Models overview omits TEE availability badges with either seller filter', () => {

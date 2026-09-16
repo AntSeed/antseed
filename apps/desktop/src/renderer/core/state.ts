@@ -131,7 +131,6 @@ export type ReminderOffer = {
 };
 
 export type VprModelCatalogEntry = {
-  teeSellerCount: number;
   provider: string;
   serviceId: string;
   label: string;

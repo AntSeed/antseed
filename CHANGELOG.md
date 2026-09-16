@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop VPR: keep TEE sellers beyond the 512-result cache eligible for automatic checks, prioritize displayed sellers, and preserve retry backoff across discovery updates. Explain missing local verification credentials without changing routing or searching other data directories.
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 

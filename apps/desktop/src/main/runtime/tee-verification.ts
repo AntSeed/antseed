@@ -4,7 +4,12 @@ import { teeControlFileName, type TeeSnapshot } from '@antseed/node/tee-status';
 
 export async function requestTeeSnapshot(directory: string, port: number, peerId?: string): Promise<TeeSnapshot> {
   const file = join(directory, teeControlFileName(port));
-  const metadata = await stat(file);
+  const metadata = await stat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') {
+      throw new Error('TEE verification credentials are missing. Ensure the buyer supports verification and uses the same data directory as desktop (ANTSEED_DESKTOP_CONNECT_DATA_DIR).');
+    }
+    throw error;
+  });
   if (process.platform !== 'win32' && ((metadata.mode & 0o077) !== 0 || metadata.uid !== process.getuid?.())) {
     throw new Error('Unsafe buyer verification credential permissions');
   }

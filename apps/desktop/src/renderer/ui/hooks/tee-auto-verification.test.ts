@@ -128,17 +128,58 @@ describe('automatic TEE checks', () => {
     expect(automatic.current(restored)).toBe(false);
   });
 
-  it('respects disabled verification, existing in-flight checks, and bounded tracking', () => {
+  it('respects disabled verification and existing in-flight checks', () => {
     const automatic = new TeeAutoVerification();
     automatic.update([peer]);
     expect(automatic.next({ ...snapshot, verificationEnabled: false }, new Set(), 0)).toBeUndefined();
     expect(automatic.next({ ...snapshot, evidence: [{ ...verdict, checking: true }] }, new Set(), 0)).toBeUndefined();
-    automatic.update(Array.from({ length: 600 }, (_, index) => ({ ...peer, peerId: String(index) })));
-    const selected: string[] = [];
-    for (let index = 0; index < 600; index++) {
-      const attempt = automatic.next(snapshot, new Set(), index * 2000);
-      if (attempt) selected.push(attempt.peerId);
+  });
+
+  it('checks all discovered sellers once even when the buyer evicts old evidence', () => {
+    const automatic = new TeeAutoVerification();
+    const peers = Array.from({ length: 600 }, (_, index) => ({ ...peer, peerId: String(index) }));
+    automatic.update(peers);
+    const status = { ...snapshot, evidence: [] as TeeEvidence[] };
+    const selected = new Set<string>();
+    for (let index = 0; index < peers.length; index++) {
+      const now = index * 2000;
+      const attempt = automatic.next(status, new Set(), now)!;
+      expect(attempt).toBeDefined();
+      expect(selected.has(attempt.peerId)).toBe(false);
+      selected.add(attempt.peerId);
+      const evidence = { ...verdict, peerId: attempt.peerId, checkedAt: now, expiresAt: now + TEE_BADGE_MAX_AGE_MS };
+      automatic.complete(attempt, evidence, now);
+      status.evidence.push(evidence);
+      if (status.evidence.length > 512) status.evidence.shift();
+      automatic.update(peers);
     }
-    expect(new Set(selected).size).toBe(512);
+    expect(selected.size).toBe(600);
+    expect(automatic.next(status, new Set(), 1_200_000)).toBeUndefined();
+    const viewed = automatic.next(status, new Set(['0']), 1_202_000)!;
+    expect(viewed.peerId).toBe('0');
+    automatic.complete(viewed, { ...verdict, peerId: '0', checkedAt: 1_202_000, expiresAt: TEE_BADGE_MAX_AGE_MS }, 1_202_000);
+    automatic.update([...peers, { ...peer, peerId: 'late-arrival' }]);
+    expect(automatic.next(status, new Set(), 1_204_000)?.peerId).toBe('late-arrival');
+  });
+
+  it('prioritizes a viewed seller beyond 512 and preserves its backoff across discovery updates', () => {
+    const automatic = new TeeAutoVerification();
+    const peers = Array.from({ length: 600 }, (_, index) => ({ ...peer, peerId: String(index) }));
+    automatic.update(peers);
+    const interested = new Set(['599']);
+    const attempt = automatic.next(snapshot, interested, 0)!;
+    expect(attempt.peerId).toBe('599');
+    automatic.complete(attempt, undefined, 0);
+    for (const now of [2000, 10_000, 29_999]) {
+      automatic.update([...peers].reverse());
+      expect(automatic.current(attempt)).toBe(true);
+      expect(automatic.next(snapshot, interested, now)?.peerId).not.toBe('599');
+    }
+    expect(automatic.next(snapshot, interested, 30_000)?.peerId).toBe('599');
+    automatic.update(peers.slice(0, 599));
+    expect(automatic.current(attempt)).toBe(false);
+    expect(automatic.next(snapshot, interested, 60_000)?.peerId).not.toBe('599');
+    automatic.update(peers);
+    expect(automatic.next(snapshot, interested, 62_000)?.peerId).toBe('599');
   });
 });

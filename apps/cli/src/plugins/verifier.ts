@@ -79,6 +79,7 @@ export interface VerifyOutcome {
   reason?: string
   /** True for install/network/timeout failures — a transient outcome must not be cached. */
   transient?: boolean
+  code?: 'busy'
   sellerNodeVerified?: boolean
   claims?: TeeClaim[]
   version?: string
@@ -177,36 +178,4 @@ export async function runVerifier(
     const reason = err instanceof Error ? err.message : String(err)
     return { ok: !policy.require, verified: false, sdk: chosen, reason: `verify error: ${reason}`.slice(0, 2048), transient: true }
   }
-}
-
-export interface CachedVerdict {
-  outcome: VerifyOutcome
-  expires: number
-}
-
-export async function getCachedVerdict(
-  cache: Map<string, CachedVerdict>,
-  key: string,
-  now: number,
-  ttlMs: number,
-  maxEntries: number,
-  run: () => Promise<VerifyOutcome>,
-): Promise<VerifyOutcome> {
-  const cached = cache.get(key)
-  if (cached && cached.expires > now) return cached.outcome
-  if (cached) cache.delete(key)
-
-  const outcome = await run()
-  if (!outcome.transient) {
-    if (cache.size >= maxEntries) {
-      for (const [k, v] of cache) if (v.expires <= now) cache.delete(k)
-      while (cache.size >= maxEntries) {
-        const oldest = cache.keys().next().value
-        if (oldest === undefined) break
-        cache.delete(oldest)
-      }
-    }
-    cache.set(key, { outcome, expires: now + ttlMs })
-  }
-  return outcome
 }

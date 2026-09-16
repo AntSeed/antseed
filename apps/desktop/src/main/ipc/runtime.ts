@@ -108,11 +108,17 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
     requestBuyerPeerRefresh,
   } = deps;
 
+  let lastTeeError: string | undefined;
   const teeStatus = async (peerId?: string): Promise<DesktopTeeStatus> => {
     try {
-      return { snapshot: await requestTeeSnapshot(resolveConnectDataDir(), await resolveBuyerProxyPort(), peerId) };
+      const snapshot = await requestTeeSnapshot(resolveConnectDataDir(), await resolveBuyerProxyPort(), peerId);
+      lastTeeError = undefined;
+      return { snapshot };
     } catch (error) {
-      return { snapshot: null, error: error instanceof Error ? error.message : 'Verification unavailable' };
+      const message = error instanceof Error ? error.message : 'Verification unavailable';
+      if (message !== lastTeeError) appendLog('connect', 'system', message);
+      lastTeeError = message;
+      return { snapshot: null, error: message };
     }
   };
   ipcMain.handle('tee:status', () => teeStatus());

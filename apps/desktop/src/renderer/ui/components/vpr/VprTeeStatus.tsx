@@ -1,4 +1,4 @@
-import { teeBadgeLabel, type TeeEvidence } from '@antseed/node/tee-status';
+import { isFreshSellerNodeEvidence, type TeeEvidence } from '@antseed/node/tee-status';
 import { InfoTooltip } from '../InfoTooltip';
 import modelRowStyles from './VprModelRows.module.scss';
 import styles from './VprTeeAvailability.module.scss';
@@ -15,7 +15,7 @@ type Props = {
 const TEE_DESCRIPTION = 'We use TEEs to enhance user privacy.';
 
 export function VprTeeStatus({ evidence, now, checking, available, error, className }: Props) {
-  if (!available || checking || error || teeBadgeLabel(evidence, now) !== 'Seller node verified') return null;
+  if (!available || checking || error || !isFreshSellerNodeEvidence(evidence, now)) return null;
   return (
     <div className={className}>
       <InfoTooltip content={TEE_DESCRIPTION}>

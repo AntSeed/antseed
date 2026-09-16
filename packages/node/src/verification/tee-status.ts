@@ -41,14 +41,9 @@ export function passedSellerNodeClaims(claims: readonly TeeClaim[]): boolean {
   })
 }
 
-export function teeBadgeLabel(evidence: TeeEvidence | undefined, now = Date.now()): string {
-  if (evidence?.checking) return 'Checking TEE…'
-  if (evidence?.unavailable) return 'Verification unavailable'
-  if (!evidence) return 'TEE advertised'
-  if (evidence.sellerNodeVerified) {
-    return evidence.expiresAt > now ? 'Seller node verified' : 'TEE advertised'
-  }
-  return 'Verification failed'
+export function isFreshSellerNodeEvidence(evidence: TeeEvidence | undefined, now = Date.now()): boolean {
+  return evidence?.sellerNodeVerified === true && !evidence.checking
+    && !evidence.unavailable && evidence.expiresAt > now
 }
 
 export function teeControlFileName(port: number): string {
