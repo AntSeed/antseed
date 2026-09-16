@@ -791,6 +791,18 @@ app.whenReady().then(async () => {
   // spawn a detached watchdog before quitting that waits for the app to
   // exit and starts ShipIt itself if launchd didn't.
   const SHIPIT_LABEL = 'com.antseed.desktop.ShipIt';
+  const clearStaleMacUpdateJob = (): void => {
+    if (process.platform !== 'darwin') return;
+    const uid = process.getuid?.();
+    if (uid === undefined) return;
+    try {
+      execFileSync('launchctl', ['bootout', `gui/${uid}/${SHIPIT_LABEL}`], {
+        stdio: 'ignore',
+      });
+    } catch {
+      // No job registered — the common case.
+    }
+  };
   const spawnMacUpdateWatchdog = (): void => {
     if (process.platform !== 'darwin') return;
     const contentsDir = path.resolve(path.dirname(process.execPath), '..');
@@ -832,6 +844,7 @@ app.whenReady().then(async () => {
     sendUpdateStatus({ status: 'installing', version: updateVersion });
 
     try {
+      clearStaleMacUpdateJob();
       spawnMacUpdateWatchdog();
       await Promise.allSettled([stopDesktopServices(), recordTelemetryCleanShutdown()]);
       isQuitting = true;

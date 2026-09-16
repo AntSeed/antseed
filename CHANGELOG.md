@@ -14,7 +14,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Changed
 
 - Website and docs: wording only. "VPR" and "Virtual Private Router" → "AI VPN", "AntSeed" → "Antseed" in copy (URLs, package names and identifiers unchanged), "seller" → "provider" and "on-chain" → "onchain" in marketing copy. No code or layout changes.
-- Desktop and agent skills: same wording pass. The app is now "Antseed AI VPN" (window title, notifications, update hints, DMG/installer product name, help center, connected-app provider names written into third-party configs, chat system prompt). Runtime internals (IPC channels, local-storage keys, bundle id, data directory, `x-vpr-session-id`, local CA name) are intentionally unchanged so existing installs, conversations, and trusted certificates keep working.
+- Desktop and agent skills: same wording pass. The app is now "Antseed AI VPN" (window title, notifications, update hints, DMG/installer product name, help center, connected-app provider names written into third-party configs, chat system prompt). Runtime internals (IPC channels, local-storage keys, bundle id, packaged bundle/executable name, data directory, `x-vpr-session-id`, local CA name) are intentionally unchanged so existing installs, updates, conversations, and trusted certificates keep working. The macOS updater also clears stale ShipIt registrations before handing off an install.
 
 ### Added
 

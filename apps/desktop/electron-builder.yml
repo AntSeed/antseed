@@ -1,5 +1,9 @@
 appId: com.antseed.desktop
 productName: Antseed AI VPN
+# Keep the installed bundle/executable path stable across the visible rename.
+# The running old version performs the first update, so changing this in the
+# same release could strand macOS relaunches or move the Windows install path.
+executableName: AntSeed VPR
 copyright: Copyright © 2025-2026 Antseed
 electronVersion: 31.7.7
 npmRebuild: false
