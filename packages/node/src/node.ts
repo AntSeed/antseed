@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { IdentityHistoryCollector } from './reputation/identity-history.js';
+import { IDENTITY_HISTORY_TTL_MS, IdentityHistoryCollector } from './reputation/identity-history.js';
 import { computeTrustScore } from './reputation/trust-score.js';
 import { TrustSignalsClient } from './payments/evm/trust-signals-client.js';
 
@@ -323,7 +323,7 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
   services: [],
 };
 
-const EXTERNAL_VERIFICATION_RESULT_TTL_MS = 15 * 60_000;
+const EXTERNAL_VERIFICATION_RESULT_TTL_MS = IDENTITY_HISTORY_TTL_MS;
 
 /** How long one relayer gets exclusive first refusal on a sweep offer before
  *  it passes to the next candidate. The relayer replies 'submitted' right
@@ -823,7 +823,7 @@ export class AntseedNode extends EventEmitter {
     if (peers.length === 0 || !this._trustSignalsClient) {
       return;
     }
-    const peersToEnrich = peers.map((peer) => ({ ...peer }));
+    const peersToEnrich = peers;
     this._partialPeerEnrichmentChain = this._partialPeerEnrichmentChain.then(async () => {
       if (!this._started || !this._trustSignalsClient) {
         return;
@@ -877,7 +877,7 @@ export class AntseedNode extends EventEmitter {
         continue;
       }
       this._externalVerificationInFlight.add(cacheKey);
-      queued.push({ ...peer });
+      queued.push(peer);
     }
     if (queued.length === 0) return;
 
@@ -945,9 +945,9 @@ export class AntseedNode extends EventEmitter {
         checkedAtMs,
         results,
       });
-      const verifiedPeer: PeerInfo = { ...peer, verificationResults: results };
-      applyTrust(verifiedPeer);
-      return verifiedPeer;
+      peer.verificationResults = results;
+      applyTrust(peer);
+      return peer;
     } catch (err) {
       debugWarn(`[Node] External verification failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
       return null;
@@ -978,7 +978,7 @@ export class AntseedNode extends EventEmitter {
    * enriches its results, so volume / last-settled / ghost counts are
    * available when chain RPC is configured.
    */
-  async findPeer(peerId: string): Promise<PeerInfo | null> {
+  async findPeer(peerId: string, options?: { awaitExternalVerification?: boolean }): Promise<PeerInfo | null> {
     if (!this._peerLookup) {
       throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     }
@@ -1008,7 +1008,11 @@ export class AntseedNode extends EventEmitter {
     );
     const peer = this._lookupResultToPeerInfo(best);
     this._attachCachedExternalVerificationResults([peer]);
-    this._queueExternalVerification([peer]);
+    if (options?.awaitExternalVerification && !peer.verificationResults && this._externalVerificationClaimsKey(peer)) {
+      await this._verifyExternalClaimsForPeer(peer);
+    } else {
+      this._queueExternalVerification([peer]);
+    }
     await this._enrichPeersWithOnChainStats([peer]);
     return peer;
   }

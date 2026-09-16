@@ -136,4 +136,96 @@ describe('AntseedNode incremental discovery enrichment', () => {
       proofFetch.mockRestore();
     }
   });
+
+  it('emits a combined trust score when chain enrichment finishes before identity verification', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = makePeer();
+    peer.metadata = {
+      peerId: peer.peerId,
+      version: 10,
+      providers: [],
+      region: 'unknown',
+      timestamp: Date.now(),
+      signature: '00'.repeat(65),
+      verifications: { github: [{ username: 'octocat', repository: 'proof' }] },
+    };
+    const discovered = vi.fn();
+    let releaseProof!: () => void;
+    const proofReady = new Promise<void>((resolve) => { releaseProof = resolve; });
+    const fetchMock = vi.fn(async () => {
+      await proofReady;
+      return new Response(JSON.stringify({
+        type: GITHUB_VERIFICATION_PROOF_TYPE,
+        peerId: peer.peerId,
+        username: 'octocat',
+      }), { status: 200 });
+    });
+    const now = Date.now();
+
+    node.on('peers:discovered', discovered);
+    const proofFetch = vi.spyOn(publicJson, 'fetchPublicProof').mockImplementation(fetchMock);
+    (node as any)._identityHistoryCollector = { collect: vi.fn().mockResolvedValue({
+      version: 1,
+      identities: [{
+        kind: 'github', claim: 'octocat', identityId: 'github:42', status: 'available', fetchedAtMs: now,
+        createdAtMs: now - 10 * 365.25 * 86_400_000,
+        projects: Array.from({ length: 8 }, (_, index) => ({
+          id: index + 1, name: `project-${index}`, createdAtMs: now - 4 * 365.25 * 86_400_000,
+          stars: 100, archived: false,
+        })),
+      }],
+    }) };
+    (node as any)._trustSignalsClient = {
+      read: vi.fn(async (sellers: string[]) => new Map(sellers.map((seller) => [seller, signals()])))
+    };
+    try {
+      (node as any)._started = true;
+      (node as any)._queueExternalVerification([peer]);
+      (node as any)._queuePartialPeerEnrichment([peer]);
+
+      await (node as any)._partialPeerEnrichmentChain;
+      expect(discovered.mock.calls.at(-1)?.[0]?.[0]?.trust?.usage).not.toBeNull();
+      expect(discovered.mock.calls.at(-1)?.[0]?.[0]?.trust?.identity).toBeNull();
+
+      releaseProof();
+      await (node as any)._externalVerificationChain;
+
+      const combined = discovered.mock.calls.at(-1)?.[0]?.[0] as PeerInfo | undefined;
+      expect(combined?.trust?.usage).not.toBeNull();
+      expect(combined?.trust?.power).not.toBeNull();
+      expect(combined?.trust?.identity?.kind).toBe('github');
+      expect(combined?.onChainReputationScore).toBeGreaterThan(60);
+    } finally {
+      proofFetch.mockRestore();
+    }
+  });
+
+  it('reuses verified identity results for the full identity-history TTL', () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = makePeer();
+    peer.metadata = {
+      peerId: peer.peerId,
+      version: 10,
+      providers: [],
+      region: 'unknown',
+      timestamp: Date.now(),
+      signature: '00'.repeat(65),
+      verifications: { github: [{ username: 'octocat' }] },
+    };
+    const results = {
+      verified: true,
+      checkedAtMs: Date.now() - 60 * 60_000,
+      domains: [],
+      github: [{ username: 'octocat', repository: 'octocat', peerId: peer.peerId, verified: true, checkedAtMs: Date.now() - 60 * 60_000 }],
+    };
+    (node as any)._externalVerificationCache.set(peer.peerId, {
+      claimsKey: (node as any)._externalVerificationClaimsKey(peer),
+      checkedAtMs: results.checkedAtMs,
+      results,
+    });
+
+    (node as any)._attachCachedExternalVerificationResults([peer]);
+
+    expect(peer.verificationResults).toBe(results);
+  });
 });

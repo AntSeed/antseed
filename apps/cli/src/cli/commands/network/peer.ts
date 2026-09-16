@@ -353,7 +353,7 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
         });
         try {
           await node.start();
-          match = await node.findPeer(normalized);
+          match = await node.findPeer(normalized, { awaitExternalVerification: true });
           if (match) {
             spinner.succeed(chalk.green('Found via live DHT lookup'));
             sourceLabel = 'live DHT lookup';
