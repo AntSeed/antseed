@@ -367,4 +367,4 @@ export {
   type LoadedRouter,
 } from './config/plugin-loader.js'
 export { readRouterSettings, validateRouterSettings, type RouterSettingField } from './routing/router-settings.js';
-export { type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
+export { RoutingContextTracker, type RoutingCadence, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';

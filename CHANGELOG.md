@@ -16,7 +16,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Opt-in network model-router plugins can choose the initial model and peer from host-validated candidates. Plugin settings remain namespaced; deadlines, cancellation, buyer constraints, and same-model continuation are host-enforced. Explicit model requests bypass classification.
+- Opt-in network model-router plugins can choose models and peers on successive user turns from host-validated candidates. The host provides structural turn/reuse hints instead of locking the first model for the whole conversation; plugins control classifier invocation and continuation reuse. Plugin settings remain namespaced; deadlines, cancellation, and buyer constraints are host-enforced. Explicit model requests bypass classification.
 - Classifier services support token pricing or exact fixed per-call fees through existing payment channels. Per-call fees require a valid, eligible classification before authorization; decision reuse adds no classifier fee. Discovery rejects fee-dropping downgrades and preserves existing image-pricing bytes. See `docs/router-network-integration.md` and `docs/router-per-call-billing.md`.
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 

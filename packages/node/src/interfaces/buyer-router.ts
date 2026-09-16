@@ -69,9 +69,11 @@ export interface Router {
 
   /**
    * Optional, additive: pick both model and seller together, ahead of the
-   * usual fixed-model peer narrowing. Called for the initial model of an
-   * explicitly router-selected conversation; returning `null` (or not
-   * implementing it) falls through to the unmodified `selectPeer` pipeline.
+   * usual fixed-model peer narrowing. Called on each explicitly auto-routed
+   * request, including later turns. Plugins can reuse context.routing.previousRoute
+   * when shouldRoute is false rather than invoking a paid classifier again.
+   * Returning `null` (or not implementing it) falls through to the unmodified
+   * `selectPeer` pipeline.
    * An empty array means the router claimed the request but has no route;
    * it must not be treated as a decline. Throw for execution failures.
    * Hosts enforce the context deadline even if a plugin ignores its signal.

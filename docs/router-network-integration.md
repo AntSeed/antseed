@@ -14,8 +14,8 @@ Included:
   existing `selectPeer` interface.
 - Plugin-owned settings, explicit activation, eligible candidates, host-enforced
   deadlines, cancellation, and fail-closed fallback.
-- Initial-model selection and persistence, concurrent-first-request coordination,
-  explicit user pins, and same-model peer failover.
+- Plugin-controlled per-turn model selection, structural routing context,
+  concurrent-first-request coordination, and explicit user pins.
 - Host-mediated classifier requests with token or fixed-per-call prices,
   separate authorization budgets and accounting, and validation before
   per-call payment.
@@ -24,7 +24,7 @@ Included:
 Not included: desktop/VPR changes, plugin bundling or catalog endorsement,
 Levanto-specific endpoints or authentication, access/day passes, daily spending
 controls, savings dashboards, reference prices, forecast history, universal
-cost/quality controls, and mid-conversation reclassification.
+cost/quality controls, and durable exactly-once classification across restarts.
 
 The existing conversation store only distinguishes a real user pin from the
 model last selected by the host. No new per-turn cost/latency fields are added.
@@ -46,8 +46,10 @@ is never required.
 
 The context supplies namespaced settings, an eligible candidate snapshot,
 `signal`, `deadlineMs`, and `invokeService(messages, parseResponse)`. Its trigger
-identifies a new conversation or a request without a usable conversation ID;
-it does not ask the plugin to implement turn detection.
+identifies new sessions, new user turns, tool continuations, context rewrites,
+explicit refreshes, changed settings, and unavailable routes. A plugin can
+declare `routingCadence: 'turn' | 'session' | 'request'`; the buyer defaults to
+`turn`. This controls the `shouldRoute` hint, not whether `selectRoute` runs.
 
 Candidate prices include input, output, and cached-input rates. An unknown
 cached-input rate is `null`, not a fabricated zero or a token forecast.
@@ -65,16 +67,36 @@ and request the plugin's sentinel model. Unknown model names do not trigger
 classification. Concrete advertised models and explicit pins bypass it.
 The sentinel must not collide with an advertised inference model.
 
-After the first valid selection the host persists the model before dispatching
-inference. Later turns, rewritten context, and refresh headers reuse that model;
-they do not buy another classification. Same-model peer failover remains possible
-unless the user pinned a particular seller. With no stable conversation identity,
-each incoming request is a separate classification opportunity. This is not a
-cross-client idempotency guarantee.
+The host calls `selectRoute` on every explicitly auto-routed request, including
+later turns. It never substitutes the conversation's last model before calling
+the plugin. A plugin can reconsider each user turn and keep the same model or
+choose another eligible model. Explicit user pins and concrete models still
+bypass classification.
 
-Reused models still pass current host price and trust checks. If a price rises
-above the buyer's ceiling, another eligible peer for the same model may serve
-the request. If none remains, the host fails without buying a new classification.
+For tool continuations and repeated requests with unchanged history, the context
+suggests reuse and includes the previously validated route. A plugin should
+return that route without calling `invokeService` when reuse is appropriate:
+
+```ts
+if (context.routing?.shouldRoute === false && context.routing.previousRoute) {
+  return [context.routing.previousRoute];
+}
+```
+
+The host validates reused recommendations against current price, trust, and
+capability constraints just like new recommendations. An unavailable route
+triggers reconsideration; no valid recommendation means no inference dispatch.
+Each accepted new per-call classification can incur a fee, even when it chooses
+the same model. Merely calling the local `selectRoute` hook does not incur a fee.
+
+Turn detection uses message structure and optional `x-antseed-turn-id` hints,
+not equality of the last prompt's text. Repeated text appended as a new user
+message is a new turn. Anthropic tool-result-only user messages are continuations.
+Compaction and explicit refresh request reconsideration without claiming the
+cache is cold. Missing conversation identity or unobservable history (such as
+Responses API `previous_response_id`) provides no safe reuse hint. Plugins remain
+responsible for reuse and concurrent classification deduplication; the host's
+hint is not a guarantee of one paid call per human turn.
 
 ## Configuration example
 
@@ -176,7 +198,10 @@ downgrades that would omit unit fees.
 Duplicate `invokeService` calls reuse one in-process operation for a parent
 request. Restarting during an unfinished classification is not durable
 exactly-once processing; a later client retry can be a new billable request.
-Completed conversation model selections survive restart. Invalid-response debt
+The last selected model remains persisted for display and soft peer affinity,
+but turn-context tracking is bounded and in-memory. Restart or expiry can cause
+a new classification; persisted `lastModel` is not a permanent model lock.
+Invalid-response debt
 is not paid merely to unblock a seller; that seller can consequently refuse
 future service. No refund or automatic paid retry workflow is added.
 
@@ -216,7 +241,7 @@ that integrated tree, and perform the normal package-version/release process.
 This PR does not activate a production router or validate a private vendor's
 seller. A later desktop or access-billing PR must be reviewed separately.
 
-### Local validation — September 16, 2026
+### Initial-selection baseline validation — September 16, 2026
 
 Validated after merging `origin/main` at `f2ee484a9`, using Node 24.21.0:
 
@@ -237,3 +262,22 @@ The branch retains all commits from `codex/levanto-p1-local`. The final diff
 against the integrated main contains no desktop, Payments UI, or vendor-plugin
 files. No package publication, push, PR creation, or production deployment is
 part of this local validation.
+
+### Per-turn restoration validation — September 16, 2026
+
+The baseline above predates the restoration of plugin-controlled per-turn
+routing. Revalidated the restored behavior locally with Node 24.21.0:
+
+- SDK and CLI builds, workspace typechecks, and diff whitespace checks passed.
+- SDK: 1,174 tests passed, including 18 structural routing-context tests.
+- CLI: 607 tests passed, including direct/alias model switching, tool reuse,
+  user pins, eligibility changes, restart behavior, and initial-request races.
+- Local-chain token classifier: four classifications settled 560 micro-USDC.
+- Both local-chain fixed-fee cases (malformed output and unadvertised model):
+  five accepted classifications settled 25,000 micro-USDC. Tool reuse, HTTP
+  failure, invalid output, and blocked retry added no fixed fee.
+
+These use a fixture router and isolated Anvil wallets, not a live vendor's
+classifier or production funds. The restored host calls the plugin on every
+auto-routed request; the fixture plugin honors the host's reuse hints. This
+does not prove arbitrary plugins deduplicate paid calls or persist turn state.

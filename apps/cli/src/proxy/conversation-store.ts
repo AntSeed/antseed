@@ -24,10 +24,10 @@ export type StoredConversation = {
   label: string | null
   /** Per-chat route as `<peerId>@<service>`, only ever set for a genuine
       user pin (via setPinnedModel(id, model, 'user')). Null for an
-      auto-routed chat -- the host uses lastModel for continuation. */
+      auto-routed chat -- lastModel is only soft peer affinity. */
   pinnedModel: string | null
   /** How the route's peer was chosen. 'auto' means the chat has never been
-      explicitly pinned (the host reuses the initial model); 'user' means
+      explicitly pinned (the router may reconsider its model); 'user' means
       the user chose this seller for this specific chat, which nothing
       overrides until they clear it. */
   peerSource: 'auto' | 'user'
@@ -196,7 +196,7 @@ export class ConversationStore {
    *
    * `pinnedModel` is never seeded or touched here for an auto-routed chat --
    * only `setPinnedModel(id, model, 'user')` may set it. The host uses
-   * lastModel to reuse the initial model while allowing same-model peer failover.
+   * lastModel for soft peer affinity without bypassing router selection.
    */
   touch(input: { tool: string; sessionKey: string; snippet?: string | null; lastModel?: string | null }): StoredConversation {
     const id = conversationId(input.tool, input.sessionKey)

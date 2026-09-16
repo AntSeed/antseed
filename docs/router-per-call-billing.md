@@ -153,9 +153,10 @@ pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-rou
 
 Use the repository's pinned Node 24 runtime and matching native dependencies. The two per-call
 scenarios distinguish malformed JSON from a parseable but unadvertised model.
-Each settles two accepted classifications at 5,000 micro-USDC each; the rejected
+Each settles five accepted classifications at 5,000 micro-USDC each; the rejected
 classification, HTTP error, blocked retry, and reused decision add no fee.
 
-The simplified shipping fixture keeps the original model across continuation,
-context rewrite, and explicit refresh. Additional classifications use new
-conversation identities. See `router-network-integration.md` for the current policy.
+The fixture plugin reuses the accepted route for a tool continuation, then
+classifies again on a new user turn, context rewrite, and explicit refresh.
+Those accepted classifications are charged even when the selected model stays
+the same. See `router-network-integration.md` for the plugin-controlled policy.

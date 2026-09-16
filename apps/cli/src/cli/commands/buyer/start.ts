@@ -230,6 +230,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       let toolHints: Array<{ name: string; envVar: string }> = []
       let autoRouteServiceId: string | undefined
       let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
+      let routingCadence: import('@antseed/node').RoutingCadence | undefined
       const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
       if (options.instance) {
@@ -256,6 +257,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           toolHints = (plugin as any).TOOL_HINTS ?? []
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
+          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -274,6 +276,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           toolHints = (plugin as any).TOOL_HINTS ?? []
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
+          routingCadence = plugin.routingCadence
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -471,6 +474,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         autoRouteServiceId,
         routingSettingsSchema,
+        routingCadence,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         routingService: effectiveBuyerConfig.routingService,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
