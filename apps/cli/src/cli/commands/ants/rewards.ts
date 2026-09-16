@@ -1,8 +1,9 @@
 import type { Command } from 'commander';
 import { parsePositiveInteger } from '../parse-positive-integer.js';
 import chalk from 'chalk';
-import { rewards, claim, restake, stakeUsageRewards, compound, formatAnts, type RewardBucket, type CompoundResult } from '@antseed/ants';
-import { ants, parseIds, printJson, runAction, runRead } from './shared.js';
+import { rewards, claim, restake, stakeUsageRewards, compound, formatAnts, lockedRewards, previewLockedClaim, type RewardBucket, type CompoundResult } from '@antseed/ants';
+import { ants, confirm, parseIds, printJson, runAction, runRead } from './shared.js';
+import { lockedClaimDecision, lockedPreviewLines, lockedRewardLines, validateLockedClaimOptions } from './locked-rewards.js';
 
 export const REWARD_BUCKETS: readonly RewardBucket[] = ['staker', 'seller', 'buyer', 'legacy', 'locked'];
 
@@ -29,11 +30,25 @@ export function compoundSummary(result: CompoundResult): string {
 export function registerAntsRewardsCommand(antsCmd: Command): void {
   const rewardsCmd = antsCmd
     .command('rewards')
-    .description('View or claim ANTS rewards (staker, seller usage, buyer usage, legacy, locked)');
+    .description('View or claim ANTS rewards (staker, seller usage, buyer usage, legacy, locked)')
+    .hook('preAction', (command, action) => {
+      if (action !== command && action.name() !== 'claim' && (command.opts().locked || command.opts().address || command.opts().json)) {
+        action.error('Locked legacy rewards support inspection and claim only; read flags cannot select rewards for staking actions.');
+      }
+    });
 
   rewardsCmd
     .option('--json', 'output as JSON', false)
-    .action(async (options: { json: boolean }) => runRead(antsCmd, 'Loading rewards...', async ({ ctx }) => {
+    .option('--locked', 'inspect the legacy seller pool and its M002 claim policy', false)
+    .option('--address <address>', 'inspect a seller without loading a signing key (requires --locked)')
+    .action(async (options: { json: boolean; locked: boolean; address?: string }) => runRead(antsCmd, 'Loading rewards...', async ({ ctx }) => {
+      if (options.address && !options.locked) throw new Error('--address requires --locked.');
+      if (options.locked) {
+        const view = await lockedRewards(ctx);
+        if (options.json) return printJson(view);
+        console.log(lockedRewardLines(view).join('\n'));
+        return;
+      }
       const view = await rewards(ctx);
       if (options.json) return printJson(view);
       console.log(chalk.bold('ANTS rewards\n'));
@@ -51,7 +66,7 @@ export function registerAntsRewardsCommand(antsCmd: Command): void {
         console.log(chalk.dim(`    position ${position.id} (agent ${position.agentId}): ${formatAnts(position.amount)}${position.closed ? ', closed' : ''}`));
       }
       console.log(chalk.dim('\nClaim with: antseed ants rewards claim [--staker|--seller|--buyer|--legacy|--locked]. Compound with: antseed ants rewards restake --epochs <n>.'));
-    }));
+    }, options));
 
   rewardsCmd
     .command('claim')
@@ -62,7 +77,23 @@ export function registerAntsRewardsCommand(antsCmd: Command): void {
     .option('--legacy', 'legacy V2 emissions', false)
     .option('--locked', 'locked legacy pool release', false)
     .option('--recipient <address>', 'send claimed ANTS to another address (staker and locked buckets only)')
-    .action(async (options: Partial<Record<RewardBucket, boolean>> & { recipient?: string }) => runAction(antsCmd, 'Claiming rewards...', async ({ ctx }, report) => {
+    .option('--dry-run', 'simulate and estimate without broadcasting (requires only --locked)', false)
+    .option('-y, --yes', 'skip confirmation after preflight (requires only --locked)', false)
+    .action(async (options: Partial<Record<RewardBucket, boolean>> & { recipient?: string; dryRun: boolean; yes: boolean }) => runAction(antsCmd, 'Checking rewards...', async ({ ctx }, report, spinner) => {
+      const readOptions = rewardsCmd.opts<{ locked?: boolean; address?: string; json?: boolean }>();
+      if (readOptions.address || readOptions.json) throw new Error('--address and --json are read-only options; use --recipient to choose a claim destination.');
+      options = { ...options, locked: options.locked || readOptions.locked };
+      if (validateLockedClaimOptions(options)) {
+        const preview = await previewLockedClaim(ctx, options.recipient);
+        spinner.stop();
+        console.log(lockedPreviewLines(preview).join('\n'));
+        const decision = lockedClaimDecision(options);
+        if (decision === 'preview') return 'Dry run complete; no transaction sent';
+        if (decision === 'confirm' && !(await confirm('Claim the available locked rewards? [y/N] '))) return 'Claim cancelled; no transaction sent';
+        ctx.invalidate();
+        await previewLockedClaim(ctx, options.recipient);
+        spinner.start('Claiming locked rewards...');
+      }
       const result = await claim(ctx, { buckets: selectedBuckets(options), recipient: options.recipient }, report);
       if (result.transactions.length === 0) return 'No pending rewards to claim';
       return `Claimed ${ants(result.claimed)} across ${result.transactions.length} transaction(s)`;

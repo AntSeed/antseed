@@ -6,6 +6,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+- CLI: add detailed M002 locked-reward inspection with address-only, key-free JSON reads; add locked-only claim simulation, gas previews and explicit confirmation (`--dry-run` / `--yes`). Validate the installed policy's source, epoch, restriction status and pool transfer readiness. Report pool read failures and partially completed claims instead of silently treating failures as zero rewards.
+
 ### Fixed
 
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.

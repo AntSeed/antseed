@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
-import { AntsContext, formatAnts, jsonReplacer, type StepReporter } from '@antseed/ants';
+import { AntsContext, formatAnts, jsonReplacer, rewardAddress, type StepReporter } from '@antseed/ants';
 import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import { loadCryptoContext, requireCryptoConfig } from '../../payment-utils.js';
@@ -15,12 +15,14 @@ export interface AntsCommandContext {
 }
 
 /** Build the ANTS service context from the CLI config and the node identity wallet. */
-export async function loadAntsContext(command: Command): Promise<AntsCommandContext> {
+export async function loadAntsContext(command: Command, readAddress?: string): Promise<AntsCommandContext> {
   const global = getGlobalOptions(command);
   const config = await loadConfig(global.config);
   const chain = requireCryptoConfig(config) as unknown as AntsChainConfig;
-  const { wallet, address } = await loadCryptoContext(global.dataDir);
-  const ctx = new AntsContext({ chain, address, signer: wallet });
+  const identity = readAddress === undefined
+    ? await loadCryptoContext(global.dataDir)
+    : { address: rewardAddress(readAddress), wallet: undefined };
+  const ctx = new AntsContext({ chain, address: identity.address, signer: identity.wallet });
   await ctx.selectRpc();
   return { ctx, chain: ctx.chain, dataDir: global.dataDir, configPath: global.config };
 }
@@ -64,14 +66,19 @@ export async function runAction(command: Command, title: string, work: (context:
   }
 }
 
-export async function runRead(command: Command, title: string, work: (context: AntsCommandContext) => Promise<void>): Promise<void> {
+export async function runRead(command: Command, title: string, work: (context: AntsCommandContext) => Promise<void>, options: { address?: string; json?: boolean } = {}): Promise<void> {
   const spinner = ora(title).start();
   try {
-    const context = await loadAntsContext(command);
+    const context = await loadAntsContext(command, options.address);
     spinner.stop();
     await work(context);
   } catch (error) {
-    spinner.fail(chalk.red((error as Error).message));
+    if (options.json) {
+      spinner.stop();
+      printJson({ status: 'unavailable', error: (error as Error).message });
+    } else {
+      spinner.fail(chalk.red((error as Error).message));
+    }
     process.exitCode = 1;
   }
 }

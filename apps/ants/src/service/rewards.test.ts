@@ -74,3 +74,69 @@ describe('closed-position rewards', () => {
     expect(await compound(ctx, { epochs: 4 })).toMatchObject({ restakedPositionIds: [7], transactions: ['restake-hash'] });
   });
 });
+
+describe('locked legacy claims', () => {
+  function lockedFixture() {
+    const { ctx } = fixture();
+    let locked = 1000n;
+    let pendingLegacy = 100n;
+    let cumulative = 1000n;
+    const pool = {
+      claimable: vi.fn(async () => ({ locked, claimable: cumulative / 10n - (cumulative - locked), policy: foreign })),
+      claim: vi.fn(async () => { locked -= cumulative / 10n - (cumulative - locked); return 'locked-hash'; }),
+    };
+    const legacy = {
+      pendingEmissions: async () => ({ seller: pendingLegacy, buyer: 0n }),
+      claimSellerEmissions: vi.fn(async () => { locked += pendingLegacy; cumulative += pendingLegacy; pendingLegacy = 0n; return 'legacy-hash'; }),
+    };
+    const token = { receivedInTransaction: vi.fn(async (hash: string) => hash === 'locked-hash' ? cumulative / 10n : 0n) };
+    Object.assign(ctx, {
+      claimableEpochs: async () => ({ legacy: [0], recognized: [] }),
+      lockedPoolAt: () => pool, legacyEmissionsAt: () => legacy,
+      antsToken: () => token, invalidate: vi.fn(),
+    });
+    return { ctx, pool, legacy, token };
+  }
+
+  it('collects late legacy emissions before computing the pool release', async () => {
+    const { ctx, pool, legacy, token } = lockedFixture();
+    const result = await claim(ctx, { buckets: ['legacy', 'locked'], recipient: foreign });
+    expect(result).toMatchObject({ claimed: '110', transactions: ['legacy-hash', 'locked-hash'] });
+    expect(legacy.claimSellerEmissions).toHaveBeenCalledOnce();
+    expect(pool.claim).toHaveBeenCalledWith({}, foreign);
+    expect(token.receivedInTransaction).toHaveBeenCalledWith('legacy-hash', address);
+    expect(token.receivedInTransaction).toHaveBeenCalledWith('locked-hash', foreign);
+    expect((await claim(ctx, { buckets: ['locked'] })).transactions).toEqual([]);
+    expect(pool.claim).toHaveBeenCalledOnce();
+  });
+
+  it('reports confirmed legacy transactions when the subsequent pool claim fails', async () => {
+    const { ctx, pool } = lockedFixture();
+    pool.claim.mockRejectedValue(new Error('claim reverted'));
+    await expect(claim(ctx, { buckets: ['legacy', 'locked'] })).rejects.toThrow(/legacy-hash.*not rolled back.*claim reverted/);
+    expect(ctx.invalidate).toHaveBeenCalled();
+  });
+
+  it('reports a confirmed claim even if receipt accounting fails', async () => {
+    const { ctx, token } = lockedFixture();
+    token.receivedInTransaction.mockRejectedValue(new Error('receipt RPC failed'));
+    await expect(claim(ctx, { buckets: ['locked'] })).rejects.toThrow(/locked-hash.*receipt RPC failed/);
+  });
+
+  it('does not turn a claimability read failure into a successful no-op', async () => {
+    const { ctx, pool } = lockedFixture();
+    pool.claimable.mockRejectedValue(new Error('RPC unavailable'));
+    await expect(claim(ctx, { buckets: ['locked'] })).rejects.toThrow('RPC unavailable');
+    await expect(rewards(ctx)).rejects.toThrow('RPC unavailable');
+    expect(pool.claim).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing policy and a zero recipient without broadcasting', async () => {
+    const { ctx, pool } = lockedFixture();
+    const zero = '0x0000000000000000000000000000000000000000';
+    await expect(claim(ctx, { buckets: ['locked'], recipient: zero })).rejects.toThrow('zero address');
+    pool.claimable.mockResolvedValue({ locked: 1000n, claimable: 0n, policy: zero });
+    await expect(claim(ctx, { buckets: ['locked'] })).rejects.toThrow('M002');
+    expect(pool.claim).not.toHaveBeenCalled();
+  });
+});
