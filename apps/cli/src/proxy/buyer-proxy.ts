@@ -2164,9 +2164,13 @@ export class BuyerProxy {
     // it never reaches a seller.
     const systemRoutedModel = headers[SYSTEM_ROUTED_MODEL_HEADER] === '1'
     delete headers[SYSTEM_ROUTED_MODEL_HEADER]
+    const requestedRequestId = headers['x-antseed-request-id']?.trim()
+    delete headers['x-antseed-request-id']
 
     let serializedReq: SerializedHttpRequest = {
-      requestId: randomUUID(),
+      requestId: requestedRequestId && isUuid(requestedRequestId)
+        ? requestedRequestId
+        : randomUUID(),
       method,
       path,
       headers,
@@ -2911,6 +2915,7 @@ export class BuyerProxy {
       'x-vpr-session-id': _vprSession,
       // Legacy desktop builds (pre AntStation → VPR rename) still send this.
       'x-antstation-session-id': _antstationSession,
+      'x-antseed-capture-response-auth-preimages': captureResponseAuthPreimages,
       ...headersForPeer
     } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
@@ -3026,7 +3031,11 @@ export class BuyerProxy {
               }
             }
           },
-        }, { signal: requestSignal, pinned })
+        }, {
+          signal: requestSignal,
+          pinned,
+          captureResponseAuthPreimages: captureResponseAuthPreimages === '1',
+        })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
         responseForClient = adaptPeerResponse(responseForClient)
@@ -3113,6 +3122,7 @@ export class BuyerProxy {
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
           signal: requestSignal,
           pinned,
+          captureResponseAuthPreimages: captureResponseAuthPreimages === '1',
         })
         if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
@@ -3278,4 +3288,8 @@ export class BuyerProxy {
       }
     }
   }
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
