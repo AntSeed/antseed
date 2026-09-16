@@ -53,12 +53,6 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
     description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
   },
-  {
-    name: 'levanto',
-    type: 'router',
-    description: 'Levanto model router -- routes each chat request to the cheapest capable model',
-    package: '@antseed/router-levanto',
-  },
 ]
 
 export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
