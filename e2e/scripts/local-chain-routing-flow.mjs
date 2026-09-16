@@ -158,7 +158,7 @@ try {
   buyer.on('payment:spend', (event) => events.push(event));
   proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:fixture', autoRouteServiceId: 'fixture-auto',
     routerTimeoutMs: 60_000, routingCadence: 'session', routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
-      allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true, dayPassOnDemandEnabled: false },
+      allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
     routingService: { routerKey: 'plugin:fixture', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
       ...(perCall ? { billing: { kind: 'per_call', maxAmountMicroUsdc: '5000' } } : {}),
@@ -189,43 +189,42 @@ try {
   assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee));
   const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture continuation' }];
   await sendInference(rewritten, { 'x-antseed-context-revision': '2' });
-  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 3]);
+  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 3]);
   await sendInference(rewritten, { 'x-antseed-context-revision': '2', 'x-antseed-route-refresh': 'true' });
-  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [3, 4]);
-  await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === String(routingFee * 3n), 'three routing authorizations');
-  const finalChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
+  assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 4]);
+  await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === String(routingFee), 'one routing authorization');
   await proxy._routingLog.flush();
   const records = (await readFile(join(buyerDir, 'routing-operations.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.ok(records.some((record) => record.parentRequestId === routeEvent.parentRequestId && record.outcome === 'succeeded'));
   const decisions = records.filter((record) => record.kind === 'selection');
-  assert.deepEqual(decisions.map((record) => record.trigger), ['new-session', 'new-turn', 'context-rewrite', 'explicit']);
-  assert.deepEqual(decisions.map((record) => record.reuseSuggested), [false, true, false, false]);
+  assert.deepEqual(decisions.map((record) => record.trigger), ['new-session']);
+  assert.deepEqual(decisions.map((record) => record.reuseSuggested), [false]);
   const operations = records.filter((record) => record.purpose === 'routing' && record.outcome === 'succeeded');
-  assert.equal(operations.length, 3);
-  assert.equal(new Set(operations.map((record) => record.requestId)).size, 3);
-  assert.equal(new Set(operations.map((record) => record.parentRequestId)).size, 3);
+  assert.equal(operations.length, 1);
+  assert.equal(new Set(operations.map((record) => record.requestId)).size, 1);
+  assert.equal(new Set(operations.map((record) => record.parentRequestId)).size, 1);
   assert.ok(operations.every((record) => record.requestId !== record.parentRequestId));
   assert.doesNotMatch(JSON.stringify(records), /fixture prompt|compacted summary|fixture continuation/);
   if (perCall) {
     fixtureProviders[0].failureStatus = 503;
-    await sendInference(rewritten, { 'x-antseed-route-refresh': 'true' }, 502);
-    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [4, 4]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '15000');
-    assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 3);
-    await sendInference(rewritten, { 'x-antseed-route-refresh': 'true' });
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '20000');
-    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [5, 5]);
+    await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' }, 502);
+    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 4]);
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '5000');
+    assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 1);
+    await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' });
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '10000');
+    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [3, 5]);
     fixtureProviders[0].invalidClassification = invalidRoute
       ? JSON.stringify({ choices: [{ message: { content: 'unadvertised-model' } }] }) : 'not-json';
-    await sendInference(rewritten, { 'x-antseed-route-refresh': 'true' }, 502);
-    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 5]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '20000');
-    await sendInference(rewritten, { 'x-antseed-route-refresh': 'true' }, 502);
-    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 5]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '20000');
-    assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 4);
+    await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
+    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [4, 5]);
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '10000');
+    await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
+    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [4, 5]);
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '10000');
+    assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 2);
   }
-  const billableRoutingCalls = perCall ? 4 : 3;
+  const billableRoutingCalls = perCall ? 2 : 1;
   const settlementChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
   const channels = new ChannelsClient({ rpcUrl, contractAddress: addresses.channels, evmChainId: 31337 });
   await waitFor(async () => (await channels.getSession(routingChannel.sessionId)).deposit > 0n, 'on-chain routing reserve');

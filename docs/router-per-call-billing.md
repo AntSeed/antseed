@@ -153,8 +153,12 @@ pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-rou
 
 Use Node 20 for the worktree's installed native dependencies. The two per-call
 scenarios distinguish malformed JSON from a parseable but unadvertised model.
-Each settles four accepted classifications at 5,000 micro-USDC each; the rejected
+Each settles two accepted classifications at 5,000 micro-USDC each; the rejected
 classification, HTTP error, blocked retry, and reused decision add no fee.
+
+The simplified shipping fixture keeps the original model across continuation,
+context rewrite, and explicit refresh. Additional classifications use new
+conversation identities. See `router-shipping-handoff.md` for the current policy.
 
 Validation on September 14, 2026: buyer-core/SDK/CLI builds and workspace
 typechecks passed; SDK 1,168 tests passed, buyer-core 11 passed, Levanto plugin

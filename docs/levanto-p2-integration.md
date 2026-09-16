@@ -1,5 +1,9 @@
 # Router integration: P2 implementation and handoff
 
+Historical implementation snapshot. `router-shipping-handoff.md` supersedes the
+mid-conversation routing gates and day-pass consent design below: shipping now
+uses initial-model-only routing and DB-backed explicit purchase-on-use approval.
+
 Date: September 14, 2026. Branch: `codex/levanto-p1-local`.
 Base: the P1 implementation ending at `aaa362d85`, on Levanto's
 `model-routing-clean-v2` (`227046fdacc470c8d030534ab8e956a3b0272a73`).

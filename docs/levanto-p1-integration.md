@@ -1,5 +1,8 @@
 # Router integration: P1 implementation
 
+Shipping update: `router-shipping-handoff.md` supersedes historical activation,
+access billing, and routing-cadence details in this document.
+
 This is the historical P1 snapshot. The completed P2 changes and test matrix
 are documented in `docs/levanto-p2-integration.md`.
 
