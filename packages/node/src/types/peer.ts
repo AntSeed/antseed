@@ -100,10 +100,10 @@ export interface PeerInfo {
   onChainLastSettledAtSec?: number;
   /** Unix seconds when the seller first staked on the legacy USDC staking contract, when known. */
   onChainStakedAtSec?: number;
-  /** Recognized-usage epoch the usage fields below were read at. */
+  /** Current recognized-usage epoch at the time of the read. */
   onChainUsageEpoch?: number;
-  /** Recognized usage points (micro-USDC) credited to the seller in the current epoch. */
-  onChainUsageCurrentEpochUsdcMicros?: number;
+  /** Seller pool's share of all pools' recognized-usage points in the previous epoch, in basis points. */
+  onChainUsageShareBps?: number;
   /** Recognized usage points (micro-USDC) credited to the seller in the previous epoch. */
   onChainUsageLastEpochUsdcMicros?: number;
   /** ANTS actively staked in the seller's pool this epoch (whole ANTS). */

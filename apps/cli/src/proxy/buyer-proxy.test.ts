@@ -2478,17 +2478,17 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
         lastSeen: NOW - 5_000,
         // A stale cached score and breakdown must never win over the signals.
         onChainReputationScore: 3,
-        trust: { score: 3, usage: null, identity: null, stake: null, washFlagged: null },
+        trust: { score: 3, usage: null, power: null, identity: null, washFlagged: null },
         onChainChannelCount: 20,
         onChainGhostCount: 0,
         onChainTotalVolumeUsdcMicros: 100_000_000,
         onChainLastSettledAtSec: Math.floor((NOW - 60_000) / 1000),
         onChainStakedAtSec: Math.floor((NOW - 40 * 86_400_000) / 1000),
         onChainUsageEpoch: 22,
-        onChainUsageCurrentEpochUsdcMicros: 500_000_000,
-        onChainUsageLastEpochUsdcMicros: 0,
+        onChainUsageShareBps: 1_000,
+        onChainUsageLastEpochUsdcMicros: 500_000_000,
         onChainPoolStakeAnts: 1_250.5,
-        onChainPoolPowerShareBps: 0,
+        onChainPoolPowerShareBps: 1_000,
         onChainWashFlagged: false,
         onChainWashShareBps: 0,
       },
@@ -2498,10 +2498,10 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
   const [peer] = parsePersistedPeers(persisted, NOW)
   assert.ok(peer)
   assert.equal(peer.onChainUsageEpoch, 22)
-  assert.equal(peer.onChainUsageCurrentEpochUsdcMicros, 500_000_000)
-  assert.equal(peer.onChainUsageLastEpochUsdcMicros, 0)
+  assert.equal(peer.onChainUsageShareBps, 1_000)
+  assert.equal(peer.onChainUsageLastEpochUsdcMicros, 500_000_000)
   assert.equal(peer.onChainPoolStakeAnts, 1_250.5)
-  assert.equal(peer.onChainPoolPowerShareBps, 0)
+  assert.equal(peer.onChainPoolPowerShareBps, 1_000)
   assert.equal(peer.onChainWashFlagged, false)
   assert.equal(peer.onChainWashShareBps, 0)
   assert.equal(peer.onChainStakedAtSec, Math.floor((NOW - 40 * 86_400_000) / 1000))
@@ -2509,10 +2509,11 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
   assert.ok(!('onChainTrustScore' in peer))
   assert.deepEqual(peer.trust, computeTrustScore(peer, NOW))
   assert.equal(peer.onChainReputationScore, peer.trust?.score)
-  // $500 of recognized usage in the best epoch scores ~90 on the log curve.
-  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 90)
-  assert.equal(peer.trust?.usage?.epoch, 22)
-  assert.equal(peer.trust?.usage?.usdc, 500)
+  // A 10% share of last epoch's pool points and of this epoch's power scores ~67 on the log curve.
+  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 67)
+  assert.equal(peer.trust?.usage?.epoch, 21)
+  assert.equal(peer.trust?.usage?.shareBps, 1_000)
+  assert.equal(peer.trust?.power?.shareBps, 1_000)
   assert.equal(peer.trust?.washFlagged, false)
 })
 
@@ -2524,8 +2525,8 @@ test('parsePersistedPeers scores a proven wash trader at zero regardless of usag
       lastSeen: NOW - 5_000,
       onChainReputationScore: 95,
       onChainUsageEpoch: 22,
-      onChainUsageCurrentEpochUsdcMicros: 500_000_000,
-      onChainUsageLastEpochUsdcMicros: 900_000_000,
+      onChainUsageShareBps: 10_000,
+      onChainPoolPowerShareBps: 10_000,
       onChainWashFlagged: true,
       onChainWashShareBps: 9_800,
     }],
@@ -2639,7 +2640,7 @@ test('parsePersistedPeers restores GitHub identity history but never trusts pers
   const stored = { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW - 1_000,
     verifications: { github: [{ username: 'portfolio', repository: 'proof' }] },
     onChainReputationScore: 100,
-    trust: { score: 100, usage: { score: 100, usdc: 1_000, epoch: 1 }, identity: null, stake: null, washFlagged: false },
+    trust: { score: 100, usage: { score: 100, shareBps: 10_000, epoch: 1 }, power: null, identity: null, washFlagged: false },
     verificationResults: { verified: true, checkedAtMs: NOW - 500, domains: [],
       github: [{ username: 'portfolio', repository: 'proof', peerId: validPeerId, verified: true, checkedAtMs: NOW - 500 }],
       identityHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',

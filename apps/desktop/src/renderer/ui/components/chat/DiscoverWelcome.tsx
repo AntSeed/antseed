@@ -877,7 +877,7 @@ function Card({
                       ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
                     </span>
                   )}
-                  <span>Trust = max(recognized usage, verified identity) + pool stake; proven wash traders score 0.</span>
+                  <span>Trust = max(average of last epoch usage share and this epoch power share, verified identity); proven wash traders score 0.</span>
                 </>
               )}
             >

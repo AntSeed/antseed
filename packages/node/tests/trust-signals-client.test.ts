@@ -21,6 +21,7 @@ const IFACE = new Interface([
   'function totalPowerWeightAtEpoch(uint256 epoch) view returns (uint256)',
   'function currentEpoch() view returns (uint256)',
   'function sellerPointsByEpoch(uint256 epoch, address seller) view returns (uint256)',
+  'function totalPoolPointsByEpoch(uint256 epoch) view returns (uint256)',
   'function isProvenWashTrader(address seller) view returns (bool)',
   'function provenWashShareBps(address seller) view returns (uint256)',
 ]);
@@ -41,7 +42,8 @@ function answer(target: string, data: string): string {
     case 'totalPowerWeightAtEpoch': return coder.encode(['uint256'], [4_000n * 10n ** 18n]);
     case 'poolWeightAtEpoch': return coder.encode(['uint256'], [(arg0 === 7n ? 1_000n : 0n) * 10n ** 18n]);
     case 'poolActiveStakeAtEpoch': return coder.encode(['uint256'], [arg0 === 7n ? 125n * 10n ** 17n : 0n]);
-    case 'sellerPointsByEpoch': return coder.encode(['uint256'], [arg0 === 22n ? (seller === SELLER_A ? 250_000_000n : 0n) : 90_000_000n]);
+    case 'sellerPointsByEpoch': return coder.encode(['uint256'], [arg0 === 21n && seller === SELLER_A ? 90_000_000n : 0n]);
+    case 'totalPoolPointsByEpoch': return coder.encode(['uint256'], [arg0 === 21n ? 360_000_000n : 0n]);
     default: throw new Error(`unexpected ${parsed.name} on ${target}`);
   }
 }
@@ -74,10 +76,10 @@ describe('TrustSignalsClient', () => {
     expect(signals.get(SELLER_C)).toBeUndefined();
     expect(signals.get(SELLER_A)).toEqual({
       agentId: 7, channelCount: 120, ghostCount: 3, totalVolumeUsdcMicros: 9_000_000_000, lastSettledAtSec: 1_700_000_000,
-      usageEpoch: 22, usageCurrentEpochUsdcMicros: 250_000_000, usageLastEpochUsdcMicros: 90_000_000,
+      usageEpoch: 22, usageShareBps: 2_500, usageLastEpochUsdcMicros: 90_000_000,
       poolStakeAnts: 12.5, poolPowerShareBps: 2_500, washFlagged: false, washShareBps: 0,
     });
-    expect(signals.get(SELLER_B)).toMatchObject({ agentId: 8, washFlagged: true, washShareBps: 4_000, poolPowerShareBps: 0, poolStakeAnts: 0, usageCurrentEpochUsdcMicros: 0 });
+    expect(signals.get(SELLER_B)).toMatchObject({ agentId: 8, washFlagged: true, washShareBps: 4_000, poolPowerShareBps: 0, poolStakeAnts: 0, usageShareBps: 0, usageLastEpochUsdcMicros: 0 });
     // The Multicall3 probe runs once per client, not per read.
     await client.read([SELLER_A]);
     expect(provider.getCode).toHaveBeenCalledTimes(1);
@@ -93,7 +95,7 @@ describe('TrustSignalsClient', () => {
   it('falls back to individual calls on chains without Multicall3', async () => {
     const { provider, calls } = fakeProvider(false);
     const signals = await new TrustSignalsClient(provider, addresses).read([SELLER_A]);
-    expect(signals.get(SELLER_A)?.usageCurrentEpochUsdcMicros).toBe(250_000_000);
+    expect(signals.get(SELLER_A)?.usageShareBps).toBe(2_500);
     expect(calls.mock.calls.length).toBeGreaterThan(2);
   });
 });

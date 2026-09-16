@@ -14,8 +14,8 @@ function makePeer(peerId = 'a'.repeat(40)): PeerInfo {
 function signals(overrides: Record<string, unknown> = {}) {
   return {
     agentId: 123, channelCount: 25, ghostCount: 0, totalVolumeUsdcMicros: 50_000_000, lastSettledAtSec: Math.floor(Date.now() / 1000),
-    usageEpoch: 22, usageCurrentEpochUsdcMicros: 120_000_000, usageLastEpochUsdcMicros: 0,
-    poolStakeAnts: 10, poolPowerShareBps: 400, washFlagged: false, washShareBps: 0,
+    usageEpoch: 22, usageShareBps: 1_500, usageLastEpochUsdcMicros: 120_000_000,
+    poolStakeAnts: 10, poolPowerShareBps: 1_500, washFlagged: false, washShareBps: 0,
     ...overrides,
   };
 }
@@ -42,11 +42,11 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainAgentId).toBe(123);
     expect(peers[0]?.onChainChannelCount).toBe(25);
     expect(peers[0]?.onChainTotalVolumeUsdcMicros).toBe(50_000_000);
-    expect(peers[0]?.onChainUsageCurrentEpochUsdcMicros).toBe(120_000_000);
-    expect(peers[0]?.onChainPoolPowerShareBps).toBe(400);
+    expect(peers[0]?.onChainUsageShareBps).toBe(1_500);
+    expect(peers[0]?.onChainPoolPowerShareBps).toBe(1_500);
     expect(peers[0]?.onChainWashFlagged).toBe(false);
     expect(peers[0]?.onChainStatsFetchedAt).toEqual(expect.any(Number));
-    expect(peers[0]?.trust?.usage?.usdc).toBe(120);
+    expect(peers[0]?.trust?.usage?.shareBps).toBe(1_500);
     expect(peers[0]?.onChainReputationScore).toBeGreaterThan(60);
   });
 

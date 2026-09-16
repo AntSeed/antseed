@@ -7,24 +7,26 @@ hide_title: true
 
 # Reputation
 
-Buyers score sellers locally from data they can check themselves: recognized usage, pool stake, and wash-trading verdicts read from the chain, plus public history of identities the seller has proven it owns. There is no central reputation authority and no seller allowlist.
+Buyers score sellers locally from data they can check themselves: the seller pool's share of recognized usage and of staking power, and wash-trading verdicts, all read from the chain, plus public history of identities the seller has proven it owns. There is no central reputation authority and no seller allowlist.
 
 ## Trust score
 
 Every buyer computes one number per seller, 0-100:
 
 ```
-trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)
+trust = washFlagged ? 0 : max((usage + power) / 2, identity)
 ```
 
 | Part | Range | On-chain source | What it means |
 |---|---|---|---|
-| `usage` | 0-100 | `AntseedUsageAccounting.sellerPointsByEpoch`, the better of the current and previous weekly epoch | Recognized USDC usage on a log curve: `100 · log10(1 + usdc) / log10(1001)`. $0 scores 0, $1,000 per epoch scores 100. Points have already passed the on-chain [reward policies](./reward-policies.md), so usage from a proven wash trader is already zero. |
-| `identity` | 0-70 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Bootstrap credit so an established operator can be routed to before it has usage. Only the larger of `usage` and `identity` counts. |
-| `stake` | 0-15 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` (lock-weighted ANTS) | `15 · sqrt(share)` of network staking power. Square root, so small pools still register. |
+| `usage` | 0-100 | `AntseedUsageAccounting.sellerPointsByEpoch / totalPoolPointsByEpoch` for the last complete weekly epoch | The seller pool's share of all pools' recognized-usage points: what it actually delivered last week relative to the network. Points only accrue for sellers with a pool and have already passed the on-chain [reward policies](./reward-policies.md), so a proven wash trader's share is already zero. |
+| `power` | 0-100 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` for the current epoch (lock-weighted ANTS) | The pool's share of all pools' staking power this week, which is what decides what a buyer's spend with this seller earns. |
+| `identity` | 0-70 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Bootstrap credit so an established operator can be routed to before it has a pool record. Only the larger of the on-chain average and `identity` counts. |
 | `washFlagged` | true/false | `AntseedWashTradingRegistry.isProvenWashTrader` | A proven wash trader scores 0 whatever the other parts say. |
 
-The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/config), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
+Both shares are unitless and mapped through the same log curve, `100 · log10(1 + 999 · share) / 3`: a 100% share scores 100, 10% scores 67, 6.2% scores 60, and 1% scores 35. Shares self-normalize, so scores do not drift as the network grows or as more ANTS is staked; ten equal pools all score 67.
+
+The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/config), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer, and in the first epoch after activation there is no previous-epoch usage share yet. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
 
 ### Identity
 
@@ -53,7 +55,7 @@ The buyer proxy and desktop share the route ranking exported by `@antseed/node/m
 }
 ```
 
-`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded; with the usage curve above, 60 corresponds to roughly $60 of recognized usage in an epoch, or a strong verified identity. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
+`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded; with the share curve above, 60 corresponds to an average share of about 6% across last epoch's usage points and this epoch's staking power, or a strong verified identity. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
 
 Eligible offers are ranked by trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible. Latency is tracked as an exponential moving average (alpha: 0.3), and peers with consecutive failures enter exponential backoff cooldown.
 
@@ -97,7 +99,7 @@ From **September 10, 2026 at 09:54:21 UTC (epoch 22)**, seller eligibility is
 resolved through AntseedSellerRegistry and ANTS pool positions contribute epoch
 power. Legacy USDC stake can remain an eligibility fallback while enabled;
 recognized-usage rewards require pool power, and the same pool power share is
-the `stake` part of the trust score. See [Recognized Usage](./recognized-usage.md)
+the `power` part of the trust score. See [Recognized Usage](./recognized-usage.md)
 and [legacy USDC staking](./legacy-emissions.md#legacy-usdc-staking).
 
 ## ERC-8004 Feedback

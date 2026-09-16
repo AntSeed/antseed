@@ -1076,7 +1076,7 @@ export class AntseedNode extends EventEmitter {
       if (read.lastSettledAtSec !== undefined) p.onChainLastSettledAtSec = read.lastSettledAtSec;
       if (read.usageEpoch !== undefined) {
         p.onChainUsageEpoch = read.usageEpoch;
-        p.onChainUsageCurrentEpochUsdcMicros = read.usageCurrentEpochUsdcMicros;
+        p.onChainUsageShareBps = read.usageShareBps;
         p.onChainUsageLastEpochUsdcMicros = read.usageLastEpochUsdcMicros;
       }
       if (read.poolStakeAnts !== undefined) p.onChainPoolStakeAnts = read.poolStakeAnts;

@@ -92,8 +92,8 @@ describe('Reputation Integration', () => {
       lastSeen: Date.now(),
       providers: ['anthropic'],
       onChainUsageEpoch: 22,
-      onChainUsageCurrentEpochUsdcMicros: 400_000_000,
-      onChainUsageLastEpochUsdcMicros: 0,
+      onChainUsageShareBps: 2_000,
+      onChainPoolPowerShareBps: 2_000,
       onChainWashFlagged: false,
       reputationScore: reportedScore,
     };

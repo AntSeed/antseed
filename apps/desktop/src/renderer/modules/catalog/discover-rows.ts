@@ -25,10 +25,18 @@ export function normalizeTrust(raw: unknown): TrustBreakdown | null {
 
   const usageRaw = asObject(value.usage);
   const usageScore = usageRaw ? boundedScore(usageRaw.score) : null;
-  const usageUsdc = usageRaw ? nonNegative(usageRaw.usdc) : null;
+  const usageShare = usageRaw ? nonNegative(usageRaw.shareBps) : null;
   const usageEpoch = usageRaw ? nonNegative(usageRaw.epoch) : null;
-  const usage = usageScore !== null && usageUsdc !== null && usageEpoch !== null
-    ? { score: usageScore, usdc: usageUsdc, epoch: usageEpoch }
+  const usage = usageScore !== null && usageShare !== null && usageEpoch !== null
+    ? { score: usageScore, shareBps: usageShare, epoch: usageEpoch }
+    : null;
+
+  const powerRaw = asObject(value.power);
+  const powerScore = powerRaw ? boundedScore(powerRaw.score) : null;
+  const powerShare = powerRaw ? nonNegative(powerRaw.shareBps) : null;
+  const powerEpoch = powerRaw ? nonNegative(powerRaw.epoch) : null;
+  const power = powerScore !== null && powerShare !== null && powerEpoch !== null
+    ? { score: powerScore, shareBps: powerShare, epoch: powerEpoch }
     : null;
 
   const identityRaw = asObject(value.identity);
@@ -38,15 +46,8 @@ export function normalizeTrust(raw: unknown): TrustBreakdown | null {
     ? { score: identityScore, kind: identityKind, claim: typeof identityRaw?.claim === 'string' ? identityRaw.claim : '' }
     : null;
 
-  const stakeRaw = asObject(value.stake);
-  const stakeScore = stakeRaw ? boundedScore(stakeRaw.score) : null;
-  const stakeShare = stakeRaw ? nonNegative(stakeRaw.powerShareBps) : null;
-  const stake = stakeScore !== null && stakeShare !== null
-    ? { score: stakeScore, powerShareBps: stakeShare }
-    : null;
-
   const washFlagged = typeof value.washFlagged === 'boolean' ? value.washFlagged : null;
-  return { score, usage, identity, stake, washFlagged };
+  return { score, usage, power, identity, washFlagged };
 }
 
 function toNullableBigintString(v: unknown): string | null {

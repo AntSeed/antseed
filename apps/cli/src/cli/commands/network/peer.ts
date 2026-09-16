@@ -114,7 +114,7 @@ function formatTimestampSec(sec: number | undefined): string {
 
 /**
  * One-line trust breakdown, e.g.
- * `74 = max(usage 59, identity 50 github) + stake 15; not flagged`.
+ * `67 = max((usage 67 + power 67) / 2, identity 50 github); not flagged`.
  * The node computes the score; this only renders `peer.trust`.
  */
 function formatTrustLine(peer: PeerInfo): string {
@@ -123,10 +123,10 @@ function formatTrustLine(peer: PeerInfo): string {
   if (!trust) return typeof score === 'number' && Number.isFinite(score) ? String(Math.round(score)) : chalk.dim('—');
   if (trust.washFlagged) return `${chalk.red('0')}  ${chalk.red('⚠ proven wash trader (on-chain registry) — trust 0')}`;
   const usage = trust.usage ? `usage ${Math.round(trust.usage.score)}` : chalk.dim('usage —');
+  const power = trust.power ? `power ${Math.round(trust.power.score)}` : chalk.dim('power —');
   const identity = trust.identity ? `identity ${Math.round(trust.identity.score)} ${trust.identity.kind}` : chalk.dim('identity —');
-  const stake = trust.stake ? `stake ${Math.round(trust.stake.score)}` : chalk.dim('stake —');
   const flagged = trust.washFlagged === null ? chalk.dim('wash registry unavailable') : 'not flagged';
-  return `${chalk.bold(String(Math.round(trust.score)))} = max(${usage}, ${identity}) + ${stake}; ${flagged}`;
+  return `${chalk.bold(String(Math.round(trust.score)))} = max((${usage} + ${power}) / 2, ${identity}); ${flagged}`;
 }
 
 /**

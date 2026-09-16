@@ -5,19 +5,19 @@ import { sellerMetaLabel, sellerReputationLabel, sellerReputationExplanation } f
 
 test('seller reputation explains the trust formula part by part', () => {
   const route = {
-    effectiveReputationScore: 74,
-    onChainReputationScore: 74,
+    effectiveReputationScore: 67,
+    onChainReputationScore: 67,
     trust: {
-      score: 74,
-      usage: { score: 59, usdc: 120, epoch: 12 },
+      score: 67,
+      usage: { score: 67, shareBps: 1_000, epoch: 11 },
+      power: { score: 67, shareBps: 1_000, epoch: 12 },
       identity: { score: 50, kind: 'github', claim: 'portfolio' },
-      stake: { score: 15, powerShareBps: 10_000 },
       washFlagged: false,
     },
   } as DiscoverRow;
   assert.equal(
     sellerReputationExplanation(route),
-    'Trust 7.4/10 = max(usage 5.9, identity 5.0 GitHub) + stake 1.5. Not flagged for wash trading.',
+    'Trust 6.7/10 = max((usage 6.7 + power 6.7) / 2, identity 5.0 GitHub). Not flagged for wash trading.',
   );
 });
 
@@ -25,11 +25,11 @@ test('seller reputation shows n/a, none and 0 for missing trust parts', () => {
   const route = {
     effectiveReputationScore: 0,
     onChainReputationScore: 0,
-    trust: { score: 0, usage: null, identity: null, stake: null, washFlagged: null },
+    trust: { score: 0, usage: null, power: null, identity: null, washFlagged: null },
   } as DiscoverRow;
   assert.equal(
     sellerReputationExplanation(route),
-    'Trust 0.0/10 = max(usage n/a, identity none) + stake 0. Wash-trading registry unavailable.',
+    'Trust 0.0/10 = max((usage n/a + power n/a) / 2, identity none). Wash-trading registry unavailable.',
   );
 });
 
@@ -39,9 +39,9 @@ test('seller reputation calls out proven wash traders', () => {
     onChainReputationScore: 0,
     trust: {
       score: 0,
-      usage: { score: 90, usdc: 800, epoch: 12 },
+      usage: { score: 90, shareBps: 7_000, epoch: 11 },
+      power: { score: 5, shareBps: 20, epoch: 12 },
       identity: null,
-      stake: { score: 5, powerShareBps: 1_100 },
       washFlagged: true,
     },
   } as DiscoverRow;

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The reputation system enables buyers to make informed peer selection decisions without relying on a central authority. The current implementation is a buyer-computed **trust score** (0-100) derived from recognized usage, pool stake, and wash-trading verdicts read from the chain, plus public history of verified identities; local runtime metrics are used only for routing tie-breakers such as latency and failure cooldowns. The formula, sources, and limits are documented in the [Reputation reference](../../../apps/website/docs/protocol/reputation.md#trust-score).
+The reputation system enables buyers to make informed peer selection decisions without relying on a central authority. The current implementation is a buyer-computed **trust score** (0-100) derived from the seller pool's share of recognized usage and of staking power, and wash-trading verdicts, read from the chain, plus public history of verified identities; local runtime metrics are used only for routing tie-breakers such as latency and failure cooldowns. The formula, sources, and limits are documented in the [Reputation reference](../../../apps/website/docs/protocol/reputation.md#trust-score).
 
 There is no central reputation authority.
 
@@ -52,7 +52,7 @@ All factors are min-max normalised across the eligible candidate pool before wei
 reputationFactor = peerReputation / 100
 ```
 
-When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified). Official routers use the buyer-computed trust score (`trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)`) before falling back to the locally reported score. Lifetime `AntseedChannels` counters are still read for display and the local sybil warning but are not part of the score.
+When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified). Official routers use the buyer-computed trust score (`trust = washFlagged ? 0 : max((usage + power) / 2, identity)`) before falling back to the locally reported score. Lifetime `AntseedChannels` counters are still read for display and the local sybil warning but are not part of the score.
 
 ### Minimum Reputation Filter
 
@@ -145,7 +145,7 @@ A peer's DHT-published reputation is computed by aggregating all attestations ab
 
 | Aspect                  | Current                                      | Phase 2 (Future)                        |
 |-------------------------|----------------------------------------------|-----------------------------------------|
-| Data source             | Recognized usage, pool stake, wash registry, verified identity history; optional reported score fallback | DHT-published signed attestations       |
+| Data source             | Recognized-usage share, pool power share, wash registry, verified identity history; optional reported score fallback | DHT-published signed attestations       |
 | Storage                 | Chain data, local peer cache                 | DHT (distributed)                       |
 | Trust model             | Buyer-verifiable chain reads + verified identities | Transitive trust with decay             |
 | Sybil resistance        | Recognized-usage cost, wash-trading registry, lock-weighted pool stake | Staking-weighted attestations           |

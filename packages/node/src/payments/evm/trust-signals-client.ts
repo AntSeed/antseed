@@ -7,9 +7,9 @@ import { multicallRead, MULTICALL3_ADDRESS, type MulticallRequest } from './mult
  *
  *   round 1: usage.currentEpoch, and per seller
  *            registry.getAgentId, wash.isProvenWashTrader, wash.provenWashShareBps
- *   round 2: pools.totalPowerWeightAtEpoch, and per seller
- *            channels.getAgentStats, pools.poolWeightAtEpoch,
- *            pools.poolActiveStakeAtEpoch, usage.sellerPointsByEpoch x2
+ *   round 2: pools.totalPowerWeightAtEpoch, usage.totalPoolPointsByEpoch(last),
+ *            and per seller channels.getAgentStats, pools.poolWeightAtEpoch,
+ *            pools.poolActiveStakeAtEpoch, usage.sellerPointsByEpoch(last)
  *
  * Each round is chunked at 80 calls per `eth_call`. Contracts that are not
  * configured (older chains without the recognized-usage stack) are skipped
@@ -36,7 +36,7 @@ export interface TrustSignals {
   totalVolumeUsdcMicros?: number;
   lastSettledAtSec?: number;
   usageEpoch?: number;
-  usageCurrentEpochUsdcMicros?: number;
+  usageShareBps?: number;
   usageLastEpochUsdcMicros?: number;
   poolStakeAnts?: number;
   poolPowerShareBps?: number;
@@ -54,6 +54,7 @@ const POOLS_IFACE = new Interface([
 const USAGE_IFACE = new Interface([
   'function currentEpoch() view returns (uint256)',
   'function sellerPointsByEpoch(uint256 epoch, address seller) view returns (uint256)',
+  'function totalPoolPointsByEpoch(uint256 epoch) view returns (uint256)',
 ]);
 const WASH_IFACE = new Interface([
   'function isProvenWashTrader(address seller) view returns (bool)',
@@ -137,10 +138,12 @@ export class TrustSignalsClient {
     // Round 2: channel stats, pool power, recognized usage.
     const poolsEnabled = Boolean(sellerPools) && epoch !== undefined;
     const usageEnabled = Boolean(usageAccounting) && epoch !== undefined;
+    const lastEpoch = epoch !== undefined ? Math.max(0, epoch - 1) : 0;
     const round2: MulticallRequest[] = [];
     if (poolsEnabled) round2.push({ target: sellerPools!, iface: POOLS_IFACE, method: 'totalPowerWeightAtEpoch', args: [epoch] });
+    if (usageEnabled) round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'totalPoolPointsByEpoch', args: [lastEpoch] });
     const round2Offset = round2.length;
-    const perSeller2 = 1 + (poolsEnabled ? 2 : 0) + (usageEnabled ? 2 : 0);
+    const perSeller2 = 1 + (poolsEnabled ? 2 : 0) + (usageEnabled ? 1 : 0);
     const ordered = [...agentIds];
     for (const [seller, agentId] of ordered) {
       round2.push({ target: channels, iface: CHANNELS_IFACE, method: 'getAgentStats', args: [agentId] });
@@ -149,12 +152,12 @@ export class TrustSignalsClient {
         round2.push({ target: sellerPools!, iface: POOLS_IFACE, method: 'poolActiveStakeAtEpoch', args: [agentId, epoch] });
       }
       if (usageEnabled) {
-        round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'sellerPointsByEpoch', args: [epoch, seller] });
-        round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'sellerPointsByEpoch', args: [Math.max(0, epoch! - 1), seller] });
+        round2.push({ target: usageAccounting!, iface: USAGE_IFACE, method: 'sellerPointsByEpoch', args: [lastEpoch, seller] });
       }
     }
     const results2 = await this._read(round2);
     const totalPower = poolsEnabled ? (first(results2[0] ?? null) as bigint | undefined) : undefined;
+    const totalPoints = usageEnabled ? (first(results2[poolsEnabled ? 1 : 0] ?? null) as bigint | undefined) : undefined;
     ordered.forEach(([seller], index) => {
       const signals = out.get(seller)!;
       let cursor = round2Offset + index * perSeller2;
@@ -174,12 +177,11 @@ export class TrustSignalsClient {
         if (typeof stake === 'bigint') signals.poolStakeAnts = Number(stake / ANTS_WEI) + Number(stake % ANTS_WEI) / 1e18;
       }
       if (usageEnabled) {
-        const current = toSafeNumber(first(results2[cursor++] ?? null));
-        const last = toSafeNumber(first(results2[cursor++] ?? null));
-        if (current !== undefined && last !== undefined) {
+        const points = first(results2[cursor++] ?? null);
+        if (typeof points === 'bigint' && typeof totalPoints === 'bigint') {
           signals.usageEpoch = epoch;
-          signals.usageCurrentEpochUsdcMicros = current;
-          signals.usageLastEpochUsdcMicros = epoch === 0 ? 0 : last;
+          signals.usageLastEpochUsdcMicros = epoch === 0 ? 0 : toSafeNumber(points);
+          signals.usageShareBps = epoch === 0 || totalPoints === 0n ? 0 : Number((points * 10_000n) / totalPoints);
         }
       }
     });

@@ -607,8 +607,8 @@ export function parsePersistedPeers(
     if (typeof entry.onChainUsageEpoch === 'number' && Number.isFinite(entry.onChainUsageEpoch)) {
       peer.onChainUsageEpoch = entry.onChainUsageEpoch
     }
-    if (typeof entry.onChainUsageCurrentEpochUsdcMicros === 'number' && Number.isFinite(entry.onChainUsageCurrentEpochUsdcMicros)) {
-      peer.onChainUsageCurrentEpochUsdcMicros = entry.onChainUsageCurrentEpochUsdcMicros
+    if (typeof entry.onChainUsageShareBps === 'number' && Number.isFinite(entry.onChainUsageShareBps)) {
+      peer.onChainUsageShareBps = entry.onChainUsageShareBps
     }
     if (typeof entry.onChainUsageLastEpochUsdcMicros === 'number' && Number.isFinite(entry.onChainUsageLastEpochUsdcMicros)) {
       peer.onChainUsageLastEpochUsdcMicros = entry.onChainUsageLastEpochUsdcMicros
@@ -1252,7 +1252,7 @@ export class BuyerProxy {
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStakedAtSec: p.onChainStakedAtSec ?? null,
         onChainUsageEpoch: p.onChainUsageEpoch ?? null,
-        onChainUsageCurrentEpochUsdcMicros: p.onChainUsageCurrentEpochUsdcMicros ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
         onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
         onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
         onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
@@ -1637,7 +1637,7 @@ export class BuyerProxy {
         onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
         onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
         onChainUsageEpoch: p.onChainUsageEpoch ?? null,
-        onChainUsageCurrentEpochUsdcMicros: p.onChainUsageCurrentEpochUsdcMicros ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
         onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
         onChainWashFlagged: p.onChainWashFlagged ?? null,
         onChainWashShareBps: p.onChainWashShareBps ?? null,

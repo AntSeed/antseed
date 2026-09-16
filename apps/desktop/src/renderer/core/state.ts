@@ -169,17 +169,17 @@ export type VprModelCatalogEntry = {
  * (`packages/node/src/reputation/trust-score.ts`). The renderer only imports
  * `@antseed/node` subpath modules, so the shape is restated here.
  *
- *   trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)
+ *   trust = washFlagged ? 0 : max((usage + power) / 2, identity)
  */
 export type TrustBreakdown = {
   /** Final trust score, 0-100. */
   score: number;
-  /** Recognized-usage part; `null` when usage accounting data is unavailable. */
-  usage: { score: number; usdc: number; epoch: number } | null;
+  /** Last epoch's share of all pools' usage points; `null` when usage accounting data is unavailable. */
+  usage: { score: number; shareBps: number; epoch: number } | null;
+  /** Current epoch's share of all pools' staking power; `null` when pool data is unavailable. */
+  power: { score: number; shareBps: number; epoch: number } | null;
   /** Verified-identity part; `null` when no verified identity has usable history. */
   identity: { score: number; kind: 'github' | 'domain'; claim: string } | null;
-  /** Pool staking-power part; `null` when pool data is unavailable. */
-  stake: { score: number; powerShareBps: number } | null;
   /** Wash-trading registry verdict; `null` when the registry is unavailable. */
   washFlagged: boolean | null;
 };

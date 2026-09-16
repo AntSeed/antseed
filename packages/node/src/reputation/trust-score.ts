@@ -4,38 +4,41 @@ import { scoreIdentityHistory } from './identity-history.js';
 /**
  * Buyer-side trust score, 0-100.
  *
- *   trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)
+ *   trust = washFlagged ? 0 : max((usage + power) / 2, identity)
  *
- * - usage:    recognized-usage points (USDC settled and accounted through
- *             `AntseedUsageAccounting`) in the best of the current and previous
- *             weekly epoch. Points already pass through the on-chain points
- *             policies, so usage from a proven wash trader is already zero.
+ * - usage:    the seller pool's share of all pools' recognized-usage points in
+ *             the last complete weekly epoch (`AntseedUsageAccounting`). Points
+ *             only accrue for sellers with a pool and already pass the on-chain
+ *             points policies, so a proven wash trader's share is already zero.
+ * - power:    the pool's share of all pools' lock-weighted staking power in the
+ *             current epoch (`AntseedSellerPools`). This is what decides what a
+ *             buyer's spend with this seller earns this week.
  * - identity: bootstrap credit for a verified public identity (GitHub
  *             portfolio up to 70, domain registration age up to 12) so an
- *             established operator can be routed to before it has usage.
- * - stake:    up to 15 points for the seller pool's share of network staking
- *             power (lock-weighted ANTS), scaled by square root so small pools
- *             still register.
+ *             established operator can be routed to before it has a pool record.
  * - wash:     a seller flagged by `AntseedWashTradingRegistry` scores 0.
+ *
+ * Shares are unitless and self-normalizing: they do not drift as the network
+ * grows or as more ANTS is staked. Each share is mapped through
+ * `shareScore`, a log curve with a 1000x range (100% → 100, 10% → 67,
+ * 3.5% → 60, 1% → 35), so ten equal pools all clear the default 60 gate.
  *
  * Nothing else feeds the number. Failure streaks, cooldowns, price limits and
  * allow/block lists stay separate router rules.
  */
 
-/** Recognized usage per epoch (USDC) at which the usage part reaches 100. */
-export const TRUST_USAGE_FULL_SCORE_USDC = 1_000;
-/** Maximum points from pool staking power share. */
-export const TRUST_STAKE_MAX_POINTS = 15;
+/** Dynamic range of the share curve: a share of 1/SHARE_SCORE_RANGE scores ~0. */
+export const SHARE_SCORE_RANGE = 1_000;
 
 export interface TrustBreakdown {
   /** Final trust score, 0-100. */
   score: number;
-  /** Recognized-usage part; `null` when usage accounting data is unavailable. */
-  usage: { score: number; usdc: number; epoch: number } | null;
+  /** Last epoch's usage-points share; `null` when usage accounting data is unavailable. */
+  usage: { score: number; shareBps: number; epoch: number } | null;
+  /** Current epoch's staking-power share; `null` when pool data is unavailable. */
+  power: { score: number; shareBps: number; epoch: number } | null;
   /** Verified-identity part; `null` when no verified identity has usable history. */
   identity: { score: number; kind: 'github' | 'domain'; claim: string } | null;
-  /** Pool staking-power part; `null` when pool data is unavailable. */
-  stake: { score: number; powerShareBps: number } | null;
   /** Wash-trading registry verdict; `null` when the registry is unavailable. */
   washFlagged: boolean | null;
 }
@@ -44,44 +47,39 @@ function finite(value: number | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-/** 0 at $0, 100 at `TRUST_USAGE_FULL_SCORE_USDC`, logarithmic in between. */
-export function usageScoreFromUsdc(usdc: number): number {
-  if (!Number.isFinite(usdc) || usdc <= 0) return 0;
-  return Math.min(100, 100 * Math.log10(1 + usdc) / Math.log10(1 + TRUST_USAGE_FULL_SCORE_USDC));
-}
-
-/** `TRUST_STAKE_MAX_POINTS * sqrt(share)`; share is the pool's fraction of network power. */
-export function stakeScoreFromPowerShareBps(shareBps: number): number {
+/** `100 · log10(1 + (SHARE_SCORE_RANGE - 1) · share) / log10(SHARE_SCORE_RANGE)`, share in basis points. */
+export function shareScore(shareBps: number): number {
   if (!Number.isFinite(shareBps) || shareBps <= 0) return 0;
-  return TRUST_STAKE_MAX_POINTS * Math.sqrt(Math.min(1, shareBps / 10_000));
+  const share = Math.min(1, shareBps / 10_000);
+  return 100 * Math.log10(1 + (SHARE_SCORE_RANGE - 1) * share) / Math.log10(SHARE_SCORE_RANGE);
 }
 
 /**
  * Compute the trust breakdown, or `null` when nothing about the peer is known
- * (no recognized-usage read, no verified identity history, no registry read).
+ * (no pool/usage read, no verified identity history, no registry read).
  */
 export function computeTrustScore(peer: PeerInfo, nowMs = Date.now()): TrustBreakdown | null {
-  const current = finite(peer.onChainUsageCurrentEpochUsdcMicros);
-  const last = finite(peer.onChainUsageLastEpochUsdcMicros);
   const epoch = finite(peer.onChainUsageEpoch);
-  const usage = current !== null && last !== null && epoch !== null
-    ? (() => { const usdc = Math.max(current, last) / 1_000_000; return { score: usageScoreFromUsdc(usdc), usdc, epoch }; })()
+  const usageShare = finite(peer.onChainUsageShareBps);
+  const usage = epoch !== null && usageShare !== null && epoch > 0
+    ? { score: shareScore(usageShare), shareBps: usageShare, epoch: epoch - 1 }
+    : null;
+
+  const powerShare = finite(peer.onChainPoolPowerShareBps);
+  const power = epoch !== null && powerShare !== null
+    ? { score: shareScore(powerShare), shareBps: powerShare, epoch }
     : null;
 
   const identityHistory = scoreIdentityHistory(peer, nowMs);
   const identity = identityHistory ? { score: identityHistory.points, kind: identityHistory.kind, claim: identityHistory.claim } : null;
 
-  const shareBps = finite(peer.onChainPoolPowerShareBps);
-  const stake = shareBps !== null ? { score: stakeScoreFromPowerShareBps(shareBps), powerShareBps: shareBps } : null;
-
   const washFlagged = typeof peer.onChainWashFlagged === 'boolean' ? peer.onChainWashFlagged : null;
 
-  if (usage === null && identity === null && washFlagged === null) return null;
+  if (usage === null && power === null && identity === null && washFlagged === null) return null;
 
-  const score = washFlagged
-    ? 0
-    : Math.min(100, Math.max(usage?.score ?? 0, identity?.score ?? 0) + (stake?.score ?? 0));
-  return { score, usage, identity, stake, washFlagged };
+  const onChain = usage || power ? ((usage?.score ?? 0) + (power?.score ?? 0)) / 2 : 0;
+  const score = washFlagged ? 0 : Math.min(100, Math.max(onChain, identity?.score ?? 0));
+  return { score, usage, power, identity, washFlagged };
 }
 
 /** Trust score alone, or `null` when the peer is unscored. */

@@ -126,7 +126,7 @@ test('the buyer trust score wins over a seller-reported score', () => {
     peerId: 'e'.repeat(40),
     reputationScore: 100,
     onChainReputationScore: 12,
-    trust: { score: 12, usage: null, identity: { score: 12, kind: 'domain', claim: 'example.com' }, stake: null, washFlagged: null },
+    trust: { score: 12, usage: null, power: null, identity: { score: 12, kind: 'domain', claim: 'example.com' }, washFlagged: null },
     providerServiceApiProtocols: {
       openai: { services: { 'qwen3-coder': ['openai-chat-completions'] } },
     },
@@ -239,8 +239,8 @@ test('never re-scores from raw on-chain stats; the node-assigned score is author
     onChainGhostCount: 0,
     onChainTotalVolumeUsdcMicros: 100_000_000,
     onChainUsageEpoch: 22,
-    onChainUsageCurrentEpochUsdcMicros: 500_000_000,
-    onChainUsageLastEpochUsdcMicros: 0,
+    onChainUsageShareBps: 5_000,
+    onChainPoolPowerShareBps: 5_000,
     onChainWashFlagged: false,
   })
 
