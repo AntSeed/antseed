@@ -817,6 +817,7 @@ export class BuyerProxy {
    * fall back to their own auto-picked default.
    */
   private _savingsBaselineModel: string | null = null
+  private readonly _initialConversationRequests = new Map<string, Promise<void>>()
   private _conversations!: ConversationStore
   /**
    * Last router-ranked candidate list per conversation, for client disclosure
@@ -2440,6 +2441,57 @@ export class BuyerProxy {
       return
     }
 
+    const identity = method === 'POST' && isCompletionRequestPath(path)
+      ? extractConversationIdentity(serializedReq.headers, parseRequestBodyObject(serializedReq.body, serializedReq.headers))
+      : null
+    const key = identity ? `${identity.tool}:${identity.parentSessionKey ?? identity.sessionKey}` : null
+    const pending = key ? this._initialConversationRequests.get(key) : undefined
+    if (pending) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          pending,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('initial routing in progress')), this._routerTimeoutMs)
+          }),
+        ])
+      } catch {
+        res.writeHead(409, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'conversation_initializing', message: 'The first conversation request is still in progress. Retry without starting a new conversation.' } }))
+        return
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    if (res.destroyed || req.aborted) return
+    if (key && this._initialConversationRequests.has(key)) {
+      res.writeHead(409, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { code: 'conversation_initializing' } }))
+      return
+    }
+    let release: (() => void) | undefined
+    if (key && !this._conversations.get(key)?.lastModel) {
+      this._initialConversationRequests.set(key, new Promise<void>((resolve) => { release = resolve }))
+    }
+    try {
+      await this._routeConversationRequest(req, res, serializedReq, systemRoutedModel, requiredParameters)
+    } finally {
+      if (release && key) {
+        this._initialConversationRequests.delete(key)
+        release()
+      }
+    }
+  }
+
+  private async _routeConversationRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    serializedReq: SerializedHttpRequest,
+    systemRoutedModel: boolean,
+    requiredParameters: string[],
+  ): Promise<void> {
+    const method = req.method ?? 'GET'
+    const path = req.url ?? '/'
     // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
     const effectivePinnedPeer = this._pinnedPeer
@@ -2465,28 +2517,21 @@ export class BuyerProxy {
     const storedConversation = conversationIdentity && trackedConversationKey
       ? this._conversations.get(`${conversationIdentity.tool}:${trackedConversationKey}`)
       : null
-    // Only a genuine user pin (peerSource === 'user') ever substitutes a
-    // concrete model in here. An auto-routed chat keeps sending its sentinel
-    // model through untouched on every request -- substituting the
-    // previously-routed model here would run the request against a fixed
-    // seller before the router plugin ever saw it, permanently bypassing its
-    // own (correct) continuation logic.
-    const chatPinnedModel = storedConversation?.peerSource === 'user'
-      ? storedConversation.pinnedModel
-      : null
-    // Separately, and only at the peer level: remember whichever peer last
-    // actually served this conversation, as a soft preference for whatever
-    // model this request (or the router, for an auto-routed chat) ends up
-    // asking for. This never substitutes a model -- it only nudges peer
-    // selection among candidates for an already-decided model, with normal
-    // failover if that peer is no longer viable. A genuine user pin already
-    // carries its own peer via chatPinnedModel, so it's excluded here.
+    const chatPinnedModel = storedConversation?.peerSource === 'user' ? storedConversation.pinnedModel : null
     const lastRoutedPeer = storedConversation?.peerSource !== 'user' && storedConversation?.lastModel
       ? parsePeerPinnedService(storedConversation.lastModel)
       : null
+    const initialModel = lastRoutedPeer?.service ?? null
+    if (initialModel && !chatPinnedModel) {
+      const requestedModel = extractRequestedService(serializedReq)
+      if (systemRoutedModel || requestedModel === ROUTED_MODEL_ALIAS || requestedModel === this._autoRouteServiceId) {
+        const override = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, initialModel)
+        if (override.overridden) serializedReq = { ...serializedReq, body: override.body, headers: override.headers }
+      }
+    }
     const preferredPeerHeader = normalizePeerId(serializedReq.headers['x-antseed-prefer-peer'] ?? '')
     const preferredConversationPeerId = preferredPeerHeader ?? lastRoutedPeer?.peerId ?? null
-    const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+    const effectiveRoutedModel = chatPinnedModel ?? initialModel ?? this._defaultRoutedModel
     let trackedConversationId: string | null = storedConversation?.id ?? null
 
     // Resolve the `antseed` model alias to the session's default route first,
@@ -2648,20 +2693,6 @@ export class BuyerProxy {
       return
     }
 
-    // Additive, optional: a router that implements selectRoute picks both
-    // model and seller together, ahead of the fixed-model narrowing below —
-    // called here, unconditionally on explicitPeerId, so a peer hint (a soft
-    // cache-affinity preference, a stale per-conversation pin, or any other
-    // source of explicitPeerId) can never bypass a router that actually
-    // claims this request's model. Declining (null) — including simply not
-    // implementing the method, or a concrete model the router doesn't
-    // recognize as its own sentinel — falls straight through to the
-    // unmodified pipeline below, identical to today for every request a
-    // router doesn't claim. Host code carries no
-    // knowledge of any sentinel string; that's entirely the plugin's
-    // business. Called at most once per request — selectRoute can have real
-    // side effects (payment signing, ledger recording), so this must never
-    // run twice for the same request.
     let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
     const routingSettings = this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}
     const routingStartedAt = Date.now()
@@ -2683,7 +2714,7 @@ export class BuyerProxy {
       return
     }
     try {
-      if (requestedService && this._node.router?.selectRoute
+      if (requestedService && !initialModel && !chatPinnedModel && !explicitPeerId && this._node.router?.selectRoute
         && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
         const sharedPreferences = structuredClone(this._routingPreferences)
         if (sharedPreferences) delete sharedPreferences.routerSettings
