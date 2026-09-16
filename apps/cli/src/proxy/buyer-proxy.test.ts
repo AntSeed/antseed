@@ -2509,8 +2509,8 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
   assert.ok(!('onChainTrustScore' in peer))
   assert.deepEqual(peer.trust, computeTrustScore(peer, NOW))
   assert.equal(peer.onChainReputationScore, peer.trust?.score)
-  // A 10% share of last epoch's pool points and of this epoch's power scores ~67 on the log curve.
-  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 67)
+  // A 10% share of last epoch's pool points and of this epoch's power scores 60 * 0.667 = 40.
+  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 40)
   assert.equal(peer.trust?.usage?.epoch, 21)
   assert.equal(peer.trust?.usage?.shareBps, 1_000)
   assert.equal(peer.trust?.power?.shareBps, 1_000)
@@ -2618,13 +2618,13 @@ test('parsePersistedPeers restores external verification claims and results', ()
     domains: [{ domain: 'example.com', methods: ['dns-txt'] }],
   })
   assert.deepEqual(peer!.verificationResults, verificationResults)
-  // A ten-year-old verified domain earns the full 12 identity points.
-  assert.equal(peer!.onChainReputationScore, 12)
-  assert.deepEqual(peer!.trust?.identity, { score: 12, kind: 'domain', claim: 'example.com' })
+  // A ten-year-old verified domain earns the full 12 identity points, worth 40 * 12 / 70 trust.
+  assert.equal(peer!.onChainReputationScore, 40 * 12 / 70)
+  assert.deepEqual(peer!.trust?.identity, { score: 40 * 12 / 70, kind: 'domain', claim: 'example.com' })
   assert.equal(peer!.trust?.usage, null)
   assert.equal(peer!.trust?.washFlagged, null)
   // Ownership proofs and identity evidence expire after seven days: once
-  // stale the peer is unscored again rather than keeping the cached 12.
+  // stale the peer is unscored again rather than keeping the cached score.
   const [stale] = parsePersistedPeers(
     { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW + 8 * 86_400_000 - 1_000,
       verifications: { domains: [{ domain: 'example.com', methods: ['dns-txt'] }] }, verificationResults }] },

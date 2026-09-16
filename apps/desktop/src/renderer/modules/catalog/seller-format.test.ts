@@ -5,19 +5,19 @@ import { sellerMetaLabel, sellerReputationLabel, sellerReputationExplanation } f
 
 test('seller reputation explains the trust formula part by part', () => {
   const route = {
-    effectiveReputationScore: 67,
-    onChainReputationScore: 67,
+    effectiveReputationScore: 65,
+    onChainReputationScore: 65,
     trust: {
-      score: 67,
-      usage: { score: 67, shareBps: 1_000, epoch: 11 },
-      power: { score: 67, shareBps: 1_000, epoch: 12 },
-      identity: { score: 50, kind: 'github', claim: 'portfolio' },
+      score: 65,
+      usage: { score: 27, shareBps: 1_000, epoch: 11 },
+      power: { score: 13, shareBps: 1_000, epoch: 12 },
+      identity: { score: 25, kind: 'github', claim: 'portfolio' },
       washFlagged: false,
     },
   } as DiscoverRow;
   assert.equal(
     sellerReputationExplanation(route),
-    'Trust 6.7/10 = max((usage 6.7 + power 6.7) / 2, identity 5.0 GitHub). Not flagged for wash trading.',
+    'Trust 6.5/10 = usage 2.7 + power 1.3 + identity 2.5 GitHub. Not flagged for wash trading.',
   );
 });
 
@@ -29,7 +29,7 @@ test('seller reputation shows n/a, none and 0 for missing trust parts', () => {
   } as DiscoverRow;
   assert.equal(
     sellerReputationExplanation(route),
-    'Trust 0.0/10 = max((usage n/a + power n/a) / 2, identity none). Wash-trading registry unavailable.',
+    'Trust 0.0/10 = usage n/a + power n/a + identity none. Wash-trading registry unavailable.',
   );
 });
 
@@ -39,7 +39,7 @@ test('seller reputation calls out proven wash traders', () => {
     onChainReputationScore: 0,
     trust: {
       score: 0,
-      usage: { score: 90, shareBps: 7_000, epoch: 11 },
+      usage: { score: 38, shareBps: 7_000, epoch: 11 },
       power: { score: 5, shareBps: 20, epoch: 12 },
       identity: null,
       washFlagged: true,

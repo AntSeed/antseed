@@ -114,7 +114,7 @@ function formatTimestampSec(sec: number | undefined): string {
 
 /**
  * One-line trust breakdown, e.g.
- * `67 = max((usage 67 + power 67) / 2, identity 50 github); not flagged`.
+ * `65 = usage 27 + power 13 + identity 25 github; not flagged`.
  * The node computes the score; this only renders `peer.trust`.
  */
 function formatTrustLine(peer: PeerInfo): string {
@@ -126,7 +126,7 @@ function formatTrustLine(peer: PeerInfo): string {
   const power = trust.power ? `power ${Math.round(trust.power.score)}` : chalk.dim('power —');
   const identity = trust.identity ? `identity ${Math.round(trust.identity.score)} ${trust.identity.kind}` : chalk.dim('identity —');
   const flagged = trust.washFlagged === null ? chalk.dim('wash registry unavailable') : 'not flagged';
-  return `${chalk.bold(String(Math.round(trust.score)))} = max((${usage} + ${power}) / 2, ${identity}); ${flagged}`;
+  return `${chalk.bold(String(Math.round(trust.score)))} = ${usage} + ${power} + ${identity}; ${flagged}`;
 }
 
 /**

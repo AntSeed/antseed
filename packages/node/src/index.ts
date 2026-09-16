@@ -302,7 +302,7 @@ export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
 export {
-  computeTrustScore, trustScore, shareScore, SHARE_SCORE_RANGE,
+  computeTrustScore, trustScore, shareCurve, SHARE_CURVE_RANGE, TRUST_WEIGHTS,
   type TrustBreakdown,
 } from './reputation/trust-score.js';
 export {

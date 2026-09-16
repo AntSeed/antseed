@@ -47,7 +47,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainWashFlagged).toBe(false);
     expect(peers[0]?.onChainStatsFetchedAt).toEqual(expect.any(Number));
     expect(peers[0]?.trust?.usage?.shareBps).toBe(1_500);
-    expect(peers[0]?.onChainReputationScore).toBeGreaterThan(60);
+    expect(peers[0]?.onChainReputationScore).toBeGreaterThan(30);
   });
 
   it('reads every stale peer in one batch and skips fresh ones', async () => {

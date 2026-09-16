@@ -169,7 +169,7 @@ export type VprModelCatalogEntry = {
  * (`packages/node/src/reputation/trust-score.ts`). The renderer only imports
  * `@antseed/node` subpath modules, so the shape is restated here.
  *
- *   trust = washFlagged ? 0 : max((usage + power) / 2, identity)
+ *   trust = washFlagged ? 0 : usage + power + identity   (weights 40 / 20 / 40)
  */
 export type TrustBreakdown = {
   /** Final trust score, 0-100. */
