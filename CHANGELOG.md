@@ -15,6 +15,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop VPR: automatically check TEE-advertising sellers and show a neutral TEE badge on model-detail seller rows after successful seller-node verification. Cache successful badge results for up to 24 hours, invalidate them on newer failures, capability changes, or buyer restart, and keep routing evidence limited to five minutes. The badge does not verify individual inference responses.
+- Desktop VPR: add session-retained, browse-only TEE seller filters to Models and model details, with matching-offer pricing and seller counts. Browsing does not change seller pins or automatic routing, and the Models overview shows no TEE badges.
+- Desktop/CLI: expose authenticated local seller-node verification status and automatic badge checks without adding a desktop routing setting or changing existing CLI verification options.
+
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
 - Contracts: standalone Base mainnet commands to deploy, verify, and wire the legacy rewards registry and switch the staking pointer ahead of cutover, then fund legacy DIEM pots and flip the emissions pointer with Channels pause/unpause handled manually.

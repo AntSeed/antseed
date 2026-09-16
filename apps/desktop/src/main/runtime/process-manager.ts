@@ -660,6 +660,7 @@ export class ProcessManager {
   }
 
   private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, isLocalDevScript: boolean): Promise<void> {
+    if (process.env['ANTSEED_LIVE_QA'] === '1') return;
     if (!isLocalDevScript) {
       return;
     }

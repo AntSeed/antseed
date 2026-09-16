@@ -154,7 +154,7 @@ The VPR is anonymous by default. There is no central AntSeed account, platform-i
 
 ### Anonymous access
 
-Identity anonymity and request content are separate. A standard seller can process the prompt it serves, but AntSeed does not tell the seller who you are. Verified TEE routes can add stronger content confidentiality where available.
+Identity anonymity and request content are separate. A standard seller can process the prompt it serves, but AntSeed does not tell the seller who you are. A passing seller-node TEE check is narrower than end-to-end inference confidentiality; see the verification section below.
 
 ### What stays local
 
@@ -166,7 +166,23 @@ Between AntSeed nodes, the preferred transport is a mutually authenticated encry
 
 See the [Transport specification](/docs/transport) for handshake, encryption, framing, and fallback details. For background on the fallback technology, see [WebRTC data channels on MDN](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Using_data_channels).
 
-### TEE-verified sellers
+### TEE availability and seller-node verification
+
+In **Models**, choose **TEE advertised** from the seller filter to browse models with sellers advertising TEE attestation support. The models overview does not show TEE badges; individual sellers on model details show **TEE** only after verification passes. The same filter is available on each model's seller list and stays selected as you navigate during the app session.
+
+While filtering, prices, savings, seller counts, and the Free filter reflect only matching offers, subject to the existing pricing eligibility rules. This is a **browsing filter only**: it does not change your selected seller, pins, automatic routing, or verification policy. Automatic routing may still select another seller. Use **Show all sellers** to see a selected seller hidden by the filter.
+
+The **TEE advertised** filter matches advertised support for the `antseed-verifier` verifier, not a passing verification verdict. Sellers excluded by this filter have no recognized advertised support in the available metadata; that does not prove that they have no TEE.
+
+VPR checks advertising sellers automatically after discovery, including newly discovered sellers. No Verify or Recheck button is needed. Checks run one at a time in the background while the window is visible, with at most one new check every two seconds and up to 512 tracked sellers. Expired results refresh for sellers on the current model's displayed seller list; other sellers are not continually rechecked. Request-time verification remains responsible for enforcing the routing policy.
+
+On a model's seller list, a single **TEE** badge appears after the trusted verifier has passed both the seller-node TEE and seller-identity binding claims. Successful results are cached for display for up to **24 hours from the check**, without extending that deadline when viewed. This badge describes a recent seller-node check, not verification of each inference result. Background checks reuse the cached result. Routing separately accepts cached evidence for at most **five minutes**; the one-day display lifetime never extends routing authorization. A newer failed or unavailable check revokes the badge. The in-memory cache is discarded when the buyer restarts or the observed verifier capabilities change. Missing, expired, failed, unavailable, or in-progress checks show no badge; absence is not proof that the seller has no TEE.
+
+Hover or keyboard-focus the badge for the tooltip: “We use TEEs to enhance user privacy.” There are no status messages, check buttons, or technical-details panels in the seller badge. The underlying checks, evidence, and routing enforcement are unchanged.
+
+Unavailable checks retry with exponential backoff starting at 30 seconds, capped at five minutes. Sellers not being viewed receive at most three unavailable-check attempts per app/buyer session or observed capability change; returning to their model resumes retries. Automatic checks never select or pin sellers, install plugins, or change verification policy. A passing seller-node check **does not guarantee that downstream inference runs inside a TEE**; provider, GPU, and measured-image claims are not guaranteed by this badge.
+
+There is no desktop verification routing setting. Automatic checks and the badge do not restart the buyer or change its policy. Existing CLI verification options remain available; see [Verify a seller's TEE](/docs/guides/verify-tee).
 
 Trusted Execution Environments can add hardware-backed confidentiality when a seller offers a verifiable TEE route. Treat a TEE label as a claim to verify, not as sufficient proof by itself. Verification must bind the attestation to the running workload, seller identity, and expected configuration.
 

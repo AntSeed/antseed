@@ -27,6 +27,7 @@ export { effectiveModelReputationScore } from '@antseed/node'
 export type NetworkModelType = 'text' | 'image'
 
 export type NetworkModelPeerOffer = {
+  advertisedVerifierIds?: string[]
   peerId: string
   displayName?: string
   provider: string
@@ -268,6 +269,7 @@ export function buildNetworkModels(
     if (offer.type === 'text') entry.type = 'text'
     const peer = peerById.get(offer.peerId)
     entry.peers.push({
+      advertisedVerifierIds: offer.advertisedVerifierIds,
       peerId: offer.peerId,
       ...(offer.displayName ? { displayName: offer.displayName } : {}),
       provider: offer.provider,

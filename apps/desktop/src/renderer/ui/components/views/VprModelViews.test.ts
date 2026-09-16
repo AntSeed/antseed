@@ -14,6 +14,7 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     serviceId: 'gpt-test',
     label: 'GPT Test',
     peerCount: 1,
+    teeSellerCount: 0,
     categories: [],
     kind: 'text',
     protocols: ['openai-chat-completions'],

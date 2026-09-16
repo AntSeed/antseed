@@ -2,6 +2,13 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
 
+test('normalizeDiscoverRow carries only normalized advertised verifier IDs', () => {
+  const raw = { peerId: 'abc', serviceId: 'gpt-5' };
+  assert.deepEqual(normalizeDiscoverRow({ ...raw, advertisedVerifierIds: [' Antseed-Verifier ', 'antseed-verifier', null, 'bad id'] })?.advertisedVerifierIds, ['antseed-verifier']);
+  assert.deepEqual(normalizeDiscoverRow({ ...raw, advertisedVerifierIds: 'antseed-verifier' })?.advertisedVerifierIds, []);
+  assert.deepEqual(normalizeDiscoverRow(raw)?.advertisedVerifierIds, []);
+});
+
 test('normalizeDiscoverRow rejects entries with missing peerId or serviceId', () => {
   assert.equal(normalizeDiscoverRow({}), null);
   assert.equal(normalizeDiscoverRow({ peerId: 'abc' }), null);

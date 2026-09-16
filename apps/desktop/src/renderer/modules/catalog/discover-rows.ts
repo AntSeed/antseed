@@ -1,6 +1,7 @@
 import type { ChatServiceOptionEntry, DiscoverRow, ServiceCapabilitiesView } from '../../core/state';
 import type { DiscoverVerificationLink } from '../../core/state';
 import { isTextCapableRow } from './model-capabilities';
+import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
 
 const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
 
@@ -87,6 +88,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
   const serviceId = String(r.serviceId ?? '').trim();
   if (!peerId || !serviceId) return null;
   return {
+    advertisedVerifierIds: normalizeAdvertisedVerifierIds(r.advertisedVerifierIds),
     rowKey: String(r.rowKey ?? `${peerId}:${serviceId}`),
     serviceId,
     serviceLabel: String(r.serviceLabel ?? serviceId),

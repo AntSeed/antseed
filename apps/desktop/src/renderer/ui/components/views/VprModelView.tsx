@@ -19,6 +19,12 @@ import { BrandIcon } from '../brand/BrandIcon';
 import { InfoTooltip } from '../InfoTooltip';
 import { formatUsdShort, VprBadge, VprCard, VprPage, VprSettingRow, VprStatRow, VprStatTile, VprToggle } from '../vpr/VprKit';
 import styles from './VprModelView.module.scss';
+import { advertisesTeeSupport } from '@antseed/node/verifier-capabilities';
+import { filterTeeBrowseRows, projectTeeBrowseCatalog, teeBrowseCache } from '../../../modules/catalog/tee-browse';
+import { useRetainedState } from '../../hooks/useRetainedState';
+import { VprTeeFilter, VprTeeNotice } from '../vpr/VprTeeAvailability';
+import { VprTeeStatus } from '../vpr/VprTeeStatus';
+import { useTeeVerification, useTeeVisibleSellers } from '../../hooks/useTeeVerification';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
@@ -37,16 +43,19 @@ function priceTile(entry: { minInputUsdPerMillion: number | null; maxInputUsdPer
 
 export function VprModelView({ onSelectView }: Props) {
   const actions = useActions();
+  const tee = useTeeVerification();
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     discoverRows: state.vprRoutableRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
     pins: state.vprModelPins,
+    discoverRowsLoaded: state.chatDiscoverRowsLoaded,
     proxyPort: state.chatProxyPort,
   }), shallowEqual);
   const [favorites, setFavorites] = useState(loadFavoriteModels);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [teeFilter, setTeeFilter] = useRetainedState(teeBrowseCache, 'filter');
   // The page shows the model the user drilled into, which may not be the
   // applied route — browsing must not change routing until "Use" is pressed.
   const selectionModel = snap.selection.model;
@@ -61,6 +70,12 @@ export function VprModelView({ onSelectView }: Props) {
     return [...list].sort(compareModelRoutesByReputation);
   }, [model, snap.discoverRows]);
   const bestRoute = useMemo(() => chooseBestVprRoute(routes, snap.preferences), [routes, snap.preferences]);
+  const displayedRoutes = useMemo(() => filterTeeBrowseRows(routes, teeFilter), [routes, teeFilter]);
+  useTeeVisibleSellers(displayedRoutes);
+  const displayCatalog = useMemo(() => projectTeeBrowseCatalog(
+    snap.catalog, snap.discoverRows, snap.preferences, teeFilter,
+  ), [snap.catalog, snap.discoverRows, snap.preferences, teeFilter]);
+  const displayEntry = model ? findCatalogEntry(displayCatalog, model.provider, model.serviceId) : null;
 
   // An unapplied model previews its remembered pin (if that seller still
   // serves it); the applied model reflects the live selection.
@@ -80,7 +95,9 @@ export function VprModelView({ onSelectView }: Props) {
     return (
       <section className={`view view-vpr-model ${styles.view}`} role="tabpanel">
         <div className={styles.empty}>
-          <button type="button" onClick={() => onSelectView?.('explore')}>Choose a model</button>
+          {model && !snap.discoverRowsLoaded ? (
+            <div role="status" aria-label="Loading models">Loading models…</div>
+          ) : <button type="button" onClick={() => onSelectView?.('explore')}>Choose a model</button>}
         </div>
       </section>
     );
@@ -88,9 +105,9 @@ export function VprModelView({ onSelectView }: Props) {
 
   const favorite = favorites.has(favoriteModelKey(model.provider, model.serviceId));
   const imageOnly = entry.kind === 'image';
-  const priceValue = imageOnly
-    ? priceRange(entry.minImageUsdPerImage, entry.maxImageUsdPerImage)
-    : priceTile(entry);
+  const priceValue = !displayEntry ? '-' : imageOnly
+    ? priceRange(displayEntry.minImageUsdPerImage, displayEntry.maxImageUsdPerImage)
+    : priceTile(displayEntry);
   const modelTags = modelTagsFor(entry.serviceId);
   const displayedModelTags = imageOnly ? ['Image generation', ...modelTags] : modelTags;
 
@@ -194,6 +211,13 @@ export function VprModelView({ onSelectView }: Props) {
           </div>
         </div>
 
+        <VprTeeFilter value={teeFilter} onChange={setTeeFilter} />
+        {teeFilter === 'tee' && (
+          <VprTeeNotice
+            selectedSellerHidden={Boolean(activePeerId && !displayedRoutes.some((route) => route.peerId === activePeerId))}
+            onClear={() => setTeeFilter('all')}
+          />
+        )}
         <VprStatRow>
           <VprStatTile
             label={imageOnly
@@ -205,12 +229,12 @@ export function VprModelView({ onSelectView }: Props) {
           />
           <VprStatTile
             label="Saving"
-            value={entry.expectedSavingsPct !== null ? `${entry.expectedSavingsPct}%` : '-'}
-            tone={entry.expectedSavingsPct !== null ? 'success' : undefined}
+            value={displayEntry?.expectedSavingsPct != null ? `${displayEntry.expectedSavingsPct}%` : '-'}
+            tone={displayEntry?.expectedSavingsPct != null ? 'success' : undefined}
             strong
             outlined
           />
-          <VprStatTile label="Sellers" value={entry.peerCount} outlined />
+          <VprStatTile label={teeFilter === 'tee' ? 'TEE sellers' : 'Sellers'} value={displayEntry?.peerCount ?? 0} outlined />
         </VprStatRow>
 
         <div className={styles.autoRow}>
@@ -255,11 +279,18 @@ export function VprModelView({ onSelectView }: Props) {
             <span className={styles.sellerHeadTitle}>Sellers</span>
             <span className={styles.sellerHeadAside}>Reputation</span>
           </div>
-          {routes.length === 0 ? (
-            <div className={styles.empty}>No sellers available for this model</div>
+          {displayedRoutes.length === 0 ? (
+            <div className={styles.empty} role="status">
+              {!snap.discoverRowsLoaded ? 'Loading sellers…' : teeFilter === 'tee' ? (
+                <>
+                  <span>No sellers advertising TEE support match these filters.</span>
+                  <button type="button" onClick={() => setTeeFilter('all')}>Show all sellers</button>
+                </>
+              ) : 'No sellers available for this model'}
+            </div>
           ) : (
             <VprCard className={styles.sellerCard}>
-              {routes.map((route) => {
+              {displayedRoutes.map((route) => {
                 const active = route.peerId === activePeerId;
                 return (
                   <SellerRow
@@ -267,6 +298,7 @@ export function VprModelView({ onSelectView }: Props) {
                     route={route}
                     active={active}
                     auto={autoSelect}
+                    tee={tee}
                     onClick={() => {
                       // Clicking the pinned seller unpins it; anyone else pins
                       // them. Only the applied model touches the live route.
@@ -372,13 +404,14 @@ function ModelTagBadges({ tags }: { tags: string[] }) {
   );
 }
 
-function SellerRow({ route, active, auto, onClick }: {
+function SellerRow({ route, active, auto, onClick, tee }: {
   route: DiscoverRow;
   /** This seller currently serves the model (auto-chosen or pinned). */
   active: boolean;
   /** Whether the page-level seller routing is in auto mode. */
   auto: boolean;
   onClick: () => void;
+  tee: ReturnType<typeof useTeeVerification>;
 }) {
   const capabilities = peerCapabilitySummary(route);
   const parameters = route.capabilities?.supportedParameters ?? [];
@@ -391,9 +424,10 @@ function SellerRow({ route, active, auto, onClick }: {
       .map((parameter) => parameter.replaceAll('_', ' ')),
   ].join(' · ');
   return (
+    <div className={`${styles.sellerRow}${active ? ` ${styles.sellerRowActive}` : ''}`}>
     <button
       type="button"
-      className={`${styles.sellerRow}${active ? ` ${styles.sellerRowActive}` : ''}`}
+      className={styles.sellerSelect}
       onClick={onClick}
       title={active && !auto ? 'Unpin this seller' : 'Pin this seller'}
     >
@@ -414,5 +448,16 @@ function SellerRow({ route, active, auto, onClick }: {
       </span>
       <span className={styles.sellerScore}>{sellerReputationLabel(route)}</span>
     </button>
+    {advertisesTeeSupport(route) &&
+      <VprTeeStatus
+        className={styles.sellerVerification}
+        evidence={tee.status.snapshot?.evidence.find((entry) => entry.peerId === route.peerId)}
+        now={tee.now}
+        checking={tee.checking.includes(route.peerId)}
+        available={Boolean(tee.status.snapshot?.verificationEnabled)}
+        error={tee.peerErrors[route.peerId]}
+      />
+    }
+    </div>
   );
 }
