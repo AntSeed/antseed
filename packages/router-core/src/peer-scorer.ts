@@ -1,4 +1,4 @@
-import { computeRoutingReputationScore, type PeerInfo, type ExternalHistoryPolicy } from '@antseed/node'
+import { normalizedModelReputationScore, type PeerInfo } from '@antseed/node'
 
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number
@@ -49,7 +49,6 @@ interface CandidateInput {
 }
 
 interface ScoringContext {
-  externalHistoryPolicy?: ExternalHistoryPolicy
   now: number
   medianLatency: number
   maxPeerStalenessMs: number
@@ -64,8 +63,8 @@ function normalizedInverted(value: number, min: number, range: number): number {
   return 1 - (value - min) / range
 }
 
-function effectiveReputation(p: PeerInfo, context: ScoringContext): number {
-  return computeRoutingReputationScore(p, context.now, context.externalHistoryPolicy)
+function effectiveReputation(p: PeerInfo): number {
+  return normalizedModelReputationScore(p) ?? 0
 }
 
 function availableCapacity(p: PeerInfo): number {
@@ -160,7 +159,7 @@ export function scoreCandidates(
       : 1
 
     // Reputation factor (higher is better, normalized 0-100 to 0-1)
-    const repFactor = effectiveReputation(c.peer, context) / 100
+    const repFactor = effectiveReputation(c.peer) / 100
     const fresh = freshnessFactor(c.peer, context.now, context.maxPeerStalenessMs)
     const reliability = reliabilityFactor(c.metrics, context.maxFailures)
 

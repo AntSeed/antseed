@@ -461,11 +461,11 @@ For generic router scoring outside this model-specific planning layer, the offic
 | price       | 0.30           | Lower price scores higher                |
 | latency     | 0.25           | Lower latency scores higher              |
 | capacity    | 0.20           | Preference for available capacity        |
-| reputation  | 0.10           | Higher on-chain reputation scores higher |
+| reputation  | 0.10           | Higher trust score scores higher         |
 | freshness   | 0.10           | Recently seen peers score higher         |
 | reliability | 0.05           | Lower failure rate and streak scores higher |
 
-Price, latency, and capacity are normalized across the eligible candidate pool. Reputation is a 0-100 effective reputation score normalized to 0-1: official routers compute it from on-chain settlement stats when available, then fall back to the optional `PeerInfo.reputationScore` field. These generic router-core weights are separate from the shared model-route ranking described above.
+Price, latency, and capacity are normalized across the eligible candidate pool. Reputation is a 0-100 score normalized to 0-1: official routers use the buyer-computed trust score (see [05-reputation](05-reputation.md)) when available, then fall back to the optional `PeerInfo.reputationScore` field. These generic router-core weights are separate from the shared model-route ranking described above.
 
 ---
 

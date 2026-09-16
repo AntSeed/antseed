@@ -7,9 +7,70 @@ hide_title: true
 
 # Reputation
 
-AntSeed derives core on-chain seller stats directly from `AntseedChannels`. Completed channels, ghost channels, and settled volume live in the Channels contract itself. An optional `AntseedStats` contract can additionally ingest buyer-signed metadata during settlement to aggregate token and request counters.
+Buyers score sellers locally from data they can check themselves: recognized usage, pool stake, and wash-trading verdicts read from the chain, plus public history of identities the seller has proven it owns. There is no central reputation authority and no seller allowlist.
+
+## Trust score
+
+Every buyer computes one number per seller, 0-100:
+
+```
+trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)
+```
+
+| Part | Range | On-chain source | What it means |
+|---|---|---|---|
+| `usage` | 0-100 | `AntseedUsageAccounting.sellerPointsByEpoch`, the better of the current and previous weekly epoch | Recognized USDC usage on a log curve: `100 · log10(1 + usdc) / log10(1001)`. $0 scores 0, $1,000 per epoch scores 100. Points have already passed the on-chain [reward policies](./reward-policies.md), so usage from a proven wash trader is already zero. |
+| `identity` | 0-70 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Bootstrap credit so an established operator can be routed to before it has usage. Only the larger of `usage` and `identity` counts. |
+| `stake` | 0-15 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` (lock-weighted ANTS) | `15 · sqrt(share)` of network staking power. Square root, so small pools still register. |
+| `washFlagged` | true/false | `AntseedWashTradingRegistry.isProvenWashTrader` | A proven wash trader scores 0 whatever the other parts say. |
+
+The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/configuration), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
+
+### Identity
+
+The identity part is the strongest single verified identity; several accounts or domains owned by one operator never add up.
+
+- **GitHub portfolio (max 70).** Original, non-fork repositories at least three months old with at least five stars, excluding the ownership-proof repository: `40 · min(1, Σ log2(1 + min(stars, 500)) / 40)` for stars, `+ 20 · min(1, projects / 8)` for breadth, `+ 10 · min(1, oldest project years / 3)` for age. Archived repositories count at 20%. An empty or zero-star account earns 0.
+- **Domain registration age (max 12).** `12 · min(1, years / 5)`, read from the authoritative RDAP registry. The registration must match the exact domain, so `app.example.com` cannot inherit the age of `example.com`.
+- **Collection.** Only identities whose [ownership proof](./discovery.md#domain-and-github-verification-claims) verified are looked up. GitHub: one account lookup plus up to four pages of 100 repositories, keyed by numeric account id so a reassigned username cannot inherit the previous owner's history. Domains: the cached IANA RDAP bootstrap plus one registry query. Requests go only to public HTTPS hosts, do not follow redirects, time out after 8 seconds, and are capped at 2 MB. Evidence is buyer-local, usable for seven days, and never part of signed seller metadata.
+- Public history is a heuristic, not proof of service quality: stars can be bought, and accounts and domains change hands.
+
+### Not in the score
+
+These stay separate router rules and never change the number: the local sybil heuristic (a display-only warning in the CLI and desktop, derived from lifetime channel stats), failure streaks and cooldowns, price limits, and allow/block lists. A seller-reported `reputationScore` is used only when the buyer has not scored the peer.
+
+## Routing
+
+The buyer proxy and desktop share the route ranking exported by `@antseed/node/model-routing`, and `/v1/models/:id` returns peer offers in that same order. The default model routing preferences are:
+
+```typescript
+{
+  preferFreePeers: false,
+  maxInputUsdPerMillion: 25,
+  minTrustScore: 60,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
+}
+```
+
+`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded; with the usage curve above, 60 corresponds to roughly $60 of recognized usage in an epoch, or a strong verified identity. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
+
+Eligible offers are ranked by trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible. Latency is tracked as an exponential moving average (alpha: 0.3), and peers with consecutive failures enter exponential backoff cooldown.
+
+The lower-level `@antseed/router-core` package also exposes generic router weights for plugin authors; its reputation factor is the trust score when available:
+
+| Factor | Weight |
+|---|---|
+| Price | 0.30 |
+| Latency | 0.25 |
+| Capacity | 0.20 |
+| Reputation | 0.10 |
+| Freshness | 0.10 |
+| Reliability | 0.05 |
 
 ## On-Chain Stats
+
+AntSeed derives core on-chain seller stats directly from `AntseedChannels`. Completed channels, ghost channels, and settled volume live in the Channels contract itself. An optional `AntseedStats` contract can additionally ingest buyer-signed metadata during settlement to aggregate token and request counters. Buyers still read these counters for display and for the local sybil warning; they are not part of the trust score.
 
 Each seller's ERC-8004 agentId maintains the following core counters in `AntseedChannels`:
 
@@ -35,7 +96,8 @@ No counter can be incremented without a corresponding on-chain state transition 
 From **September 10, 2026 at 09:54:21 UTC (epoch 22)**, seller eligibility is
 resolved through AntseedSellerRegistry and ANTS pool positions contribute epoch
 power. Legacy USDC stake can remain an eligibility fallback while enabled;
-recognized-usage rewards require pool power. See [Recognized Usage](./recognized-usage.md)
+recognized-usage rewards require pool power, and the same pool power share is
+the `stake` part of the trust score. See [Recognized Usage](./recognized-usage.md)
 and [legacy USDC staking](./legacy-emissions.md#legacy-usdc-staking).
 
 ## ERC-8004 Feedback
@@ -49,7 +111,7 @@ Buyers submit structured feedback via the deployed ERC-8004 ReputationRegistry (
 | Accuracy | uint8 | 0-100 |
 | Reliability | uint8 | 0-100 |
 
-Feedback and routing reputation do not automatically grant ANTS or apply a
+Feedback and the trust score do not automatically grant ANTS or apply a
 fixed on-chain reward multiplier. Recognized-usage accounting applies the
 configured [reward policies](./reward-policies.md); the registered historical wash-trading policy
 can zero future rewards without changing settlement stats.
@@ -58,48 +120,10 @@ can zero future rewards without changing settlement stats.
 
 **Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
 
-Routing reputation helps a buyer choose a seller. ANTS reward accounting is
+The trust score helps a buyer choose a seller. ANTS reward accounting is
 separate: it uses recognized usage, seller-pool power, and the configured policies.
-A high routing score does not override a reward exclusion.
+A high trust score does not override a reward exclusion.
 
 See [Recognized Usage and ANTS Rewards](./recognized-usage.md) for the standard
 reward model. **Looking for pre-migration emissions?** The [legacy guide](./legacy-emissions.md)
 covers the 65% seller / 5% buyer split and historical claims.
-
-## Buyer Route Scoring
-
-On-chain trust and reputation feed into model-only seller selection. The buyer proxy and desktop share the route ranking exported by `@antseed/node/model-routing`, and `/v1/models/:id` returns peer offers in that same policy order.
-
-The default model routing preferences are:
-
-```typescript
-{
-  preferFreePeers: false,
-  maxInputUsdPerMillion: 25,
-  minTrustScore: 60,
-  allowedPeerIds: [],
-  blockedPeerIds: [],
-}
-```
-
-The minimum trust score and allow/block lists are hard eligibility rules. Eligible offers are ranked by effective trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible.
-
-The lower-level `@antseed/router-core` package also exposes generic router weights for plugin authors:
-
-| Factor | Weight |
-|---|---|
-| Price | 0.30 |
-| Latency | 0.25 |
-| Capacity | 0.20 |
-| Reputation | 0.10 |
-| Freshness | 0.10 |
-| Reliability | 0.05 |
-
-### Scoring Rules
-
-- **Model-only eligibility**: Defaults to `minTrustScore: 60`. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored and lower-trust peers.
-- **Legacy policy filter**: `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the model-route ranking.
-- **On-chain precedence**: When on-chain reputation data is available, it takes precedence over locally reported reputation. Runtime metrics such as latency and failure history are handled separately by router scoring.
-- **Score composition**: On-chain score is multi-factor. Settled USDC volume carries the largest weight through an exponent-shaped logarithmic curve, so large settled-volume differences continue to matter and many tiny channels cannot rank highly by themselves. Completed `channelCount`, average settled value per channel, `lastSettledAt` recency, and seller stake age also contribute. `ghostCount` applies a penalty based on the ghost-channel rate.
-- **Latency**: Tracked as an exponential moving average (alpha: 0.3).
-- **Failure backoff**: Peers with consecutive failures enter exponential backoff cooldown.

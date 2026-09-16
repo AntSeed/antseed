@@ -1,6 +1,6 @@
 /** Shared formatting for the Figma "sellers list" rows (model page, prefs). */
 
-import type { DiscoverRow } from '../../core/state';
+import type { DiscoverRow, TrustBreakdown } from '../../core/state';
 import { formatUsdShort } from '../../core/format';
 
 /** Effective model reputation is 0-100; the UI shows it on a 10-point scale. */
@@ -10,13 +10,27 @@ export function sellerReputationLabel(route: DiscoverRow): string {
   return reputationScaleLabel(score);
 }
 
+const IDENTITY_KIND_LABELS: Record<NonNullable<TrustBreakdown['identity']>['kind'], string> = {
+  github: 'GitHub',
+  domain: 'domain',
+};
+
+/**
+ * Tooltip spelling out the trust formula for one seller, e.g.
+ * `Trust 7.4/10 = max(usage 5.9, identity 5.0 GitHub) + stake 1.5. Not flagged for wash trading.`
+ * Flagged sellers read `Trust 0/10: flagged as a proven wash trader by the on-chain registry.`
+ */
 export function sellerReputationExplanation(route: DiscoverRow): string {
-  const breakdown = route.reputationBreakdown;
-  if (!breakdown) return `Routing reputation: ${sellerReputationLabel(route)}/10`;
-  const chain = breakdown.rawChainScore ?? breakdown.legacyChainScore;
-  const chainLabel = chain === null ? 'unavailable' : `${(chain / 10).toFixed(1)}/10`;
-  const followerLabel = breakdown.externalFollowerScore ? ` Includes ${(breakdown.externalFollowerScore / 10).toFixed(1)}/10 from GitHub followers.` : '';
-  return `Routing: ${sellerReputationLabel(route)}/10. Chain: ${chainLabel}. Public history after failure penalties: ${(breakdown.externalScore / 10).toFixed(1)}/10.${followerLabel} Public history is a heuristic, not proof of service quality.`;
+  const trust = route.trust;
+  if (!trust) return `Trust: ${sellerReputationLabel(route)}/10`;
+  if (trust.washFlagged) return 'Trust 0/10: flagged as a proven wash trader by the on-chain registry.';
+  const usage = trust.usage ? `usage ${reputationScaleLabel(trust.usage.score)}` : 'usage n/a';
+  const identity = trust.identity
+    ? `identity ${reputationScaleLabel(trust.identity.score)} ${IDENTITY_KIND_LABELS[trust.identity.kind]}`
+    : 'identity none';
+  const stake = trust.stake ? `stake ${reputationScaleLabel(trust.stake.score)}` : 'stake 0';
+  const wash = trust.washFlagged === false ? ' Not flagged for wash trading.' : ' Wash-trading registry unavailable.';
+  return `Trust ${reputationScaleLabel(trust.score)}/10 = max(${usage}, ${identity}) + ${stake}.${wash}`;
 }
 
 /** 0-100 score → "9.8" (10-point scale). */

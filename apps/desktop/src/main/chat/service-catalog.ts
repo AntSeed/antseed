@@ -6,7 +6,7 @@ import type {
 } from '@antseed/node';
 import {
   buildNetworkServiceOffers,
-  computeRoutingReputationScore,
+  normalizedModelReputationScore,
   preferredModelDisplayName,
 } from '@antseed/node';
 
@@ -169,7 +169,7 @@ export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): Cha
   return buildNetworkServiceOffers(peers).flatMap((offer) => {
     if (!offer.protocol) return [];
     const peer = peersById.get(offer.peerId);
-    const effectiveReputationScore = peer ? computeRoutingReputationScore(peer as PeerInfo) : null;
+    const effectiveReputationScore = peer ? normalizedModelReputationScore(peer as PeerInfo) : null;
     return [{
       id: offer.serviceId,
       label: preferredModelDisplayName(offer.serviceId),

@@ -1,22 +1,18 @@
 import type { Router } from '../interfaces/buyer-router.js';
 import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest } from '../types/http.js';
-import { computeRoutingReputationScore } from '../reputation/routing-reputation.js';
-import { DEFAULT_EXTERNAL_HISTORY_POLICY, type ExternalHistoryPolicy } from '../reputation/external-history.js';
+import { normalizedModelReputationScore } from '../reputation/model-reputation.js';
 
 export interface DefaultRouterConfig {
-  externalHistoryPolicy?: ExternalHistoryPolicy;
   minReputation?: number;  // Default: 0 (no reputation gate)
 }
 
 export class DefaultRouter implements Router {
   private _minReputation: number;
   private _latencyMap = new Map<string, number>();
-  private readonly _externalHistoryPolicy: ExternalHistoryPolicy;
 
   constructor(config?: DefaultRouterConfig) {
     this._minReputation = config?.minReputation ?? 0;
-    this._externalHistoryPolicy = config?.externalHistoryPolicy ?? DEFAULT_EXTERNAL_HISTORY_POLICY;
   }
 
   selectPeer(_req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null {
@@ -47,6 +43,6 @@ export class DefaultRouter implements Router {
   }
 
   private _effectiveReputation(peer: PeerInfo): number {
-    return computeRoutingReputationScore(peer, Date.now(), this._externalHistoryPolicy);
+    return normalizedModelReputationScore(peer) ?? 0;
   }
 }

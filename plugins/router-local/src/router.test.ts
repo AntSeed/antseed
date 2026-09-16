@@ -39,7 +39,7 @@ function withEstablishedHistory(peer: PeerInfo): PeerInfo {
   const now = Date.now();
   peer.verificationResults = { verified: true, checkedAtMs: now, domains: [],
     github: [{ username: 'portfolio', repository: 'proof', peerId: peer.peerId, verified: true, checkedAtMs: now }],
-    externalHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42',
+    identityHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42',
       status: 'available', fetchedAtMs: now, createdAtMs: now - 10 * 365.25 * 86_400_000,
       projects: Array.from({ length: 10 }, (_, index) => ({ id: index + 1, name: `project-${index}`,
         createdAtMs: now - 4 * 365.25 * 86_400_000, stars: 100, archived: false })) }] } };

@@ -28,6 +28,7 @@ import {
   normalizeServiceValue,
 } from './normalize.js';
 import type { DesktopVerificationLink } from '../connected-apps/domain-site-metadata.js';
+import type { TrustBreakdown } from '@antseed/node';
 
 export type BuyerMaxPricingDefaults = {
   inputUsdPerMillion: number;
@@ -36,7 +37,8 @@ export type BuyerMaxPricingDefaults = {
 };
 
 export type DiscoverRowEntry = {
-  reputationBreakdown?: ReturnType<typeof import('@antseed/node').routingReputationBreakdown>;
+  /** Parts that make up `onChainReputationScore`; `null` when the buyer has not scored the peer. */
+  trust?: TrustBreakdown | null;
   rowKey: string;
   serviceId: string;
   serviceLabel: string;
@@ -65,13 +67,15 @@ export type DiscoverRowEntry = {
   lifetimeLastSessionAt: number | null;
   onChainChannelCount: number | null;
   agentId: number;
-  stakeUsdc: string;
+  /** ANTS actively staked in the seller's pool this epoch (whole ANTS). */
+  poolStakeAnts: number;
   onChainActiveChannelCount: number;
   onChainGhostCount: number;
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
   onChainReputationScore: number | null;
-  onChainTrustScore: number | null;
+  /** Wash-trading registry verdict; `null` when the registry was unavailable. */
+  washFlagged: boolean | null;
   effectiveReputationScore: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
@@ -311,21 +315,67 @@ export function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[
 }
 
 export type BuyerStateDiscoveredPeer = {
-  reputationBreakdown?: ReturnType<typeof import('@antseed/node').routingReputationBreakdown>;
+  trust: TrustBreakdown | null;
   onChainAgentId: number | null;
-  onChainStakeUsdcMicros: number | null;
+  onChainPoolStakeAnts: number | null;
   onChainChannelCount: number | null;
   onChainGhostCount: number | null;
   onChainTotalVolumeUsdcMicros: number | null;
   onChainLastSettledAtSec: number | null;
   onChainReputationScore: number | null;
-  onChainTrustScore: number | null;
+  onChainWashFlagged: boolean | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
   sellerContract?: string;
   verificationLinks: DiscoverVerificationLink[];
   peerIconUrl: string | null;
 };
+
+function boundedScore(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
+function nonNegative(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Validate a `trust` blob read from buyer.state.json. The buyer daemon writes
+ * `TrustBreakdown`, but the file may predate the field or be hand-edited, so
+ * every part is checked and the whole breakdown is dropped when the final
+ * score is missing or out of range.
+ */
+export function normalizeTrustBreakdown(raw: unknown): TrustBreakdown | null {
+  const value = asPlainObject(raw);
+  if (!value) return null;
+  const score = boundedScore(value.score);
+  if (score === null) return null;
+
+  const usageRaw = asPlainObject(value.usage);
+  const usageScore = usageRaw ? boundedScore(usageRaw.score) : null;
+  const usageUsdc = usageRaw ? nonNegative(usageRaw.usdc) : null;
+  const usageEpoch = usageRaw ? nonNegative(usageRaw.epoch) : null;
+  const usage = usageScore !== null && usageUsdc !== null && usageEpoch !== null
+    ? { score: usageScore, usdc: usageUsdc, epoch: usageEpoch }
+    : null;
+
+  const identityRaw = asPlainObject(value.identity);
+  const identityScore = identityRaw ? boundedScore(identityRaw.score) : null;
+  const identityKind: 'github' | 'domain' | null = identityRaw?.kind === 'github' || identityRaw?.kind === 'domain' ? identityRaw.kind : null;
+  const identity = identityScore !== null && identityKind !== null
+    ? { score: identityScore, kind: identityKind, claim: typeof identityRaw?.claim === 'string' ? identityRaw.claim : '' }
+    : null;
+
+  const stakeRaw = asPlainObject(value.stake);
+  const stakeScore = stakeRaw ? boundedScore(stakeRaw.score) : null;
+  const stakeShare = stakeRaw ? nonNegative(stakeRaw.powerShareBps) : null;
+  const stake = stakeScore !== null && stakeShare !== null
+    ? { score: stakeScore, powerShareBps: stakeShare }
+    : null;
+
+  const washFlagged = typeof value.washFlagged === 'boolean' ? value.washFlagged : null;
+  return { score, usage, identity, stake, washFlagged };
+}
 
 export function invalidateOnChainEnrichmentCache(): void {
   // On-chain enrichment now comes from the buyer daemon's buyer.state.json.
@@ -357,13 +407,13 @@ export async function buildDiscoverRows(
 
     const stats = peerStats.get(peerId);
     const agentId = peerBlob?.onChainAgentId ?? 0;
-    const stakeUsdc = String(peerBlob?.onChainStakeUsdcMicros ?? 0);
+    const poolStakeAnts = peerBlob?.onChainPoolStakeAnts ?? 0;
     const onChainActiveChannelCount = peerBlob?.onChainChannelCount ?? 0;
     const onChainGhostCount = peerBlob?.onChainGhostCount ?? 0;
     const onChainTotalVolumeUsdc = String(peerBlob?.onChainTotalVolumeUsdcMicros ?? 0);
     const onChainLastSettledAt = peerBlob?.onChainLastSettledAtSec ?? 0;
     const onChainReputationScore = peerBlob?.onChainReputationScore ?? null;
-    const onChainTrustScore = peerBlob?.onChainTrustScore ?? null;
+    const washFlagged = peerBlob?.onChainWashFlagged ?? null;
     const onChainSybilRisk = peerBlob?.onChainSybilRisk ?? null;
     const onChainSybilFlags = peerBlob?.onChainSybilFlags ?? [];
     const netForAgent = agentId > 0 ? networkStats.get(agentId) ?? null : null;
@@ -401,14 +451,14 @@ export async function buildDiscoverRows(
       lifetimeLastSessionAt: stats?.lastSessionAt ?? null,
       onChainChannelCount: peerBlob?.onChainChannelCount ?? null,
       agentId,
-      stakeUsdc,
+      poolStakeAnts,
       onChainActiveChannelCount,
       onChainGhostCount,
       onChainTotalVolumeUsdc,
       onChainLastSettledAt,
       onChainReputationScore,
-      reputationBreakdown: peerBlob?.reputationBreakdown,
-      onChainTrustScore,
+      trust: peerBlob?.trust ?? null,
+      washFlagged,
       effectiveReputationScore: entry.effectiveReputationScore ?? null,
       onChainSybilRisk,
       onChainSybilFlags,

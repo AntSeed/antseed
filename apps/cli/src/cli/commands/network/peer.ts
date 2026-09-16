@@ -113,6 +113,23 @@ function formatTimestampSec(sec: number | undefined): string {
 }
 
 /**
+ * One-line trust breakdown, e.g.
+ * `74 = max(usage 59, identity 50 github) + stake 15; not flagged`.
+ * The node computes the score; this only renders `peer.trust`.
+ */
+function formatTrustLine(peer: PeerInfo): string {
+  const trust = peer.trust;
+  const score = peer.onChainReputationScore;
+  if (!trust) return typeof score === 'number' && Number.isFinite(score) ? String(Math.round(score)) : chalk.dim('—');
+  if (trust.washFlagged) return `${chalk.red('0')}  ${chalk.red('⚠ proven wash trader (on-chain registry) — trust 0')}`;
+  const usage = trust.usage ? `usage ${Math.round(trust.usage.score)}` : chalk.dim('usage —');
+  const identity = trust.identity ? `identity ${Math.round(trust.identity.score)} ${trust.identity.kind}` : chalk.dim('identity —');
+  const stake = trust.stake ? `stake ${Math.round(trust.stake.score)}` : chalk.dim('stake —');
+  const flagged = trust.washFlagged === null ? chalk.dim('wash registry unavailable') : 'not flagged';
+  return `${chalk.bold(String(Math.round(trust.score)))} = max(${usage}, ${identity}) + ${stake}; ${flagged}`;
+}
+
+/**
  * Build the machine-friendly list of (provider, service) entries on this
  * peer that match the given tag filter. When the filter is empty, every
  * announced service is returned. Services without any tags are excluded
@@ -204,6 +221,7 @@ function printPeerDetail(peer: PeerInfo, requestedTags: Set<string>): void {
   console.log(`  Ghosts:          ${typeof ghosts === 'number' ? (ghosts === 0 ? chalk.dim('0') : chalk.red(String(ghosts))) : chalk.dim('—')}`);
   console.log(`  Volume:          ${formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros)}`);
   console.log(`  Last settled:    ${formatTimestampSec(peer.onChainLastSettledAtSec)}`);
+  console.log(`  Trust:           ${formatTrustLine(peer)}`);
   if (typeof peer.onChainStatsFetchedAt === 'number' && peer.onChainStatsFetchedAt > 0) {
     const age = Date.now() - peer.onChainStatsFetchedAt;
     console.log(`  ${chalk.dim(`Verified ${Math.max(0, Math.floor(age / 1000))}s ago by reading contract directly`)}`);

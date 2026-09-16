@@ -1,18 +1,52 @@
-import type { ChatServiceOptionEntry, DiscoverRow, ServiceCapabilitiesView } from '../../core/state';
+import type { ChatServiceOptionEntry, DiscoverRow, ServiceCapabilitiesView, TrustBreakdown } from '../../core/state';
 import type { DiscoverVerificationLink } from '../../core/state';
 import { isTextCapableRow } from './model-capabilities';
 
 const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
 
-function normalizeReputationBreakdown(raw: unknown): DiscoverRow['reputationBreakdown'] {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const value = raw as Record<string, unknown>;
-  const score = (input: unknown) => typeof input === 'number' && Number.isFinite(input) && input >= 0 && input <= 100 ? input : null;
-  const externalScore = score(value.externalScore);
-  if (value.version !== 1 || externalScore === null) return undefined;
-  return { version: 1, rawChainScore: score(value.rawChainScore), legacyChainScore: score(value.legacyChainScore), externalScore,
-    externalFollowerScore: Math.min(externalScore, 20, score(value.externalFollowerScore) ?? 0),
-  };
+function boundedScore(input: unknown): number | null {
+  return typeof input === 'number' && Number.isFinite(input) && input >= 0 && input <= 100 ? input : null;
+}
+
+function nonNegative(input: unknown): number | null {
+  return typeof input === 'number' && Number.isFinite(input) && input >= 0 ? input : null;
+}
+
+function asObject(input: unknown): Record<string, unknown> | null {
+  return input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null;
+}
+
+/** Validate the buyer's `TrustBreakdown`; each part is nullable, the final score must be 0-100. */
+export function normalizeTrust(raw: unknown): TrustBreakdown | null {
+  const value = asObject(raw);
+  if (!value) return null;
+  const score = boundedScore(value.score);
+  if (score === null) return null;
+
+  const usageRaw = asObject(value.usage);
+  const usageScore = usageRaw ? boundedScore(usageRaw.score) : null;
+  const usageUsdc = usageRaw ? nonNegative(usageRaw.usdc) : null;
+  const usageEpoch = usageRaw ? nonNegative(usageRaw.epoch) : null;
+  const usage = usageScore !== null && usageUsdc !== null && usageEpoch !== null
+    ? { score: usageScore, usdc: usageUsdc, epoch: usageEpoch }
+    : null;
+
+  const identityRaw = asObject(value.identity);
+  const identityScore = identityRaw ? boundedScore(identityRaw.score) : null;
+  const identityKind: 'github' | 'domain' | null = identityRaw?.kind === 'github' || identityRaw?.kind === 'domain' ? identityRaw.kind : null;
+  const identity = identityScore !== null && identityKind !== null
+    ? { score: identityScore, kind: identityKind, claim: typeof identityRaw?.claim === 'string' ? identityRaw.claim : '' }
+    : null;
+
+  const stakeRaw = asObject(value.stake);
+  const stakeScore = stakeRaw ? boundedScore(stakeRaw.score) : null;
+  const stakeShare = stakeRaw ? nonNegative(stakeRaw.powerShareBps) : null;
+  const stake = stakeScore !== null && stakeShare !== null
+    ? { score: stakeScore, powerShareBps: stakeShare }
+    : null;
+
+  const washFlagged = typeof value.washFlagged === 'boolean' ? value.washFlagged : null;
+  return { score, usage, identity, stake, washFlagged };
 }
 
 function toNullableBigintString(v: unknown): string | null {
@@ -134,7 +168,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     lifetimeLastSessionAt: typeof r.lifetimeLastSessionAt === 'number' ? r.lifetimeLastSessionAt : null,
     onChainChannelCount: typeof r.onChainChannelCount === 'number' ? r.onChainChannelCount : null,
     agentId: Number(r.agentId) || 0,
-    stakeUsdc: String(r.stakeUsdc ?? '0'),
+    poolStakeAnts: nonNegative(r.poolStakeAnts) ?? 0,
     onChainActiveChannelCount: Number(r.onChainActiveChannelCount) || 0,
     onChainGhostCount: Number(r.onChainGhostCount) || 0,
     onChainTotalVolumeUsdc: String(r.onChainTotalVolumeUsdc ?? '0'),
@@ -142,10 +176,8 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     onChainReputationScore: typeof r.onChainReputationScore === 'number' && Number.isFinite(r.onChainReputationScore)
       ? r.onChainReputationScore
       : null,
-    onChainTrustScore: typeof r.onChainTrustScore === 'number' && Number.isFinite(r.onChainTrustScore)
-      ? r.onChainTrustScore
-      : null,
-    reputationBreakdown: normalizeReputationBreakdown(r.reputationBreakdown),
+    trust: normalizeTrust(r.trust),
+    washFlagged: typeof r.washFlagged === 'boolean' ? r.washFlagged : null,
     effectiveReputationScore: typeof r.effectiveReputationScore === 'number' && Number.isFinite(r.effectiveReputationScore)
       ? r.effectiveReputationScore
       : null,

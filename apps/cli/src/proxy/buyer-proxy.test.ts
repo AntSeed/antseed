@@ -12,8 +12,7 @@ import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   adaptPeerFaultErrorResponse,
   buyerFault,
-  computeOnChainReputationScore,
-  computeRoutingReputationScore,
+  computeTrustScore,
   type ModelRoutingPreferences,
   type PeerInfo,
   type SerializedHttpResponse,
@@ -2470,27 +2469,89 @@ test('parsePersistedPeers preserves provider metadata so routing filters still w
   assert.equal(result.routePlanByPeerId.get(validPeerId)?.provider, 'claude-oauth')
 })
 
-test('parsePersistedPeers re-derives on-chain reputation from persisted stats', () => {
+test('parsePersistedPeers re-derives the trust score from persisted on-chain signals', () => {
   const persisted = {
     discoveredPeers: [
       {
         peerId: validPeerId,
         providers: ['claude-oauth'],
         lastSeen: NOW - 5_000,
-        onChainStakeUsdcMicros: 2_000_000,
+        // A stale cached score and breakdown must never win over the signals.
+        onChainReputationScore: 3,
+        trust: { score: 3, usage: null, identity: null, stake: null, washFlagged: null },
         onChainChannelCount: 20,
         onChainGhostCount: 0,
         onChainTotalVolumeUsdcMicros: 100_000_000,
         onChainLastSettledAtSec: Math.floor((NOW - 60_000) / 1000),
         onChainStakedAtSec: Math.floor((NOW - 40 * 86_400_000) / 1000),
+        onChainUsageEpoch: 22,
+        onChainUsageCurrentEpochUsdcMicros: 500_000_000,
+        onChainUsageLastEpochUsdcMicros: 0,
+        onChainPoolStakeAnts: 1_250.5,
+        onChainPoolPowerShareBps: 0,
+        onChainWashFlagged: false,
+        onChainWashShareBps: 0,
       },
     ],
   }
 
   const [peer] = parsePersistedPeers(persisted, NOW)
   assert.ok(peer)
-  assert.equal(peer.onChainReputationScore, computeOnChainReputationScore(peer, NOW))
-  assert.ok((peer.onChainReputationScore ?? 0) > 0)
+  assert.equal(peer.onChainUsageEpoch, 22)
+  assert.equal(peer.onChainUsageCurrentEpochUsdcMicros, 500_000_000)
+  assert.equal(peer.onChainUsageLastEpochUsdcMicros, 0)
+  assert.equal(peer.onChainPoolStakeAnts, 1_250.5)
+  assert.equal(peer.onChainPoolPowerShareBps, 0)
+  assert.equal(peer.onChainWashFlagged, false)
+  assert.equal(peer.onChainWashShareBps, 0)
+  assert.equal(peer.onChainStakedAtSec, Math.floor((NOW - 40 * 86_400_000) / 1000))
+  assert.ok(!('onChainStakeUsdcMicros' in peer))
+  assert.ok(!('onChainTrustScore' in peer))
+  assert.deepEqual(peer.trust, computeTrustScore(peer, NOW))
+  assert.equal(peer.onChainReputationScore, peer.trust?.score)
+  // $500 of recognized usage in the best epoch scores ~90 on the log curve.
+  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 90)
+  assert.equal(peer.trust?.usage?.epoch, 22)
+  assert.equal(peer.trust?.usage?.usdc, 500)
+  assert.equal(peer.trust?.washFlagged, false)
+})
+
+test('parsePersistedPeers scores a proven wash trader at zero regardless of usage', () => {
+  const [peer] = parsePersistedPeers({
+    discoveredPeers: [{
+      peerId: validPeerId,
+      providers: ['openai'],
+      lastSeen: NOW - 5_000,
+      onChainReputationScore: 95,
+      onChainUsageEpoch: 22,
+      onChainUsageCurrentEpochUsdcMicros: 500_000_000,
+      onChainUsageLastEpochUsdcMicros: 900_000_000,
+      onChainWashFlagged: true,
+      onChainWashShareBps: 9_800,
+    }],
+  }, NOW)
+  assert.ok(peer)
+  assert.equal(peer.onChainWashFlagged, true)
+  assert.equal(peer.onChainWashShareBps, 9_800)
+  assert.equal(peer.onChainReputationScore, 0)
+  assert.equal(peer.trust?.washFlagged, true)
+  assert.equal(peer.trust?.score, 0)
+})
+
+test('parsePersistedPeers keeps the persisted score when nothing scoreable was stored', () => {
+  const [peer] = parsePersistedPeers({
+    discoveredPeers: [{
+      peerId: validPeerId,
+      providers: ['openai'],
+      lastSeen: NOW - 5_000,
+      onChainReputationScore: 42,
+      onChainChannelCount: 3,
+    }],
+  }, NOW)
+  assert.ok(peer)
+  assert.equal(computeTrustScore(peer, NOW), null)
+  assert.equal(peer.onChainReputationScore, 42)
+  assert.equal(peer.trust, undefined)
 })
 
 test('parsePersistedPeers restores sellerContract into peer.metadata', () => {
@@ -2519,7 +2580,7 @@ test('parsePersistedPeers restores sellerContract into peer.metadata', () => {
 
 test('parsePersistedPeers restores external verification claims and results', () => {
   const verificationResults = {
-    externalHistory: { version: 1, identities: [{ kind: 'domain', claim: 'example.com', identityId: 'domain:example.com',
+    identityHistory: { version: 1, identities: [{ kind: 'domain', claim: 'example.com', identityId: 'domain:example.com',
       status: 'available', fetchedAtMs: NOW - 500, createdAtMs: NOW - 10 * 365.25 * 86_400_000 }] },
     verified: true,
     checkedAtMs: NOW - 500,
@@ -2556,26 +2617,53 @@ test('parsePersistedPeers restores external verification claims and results', ()
     domains: [{ domain: 'example.com', methods: ['dns-txt'] }],
   })
   assert.deepEqual(peer!.verificationResults, verificationResults)
-  assert.equal(computeRoutingReputationScore(peer!, NOW), 12)
-  assert.equal(computeRoutingReputationScore(peer!, NOW + 8 * 86_400_000), 0)
+  // A ten-year-old verified domain earns the full 12 identity points.
+  assert.equal(peer!.onChainReputationScore, 12)
+  assert.deepEqual(peer!.trust?.identity, { score: 12, kind: 'domain', claim: 'example.com' })
+  assert.equal(peer!.trust?.usage, null)
+  assert.equal(peer!.trust?.washFlagged, null)
+  // Ownership proofs and identity evidence expire after seven days: once
+  // stale the peer is unscored again rather than keeping the cached 12.
+  const [stale] = parsePersistedPeers(
+    { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW + 8 * 86_400_000 - 1_000,
+      verifications: { domains: [{ domain: 'example.com', methods: ['dns-txt'] }] }, verificationResults }] },
+    NOW + 8 * 86_400_000,
+  )
+  assert.ok(stale)
+  assert.equal(computeTrustScore(stale, NOW + 8 * 86_400_000), null)
+  assert.equal(stale.onChainReputationScore, undefined)
+  assert.equal(stale.trust, undefined)
 })
 
-test('parsePersistedPeers restores v2 followers but never trusts persisted score breakdowns', () => {
+test('parsePersistedPeers restores GitHub identity history but never trusts persisted score breakdowns', () => {
   const stored = { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW - 1_000,
     verifications: { github: [{ username: 'portfolio', repository: 'proof' }] },
-    reputationBreakdown: { externalFollowerScore: 100, effectiveReputationScore: 100 },
+    onChainReputationScore: 100,
+    trust: { score: 100, usage: { score: 100, usdc: 1_000, epoch: 1 }, identity: null, stake: null, washFlagged: false },
     verificationResults: { verified: true, checkedAtMs: NOW - 500, domains: [],
       github: [{ username: 'portfolio', repository: 'proof', peerId: validPeerId, verified: true, checkedAtMs: NOW - 500 }],
-      externalHistory: { version: 2, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',
-        fetchedAtMs: NOW - 500, createdAtMs: NOW - 2 * 365.25 * 86_400_000, projects: [],
-        followers: 1_000, followersFetchedAtMs: NOW - 500 }] } },
+      identityHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',
+        fetchedAtMs: NOW - 500, createdAtMs: NOW - 2 * 365.25 * 86_400_000,
+        projects: [
+          { id: 1, name: 'alpha', createdAtMs: NOW - 365.25 * 86_400_000, stars: 31, archived: false },
+          // The ownership-proof repository never counts, however popular.
+          { id: 2, name: 'proof', createdAtMs: NOW - 365.25 * 86_400_000, stars: 5_000, archived: false },
+        ] }] } },
   }] }
   const [peer] = parsePersistedPeers(JSON.parse(JSON.stringify(stored)), NOW)
   assert.ok(peer)
-  assert.equal(peer.verificationResults?.externalHistory?.version, 2)
-  assert.equal(peer.verificationResults?.externalHistory?.identities[0]?.followers, 1_000)
-  assert.equal(computeRoutingReputationScore(peer, NOW), 20)
-  assert.equal(computeRoutingReputationScore(peer, NOW + 8 * 86_400_000), 0)
+  assert.equal(peer.verificationResults?.identityHistory?.version, 1)
+  assert.equal(peer.verificationResults?.identityHistory?.identities[0]?.projects?.length, 2)
+  const trust = computeTrustScore(peer, NOW)
+  assert.ok(trust)
+  assert.deepEqual(peer.trust, trust)
+  assert.equal(peer.onChainReputationScore, trust.score)
+  assert.equal(trust.identity?.kind, 'github')
+  assert.equal(trust.identity?.claim, 'portfolio')
+  assert.equal(trust.usage, null)
+  assert.ok(trust.score > 0 && trust.score < 40, `expected a modest identity-only score, got ${trust.score}`)
+  const [stale] = parsePersistedPeers(JSON.parse(JSON.stringify(stored)), NOW + 8 * 86_400_000)
+  assert.equal(stale, undefined)
 })
 
 test('parsePersistedPeers leaves metadata undefined when sellerContract is absent', () => {
