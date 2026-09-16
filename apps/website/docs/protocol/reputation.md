@@ -24,7 +24,7 @@ trust = washFlagged ? 0 : min(100, max(usage, identity) + stake)
 | `stake` | 0-15 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` (lock-weighted ANTS) | `15 · sqrt(share)` of network staking power. Square root, so small pools still register. |
 | `washFlagged` | true/false | `AntseedWashTradingRegistry.isProvenWashTrader` | A proven wash trader scores 0 whatever the other parts say. |
 
-The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/configuration), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
+The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/config), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
 
 ### Identity
 
