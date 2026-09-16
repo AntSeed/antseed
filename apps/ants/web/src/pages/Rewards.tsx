@@ -6,7 +6,7 @@ import { useConfig } from '../app-context';
 import { AddressLink } from '../components/AddressLink';
 import { ActionButton } from '../components/Confirm';
 import { ErrorBox, Skeleton } from '../components/Feedback';
-import { Field, Select } from '../components/Field';
+import { Field, Input, Select } from '../components/Field';
 import { LockSlider } from '../components/LockSlider';
 import { poolLabel, sortPools } from '../components/Pools';
 import { usePageData } from '../data';
@@ -26,7 +26,42 @@ export function RewardsPage() {
         </>
       ) : null}
       {data ? <RewardsBody data={data} /> : null}
+      <ReferralRewards />
     </>
+  );
+}
+
+function ReferralRewards() {
+  const page = usePageData('referral', api.referral, 15_000);
+  const view = page.data;
+  return (
+    <Card>
+      <div className="panel-head"><h3>Friend referrals</h3></div>
+      <p className="muted small">Share your wallet-specific referral link. Each finalized week, the Foundation-funded referral contract credits 2% of the ANTS earned from referred buyers’ usage.</p>
+      {page.error ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
+      {view ? (
+        <div className="bucket-row">
+          <div className="bucket-main">
+            <div className="bucket-name mono">{view.referralUrl ?? 'Unavailable'}</div>
+            <div className="bucket-note">{view.available ? 'Share this link with friends.' : 'Referral contract is not configured on this network.'}</div>
+          </div>
+          <div className="bucket-amount mono">{formatAnts(view.claimable, 4)} <span className="unit">ANTS</span></div>
+          <div className="bucket-actions">
+            {view.available ? (
+              <ActionButton
+                label="Claim"
+                title="Claim referral rewards"
+                path="/api/referrals/claim"
+                body={{}}
+                disabled={isZero(view.claimable)}
+                disabledReason="Nothing to claim yet."
+                summary={[["Amount", `${formatAnts(view.claimable, 4)} ANTS`]]}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

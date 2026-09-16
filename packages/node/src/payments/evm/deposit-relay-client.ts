@@ -16,6 +16,12 @@ export interface SweepParams {
   validBefore: bigint;
   nonce: string; // bytes32 hex
   sig3009: string;
+  referral?: {
+    referrer: string;
+    nonce: bigint;
+    deadline: bigint;
+    signature: string;
+  };
 }
 
 export interface SweepProfitEstimate {
@@ -45,6 +51,7 @@ const DEFAULT_ETH_PRICE_USD = 10_000n;
 
 const DEPOSIT_RELAY_ABI = [
   'function sweepDeposit(address from, uint256 amount, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes sig3009) external',
+  'function sweepDepositWithReferral(address from, uint256 amount, uint256 validAfter, uint256 validBefore, bytes32 depositNonce, bytes sig3009, address referrer, uint256 referralNonce, uint256 referralDeadline, bytes referralSignature) external',
   'function FEE() external view returns (uint256)',
   'function usdc() external view returns (address)',
   'function deposits() external view returns (address)',
@@ -61,16 +68,12 @@ export class DepositRelayClient extends BaseEvmClient {
   // ─── Relayer Operations ────────────────────────────────────────────
 
   async sweep(signer: AbstractSigner, params: SweepParams): Promise<string> {
+    const { method, args } = sweepCall(params);
     return this._execWrite(
       signer,
       DEPOSIT_RELAY_ABI,
-      'sweepDeposit',
-      params.from,
-      params.amount,
-      params.validAfter,
-      params.validBefore,
-      params.nonce,
-      params.sig3009,
+      method,
+      ...args,
     );
   }
 
@@ -87,14 +90,8 @@ export class DepositRelayClient extends BaseEvmClient {
   ): Promise<SweepProfitEstimate> {
     const connected = this._ensureConnected(signer);
     const contract = new Contract(this._contractAddress, DEPOSIT_RELAY_ABI, connected);
-    const populated = await contract.getFunction('sweepDeposit').populateTransaction(
-      params.from,
-      params.amount,
-      params.validAfter,
-      params.validBefore,
-      params.nonce,
-      params.sig3009,
-    );
+    const { method, args } = sweepCall(params);
+    const populated = await contract.getFunction(method).populateTransaction(...args);
     const [gasEstimate, feeData, fee] = await Promise.all([
       connected.estimateGas(populated),
       this._provider.getFeeData(),
@@ -198,4 +195,19 @@ export class DepositRelayClient extends BaseEvmClient {
     const onChain = await usdc.getFunction('DOMAIN_SEPARATOR')() as string;
     return onChain.toLowerCase() === TypedDataEncoder.hashDomain(domain).toLowerCase();
   }
+}
+
+function sweepCall(params: SweepParams): { method: 'sweepDeposit' | 'sweepDepositWithReferral'; args: unknown[] } {
+  const baseArgs = [params.from, params.amount, params.validAfter, params.validBefore, params.nonce, params.sig3009];
+  if (!params.referral) return { method: 'sweepDeposit', args: baseArgs };
+  return {
+    method: 'sweepDepositWithReferral',
+    args: [
+      ...baseArgs,
+      params.referral.referrer,
+      params.referral.nonce,
+      params.referral.deadline,
+      params.referral.signature,
+    ],
+  };
 }

@@ -485,6 +485,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
 
       let paymentConfig: PaymentConfig | null = null
       let depositRelayAddress: string | undefined
+      let referralsAddress: string | undefined
       if (preferredMethod === 'crypto') {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
@@ -498,8 +499,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
           emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
           depositRelayAddress: config.payments.crypto?.depositRelayAddress,
+          referralsAddress: config.payments.crypto?.referralsAddress,
         })
         depositRelayAddress = cc.depositRelayAddress
+        referralsAddress = cc.referralsAddress
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
           config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
           defaultDepositAmountUSDCBaseUnits,
@@ -726,6 +729,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
             ...(depositRelayAddress ? { depositRelayAddress } : {}),
+            ...(referralsAddress ? { referralsAddress } : {}),
           } : {}),
         },
         ...(config.relayer ? { relayer: config.relayer } : {}),

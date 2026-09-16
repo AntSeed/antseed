@@ -295,6 +295,8 @@ export interface PaymentsCLIConfig {
     explorerApiUrl?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
+    /** Deployed AntseedReferrals contract address. */
+    referralsAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };

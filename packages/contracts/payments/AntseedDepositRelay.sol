@@ -5,8 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IAntseedDeposits} from "../interfaces/IAntseedDeposits.sol";
-import {IERC3009} from "../interfaces/IERC3009.sol";
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
+import { IERC3009 } from "../interfaces/IERC3009.sol";
 
 /**
  * @title AntseedDepositRelay
@@ -47,11 +47,7 @@ contract AntseedDepositRelay is ReentrancyGuard {
 
     // ─── Events ──────────────────────────────────────────────────────
     event SweepExecuted(
-        address indexed buyer,
-        address indexed relayer,
-        uint256 deposited,
-        uint256 fee,
-        bytes32 authNonce
+        address indexed buyer, address indexed relayer, uint256 deposited, uint256 fee, bytes32 authNonce
     );
 
     // ─── Custom Errors ───────────────────────────────────────────────
@@ -92,13 +88,24 @@ contract AntseedDepositRelay is ReentrancyGuard {
         bytes32 nonce,
         bytes calldata sig3009
     ) external nonReentrant {
+        _sweepDeposit(from, amount, validAfter, validBefore, nonce, sig3009);
+    }
+
+    function _sweepDeposit(
+        address from,
+        uint256 amount,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        bytes calldata sig3009
+    ) internal {
         if (amount <= FEE) revert FeeExceedsAmount();
         uint256 net = amount - FEE;
 
         // Mirror the Deposits guards so relayers simulating the call get clear
         // errors: MIN_BUYER_DEPOSIT applies only to a buyer's first deposit,
         // and the credited balance may never exceed the buyer's credit limit.
-        (uint256 available, uint256 reserved, ) = deposits.getBuyerBalance(from);
+        (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(from);
         uint256 balance = available + reserved;
         if (balance == 0 && net < deposits.MIN_BUYER_DEPOSIT()) {
             revert NetBelowMinDeposit();

@@ -4,6 +4,7 @@ import type { PeerId } from '../types/peer.js';
 import type { SweepRequestPayload, SweepReceiptPayload } from '../types/protocol.js';
 import type { SweepMux } from '../p2p/sweep-mux.js';
 import { DepositRelayClient } from './evm/deposit-relay-client.js';
+import { REFERRAL_BIND_TYPES } from './evm/referrals-client.js';
 import { RECEIVE_WITH_AUTHORIZATION_TYPES, makeUsdcDomain } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 
@@ -16,6 +17,7 @@ export interface DepositRelayerConfig {
   relayAddress: string;
   usdcAddress: string;
   evmChainId: number;
+  referralsAddress?: string;
   /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
    *  May be negative to relay at a loss (e.g. local testing where anvil's gas
    *  price dwarfs the fee). Default: 0. */
@@ -65,6 +67,7 @@ export class DepositRelayer {
   }
 
   get client(): DepositRelayClient { return this._client; }
+  get relaysReferrals(): boolean { return Boolean(this._config.referralsAddress); }
 
   async handleSweepRequest(
     peerId: PeerId,
@@ -76,6 +79,22 @@ export class DepositRelayer {
         payload.relayAddress.toLowerCase() !== this._config.relayAddress.toLowerCase()) {
       debugLog(`[Relayer] Dropping sweep from ${peerId.slice(0, 12)}...: chain/relay mismatch`);
       return 'dropped';
+    }
+    if (payload.version === 2) {
+      const referral = payload.referral;
+      if (!referral || !this._config.referralsAddress
+          || referral.referralsAddress.toLowerCase() !== this._config.referralsAddress.toLowerCase()) {
+        return 'dropped';
+      }
+      const nowSecs = Math.floor(Date.now() / 1000);
+      if (nowSecs >= referral.deadline - MIN_REMAINING_VALIDITY_SECS) {
+        this._sendReceipt(mux, payload, 'rejected', undefined, 'referral authorization expired or expiring');
+        return 'rejected';
+      }
+      if (!this._verifyReferralSignature(payload)) {
+        this._sendReceipt(mux, payload, 'rejected', undefined, 'invalid referral signature');
+        return 'rejected';
+      }
     }
 
     const nonceKey = payload.nonce.toLowerCase();
@@ -123,6 +142,14 @@ export class DepositRelayer {
       validBefore: BigInt(payload.validBefore),
       nonce: payload.nonce,
       sig3009: payload.sig3009,
+      ...(payload.referral ? {
+        referral: {
+          referrer: payload.referral.referrer,
+          nonce: BigInt(payload.referral.nonce),
+          deadline: BigInt(payload.referral.deadline),
+          signature: payload.referral.signature,
+        },
+      } : {}),
     };
 
     this._inFlight++;
@@ -189,6 +216,32 @@ export class DepositRelayer {
     }
   }
 
+  private _verifyReferralSignature(payload: SweepRequestPayload): boolean {
+    const referral = payload.referral;
+    if (!referral) return false;
+    try {
+      const recovered = verifyTypedData(
+        {
+          name: 'AntseedReferrals',
+          version: '1',
+          chainId: this._config.evmChainId,
+          verifyingContract: referral.referralsAddress,
+        },
+        REFERRAL_BIND_TYPES,
+        {
+          buyer: payload.from,
+          referrer: referral.referrer,
+          nonce: BigInt(referral.nonce),
+          deadline: BigInt(referral.deadline),
+        },
+        referral.signature,
+      );
+      return recovered.toLowerCase() === payload.from.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+
   private _admitPeerRequest(peerId: PeerId): boolean {
     const limit = this._config.maxPerPeerPerMinute ?? DEFAULT_MAX_PER_PEER_PER_MINUTE;
     const now = Date.now();
@@ -227,4 +280,5 @@ export class DepositRelayer {
       debugLog(`[Relayer] Failed to send receipt: ${err instanceof Error ? err.message : err}`);
     }
   }
+
 }

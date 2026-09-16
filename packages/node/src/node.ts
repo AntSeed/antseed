@@ -52,6 +52,7 @@ import { SweepMux } from "./p2p/sweep-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { DepositRelayer } from "./payments/deposit-relayer.js";
 import {
+  CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_WEBRTC_V1,
@@ -196,6 +197,7 @@ export interface NodePaymentsConfig {
   disableMetadataV2Services?: boolean;
   /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps). */
   depositRelayAddress?: string;
+  referralsAddress?: string;
 }
 
 export interface NodeRelayerConfig {
@@ -1658,6 +1660,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
         ...(this._depositRelayer ? { relaysSweeps: true } : {}),
+        ...(this._depositRelayer?.relaysReferrals ? { relaysReferrals: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -2084,6 +2087,7 @@ export class AntseedNode extends EventEmitter {
           relayAddress: payments.depositRelayAddress,
           usdcAddress: payments.usdcAddress,
           evmChainId: payments.chainId ?? 8453,
+          ...(payments.referralsAddress ? { referralsAddress: payments.referralsAddress } : {}),
           ...(relayerConfig?.minProfitBaseUnits !== undefined
             ? { minProfitBaseUnits: BigInt(relayerConfig.minProfitBaseUnits) }
             : {}),
@@ -2301,6 +2305,7 @@ export class AntseedNode extends EventEmitter {
     for (const peerId of this._muxes.keys()) {
       const capabilities = this._peerCapabilities.get(peerId);
       if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      if (payload.version === 2 && !capabilities.has(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1)) continue;
       const conn = this._connectionManager.getConnection(peerId);
       if (!conn) continue;
       if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
@@ -2375,6 +2380,7 @@ export class AntseedNode extends EventEmitter {
     for (const peerId of this._muxes.keys()) {
       const capabilities = this._peerCapabilities.get(peerId);
       if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      if (payload.version === 2 && !capabilities.has(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1)) continue;
       const conn = this._connectionManager.getConnection(peerId);
       if (!conn) continue;
       if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;

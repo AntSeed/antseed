@@ -32,6 +32,7 @@ import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
 import {
+  CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
@@ -99,6 +100,8 @@ export interface AnnouncerConfig {
   sellerContract?: SellerContractConfig;
   /** Whether this seller currently supports buyer deposit sweep relaying. */
   relaysSweeps?: boolean;
+  /** Whether this seller relays buyer-signed referral bindings. */
+  relaysReferrals?: boolean;
 }
 
 /**
@@ -304,6 +307,9 @@ export class PeerAnnouncer {
     ];
     if (this.config.relaysSweeps) {
       capabilities.push(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1);
+    }
+    if (this.config.relaysReferrals) {
+      capabilities.push(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1);
     }
     if (this.config.capabilities && this.config.capabilities.length > 0) {
       capabilities.push(...this.config.capabilities);
