@@ -7,7 +7,7 @@ import test from 'node:test'
 import { Wallet } from 'ethers'
 import { BuyerPaymentManager, ChannelStore } from '@antseed/node'
 import type { BuyerPaymentConfig, ChannelsClient, Identity, PaymentMux, SpendingAuthPayload } from '@antseed/node'
-import { createSignDailyIfNeeded, type DailySigningNode } from './day-pass-signing.js'
+import { createSignAccessIfNeeded, type AccessSigningNode } from './access-signing.js'
 
 /**
  * Real BuyerPaymentManager throughout -- all the clamping/elapsed-day/
@@ -20,6 +20,7 @@ import { createSignDailyIfNeeded, type DailySigningNode } from './day-pass-signi
  * directly, standing in for a real seller's topUp()/reserve() landing.
  */
 
+const SERVICE_ID = 'example-access'
 const DAILY_AMOUNT = 10_000n // matches other test suites' convention
 const SELLER_PEER_ID = 'cc'.repeat(20)
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -115,6 +116,7 @@ async function withBuyer(
   const identity = createTestIdentity()
   const buyer = new BuyerPaymentManager(identity, makeBuyerConfig(dir, maxReserveAmountUsdc), store)
   buyer.setSigner(identity.wallet)
+  buyer.acceptAccessTerms(SELLER_PEER_ID, SERVICE_ID, { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 })
   // topUpReserve now deliberately verifies real buyer deposits before
   // signing a top-up (see its own doc comment: a real incident during a
   // chain-RPC outage let unverified top-ups stack days of fee on a stale
@@ -137,12 +139,12 @@ test('bootstrap: first call only reserves (no charge yet); the response-triggere
   await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
+    const node: AccessSigningNode = {
       buyerPaymentManager: buyer,
       channelsClient: scripted.client,
       getOrConnectPaymentMux: async () => mux,
     }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Call 1 (reacting to the seller's "no session" 402): reserve only.
     // Day 1's real charge must not be signed before the buyer has ever been
@@ -200,14 +202,15 @@ for (const scenario of [
     await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
       const mux = createRecordingMux()
       const scripted = createScriptedChannelsClient(0n)
-      const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-      const sign = createSignDailyIfNeeded(node, {
-        resolveAgreedPriceUsdc: async () => scenario.agreed,
+      const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+      const sign = createSignAccessIfNeeded(node, {
+        serviceId: SERVICE_ID,
         resolveDiscoveredPriceUsdc: async () => {
           if (scenario.throws) throw new Error('discovery failed')
           return scenario.discovered
         },
       })
+      if (scenario.agreed === null) buyer.pauseAccess(SELLER_PEER_ID, SERVICE_ID)
       await assert.rejects(sign(SELLER_PEER_ID), new RegExp(scenario.error))
       assert.equal(mux.sent.length, 0)
       assert.equal(buyer.getActiveSession(SELLER_PEER_ID), null)
@@ -215,65 +218,52 @@ for (const scenario of [
   })
 }
 
-test('resolveLastFlatFeeSignedAtMs: a recently-persisted charge blocks an unwarranted extra sign on a fresh process', async () => {
-  // Simulates restoring buyer-local persisted state after a process
-  // restart: without this seeding, a brand-new BuyerPaymentManager (this
-  // test's real one) has no memory of a real recent charge and would treat
-  // the next call as day one, regardless of what was actually paid before
-  // the restart.
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
+test('changed terms stay paused even if discovery returns the old price again', async () => {
+  await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
+    let price = DAILY_AMOUNT + 1n
+    const node: AccessSigningNode = {
+      buyerPaymentManager: buyer, channelsClient: null,
+      getOrConnectPaymentMux: async () => { throw new Error('must not connect') },
     }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT,
-      resolveLastFlatFeeSignedAtMs: async () => Date.now() - 60 * 60 * 1000, // persisted: "signed" 1h ago
-    })
-
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    scripted.bumpTo(DAILY_AMOUNT)
-    await signDailyIfNeeded(SELLER_PEER_ID) // would ordinarily be the real day-1 signature
-
-    const afterBootstrap = mux.sent.slice(1)
-    assert.equal(BigInt(afterBootstrap[0]!.cumulativeAmount), 0n, 'seeded clock blocks the charge -- persisted state says this seller was already paid within 24h')
+    const sign = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => price })
+    await assert.rejects(sign(SELLER_PEER_ID), /BILLING_TERMS_CHANGED/)
+    price = DAILY_AMOUNT
+    await assert.rejects(sign(SELLER_PEER_ID), /BILLING_APPROVAL_REQUIRED/)
+    assert.equal(buyer.getAccessAgreement(SELLER_PEER_ID, SERVICE_ID)?.enabled, false)
   })
 })
 
-test('recordFlatFeeSignedAtMs: persists the moment a real flat-fee signature completes, not the bootstrap reserve', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
+test('a reserve-only request cannot buy an expired access period', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'] })
+  await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
     const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
+    await buyer.authorizeSpending(SELLER_PEER_ID, mux, 0n, DAILY_AMOUNT * 5n)
+    buyer.configureFlatFeeSigning(SELLER_PEER_ID, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: SERVICE_ID })
+    await buyer.signCumulativeAuth(SELLER_PEER_ID, DAILY_AMOUNT)
+    const first = buyer.getAccessPurchase(SELLER_PEER_ID, SERVICE_ID)
+    t.mock.timers.tick(DAY_MS * 2)
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: null, getOrConnectPaymentMux: async () => mux }
+    const sign = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    await sign(SELLER_PEER_ID, { purchase: false })
+    assert.equal(buyer.getActiveSession(SELLER_PEER_ID)?.authMax, DAILY_AMOUNT.toString())
+    assert.deepEqual(buyer.getAccessPurchase(SELLER_PEER_ID, SERVICE_ID), first)
+  })
+})
+
+test('pausing an active pass prevents opening or topping up a payment channel', async () => {
+  await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
+    const mux = createRecordingMux()
+    await buyer.authorizeSpending(SELLER_PEER_ID, mux, 0n, DAILY_AMOUNT * 5n)
+    buyer.configureFlatFeeSigning(SELLER_PEER_ID, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: SERVICE_ID })
+    await buyer.signCumulativeAuth(SELLER_PEER_ID, DAILY_AMOUNT)
+    buyer.pauseAccess(SELLER_PEER_ID, SERVICE_ID)
+    const node: AccessSigningNode = {
+      buyerPaymentManager: buyer, channelsClient: null,
+      getOrConnectPaymentMux: async () => { throw new Error('must not connect while paused') },
     }
-    const recorded: Array<{ sellerPeerId: string; atMs: number }> = []
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT,
-      recordFlatFeeSignedAtMs: async (sellerPeerId, atMs) => { recorded.push({ sellerPeerId, atMs }) },
-    })
-
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only, no cumulative sign yet
-    assert.equal(recorded.length, 0, 'a bootstrap reserve is not a flat-fee cumulative signature')
-
-    // Matches the real reserve exactly for reconcileOnChainChannelStatus's
-    // pre-sign read, then simulates the "prepare tomorrow" top-up's own
-    // on-chain confirmation landing one poll cycle later -- without this,
-    // topUpAndReconcile polls for the real TOPUP_CONFIRMATION_TIMEOUT_MS
-    // (30s) before giving up, same as the reference bootstrap test above.
-    scripted.bumpTo(DAILY_AMOUNT)
-    scripted.bumpAfterOneRead(DAILY_AMOUNT * 2n)
-    const before = Date.now()
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(recorded.length, 1)
-    assert.equal(recorded[0]!.sellerPeerId, SELLER_PEER_ID)
-    assert.ok(recorded[0]!.atMs >= before, 'records a timestamp taken after the real signature completed')
+    const sign = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    await assert.rejects(sign(SELLER_PEER_ID, { purchase: false }), /BILLING_APPROVAL_REQUIRED/)
+    assert.equal(buyer.getActiveSession(SELLER_PEER_ID)?.authMax, DAILY_AMOUNT.toString())
   })
 })
 
@@ -282,8 +272,8 @@ test('ordinary day: signs exactly one more day\'s increment, no top-up when ther
   await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -328,8 +318,8 @@ test('repeated same-day calls never ratchet authMax up, even across many retries
   await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 10n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -362,8 +352,8 @@ test('catch-up: a multi-day gap tops up and signs exactly one more day, never th
   await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Bootstrap's own top-up raises the ceiling by exactly one day's
     // increment (the fixed topUpReserve call, not the generic per-request
@@ -411,8 +401,8 @@ test('on-chain settlement: a channel closed on-chain (local store still says act
   await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -473,8 +463,8 @@ test('reserve deadline renewal: an expired deadline with a healthy ceiling renew
   await withBuyer(DAILY_AMOUNT * 5n, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -521,8 +511,8 @@ test('topUpAndReconcile genuinely waits for on-chain confirmation before reconci
   await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
+    const node: AccessSigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+    const signDailyIfNeeded = createSignAccessIfNeeded(node, { serviceId: SERVICE_ID, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Bootstrap's reserve alone never calls topUpAndReconcile -- only day
     // 1's real signature (below) does, once its own ceiling is fully

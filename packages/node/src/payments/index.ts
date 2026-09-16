@@ -91,6 +91,7 @@ export type { ChannelKind, ChannelRole, ChannelStatus, StoredChannel, StoredRece
 
 // Buyer payment manager
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
+export type { AccessTerms, AccessAgreement, AccessPurchase, AccessAuthorization } from '@antseed/buyer-core';
 export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
 
 // Free usage managers

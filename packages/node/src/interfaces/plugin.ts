@@ -66,7 +66,7 @@ export interface AntseedRouterPlugin extends AntseedPluginBase {
    * Omit if this plugin has no flat-fee charge to attribute, or doesn't care
    * about attribution.
    */
-  dailyPassServiceId?: string
+  accessServiceId?: string
 }
 
 export interface ClaimResult {

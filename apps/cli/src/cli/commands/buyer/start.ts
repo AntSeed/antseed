@@ -16,8 +16,7 @@ import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy, type DepositWatcherAbsenceReason } from '../../../proxy/buyer-proxy.js'
 import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
-import { createSignDailyIfNeeded } from '../../../proxy/day-pass-signing.js'
-import { readAgreedDayPassPriceUsd, readLastFlatFeeSignedAtMs, writeLastFlatFeeSignedAtMs, usdToUsdc, usdcToUsd } from '../../../proxy/day-pass-consent.js'
+import { createSignAccessIfNeeded } from '../../../proxy/access-signing.js'
 import { createSignRouteAuth } from '../../../proxy/route-auth-signing.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
@@ -236,16 +235,12 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       const buyerIdentity = await loadOrCreateIdentity(globalOpts.dataDir)
 
       let router
+      let activeRouterPackage: string | undefined
       let toolHints: Array<{ name: string; envVar: string }> = []
-      let dailyPassServiceId: string | undefined
+      let accessServiceId: string | undefined
       let autoRouteServiceId: string | undefined
       let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
       let routingCadence: import('@antseed/node').RoutingCadence | undefined
-      // Set by day-pass-signing.ts's onPriceCappedChange below, read by
-      // BuyerProxy's /_antseed/day-pass-price-increase admin route -- these
-      // run on entirely independent cycles (a signing pass vs. an HTTP
-      // request), so this is the one thing they actually share.
-      let dayPassPriceIncreaseNotice: { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null = null
       const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
       if (options.instance) {
@@ -265,6 +260,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         const spinner = ora(`Loading router plugin "${instance.package}"...`).start()
         try {
           const plugin = await loadRouterPlugin(instance.package)
+          activeRouterPackage = resolvePluginPackage(instance.package)
           const runtimeEnv = {
             ...buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig),
             ANTSEED_BUYER_PEER_ID: buyerIdentity.peerId,
@@ -274,7 +270,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          dailyPassServiceId = plugin.dailyPassServiceId
+          accessServiceId = plugin.accessServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
           routingCadence = plugin.routingCadence
@@ -289,6 +285,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         const spinner = ora(`Loading router plugin "${routerName}"...`).start()
         try {
           const plugin = await loadRouterPlugin(routerName)
+          activeRouterPackage = resolvePluginPackage(routerName)
           const runtimeEnv = {
             ...buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig),
             ANTSEED_BUYER_PEER_ID: buyerIdentity.peerId,
@@ -298,7 +295,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          dailyPassServiceId = plugin.dailyPassServiceId
+          accessServiceId = plugin.accessServiceId
           autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
           routingCadence = plugin.routingCadence
@@ -443,55 +440,25 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         process.exit(1)
       }
 
-      // Optional Router capability: a router that needs daily/periodic
-      // payment signing (e.g. a day-pass-priced routing peer) implements
-      // configureDailySigning to receive a real signing closure. Built
-      // here, after node.start(), because it needs node.buyerPaymentManager,
-      // which only exists once payments are configured -- constructing the
-      // router itself (above) happens before the node has started.
-      if (router.configureDailySigning && paymentsConfig?.enabled) {
-        const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-          // The loaded router plugin's own declared attribution string
-          // (`AntseedRouterPlugin.dailyPassServiceId`) -- generic host code,
-          // no plugin-specific literal here (unlike createSignDailyIfNeeded/
-          // signCumulativeAuth themselves, which were already generic).
-          // Omitted entirely if the plugin doesn't declare one.
-          serviceId: dailyPassServiceId,
-          // A single, targeted per-peer DHT lookup (cheaper and more
-          // deterministic than a full network sweep, per findPeer's own doc
-          // comment) -- this only ever runs once per real signing cycle
-          // (roughly once a day per seller), so a live lookup each time is
-          // fine; no caching needed. Filtered to this exact sellerPeerId,
-          // not just any day-pass offer on the network -- buyer-proxy.ts's
-          // /_antseed/day-pass-price handler is peer-agnostic (any offer,
-          // for display only); this one signs money, so it must be this
-          // specific seller's own advertised price or nothing.
+      if (router.configureAccessSigning && accessServiceId && paymentsConfig?.enabled) {
+        const serviceId = accessServiceId
+        router.configureAccessSigning(createSignAccessIfNeeded(node, {
+          serviceId,
+          isEnabled: async () => {
+            const preferences = (await loadConfig(globalOpts.config)).buyer.routingPreferences
+            return preferences.routerEnabled === true && preferences.autoRouting !== false
+              && (!preferences.selectedRouterPackage || preferences.selectedRouterPackage === activeRouterPackage)
+          },
           resolveDiscoveredPriceUsdc: async (sellerPeerId) => {
             const peer = await node.findPeer(sellerPeerId)
             if (!peer) return null
-            const offer = buildNetworkServiceOffers([peer]).find(
-              (o) => o.type === 'day-pass' && o.peerId === sellerPeerId && o.flatUsdPrice !== undefined,
-            )
-            if (!offer || offer.flatUsdPrice === undefined) return null
-            return BigInt(Math.round(offer.flatUsdPrice * 1_000_000))
+            const offer = buildNetworkServiceOffers([peer]).find((offer) =>
+              offer.type === 'day-pass' && offer.peerId === sellerPeerId && offer.serviceId === serviceId)
+            const price = offer?.flatUsdPrice
+            if (price === undefined || !Number.isFinite(price) || price < 0 || !Number.isSafeInteger(Math.round(price * 1_000_000))) return null
+            return BigInt(Math.round(price * 1_000_000))
           },
-          resolveAgreedPriceUsdc: async (sellerPeerId) => {
-            const agreedUsd = await readAgreedDayPassPriceUsd(globalOpts.config, sellerPeerId)
-            return agreedUsd === null ? null : usdToUsdc(agreedUsd)
-          },
-          onPriceCappedChange: (sellerPeerId, notice) => {
-            dayPassPriceIncreaseNotice = notice
-              ? { sellerPeerId, agreedUsd: usdcToUsd(notice.agreedUsdc), discoveredUsd: usdcToUsd(notice.discoveredUsdc) }
-              : null
-          },
-          resolveLastFlatFeeSignedAtMs: async (sellerPeerId) => {
-            return readLastFlatFeeSignedAtMs(globalOpts.config, sellerPeerId)
-          },
-          recordFlatFeeSignedAtMs: async (sellerPeerId, atMs) => {
-            await writeLastFlatFeeSignedAtMs(globalOpts.config, sellerPeerId, atMs)
-          },
-        })
-        router.configureDailySigning(signDailyIfNeeded)
+        }))
       }
 
       // Optional Router capability: a router that talks to a bare,
@@ -594,10 +561,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         autoRouteServiceId,
         routingSettingsSchema,
         routingCadence,
-        dailyPassServiceId,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         routingService: effectiveBuyerConfig.routingService,
-        getDayPassPriceIncreaseNotice: () => dayPassPriceIncreaseNotice,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })
       let ownsProxyListener = false

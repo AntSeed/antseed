@@ -7,70 +7,9 @@ export type ModelRoutingPreferences = {
   minTrustScore: number;
   allowedPeerIds: string[];
   blockedPeerIds: string[];
-  /**
-   * Cost/quality tradeoff dial -- one of the five discrete values
-   * {1, 3, 5, 7, 9} on Sage's underlying 0-10 scale; 5 is "Balanced." Only
-   * meaningful to a router that implements selectRoute -- optional so
-   * existing routers (e.g. router-local) that don't read it are unaffected.
-   */
-  cqt?: number;
-  /**
-   * Explicit opt-in to Auto model-routing's daily flat-fee day pass -- off
-   * by default. A router that gates real signing on this (e.g. a router
-   * plugin's own `signDayPassOnDemand`) must treat "unknown"
-   * (preferences not yet supplied) the same as `false`, never as implicit
-   * consent. Optional so existing routers that don't read it are
-   * unaffected.
-   */
-  dayPassOnDemandEnabled?: boolean;
   routerEnabled?: boolean;
-  /**
-   * npm package name of the router plugin `dayPassOnDemandEnabled` applies
-   * to (e.g. '@antseed/router-acme'), chosen from whichever router-type
-   * plugins are actually installed. Optional/nullable so a preferences
-   * object from before this field existed, or a host with exactly one
-   * router plugin, still behaves the same as it always did.
-   */
   selectedRouterPackage?: string | null;
-  /**
-   * The buyer's standing "Auto select seller" switch -- distinct from, and
-   * checked ALONGSIDE, dayPassOnDemandEnabled. Found live: a buyer trying
-   * to stop real-money day-pass billing reasonably reached for this
-   * toggle (labeled "Off pauses routing everywhere" in the UI) instead of
-   * the separate "Select model router" control that actually owns
-   * dayPassOnDemandEnabled -- and billing kept running, because nothing
-   * gated on this flag. A router that bills on dayPassOnDemandEnabled
-   * (e.g. a router plugin's own `signDayPassOnDemand`) should treat an explicit
-   * `false` here as an additional stop condition, same as
-   * dayPassOnDemandEnabled itself: `undefined` (an older caller that
-   * doesn't send this field) must NOT be treated as consent to keep
-   * billing, but must also not newly block a host that never intended to
-   * gate on it -- so callers default it to `true` (routing enabled) when
-   * absent, not to `false`. Optional so existing routers/callers that
-   * don't need it are unaffected.
-   */
   autoRouting?: boolean;
-  /**
-   * Day-pass daily prices (whole USD, e.g. 0.89) this buyer has actually
-   * agreed to, keyed by the routing-peer's own seller peer id (lowercase
-   * hex, no `0x`) rather than by router package -- the seller relationship
-   * a day-pass charge is actually against, and already the key every
-   * day-pass function (`signDailyIfNeeded`, `resolveDiscoveredPriceUsdc`,
-   * `configureFlatFeeSigning`) takes. Keying by seller peer id rather than
-   * package means switching to a different router plugin naturally starts
-   * with no agreement on file for that plugin's (different) seller, with no
-   * separate reset step needed.
-   *
-   * Set once per seller: either the first time a day-pass signature is ever
-   * produced for it (implicit agreement to whatever price was live at that
-   * moment) or explicitly when a buyer re-confirms after a price increase.
-   * Day-pass signing must never sign above the stored value for a seller
-   * once one exists; a live/shipped price above it is capped, not paid.
-   * Missing entry means no agreement exists yet for that seller. Optional
-   * so existing preferences objects from before this field existed are
-   * unaffected.
-   */
-  agreedDayPassPricesUsdc?: Record<string, number>;
 };
 
 export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {
@@ -79,10 +18,8 @@ export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {
   minTrustScore: 60,
   allowedPeerIds: [],
   blockedPeerIds: [],
-  cqt: 5,
-  dayPassOnDemandEnabled: false,
+  routerEnabled: false,
   selectedRouterPackage: null,
-  agreedDayPassPricesUsdc: {},
 };
 
 export type ModelRouteCandidate = {

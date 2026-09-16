@@ -224,6 +224,7 @@ export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
 export type { FlatFeeSigningConfig, PerRequestAuthResult } from './payments/buyer-payment-manager.js';
+export type { AccessTerms, AccessAgreement, AccessPurchase, AccessAuthorization } from '@antseed/buyer-core';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';
 export { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';

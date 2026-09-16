@@ -255,6 +255,44 @@ test('host classifies only the initial model and ignores later rewrite and refre
   assert.doesNotMatch(JSON.stringify(audit), /repeat|summary/)
 })
 
+test('a valid first model remains selected when its first inference fails', async () => {
+  const peer = routerPeer('a')
+  let classifications = 0
+  let dispatches = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async () => { classifications++; return [{ peerId: peer.peerId, serviceId: 'test-model' }] },
+  }, undefined, priceAndTrustPreferences)
+  ;(proxy as any)._autoRouteServiceId = 'router-test'
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
+    requestId: request.requestId, statusCode: ++dispatches === 1 ? 503 : 200, headers: {}, body: Buffer.from('{}'),
+  })
+  const send = () => invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-vpr-session-id': 'failed-first-inference' }, body: { model: 'router-test', messages: [] },
+  }))
+  assert.equal((await send()).statusCode, 503)
+  ;(proxy as any)._peerHealth.clear()
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(classifications, 1)
+})
+
+test('an explicit advertised model bypasses initial classification', async () => {
+  const peer = routerPeer('a')
+  let calls = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async () => { calls++; throw new Error('must not classify an explicit model') },
+  }, undefined, priceAndTrustPreferences)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
+    requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}'),
+  })
+  const response = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-vpr-session-id': 'explicit-first-model' }, body: { model: 'test-model', messages: [] },
+  }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(calls, 0)
+})
+
 test('concurrent initial requests share the successful model choice without paying for another classification', async () => {
   const peer = routerPeer('a')
   let calls = 0
@@ -509,53 +547,12 @@ test('BuyerProxy reloads model routing preferences from config', async (t) => {
     minTrustScore: 72,
     allowedPeerIds: [allowedPeerId],
     blockedPeerIds: [],
-    cqt: 5,
     routerEnabled: false,
-    dayPassOnDemandEnabled: false,
     autoRouting: undefined,
     selectedRouterPackage: null,
-    agreedDayPassPricesUsdc: {},
   })
 })
 
-test('GET /_antseed/day-pass-price-increase reports null when nothing is currently capped', async () => {
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: null } as any,
-    getDayPassPriceIncreaseNotice: () => null,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/day-pass-price-increase' }))
-  assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, notice: null })
-})
-
-test('GET /_antseed/day-pass-price-increase reports the live notice when a seller\'s price is being capped', async () => {
-  const notice = { sellerPeerId: 'a'.repeat(40), agreedUsd: 0.89, discoveredUsd: 1.2 }
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: null } as any,
-    getDayPassPriceIncreaseNotice: () => notice,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/day-pass-price-increase' }))
-  assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, notice })
-})
-
-test('GET /_antseed/day-pass-price-increase reports null when no getter was wired in at all', async () => {
-  const proxy = new BuyerProxy({
-    port: 0,
-    dataDir: '/tmp/antseed-test',
-    node: { router: null } as any,
-  })
-
-  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/day-pass-price-increase' }))
-  assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, notice: null })
-})
 
 test('BuyerProxy starts incremental discovery on startup', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-proxy-'))

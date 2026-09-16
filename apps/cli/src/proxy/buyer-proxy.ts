@@ -1,3 +1,4 @@
+import { handleAccessBilling } from './access-billing.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
@@ -147,7 +148,6 @@ export interface BuyerProxyConfig {
   routerTimeoutMs?: number
   routerFailureFallback?: 'none' | 'default'
   autoRouteServiceId?: string
-  dailyPassServiceId?: string
   routerKey?: string
   routingService?: RoutingServiceConfig
   routingSettingsSchema?: RouterSettingField[]
@@ -181,17 +181,6 @@ export interface BuyerProxyConfig {
    * savings (Acme)". Undefined falls back to a generic title.
    */
   routerName?: string
-  /**
-   * Live read of whatever day-pass-signing.ts's `onPriceCappedChange` most
-   * recently reported (`null` when no seller's live price is currently
-   * being capped) -- exposed via `GET /_antseed/day-pass-price-increase` so
-   * the desktop app can poll it and reopen its router info dialog on its
-   * own, without the user having to notice a failed request first. A
-   * getter, not a plain value, since day-pass-signing.ts's signing cycle
-   * (which produces this) runs entirely independently of any single HTTP
-   * request this proxy handles.
-   */
-  getDayPassPriceIncreaseNotice?: () => { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null
 }
 
 // 401/403 are included: sellers relay upstream auth failures (revoked or
@@ -796,7 +785,6 @@ export class BuyerProxy {
   private readonly _stateFile: string
   private readonly _configPath: string | null
   private readonly _routerName: string | undefined
-  private readonly _getDayPassPriceIncreaseNotice: (() => { sellerPeerId: string; agreedUsd: number; discoveredUsd: number } | null) | undefined
   private _stateFileWatching = false
   private _configFileWatching = false
   private _pinnedPeer: string | null
@@ -845,7 +833,6 @@ export class BuyerProxy {
   private readonly _routerTimeoutMs: number
   private readonly _routerFailureFallback: 'none' | 'default'
   private readonly _autoRouteServiceId: string | undefined
-  private readonly _dailyPassServiceId: string | undefined
   private _routingServiceConfig: RoutingServiceConfig | undefined
   private readonly _routingSettingsSchema: RouterSettingField[]
   private readonly _routerKey: string
@@ -905,7 +892,6 @@ export class BuyerProxy {
     this._routerTimeoutMs = config.routerTimeoutMs ?? 10_000
     this._routerFailureFallback = config.routerFailureFallback ?? 'none'
     this._autoRouteServiceId = config.autoRouteServiceId
-    this._dailyPassServiceId = config.dailyPassServiceId
     this._routingServiceConfig = config.routingService
     this._routingSettingsSchema = config.routingSettingsSchema ?? []
     this._routerKey = config.routerKey ?? ''
@@ -927,7 +913,6 @@ export class BuyerProxy {
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._configPath = config.configPath ?? null
     this._routerName = config.routerName
-    this._getDayPassPriceIncreaseNotice = config.getDayPassPriceIncreaseNotice
     this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._routingPreferences = config.routingPreferences
@@ -1218,7 +1203,7 @@ export class BuyerProxy {
       log(
         `Routing preferences reloaded: minTrust=${next.minTrustScore} maxInput=${next.maxInputUsdPerMillion} `
         + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length} `
-        + `dayPassOnDemandEnabled=${next.dayPassOnDemandEnabled ?? false}`,
+        + `routerEnabled=${next.routerEnabled ?? false}`,
       )
       // Toggling the day pass on/off, by itself, causes zero network or
       // signing activity -- the only trigger is a real routing dispatch
@@ -2066,36 +2051,8 @@ export class BuyerProxy {
       return
     }
 
-    if (path === '/_antseed/day-pass-price' && method === 'GET') {
-      // Generic read of any discovered peer's advertised `type: 'day-pass'`
-      // offer -- for a router plugin's Auto Preferences toggle to show a
-      // real, live daily price instead of a bare "starts a day pass" with no
-      // number. `null` (not an error) whenever no such offer has been
-      // discovered yet -- a buyer who hasn't found a routing peer over the
-      // network, or one advertising nothing, sees the generic copy rather
-      // than a broken price.
-      const peers = await this._getPeers()
-      const offer = this._dailyPassServiceId
-        ? buildNetworkServiceOffers(peers).find((offer) => offer.serviceId === this._dailyPassServiceId && offer.type === 'day-pass' && offer.flatUsdPrice !== undefined) ?? null
-        : null
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({
-        ok: true,
-        offer: offer ? { peerId: offer.peerId, flatUsdPrice: offer.flatUsdPrice } : null,
-      }))
-      return
-    }
-
-    if (path === '/_antseed/day-pass-price-increase' && method === 'GET') {
-      // Whether day-pass-signing.ts is currently capping some seller's
-      // signing at a price below what it's actually advertising -- lets a
-      // host UI (desktop's router info dialog) reopen itself on its own the
-      // moment this becomes true, instead of the buyer only finding out
-      // once a routed request happens to fail. `null` (not an error)
-      // whenever nothing is currently capped.
-      const notice = this._getDayPassPriceIncreaseNotice?.() ?? null
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, notice }))
+    if (path.split('?')[0] === '/_antseed/access-billing') {
+      await handleAccessBilling(req, res, this._node.buyerPaymentManager, () => this._getPeers({ forceRefresh: true }))
       return
     }
 
@@ -2715,6 +2672,7 @@ export class BuyerProxy {
     }
     try {
       if (requestedService && !initialModel && !chatPinnedModel && !explicitPeerId && this._node.router?.selectRoute
+        && !buildNetworkServiceOffers(peers).some((offer) => offer.serviceId === requestedService && offer.type === 'text')
         && this._routingPreferences?.routerEnabled !== false && this._routingPreferences?.autoRouting !== false) {
         const sharedPreferences = structuredClone(this._routingPreferences)
         if (sharedPreferences) delete sharedPreferences.routerSettings
@@ -2940,7 +2898,9 @@ export class BuyerProxy {
 
       let lastRetry: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
       let lastVerificationError: string | null = null
+      let initialDispatchService: string | null = null
       for (const [index, initialCandidate] of candidates.entries()) {
+        if (initialDispatchService && initialCandidate.serviceId !== initialDispatchService) continue
         let selected = initialCandidate
         if (this._verifier) {
           const makeReach = (chosenId: string): SellerReach =>
@@ -2971,6 +2931,13 @@ export class BuyerProxy {
             + `effective=${selected.effectiveReputationScore ?? 'unknown'} peer=${index + 1}/${candidates.length} `
             + `attempt=${peerAttempt + 1}/${MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER}`,
           )
+          if (routeSelected && !initialDispatchService) {
+            initialDispatchService = selected.serviceId
+            if (trackedConversationId) {
+              this._conversations.recordRoutedModel(trackedConversationId, `${selected.peer.peerId}@${selected.serviceId}`)
+              await this._conversations.flush()
+            }
+          }
           const result = await this._dispatchToPeer(
             res,
             selected.request,

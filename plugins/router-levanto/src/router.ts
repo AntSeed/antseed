@@ -67,7 +67,7 @@ export interface LevantoRouterConfig {
   buyerPeerId?: string;
   /**
    * Proves `buyerPeerId` is genuine -- set via `configureRouteAuthSigning`.
-   * Deliberately narrow, same reasoning as `signDailyIfNeeded` below: this
+   * Deliberately narrow, same reasoning as `authorizeAccess` below: this
    * plugin never holds a signing key directly. Omitted -- requests carry no
    * auth headers; a verifying routing peer treats that as unauthenticated,
    * not as a hard failure -- a deliberate rollout choice, since an old
@@ -85,9 +85,9 @@ export interface LevantoRouterConfig {
    * sign arbitrary messages. The host implements this by calling the real
    * BuyerPaymentManager.signCumulativeAuth and sending the result over
    * PaymentMux -- see apps/cli/src/proxy/day-pass-signing.ts,
-   * wired in via configureDailySigning at apps/cli/src/cli/commands/buyer/start.ts.
+   * wired in via configureAccessSigning at apps/cli/src/cli/commands/buyer/start.ts.
    */
-  signDailyIfNeeded?: (sellerPeerId: string) => Promise<void>;
+  authorizeAccess?: (sellerPeerId: string, request: { purchase: boolean; signal?: AbortSignal }) => Promise<void>;
   fetchImpl?: typeof fetch;
   /**
    * Bounds a hung connection, not just a refused one -- plain fetch() has no
@@ -222,7 +222,7 @@ export const LEVANTO_AUTO_SERVICE_ID = 'levanto-auto';
  * (levanto-routing-server's DayPassPriceAdProvider) -- attributes this
  * plugin's flat-fee day pass in SpendingAuthMetadata.services[] (v4) instead
  * of leaving it unattributed. Declared here (`index.ts`'s manifest exposes it
- * as `AntseedRouterPlugin.dailyPassServiceId`) so host code (apps/cli's
+ * as `AntseedRouterPlugin.accessServiceId`) so host code (apps/cli's
  * buyer start command) reads it generically instead of hardcoding a
  * router-levanto-specific string.
  */
@@ -354,7 +354,7 @@ export class LevantoRouter {
    * Most recently seen `routingPreferences` -- kept fresh from two paths:
    * the host's `updateRoutingPreferences` push (fires on config-file change,
    * including once at startup) and every `selectRoute` call that receives a
-   * non-null `routingPreferences` parameter. Needed because `signDayPassOnDemand`
+   * non-null `routingPreferences` parameter. Needed because `authorizeAccessOnDemand`
    * (called from inside `selectRoute`, but taking no parameters of its own)
    * reads this cache rather than a passed-in value -- a `selectRoute` call for
    * a concretely-chosen model, or any other call site with nothing fresh to
@@ -393,7 +393,7 @@ export class LevantoRouter {
    * calls once, after the node has actually started (this plugin's own
    * `createRouter` runs before that, so it can't do a live P2P lookup at
    * construction time). Same mutate-in-place pattern as
-   * `configureDailySigning`/`configureRouteAuthSigning` for the same reason.
+   * `configureAccessSigning`/`configureRouteAuthSigning` for the same reason.
    */
   configureRoutingPeerHostResolution(resolveRoutingPeerHost: (peerId: string) => Promise<string | null>): void {
     this.config.resolveRoutingPeerHost = resolveRoutingPeerHost;
@@ -406,7 +406,7 @@ export class LevantoRouter {
    * discovered and cached this run; otherwise a fresh discovery via
    * `resolveRoutingPeerHost(effectiveSellerPeerId)`, combined with this
    * plugin's own known HTTP port. Concurrent callers collapse onto one
-   * in-flight discovery, same dedup shape `signDayPassOnDemand` already
+   * in-flight discovery, same dedup shape `authorizeAccessOnDemand` already
    * uses for signing. Throws a clear, actionable error rather than silently
    * routing nowhere if none of the above produces a URL.
    */
@@ -466,23 +466,23 @@ export class LevantoRouter {
   }
 
   /**
-   * `Router.configureDailySigning` (packages/node/src/interfaces/buyer-router.ts)
+   * `Router.configureAccessSigning` (packages/node/src/interfaces/buyer-router.ts)
    * -- the generic hook the host calls once, after loading, to hand this
-   * router a real signing closure. Mutates `config.signDailyIfNeeded` in
+   * router a real signing closure. Mutates `config.authorizeAccess` in
    * place rather than requiring it at construction time, since the host
    * builds the closure from a real,
    * *started* `AntseedNode` (it needs `node.buyerPaymentManager`, which
    * only exists once payments are configured) -- constructing the router
    * itself happens earlier, before the node has started.
    */
-  configureDailySigning(signDailyIfNeeded: (sellerPeerId: string) => Promise<void>): void {
-    this.config.signDailyIfNeeded = signDailyIfNeeded;
+  configureAccessSigning(authorizeAccess: (sellerPeerId: string, request: { purchase: boolean; signal?: AbortSignal }) => Promise<void>): void {
+    this.config.authorizeAccess = authorizeAccess;
   }
 
   /**
    * `Router.configureRouteAuthSigning` (packages/node/src/interfaces/buyer-router.ts)
    * -- same generic, additive, mutate-in-place pattern as
-   * `configureDailySigning` above, for the same reason (this plugin never
+   * `configureAccessSigning` above, for the same reason (this plugin never
    * holds a signing key directly).
    */
   configureRouteAuthSigning(signRouteAuth: (routingPeerId: string) => Promise<RouteAuthHeaders>): void {
@@ -493,7 +493,7 @@ export class LevantoRouter {
    * `Router.updateRoutingPreferences` (packages/node/src/interfaces/buyer-router.ts)
    * -- keeps `cachedRoutingPreferences` fresh outside of a `selectRoute`
    * call that happens to pass one, e.g. right after a config-file reload,
-   * so `signDayPassOnDemand` (called only from inside a live
+   * so `authorizeAccessOnDemand` (called only from inside a live
    * `selectRoute`, as part of fully-reactive billing) still sees a current
    * day-pass-enable toggle on a `selectRoute` call that itself passes
    * `null`.
@@ -502,71 +502,17 @@ export class LevantoRouter {
     this.cachedRoutingPreferences = preferences;
   }
 
-  /**
-   * Signs a day-pass SpendingAuth strictly on demand -- never on a
-   * schedule, a timer, or any elapsed-time bookkeeping this client keeps
-   * itself. Called from two places in `selectRoute`, both reacting to the seller rather than deciding
-   * anything locally:
-   *  - a 402 from `attemptRoute` (a genuinely brand-new buyer with no
-   *    channel yet, which this opens, or a returning buyer who already saw
-   *    `renewalDue` once and didn't pay before their next request) --
-   *    awaited, then the caller retries the route once.
-   *  - `renewalDue: true` on an otherwise-successful response -- called
-   *    fire-and-forget, after that response is already on its way back to
-   *    its own caller, never blocking or delaying it.
-   *
-   * `signDailyIfNeeded` already handles both bootstrap and renewal
-   * idempotently -- opens a channel if none exists, or signs one more day
-   * if one does -- so this has no branch of its own for which case it is.
-   *
-   * Gated on `routingPreferences.dayPassOnDemandEnabled` -- real money moves
-   * here (a signed SpendingAuth is a genuine payment authorization), so an
-   * explicit, current "yes" is required. "Unknown" (no preferences ever
-   * pushed -- `configureDailySigning`
-   * wired but `updateRoutingPreferences` never called, or a CLI-only caller
-   * with no preferences UI at all) is treated the same as "no": this must
-   * never default to signing.
-   *
-   * ALSO gated on `autoRouting !== false` -- distinct from, and checked
-   * alongside, dayPassOnDemandEnabled: a buyer could reasonably reach for
-   * the standing "Auto select seller" switch instead of the separate
-   * control that actually owns dayPassOnDemandEnabled. `autoRouting`
-   * defaults to `undefined`/absent meaning "on" (unlike
-   * dayPassOnDemandEnabled's opt-in default), so only an EXPLICIT `false`
-   * stops signing here -- a caller that never sends this field at all is
-   * unaffected.
-   *
-   * Concurrent callers collapse onto one in-flight signature via
-   * `signingInFlight`, rather than each firing their own -- the only
-   * "limiting" this does; it never decides on its own that a sign is due.
-   */
-  private async signDayPassOnDemand(): Promise<void> {
-    if (this.cachedRoutingPreferences?.routerEnabled === false) return;
-    if (!this.cachedRoutingPreferences?.dayPassOnDemandEnabled) return;
-    if (this.cachedRoutingPreferences.autoRouting === false) return;
-    if (!this.config.signDailyIfNeeded) return;
-    if (!this.signingInFlight) {
-      const signDailyIfNeeded = this.config.signDailyIfNeeded;
-      const sellerPeerId = this.effectiveSellerPeerId;
-      this.signingInFlight = signDailyIfNeeded(sellerPeerId)
-        .catch((err: unknown) => {
-          // Swallowed on purpose (a failed sign must not turn a successful
-          // retry attempt below into a thrown error before it even tries),
-          // but silent-and-discarded is its own risk: the routing peer's own
-          // error -- "no current day pass, or today's signature is not yet
-          // on file" -- gives no hint that a chain-RPC outage upstream could
-          // be the actual cause. Logging what failed costs nothing and turns
-          // any occurrence into a one-line diagnosis instead of a mystery.
-          // The retry right after this in selectRoute will simply 402 again
-          // and surface as a normal RoutingPeerError.
-          const code = (err as { code?: unknown } | null)?.code;
-          console.warn(`[LevantoRouter] day-pass signing skipped: ${code ?? (err instanceof Error ? err.message : err)}`);
-        })
-        .finally(() => {
-          this.signingInFlight = null;
-        });
+  private async authorizeAccessOnDemand(purchase: boolean, signal?: AbortSignal): Promise<void> {
+    if (this.cachedRoutingPreferences?.routerEnabled !== true || this.cachedRoutingPreferences.autoRouting === false) return;
+    if (!this.config.authorizeAccess) return;
+    signal?.throwIfAborted();
+    if (this.signingInFlight) await this.signingInFlight;
+    this.signingInFlight = this.config.authorizeAccess(this.effectiveSellerPeerId, { purchase, signal });
+    try {
+      await this.signingInFlight;
+    } finally {
+      this.signingInFlight = null;
     }
-    await this.signingInFlight;
   }
 
   /**
@@ -708,7 +654,7 @@ export class LevantoRouter {
     peers: PeerInfo[],
     conversation: ConversationIdentity | null,
     routingPreferences: ModelRoutingPreferences | null,
-    defaultRoutedModel?: string | null,
+    _defaultRoutedModel?: string | null,
     context?: RouteSelectionContext,
   ): Promise<RouteCandidate[] | null> {
     context?.signal.throwIfAborted();
@@ -732,7 +678,7 @@ export class LevantoRouter {
     // ConversationIdentity) always route -- a safe default, not a full
     // content-hash fallback.
     const routing = context?.routing ?? this.routingContext.observe(req, conversation, {
-      cadence: 'turn', settings: context?.settings ?? routingPreferences?.cqt,
+      cadence: 'turn', settings: context?.settings,
       isRouteAvailable: (route) => peers.some((entry) => entry.peerId === route.peerId),
     });
     if (convKey && !routing.shouldRoute && routing.previousRoute) {
@@ -773,7 +719,7 @@ export class LevantoRouter {
       })).filter((entry) => entry.tokens > 0)
       : [];
 
-    const cqt = Number(context?.settings?.costQuality ?? routingPreferences?.cqt ?? 5);
+    const cqt = Number(context?.settings?.costQuality ?? 5);
     if (![1, 3, 5, 7, 9].includes(cqt)) throw new Error('Invalid Levanto costQuality setting');
     const body: RouteRequestBody = {
       v: 1,
@@ -868,15 +814,15 @@ export class LevantoRouter {
     // payment is required, the same shape ordinary per-request metered
     // billing already uses (seller decides a charge is due, buyer signs in
     // response, never the other way around). A 402 here covers two
-    // distinct cases, and signDayPassOnDemand doesn't need
+    // distinct cases, and authorizeAccessOnDemand doesn't need
     // to know which: a genuinely brand-new buyer (no channel at all yet), or
     // a returning buyer who was already served one response with
     // `renewalDue` set (below) and didn't pay before this next request --
     // the seller blocks THAT one, not the one that revealed the charge. One
     // retry only: a second 402 after it just falls through to the throw
     // below like any other rejection.
-    if (result.response.status === 402 && this.config.signDailyIfNeeded) {
-      await this.signDayPassOnDemand();
+    if (result.response.status === 402 && this.config.authorizeAccess) {
+      await this.authorizeAccessOnDemand(false, context?.signal);
       context?.signal.throwIfAborted();
       result = await attemptRoute();
     }
@@ -902,13 +848,6 @@ export class LevantoRouter {
       const routingPeerUrl = await this.resolveEffectiveRoutingPeerUrl();
       throw new RoutingPeerError('rejected', `Routing peer at ${routingPeerUrl} returned a malformed response.`, res.status);
     }
-    // Postpaid day-pass renewal: this response is already real and already
-    // on its way back to the caller below -- signing here must never delay
-    // or gate it. Fire-and-forget, not awaited: signDayPassOnDemand
-    // swallows its own errors and dedupes concurrent callers, so a failure
-    // just means the seller flags renewalDue again (or blocks) on the
-    // buyer's next request.
-    if (parsed.renewalDue) void this.signDayPassOnDemand();
     const peerById = new Map(peers.map((p) => [p.peerId, p] as const));
     // One snapshot per response, not per candidate -- duplicated onto every
     // PinnedDecision below the same way cqt already is, since it's a
@@ -941,54 +880,19 @@ export class LevantoRouter {
       });
     }
 
-    // allowedPeerIds is a client-side re-filter, not a ranking constraint
-    // the peer narrows by -- walk the ranked list as usual, skip anything
-    // outside the allowlist. If that empties the list, fall back to the
-    // allowed peers directly rather than giving up.
-    //
-    // The fallback needs a model to pair with those peers -- use whatever
-    // the pre-existing "antseed" alias currently resolves to
-    // (defaultRoutedModel, host-owned buyer.state.json state passed in by
-    // buyer-proxy.ts) -- the buyer's own already-chosen fallback
-    // target, which has an actual reason to be one of these allowlisted
-    // peers' models. No price data comes with defaultRoutedModel, so the
-    // synthesized candidates carry null pricing -- honest "unknown," not a
-    // fabricated number.
     const allowedPeerIds = routingPreferences?.allowedPeerIds;
     if (allowedPeerIds && allowedPeerIds.length > 0) {
-      const allowedSet = new Set(allowedPeerIds.map((p) => p.toLowerCase()));
-      const filtered = ranked.filter((c) => allowedSet.has(c.peerId.toLowerCase()));
-      if (filtered.length > 0) {
-        ranked = filtered;
-      } else if (defaultRoutedModel) {
-        ranked = peers
-          .filter((peer) => allowedSet.has(peer.peerId.toLowerCase()))
-          .map((peer) => ({
-            peer,
-            peerId: peer.peerId,
-            serviceId: defaultRoutedModel,
-            reputation: 0,
-            hasCachedInputPricing: false,
-            inputUsdPerMillion: null,
-            outputUsdPerMillion: null,
-            minImageUsdPerImage: null,
-            // No real Sage prediction for a synthesized fallback candidate --
-            // honest "unknown," same reasoning as the null price fields above.
-            predictedCostUsd: null,
-            predictedInputTokens: null,
-            predictedCachedInputTokens: null,
-            predictedOutputTokens: null,
-            cqt,
-            // Still real: baselinePrices comes from the actual ranked
-            // response, independent of which candidate the walk ends up on.
-            baselinePrices,
-          }));
-      } else {
-        ranked = [];
-      }
+      const allowedSet = new Set(allowedPeerIds.map((peerId) => peerId.toLowerCase()));
+      ranked = ranked.filter((candidate) => allowedSet.has(candidate.peerId.toLowerCase()));
     }
 
+    if (context?.candidates) {
+      const eligible = new Set(context.candidates.map((candidate) => `${candidate.peerId.toLowerCase()}@${candidate.serviceId}`));
+      ranked = ranked.filter((candidate) => eligible.has(`${candidate.peerId.toLowerCase()}@${candidate.serviceId}`));
+    }
     if (ranked.length === 0) return [];
+    if (parsed.renewalDue) await this.authorizeAccessOnDemand(true, context?.signal);
+    context?.signal.throwIfAborted();
 
     const winner = ranked[0]!;
     if (convKey) {

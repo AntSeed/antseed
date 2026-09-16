@@ -226,7 +226,7 @@ export interface Router {
    * arbitrary messages); the host builds and owns the actual signing
    * closure.
    */
-  configureDailySigning?(signDailyIfNeeded: (sellerPeerId: string) => Promise<void>): void;
+  configureAccessSigning?(authorizeAccess: (sellerPeerId: string, request: { purchase: boolean; signal?: AbortSignal }) => Promise<void>): void;
 
   /**
    * Optional, additive: pushed by the host whenever live `buyer.routingPreferences`
@@ -246,7 +246,7 @@ export interface Router {
    * Optional, additive: a router that talks to a routing peer over a bare,
    * unauthenticated HTTP endpoint implements this to receive a
    * host-provided signing function, called once by the host after loading.
-   * Same key-custody rule as `configureDailySigning` -- the router never
+   * Same key-custody rule as `configureAccessSigning` -- the router never
    * holds a real signing key directly, so the host signs and hands back
    * only the resulting auth fields. `signRouteAuth` takes the routing
    * peer's own PeerId (which the router already knows) since only the

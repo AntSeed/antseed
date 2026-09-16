@@ -312,7 +312,7 @@ export function validateConfig(config: AntseedConfig): string[] {
       errors.push(`buyer.routingPreferences.${key} must contain only 40-character hex peer IDs`);
     }
   }
-  for (const key of ['routerEnabled', 'dayPassOnDemandEnabled'] as const) {
+  for (const key of ['routerEnabled'] as const) {
     if (routingPreferences[key] !== undefined && typeof routingPreferences[key] !== 'boolean') {
       errors.push(`buyer.routingPreferences.${key} must be a boolean`);
     }

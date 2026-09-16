@@ -97,10 +97,8 @@ test('createDefaultConfig includes shared model routing preferences', () => {
     minTrustScore: 60,
     allowedPeerIds: [],
     blockedPeerIds: [],
-    cqt: 5,
-    dayPassOnDemandEnabled: false,
+    routerEnabled: false,
     selectedRouterPackage: null,
-    agreedDayPassPricesUsdc: {},
   });
 });
 
@@ -122,12 +120,9 @@ test('loadConfig merges partial model routing preferences with defaults', async 
         minTrustScore: 60,
         allowedPeerIds: ['0x' + 'a'.repeat(40)],
         blockedPeerIds: [],
-        cqt: 5,
-        dayPassOnDemandEnabled: false,
         routerEnabled: false,
         autoRouting: undefined,
         selectedRouterPackage: null,
-        agreedDayPassPricesUsdc: {},
       });
     },
   );
