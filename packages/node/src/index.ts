@@ -164,6 +164,12 @@ export { SellerRegistryClient, SellerRegistrationVerificationError, type SellerR
 export { pendingEpochRewards, claimEpochRewards, claimBuyerEpochRewards, previewPoolRewards, claimPoolRewards, type RewardTransactionRecorder } from './payments/reward-claims.js';
 export { PositionInitClient, type PositionInitClientConfig } from './payments/evm/position-init-client.js';
 export { EmissionsGateClient, GATE_MINTERS, gateMinterId, type EmissionsGateClientConfig, type GateMinter } from './payments/evm/emissions-gate-client.js';
+export {
+  ReferralsClient,
+  REFERRAL_BIND_TYPES,
+  type ReferralBindingPayload,
+  type ReferralsClientConfig,
+} from './payments/evm/referrals-client.js';
 export { WashTradingRegistryClient, validateSellerProofArtifact, sellerProofId, type WashTradingRegistryClientConfig, type WashTradingSellerStatus, type WashTradingProofStatus, type WashTradingRegistryConfig, type SellerProofArtifact, type SellerProofSubmissionStep, type BlockAuthenticationChunk, type BlockReference } from './payments/evm/wash-trading-registry-client.js';
 export { PointsPolicyRegistryClient, type PointsPolicyRegistryClientConfig } from './payments/evm/points-policy-registry-client.js';
 export { SellerRewardsPoolClient, type SellerRewardsPoolClientConfig } from './payments/evm/seller-rewards-pool-client.js';
@@ -251,7 +257,12 @@ export type { ChainConfig, RecognizedUsageDeployment } from './payments/chain-co
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { SweepMux, type SweepMessageHandler } from './p2p/sweep-mux.js';
-export { encodeSweepRequest, decodeSweepRequest, encodeSweepReceipt, decodeSweepReceipt } from './p2p/sweep-codec.js';
+export {
+  encodeSweepRequest,
+  decodeSweepRequest,
+  encodeSweepReceipt,
+  decodeSweepReceipt,
+} from './p2p/sweep-codec.js';
 export {
   VerificationMux,
   VerificationSampler,

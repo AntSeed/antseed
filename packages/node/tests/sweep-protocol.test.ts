@@ -132,3 +132,39 @@ describe('sweep codec', () => {
     expect(decoded.reason).toBeUndefined();
   });
 });
+
+describe('referral sweep codec', () => {
+  const request: SweepRequestPayload = {
+    version: 2,
+    evmChainId: 31337,
+    relayAddress: RELAY,
+    from: BUYER.address,
+    amount: '5000000',
+    validAfter: 0,
+    validBefore: 2_000_000_000,
+    nonce: `0x${'11'.repeat(32)}`,
+    sig3009: `0x${'ab'.repeat(65)}`,
+    referral: {
+      referralsAddress: `0x${'22'.repeat(20)}`,
+      referrer: `0x${'33'.repeat(20)}`,
+      nonce: '0',
+      deadline: 2_000_000_000,
+      signature: `0x${'cd'.repeat(65)}`,
+    },
+  };
+
+  it('roundtrips a version 2 sweep with an atomic referral binding', () => {
+    expect(decodeSweepRequest(encodeSweepRequest(request))).toEqual(request);
+  });
+
+  it('requires referral data only for version 2', () => {
+    const missing = { ...request, referral: undefined };
+    expect(() => decodeSweepRequest(encodeSweepRequest(missing))).toThrow(/requires referral/);
+    expect(() => decodeSweepRequest(encodeSweepRequest({ ...request, version: 1 }))).toThrow(/version 1/);
+  });
+
+  it('rejects malformed referral data', () => {
+    const referral = { ...request.referral!, referrer: 'alice' };
+    expect(() => decodeSweepRequest(encodeSweepRequest({ ...request, referral }))).toThrow(/referrer/);
+  });
+});

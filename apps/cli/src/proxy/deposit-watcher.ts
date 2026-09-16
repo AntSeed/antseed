@@ -76,6 +76,10 @@ export interface DepositWatcherDeps {
   connectRelayers: () => Promise<void>
   /** Latest relayer receipt for a sweep authNonce, if one arrived. */
   getReceipt: (authNonce: string) => Promise<SweepReceiptPayload | null>
+  /** Optional buyer-confirmed referral to bind atomically with the next sweep. */
+  getPendingReferral?: () => Promise<NonNullable<SweepRequestPayload['referral']> | null>
+  /** Persist that the atomic referral + deposit transaction confirmed. */
+  markReferralBound?: () => Promise<void>
   onEvent?: (event: DepositWatchEvent) => void
   /** Resting cadence once the background linger expires; null stops instead. */
   idleIntervalMs?: number | null
@@ -283,8 +287,9 @@ export class DepositWatcher {
       validBefore: BigInt(validBefore),
     })
 
+    const referral = await this._deps.getPendingReferral?.().catch(() => null) ?? null
     const payload: SweepRequestPayload = {
-      version: 1,
+      version: referral ? 2 : 1,
       evmChainId: this._deps.evmChainId,
       relayAddress: this._deps.depositRelayAddress,
       from: address,
@@ -293,6 +298,7 @@ export class DepositWatcher {
       validBefore,
       nonce: message.nonce,
       sig3009,
+      ...(referral ? { referral } : {}),
     }
 
     let dispatch = await this._deps.dispatch(payload)
@@ -319,6 +325,7 @@ export class DepositWatcher {
     if (!result) {
       throw new Error('The deposit was not confirmed in time. Your USDC is safe in the wallet — retrying automatically.')
     }
+    if (referral) await this._deps.markReferralBound?.().catch(() => {})
 
     this._lastBalance = await depositsClient.getUSDCBalance(address).catch(() => 0n)
     this._emit({

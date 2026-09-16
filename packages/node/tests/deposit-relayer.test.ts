@@ -3,12 +3,15 @@ import { Wallet } from 'ethers';
 import { DepositRelayer } from '../src/payments/deposit-relayer.js';
 import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import { makeUsdcDomain, buildReceiveAuthorization } from '../src/payments/evm/signatures.js';
+import { REFERRAL_BIND_TYPES } from '../src/payments/evm/referrals-client.js';
 import type { SweepRequestPayload } from '../src/types/protocol.js';
 import type { SweepMux } from '../src/p2p/sweep-mux.js';
 import type { PeerId } from '../src/types/peer.js';
 
 const RELAY = '0x8A791620dd6260079BF849Dc5567aDC3F2FdC318';
 const USDC = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+const REFERRALS = `0x${'44'.repeat(20)}`;
+const REFERRER = `0x${'55'.repeat(20)}`;
 const CHAIN_ID = 31337;
 const FEE = 50_000n;
 
@@ -19,6 +22,23 @@ const PEER = 'peer-buyer-1' as PeerId;
 
 function makeMux() {
   return { sendSweepReceipt: vi.fn() } as unknown as SweepMux & { sendSweepReceipt: ReturnType<typeof vi.fn> };
+}
+
+async function makeReferralPayload(): Promise<SweepRequestPayload['referral']> {
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  const value = { buyer: buyer.address, referrer: REFERRER, nonce: 0n, deadline: BigInt(deadline) };
+  const signature = await buyer.signTypedData(
+    { name: 'AntseedReferrals', version: '1', chainId: CHAIN_ID, verifyingContract: REFERRALS },
+    REFERRAL_BIND_TYPES,
+    value,
+  );
+  return {
+    referralsAddress: REFERRALS,
+    referrer: REFERRER,
+    nonce: '0',
+    deadline,
+    signature,
+  };
 }
 
 async function makeValidPayload(overrides?: Partial<SweepRequestPayload>): Promise<SweepRequestPayload> {
@@ -81,6 +101,17 @@ describe('DepositRelayer', () => {
     expect(statuses).toEqual(['submitted', 'confirmed']);
     expect(mux.sendSweepReceipt.mock.calls[1][0].txHash).toBe('0x' + '77'.repeat(32));
     expect(mux.sendSweepReceipt.mock.calls[1][0].authNonce).toBe(payload.nonce);
+  });
+
+  it('submits a buyer-signed wallet referral atomically with the sweep', async () => {
+    const { relayer, sweepSpy } = makeRelayer({ referralsAddress: REFERRALS });
+    const mux = makeMux();
+    const payload = await makeValidPayload({ version: 2, referral: await makeReferralPayload() });
+
+    expect(await relayer.handleSweepRequest(PEER, payload, mux)).toBe('submitted');
+    expect(sweepSpy).toHaveBeenCalledWith(sellerIdentity.wallet, expect.objectContaining({
+      referral: expect.objectContaining({ referrer: REFERRER, nonce: 0n }),
+    }));
   });
 
   it('drops requests for a different relay address without submitting', async () => {

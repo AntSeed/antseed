@@ -42,7 +42,7 @@ export function encodeSweepReceipt(payload: SweepReceiptPayload): Uint8Array {
 
 export function decodeSweepRequest(data: Uint8Array): SweepRequestPayload {
   const obj = parseSweepJson(data);
-  if (obj.version !== 1) {
+  if (obj.version !== 1 && obj.version !== 2) {
     throw new Error('Unsupported sweep request version');
   }
   const validAfter = requireFiniteNumberField(obj, 'validAfter');
@@ -50,8 +50,8 @@ export function decodeSweepRequest(data: Uint8Array): SweepRequestPayload {
   if (validAfter < 0 || validBefore <= 0) {
     throw new Error('Sweep payload validity window out of range');
   }
-  return {
-    version: 1,
+  const result: SweepRequestPayload = {
+    version: obj.version,
     evmChainId: requireFiniteNumberField(obj, 'evmChainId'),
     relayAddress: requirePatternField(obj, 'relayAddress', ADDRESS_RE, 'address'),
     from: requirePatternField(obj, 'from', ADDRESS_RE, 'address'),
@@ -61,6 +61,25 @@ export function decodeSweepRequest(data: Uint8Array): SweepRequestPayload {
     nonce: requirePatternField(obj, 'nonce', BYTES32_RE, 'bytes32'),
     sig3009: requirePatternField(obj, 'sig3009', SIGNATURE_RE, 'signature'),
   };
+  if (obj.version === 2) {
+    const referral = obj.referral;
+    if (!referral || typeof referral !== 'object' || Array.isArray(referral)) {
+      throw new Error('Sweep payload version 2 requires referral binding');
+    }
+    const referralObject = referral as Record<string, unknown>;
+    const deadline = requireFiniteNumberField(referralObject, 'deadline');
+    if (deadline <= 0) throw new Error('Referral binding deadline out of range');
+    result.referral = {
+      referralsAddress: requirePatternField(referralObject, 'referralsAddress', ADDRESS_RE, 'address'),
+      referrer: requirePatternField(referralObject, 'referrer', ADDRESS_RE, 'address'),
+      nonce: requirePatternField(referralObject, 'nonce', UINT256_DECIMAL_RE, 'uint256 decimal string'),
+      deadline,
+      signature: requirePatternField(referralObject, 'signature', SIGNATURE_RE, 'signature'),
+    };
+  } else if (obj.referral !== undefined) {
+    throw new Error('Sweep payload version 1 cannot include referral binding');
+  }
+  return result;
 }
 
 export function decodeSweepReceipt(data: Uint8Array): SweepReceiptPayload {

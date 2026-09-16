@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AntseedNode } from '../src/node.js';
 import { ConnectionState } from '../src/types/connection.js';
 import {
+  CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   type SweepRequestPayload,
 } from '../src/types/protocol.js';
@@ -18,6 +19,20 @@ function makePayload(): SweepRequestPayload {
     validBefore: 2_000_000_000,
     nonce: '0x' + 'aa'.repeat(32),
     sig3009: '0x' + 'ab'.repeat(65),
+  };
+}
+
+function makeReferralPayload(): SweepRequestPayload {
+  return {
+    ...makePayload(),
+    version: 2,
+    referral: {
+      referralsAddress: '0x' + '9a'.repeat(20),
+      referrer: '0x' + '22'.repeat(20),
+      nonce: '0',
+      deadline: 2_000_000_000,
+      signature: '0x' + 'cd'.repeat(65),
+    },
   };
 }
 
@@ -56,6 +71,39 @@ describe('AntseedNode sweep broadcast capabilities', () => {
     expect(node.broadcastSweepRequest(makePayload())).toBe(1);
     expect(sendSweepRequest).toHaveBeenCalledTimes(1);
   });
+
+  it('only sends referral sweeps to peers that advertise referral relaying', () => {
+    const sweepOnlyPeer = toPeerId('a'.repeat(40));
+    const referralPeer = toPeerId('b'.repeat(40));
+    const node = new AntseedNode({ role: 'buyer' });
+    const offers: string[] = [];
+    const connections = new Map([
+      [sweepOnlyPeer, { state: ConnectionState.Open }],
+      [referralPeer, { state: ConnectionState.Open }],
+    ]);
+    const internals = node as unknown as NodeInternals;
+
+    internals._connectionManager = {
+      getConnection: (peerId: string) => connections.get(peerId),
+    };
+    internals._muxes = new Map([
+      [sweepOnlyPeer, {}],
+      [referralPeer, {}],
+    ]);
+    internals._peerCapabilities = new Map([
+      [sweepOnlyPeer, new Set([CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1])],
+      [referralPeer, new Set([
+        CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+        CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1,
+      ])],
+    ]);
+    internals._getOrCreateSweepMux = (peerId: string) => ({
+      sendSweepRequest: () => offers.push(peerId),
+    });
+
+    expect(node.broadcastSweepRequest(makeReferralPayload())).toBe(1);
+    expect(offers).toEqual([referralPeer]);
+  });
 });
 
 type NodeInternals = {
@@ -69,7 +117,12 @@ type NodeInternals = {
  *  what the peer does when offered a sweep: a receipt status (sent async),
  *  or 'silent' to never respond. Returns the per-peer offer log. */
 function makeDispatchNode(
-  peers: Array<{ peerId: string; behavior: 'submitted' | 'confirmed' | 'rejected' | 'silent'; capable?: boolean }>,
+  peers: Array<{
+    peerId: string;
+    behavior: 'submitted' | 'confirmed' | 'rejected' | 'silent';
+    capable?: boolean;
+    referralCapable?: boolean;
+  }>,
 ): { node: AntseedNode; offers: string[] } {
   const node = new AntseedNode({ role: 'buyer' });
   const offers: string[] = [];
@@ -79,10 +132,12 @@ function makeDispatchNode(
     getConnection: () => ({ state: ConnectionState.Open }),
   };
   internals._muxes = new Map(peers.map((p) => [p.peerId, {}]));
-  internals._peerCapabilities = new Map(peers.map((p) => [
-    p.peerId,
-    new Set(p.capable === false ? [] : [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1]),
-  ]));
+  internals._peerCapabilities = new Map(peers.map((peer) => {
+    const capabilities = new Set<string>();
+    if (peer.capable !== false) capabilities.add(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1);
+    if (peer.referralCapable) capabilities.add(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1);
+    return [peer.peerId, capabilities];
+  }));
   internals._getOrCreateSweepMux = (peerId: string) => ({
     sendSweepRequest: (payload: SweepRequestPayload) => {
       offers.push(peerId);
@@ -168,6 +223,21 @@ describe('AntseedNode sequential sweep dispatch', () => {
     const result = await node.dispatchSweepRequest(makePayload(), { perPeerTimeoutMs: 200 });
     expect(result).toEqual({ offered: 1, accepted: true });
     expect(offers).toEqual([b]);
+  });
+
+  it('only offers referral sweeps to referral-capable relayers', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    const sweepOnlyPeer = toPeerId('a'.repeat(40));
+    const referralPeer = toPeerId('b'.repeat(40));
+    const { node, offers } = makeDispatchNode([
+      { peerId: sweepOnlyPeer, behavior: 'submitted' },
+      { peerId: referralPeer, behavior: 'submitted', referralCapable: true },
+    ]);
+
+    const result = await node.dispatchSweepRequest(makeReferralPayload(), { perPeerTimeoutMs: 200 });
+    expect(result).toEqual({ offered: 1, accepted: true });
+    expect(offers).toEqual([referralPeer]);
+    vi.restoreAllMocks();
   });
 
   it('does not offer an authorization that is about to expire', async () => {

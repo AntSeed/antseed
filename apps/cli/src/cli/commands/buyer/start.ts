@@ -1,14 +1,14 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { readFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DepositRelayClient, DepositsClient, getInstance, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
-import type { NodePaymentsConfig } from '@antseed/node'
+import { AntseedNode, DepositRelayClient, DepositsClient, ReferralsClient, getInstance, peerRelaysReferrals, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
+import type { NodePaymentsConfig, SweepRequestPayload } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
@@ -24,6 +24,74 @@ interface LocalSeederInfo {
   dhtPort: number
   signalingPort: number
   pid: number
+}
+
+type StoredReferralState = {
+  state?: string
+  referrer?: string
+  binding?: {
+    evmChainId?: number
+    referralsAddress?: string
+    buyer?: string
+    referrer?: string
+    nonce?: string
+    deadline?: number
+    signature?: string
+  }
+}
+
+type PendingReferral = NonNullable<SweepRequestPayload['referral']>
+
+async function readStoredReferral(dataDir: string): Promise<StoredReferralState | null> {
+  try {
+    return JSON.parse(await readFile(join(dataDir, 'referral.json'), 'utf8')) as StoredReferralState
+  } catch {
+    return null
+  }
+}
+
+async function markStoredReferralBound(dataDir: string, referrer: string): Promise<void> {
+  const filePath = join(dataDir, 'referral.json')
+  const temporaryPath = `${filePath}.tmp`
+  await writeFile(temporaryPath, `${JSON.stringify({ state: 'bound', referrer }, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporaryPath, filePath)
+}
+
+async function getPendingStoredReferral(options: {
+  dataDir: string
+  buyer: string
+  evmChainId: number
+  referralsAddress: string
+  client: ReferralsClient
+}): Promise<PendingReferral | null> {
+  const stored = await readStoredReferral(options.dataDir)
+  const binding = stored?.state === 'accepted' ? stored.binding : null
+  const now = Math.floor(Date.now() / 1000)
+  if (
+    !binding
+    || binding.evmChainId !== options.evmChainId
+    || binding.referralsAddress?.toLowerCase() !== options.referralsAddress.toLowerCase()
+    || binding.buyer?.toLowerCase() !== options.buyer.toLowerCase()
+    || !binding.referrer
+    || !binding.nonce
+    || !binding.deadline
+    || !binding.signature
+    || binding.deadline <= now + 30
+  ) return null
+
+  const existingReferrer = await options.client.referrerOf(options.buyer)
+  if (!/^0x0{40}$/i.test(existingReferrer)) {
+    await markStoredReferralBound(options.dataDir, existingReferrer)
+    return null
+  }
+
+  return {
+    referralsAddress: options.referralsAddress,
+    referrer: binding.referrer,
+    nonce: binding.nonce,
+    deadline: binding.deadline,
+    signature: binding.signature,
+  }
 }
 
 export function buildBuyerRuntimeOverridesFromFlags(options: {
@@ -290,6 +358,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         channelsContractAddress: cryptoOverrides?.channelsContractAddress,
         freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
+        referralsAddress: cryptoOverrides?.referralsAddress,
       })
       const settlementEnabled = settlementEnv ?? true
 
@@ -322,6 +391,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           // as `null` in buyer.state.json).
           ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
           ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
+          ...(chainConfig.referralsAddress ? { referralsAddress: chainConfig.referralsAddress } : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
@@ -503,6 +573,15 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       }
       if (ownsProxyListener && paymentsConfig?.enabled && depositRelayAddress) {
         const identity = node.identity!
+        const referralsAddress = chainConfig.referralsAddress
+        const referralsClient = referralsAddress
+          ? new ReferralsClient({
+              rpcUrl: chainConfig.rpcUrl,
+              ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+              contractAddress: referralsAddress,
+              evmChainId: chainConfig.evmChainId,
+            })
+          : null
         depositWatcher = new DepositWatcher({
           wallet: identity.wallet,
           address: identity.wallet.address,
@@ -524,10 +603,26 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           depositRelayAddress,
           dispatch: (payload) => node.dispatchSweepRequest(payload),
           connectRelayers: async () => {
-            const relayers = (await node.discoverPeers()).filter(peerRelaysSweeps)
+            const peers = await node.discoverPeers()
+            const referralRelayers = peers.filter((peer) => peerRelaysSweeps(peer) && peerRelaysReferrals(peer))
+            const sweepRelayers = peers.filter((peer) => peerRelaysSweeps(peer) && !peerRelaysReferrals(peer))
+            const relayers = [...referralRelayers, ...sweepRelayers]
             await Promise.allSettled(relayers.slice(0, 4).map((peer) => node.connectToPeer(peer)))
           },
           getReceipt: async (authNonce) => proxy.getSweepReceipt(authNonce),
+          ...(referralsClient && referralsAddress ? {
+            getPendingReferral: () => getPendingStoredReferral({
+              dataDir: globalOpts.dataDir,
+              buyer: identity.wallet.address,
+              evmChainId: chainConfig.evmChainId,
+              referralsAddress,
+              client: referralsClient,
+            }),
+            markReferralBound: async () => {
+              const stored = await readStoredReferral(globalOpts.dataDir)
+              if (stored?.referrer) await markStoredReferralBound(globalOpts.dataDir, stored.referrer)
+            },
+          } : {}),
         })
         proxy.setDepositWatcher(depositWatcher)
         if (effectiveBuyerConfig.autoSweep !== false) {

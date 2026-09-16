@@ -15,6 +15,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Referrals: added privacy-preserving referral download attribution (48-hour HMAC-derived IP matching with explicit first-run confirmation), gasless EIP-712 buyer-to-referrer wallet binding submitted atomically with profitable deposit sweeps by seller relayers, a fixed 2% Foundation-funded reward contract based on finalized buyer ANTS usage rewards, and wallet-based referral links and claims in the ANTS dashboard. Referral identifiers and ownership remain off-chain.
+
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
 - Contracts: standalone Base mainnet commands to deploy, verify, and wire the legacy rewards registry and switch the staking pointer ahead of cutover, then fund legacy DIEM pots and flip the emissions pointer with Channels pause/unpause handled manually.

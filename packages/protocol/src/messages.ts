@@ -50,6 +50,7 @@ import type { UnitBillingUsageReportV1 } from "./billing.js";
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
 export const CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1 = 'payments.relays-sweeps.v1' as const;
+export const CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1 = 'payments.relays-referrals.v1' as const;
 /** Seller honours buyer-initiated cooperative channel close (0x59 / 0x5A). */
 export const CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1 = 'payments.cooperative-close.v1' as const;
 /**
@@ -67,6 +68,11 @@ export const CONNECTION_CAPABILITY_WEBRTC_V1 = 'transport.webrtc.v1' as const;
 export function peerRelaysSweeps(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true
     || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true;
+}
+
+export function peerRelaysReferrals(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
+  return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1) === true
+    || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_REFERRALS_V1) === true;
 }
 
 export function peerSupportsCooperativeClose(
@@ -320,7 +326,7 @@ export interface CloseChannelResultPayload {
  * the EIP-3009 nonce; losing a submission race is harmless.
  */
 export interface SweepRequestPayload {
-  version: 1;
+  version: 1 | 2;
   evmChainId: number;
   /** AntseedDepositRelay address the buyer signed against. Relayers must only
    *  submit when this matches their own configured relay address. */
@@ -334,6 +340,15 @@ export interface SweepRequestPayload {
   nonce: string;
   /** Buyer signature over the USDC ReceiveWithAuthorization typed data. */
   sig3009: string;
+  /** Present only in version 2. Seller relayers submit this binding atomically
+   *  with the profitable deposit sweep. */
+  referral?: {
+    referralsAddress: string;
+    referrer: string;
+    nonce: string;
+    deadline: number;
+    signature: string;
+  };
 }
 
 export type SweepReceiptStatus = 'submitted' | 'confirmed' | 'rejected';
@@ -350,6 +365,8 @@ export interface SweepReceiptPayload {
   txHash?: string;
   reason?: string;
 }
+
+/** Buyer-signed, permissionless wallet-to-wallet referral binding. */
 
 // ─── Bilateral Verification Messages ───────────────────────────
 

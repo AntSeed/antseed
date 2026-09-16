@@ -110,6 +110,36 @@ test('deposit watcher sweeps incoming USDC and reports received → sweeping →
   assert.deepEqual(events.map((e) => e.seq), [1, 2, 3])
 })
 
+test('deposit watcher includes a confirmed referral in the atomic sweep', async (t) => {
+  const chain: FakeChain = {
+    walletBalance: 5_000_000n,
+    depositsAvailable: 0n,
+    depositsReserved: 0n,
+    creditLimit: 100_000_000n,
+    authorizationUsed: false,
+  }
+  let markedBound = false
+  const referral = {
+    referralsAddress: '0x' + '33'.repeat(20),
+    referrer: '0x' + '44'.repeat(20),
+    nonce: '0',
+    deadline: 2_000_000_000,
+    signature: '0x' + '55'.repeat(65),
+  }
+  const { watcher, events, dispatched, cleanup } = await makeWatcher(chain, {
+    getPendingReferral: async () => referral,
+    markReferralBound: async () => { markedBound = true },
+  })
+  t.after(async () => { watcher.stop(); await cleanup() })
+
+  watcher.promote()
+  await waitFor(() => events.some((event) => event.phase === 'credited'))
+
+  assert.equal(dispatched[0]?.version, 2)
+  assert.deepEqual(dispatched[0]?.referral, referral)
+  assert.equal(markedBound, true)
+})
+
 test('deposit watcher clamps the sweep to credit-limit headroom', async (t) => {
   const chain: FakeChain = {
     walletBalance: 10_000_000n, // 10 USDC in the wallet…

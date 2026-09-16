@@ -264,6 +264,13 @@ export interface SellerView {
   } | null;
 }
 
+export interface ReferralView {
+  available: boolean;
+  referralUrl: string | null;
+  claimable: string;
+  rateBps: number;
+}
+
 export interface JobStep { at: number; label: string; hash?: string; }
 export interface JobView {
   id: string;
