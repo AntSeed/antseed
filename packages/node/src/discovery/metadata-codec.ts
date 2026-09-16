@@ -108,6 +108,10 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
 
   // each provider
   for (const p of metadata.providers) {
+    if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION
+      && Object.values(p.serviceUnitBillingModels ?? {}).some((models) => Object.keys(models).length > 0)) {
+      throw new Error(`Service unit billing requires metadata v${SERVICE_UNIT_BILLING_METADATA_VERSION} or newer`);
+    }
     const providerNameBytes = new TextEncoder().encode(p.provider);
     parts.push(new Uint8Array([providerNameBytes.length]));
     parts.push(providerNameBytes);
@@ -442,7 +446,15 @@ function encodeServiceUnitBillingModels(
     for (const component of model.components) {
       parts.push(new Uint8Array([UNIT_BILLING_UNIT_IDS.get(component.unit) ?? 255]));
       const priceBuf = new ArrayBuffer(4);
-      new DataView(priceBuf).setFloat32(0, component.priceUsd, false);
+      if (component.unit === 'successful_requests') {
+        const micros = Math.round(component.priceUsd * 1_000_000);
+        if (!Number.isSafeInteger(micros) || micros < 0 || micros > 0xffff_ffff || micros / 1_000_000 !== component.priceUsd) {
+          throw new Error('Invalid per-call micro-USDC price');
+        }
+        new DataView(priceBuf).setUint32(0, micros, false);
+      } else {
+        new DataView(priceBuf).setFloat32(0, component.priceUsd, false);
+      }
       parts.push(new Uint8Array(priceBuf));
       const matchEntries = Object.entries(component.match ?? {})
         .filter((entry): entry is [UnitBillingMatchKeyV1, string] => UNIT_BILLING_MATCH_KEY_IDS.has(entry[0] as UnitBillingMatchKeyV1))
@@ -695,7 +707,8 @@ function decodeServiceUnitBillingModels(
       if (!unit) {
         throw new Error("Unsupported service unit billing component unit");
       }
-      const priceUsd = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false);
+      const priceView = new DataView(data.buffer, data.byteOffset + offset, 4);
+      const priceUsd = unit === 'successful_requests' ? priceView.getUint32(0, false) / 1_000_000 : priceView.getFloat32(0, false);
       offset += 4;
       const matchCount = data[offset]!;
       offset += 1;

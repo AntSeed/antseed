@@ -6,11 +6,13 @@ import { randomBytes } from 'node:crypto';
 import { AbiCoder, id, keccak256, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from '../src/payments/channel-store.js';
+import { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { estimateCostFromBytes } from '../src/payments/pricing.js';
+import { createPerCallBillingModel } from '../src/types/billing.js';
 
 const enc = new TextEncoder();
 
@@ -125,14 +127,233 @@ describe('BuyerPaymentManager', () => {
     const wallet = Wallet.createRandom();
     manager.setSigner(wallet);
     mux = createMockPaymentMux();
+    // topUpReserve verifies buyer deposits before signing (a failed read now
+    // aborts the top-up rather than signing blind -- a real incident showed
+    // the old warn-and-continue behavior let a stale ceiling ratchet up
+    // indefinitely during an RPC outage). Tests never run against a real
+    // chain, so without this every topUpReserve call would hit a real
+    // ECONNREFUSED against config.rpcUrl and (correctly, now) abort --
+    // this stubs that one read so tests can assert normal, verified-success
+    // top-up behavior instead of testing an unreachable RPC.
+    vi.spyOn(DepositsClient.prototype, 'getBuyerBalance').mockResolvedValue({
+      available: 1_000_000_000_000n,
+      reserved: 0n,
+      lastActivityAt: 0n,
+    });
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     store.close();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
   // ── authorizeSpending ──────────────────────────────────────────
+
+  async function setupPerCall() {
+    const sellerPeerId = fakePeerId('per-call-router');
+    const requestId = 'per-call-operation';
+    const controller = new AbortController();
+    manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'inference', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 5000n, perCallAmountUsdc: 5000n, signal: controller.signal,
+      maxPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    const entry = { context: { sellerPeerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' as const },
+      requestFacts: {}, unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+    manager.trackRequestBilling(requestId, entry);
+    const response = { requestId, service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('selection'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { units: { successful_requests: 1 } } };
+    const claim = { channelId, requestId, requiredCumulativeAmount: '5000', currentAcceptedCumulative: '0', deposit: '10000000',
+      lastRequestCost: '5000', inputTokens: '100', outputTokens: '20', billingUsage: { version: 1 as const, units: { successful_requests: '1' } } };
+    return { sellerPeerId, requestId, controller, channelId, entry, response, claim };
+  }
+
+  it.each(['buyer-first', 'seller-first'])('signs one fixed fee under concurrent authorization (%s)', async (order) => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    const operations = [() => manager.signPerRequestAuth(state.sellerPeerId, state.response),
+      () => manager.handleNeedAuth(state.sellerPeerId, state.claim, mux)];
+    if (order === 'seller-first') operations.reverse();
+    await Promise.all(operations.map((operation) => operation()));
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ amountUsdc: '5000', purpose: 'routing', parentRequestId: 'inference' });
+  });
+
+  it('does not sign a per-call fee without observed success or after cancellation', async () => {
+    const state = await setupPerCall();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 0 } });
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    state.controller.abort();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/No active routing/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+  });
+
+  it('rejects omitted evidence, duplicate units, and even a one-micro overcharge', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, billingUsage: undefined }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '10000', billingUsage: { version: 1, units: { successful_requests: '2' } } }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '5001' }, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    await manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+  });
+
+  it('rejects changed per-call models and snapshots the accepted billing context', async () => {
+    const state = await setupPerCall();
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, unitModel: createPerCallBillingModel('5001') })).toThrow(/changed/);
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, tokenPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 0 } })).toThrow(/changed/);
+    state.entry.unitModel.components[0]!.priceUsd = 9;
+    expect(manager.getRequestBilling(state.requestId)?.unitModel?.components[0]?.priceUsd).toBe(0.005);
+  });
+
+  it('meters routing tokens once under concurrent buyer and seller authorizations', async () => {
+    const sellerPeerId = fakePeerId('metered-router');
+    const requestId = 'routing-operation';
+    const finish = manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'inference-request',
+      service: 'route-classifier', maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, {
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(requestId, 'route-classifier');
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    await Promise.all([
+      manager.signPerRequestAuth(sellerPeerId, {
+        requestId, service: 'route-classifier', inputBytes: enc.encode('route'), outputBytes: enc.encode('selection'),
+        reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n,
+      }),
+      manager.handleNeedAuth(sellerPeerId, {
+        channelId, requestId, requiredCumulativeAmount: '999999', currentAcceptedCumulative: '0', deposit: '10000000',
+        lastRequestCost: '140', inputTokens: '100', outputTokens: '20',
+      }, mux),
+    ]);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('140');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ purpose: 'routing', parentRequestId: 'inference-request', amountUsdc: '140' });
+    finish();
+    await expect(manager.signPerRequestAuth(sellerPeerId, {
+      requestId, service: 'route-classifier', inputBytes: enc.encode('route'), outputBytes: enc.encode('selection'),
+    })).rejects.toThrow(/No active routing authorization/);
+  });
+
+  it('caps routing headroom and rejects overlapping, mismatched, and cancelled grants', async () => {
+    const sellerPeerId = fakePeerId('router-limit');
+    const controller = new AbortController();
+    const grant = { sellerPeerId, requestId: 'limited-route', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 150n, signal: controller.signal };
+    const finish = manager.beginRoutingRequest(grant);
+    expect(() => manager.beginRoutingRequest({ ...grant, requestId: 'overlap' })).toThrow(/already active/);
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, TEST_PRICING);
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(grant.requestId, grant.service);
+    await manager.handleNeedAuth(sellerPeerId, { channelId, requestId: grant.requestId,
+      requiredCumulativeAmount: '999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+    expect(BigInt(manager.getActiveSession(sellerPeerId)!.authMax)).toBeLessThanOrEqual(150n);
+    await expect(manager.signPerRequestAuth(sellerPeerId, { requestId: 'wrong', service: grant.service,
+      inputBytes: enc.encode('a'), outputBytes: enc.encode('b') })).rejects.toThrow(/No active routing/);
+    controller.abort();
+    await expect(manager.signPerRequestAuth(sellerPeerId, { requestId: grant.requestId, service: grant.service,
+      inputBytes: enc.encode('a'), outputBytes: enc.encode('b') })).rejects.toThrow(/No active routing/);
+    finish();
+  });
+
+  it('does not sign twice when seller authorization wins the routing race', async () => {
+    const sellerPeerId = fakePeerId('routing-seller-first');
+    const requestId = 'seller-first';
+    manager.beginRoutingRequest({ sellerPeerId, requestId, parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService(requestId, 'classifier');
+    await Promise.all([
+      manager.handleNeedAuth(sellerPeerId, { channelId, requestId, requiredCumulativeAmount: '140',
+        currentAcceptedCumulative: '0', deposit: '10000000', lastRequestCost: '140', inputTokens: '100', outputTokens: '20' }, mux),
+      manager.signPerRequestAuth(sellerPeerId, { requestId, service: 'classifier', inputBytes: enc.encode('prompt'),
+        outputBytes: enc.encode('route'), reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n }),
+    ]);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('140');
+    expect(manager.getActiveSession(sellerPeerId)?.requestCount).toBe(1);
+  });
+
+  it('rejects negotiated router prices above the approved offer before signing a reserve', async () => {
+    const sellerPeerId = fakePeerId('routing-price');
+    manager.beginRoutingRequest({ sellerPeerId, requestId: 'price', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal,
+      maxPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } });
+    await expect(manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 2, outputUsdPerMillion: 2 }))
+      .rejects.toThrow(/changed prices/);
+    expect(mux.sentSpendingAuths).toHaveLength(0);
+  });
+
+  it('preserves the routing allowance when authorization persistence fails', async () => {
+    const sellerPeerId = fakePeerId('routing-persistence');
+    manager.beginRoutingRequest({ sellerPeerId, requestId: 'persist', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 140n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService('persist', 'classifier');
+    const originalCommit = store.commitAuthorization.bind(store);
+    vi.spyOn(store, 'commitAuthorization').mockRejectedValueOnce(new Error('routing write failed')).mockImplementation(originalCommit);
+    const response = { requestId: 'persist', service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('route'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n };
+    await expect(manager.signPerRequestAuth(sellerPeerId, response)).rejects.toThrow('routing write failed');
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('0');
+    await manager.signPerRequestAuth(sellerPeerId, response);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('140');
+    expect(manager.getActiveSession(sellerPeerId)?.requestCount).toBe(1);
+  });
+
+  it('does not persist a routing authorization cancelled during signing', async () => {
+    const sellerPeerId = fakePeerId('routing-sign-cancel');
+    const controller = new AbortController();
+    manager.beginRoutingRequest({ sellerPeerId, requestId: 'cancel', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 140n, signal: controller.signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService('cancel', 'classifier');
+    manager.setSigner(identity.wallet);
+    const sign = identity.wallet.signTypedData.bind(identity.wallet);
+    vi.spyOn(identity.wallet, 'signTypedData').mockImplementation(async (...args) => {
+      controller.abort();
+      return sign(...args);
+    });
+    const commit = vi.spyOn(store, 'commitAuthorization');
+    await expect(manager.signPerRequestAuth(sellerPeerId, {
+      requestId: 'cancel', service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('route'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 140n,
+    })).rejects.toThrow(/expired/);
+    expect(commit).not.toHaveBeenCalled();
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('0');
+  });
+
+  it('routing authorization does not reset its remaining allowance when a channel rolls over', async () => {
+    const sellerPeerId = fakePeerId('routing-rollover');
+    manager.beginRoutingRequest({ sellerPeerId, requestId: 'rollover', parentRequestId: 'parent', service: 'classifier',
+      maxAdditionalAuthorizationUsdc: 200n, signal: new AbortController().signal });
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
+    manager.trackRequestService('rollover', 'classifier');
+    await manager.handleNeedAuth(sellerPeerId, { channelId, requestId: 'rollover', requiredCumulativeAmount: '150',
+      currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('150');
+    manager.retireSession(sellerPeerId, CHANNEL_STATUS.SETTLED);
+    const nextChannel = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
+    manager.handleAuthAck(sellerPeerId, { channelId: nextChannel });
+    manager.trackRequestService('rollover', 'classifier');
+    await manager.handleNeedAuth(sellerPeerId, { channelId: nextChannel, requestId: 'rollover', requiredCumulativeAmount: '150',
+      currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+    expect(manager.getActiveSession(sellerPeerId)?.authMax).toBe('50');
+  });
 
   it('authorizeSpending sends SpendingAuth with channelId and reserve fields', async () => {
     const sellerPeerId = fakePeerId('seller-peer-001');
@@ -162,7 +383,6 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.metadata).not.toBe('');
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
-    // v3 zero metadata: five head words + empty services array (offset + length) = 7 words.
     expect((sent.metadata as string).length).toBe(2 + 7 * 64);
   });
 
@@ -1597,6 +1817,27 @@ describe('BuyerPaymentManager', () => {
     expect(manager.getReserveCeiling(sellerPeerId)).toBe(20_000_000n);
   });
 
+  it('topUpReserve aborts (does not sign) when the deposit-verification read fails, instead of signing blind', async () => {
+    // Regression for a real incident: this used to warn-and-continue on a
+    // failed verification read, so a sustained RPC outage let every retry
+    // re-derive the new ceiling from the same stale, unreconciled baseline
+    // and sign another full day's increment on top -- repeating for as long
+    // as the read kept failing (real trace: four top-ups in three minutes on
+    // one channel). A failed read must abort instead.
+    const sellerPeerId = fakePeerId('seller-topup-rpc-down');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    const ceilingBefore = manager.getReserveCeiling(sellerPeerId);
+    mux.sentSpendingAuths.length = 0;
+
+    vi.spyOn(DepositsClient.prototype, 'getBuyerBalance').mockRejectedValue(
+      new Error('connect ECONNREFUSED 127.0.0.1:8545'),
+    );
+
+    await expect(manager.topUpReserve(sellerPeerId, mux)).rejects.toMatchObject({ code: 'chain-rpc-unavailable' });
+    expect(mux.sentSpendingAuths.length).toBe(0);
+    expect(manager.getReserveCeiling(sellerPeerId)).toBe(ceilingBefore);
+  });
+
   it('resendReserveAuth replays the original reserve amount after top-up', async () => {
     store.close();
     store = new ChannelStore(tempDir);
@@ -1953,4 +2194,5 @@ describe('BuyerPaymentManager', () => {
     expect(channel!.previousConsumption).toBe('350');
     expect(channel!.requestCount).toBe(2);
   });
+
 });

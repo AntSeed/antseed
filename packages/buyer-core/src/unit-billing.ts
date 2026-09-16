@@ -19,6 +19,7 @@ import type {
 } from '@antseed/protocol/billing';
 import {
   evaluateUnitBilling,
+  PER_CALL_BILLING_UNIT_V1,
   unitUsageToBillingReport,
 } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
@@ -65,9 +66,8 @@ export function captureUnitBillingContext(args: {
       service: args.service,
       serviceApiProtocol: args.serviceApiProtocol,
       ...(attributes ? { attributes } : {}),
-      ...(requestFacts.requestedImages !== undefined
-        ? { unitLimits: { output_images: requestFacts.requestedImages } }
-        : {}),
+      unitLimits: { successful_requests: 1, ...(requestFacts.requestedImages !== undefined
+        ? { output_images: requestFacts.requestedImages } : {}) },
     },
     requestUsage,
     requestFacts,
@@ -77,6 +77,7 @@ export function captureUnitBillingContext(args: {
 export function extractUnitResponseUsage(
   response: SerializedHttpResponse,
   requestFacts?: ImageRequestFacts,
+  includeSuccessfulRequests = false,
 ): { usage: UnitBillingUsage; tokenUsage: TokenUsage } {
   const parsed = parseJsonObject(response.body);
   const responseFacts: ProviderResponseFacts = parsed
@@ -89,6 +90,7 @@ export function extractUnitResponseUsage(
   return {
     usage: {
       units: {
+        ...(includeSuccessfulRequests ? { successful_requests: response.statusCode >= 200 && response.statusCode < 300 ? 1 : 0 } : {}),
         ...(billableOutputImages !== undefined ? { output_images: billableOutputImages } : {}),
       },
     },
@@ -102,7 +104,9 @@ export function computeFinalUnitBilling(
   response: SerializedHttpResponse,
   requestFacts?: ImageRequestFacts,
 ): FinalUnitBillingResult {
-  const responseUsage = extractUnitResponseUsage(response, requestFacts);
+  const perCall = model.components.some((component) => component.unit === PER_CALL_BILLING_UNIT_V1);
+  const responseUsage = extractUnitResponseUsage(response, requestFacts, perCall);
+  if (perCall) delete responseUsage.usage.units.output_images;
   const costUsdc = evaluateUnitBilling(model, context, responseUsage.usage);
   return {
     usage: responseUsage.usage,
@@ -115,6 +119,7 @@ export function computeFinalUnitBilling(
 function factsToUnitUsage(facts: ImageRequestFacts): UnitBillingUsage {
   return {
     units: {
+      successful_requests: 1,
       ...(facts.requestedImages !== undefined ? { output_images: facts.requestedImages } : {}),
     },
   };

@@ -1,6 +1,9 @@
 import { parseJsonObject } from '@antseed/api-adapter'
 import { createHash } from 'node:crypto'
+import type { ConversationIdentity } from '@antseed/node'
 import { SYSTEM_PROXY_SOURCE_HEADER } from './request-utils.js'
+
+export type { ConversationIdentity } from '@antseed/node'
 
 /**
  * Per-chat identity extraction for the buyer proxy.
@@ -28,19 +31,6 @@ import { SYSTEM_PROXY_SOURCE_HEADER } from './request-utils.js'
  * tool name comes from the `x-<tool>-session-id` header name, the `originator`
  * header value, or the User-Agent product token, in that order.
  */
-
-export type ConversationIdentity = {
-  /** Slug for the originating tool ('claude-code' | 'codex' | 'opencode' | 'unknown'). */
-  tool: string
-  /** Stable per-conversation key as sent by the tool. */
-  sessionKey: string
-  /** Parent session for subagent traffic (OpenCode), when advertised. */
-  parentSessionKey: string | null
-  /** False when the tool declares this thread as its own housekeeping rather
-      than a user's chat. True by default — a tool that says nothing is taken
-      at face value. */
-  isUserThread: boolean
-}
 
 /* Snippets are labels, not previews — keep them short. */
 const SNIPPET_MAX_CHARS = 80

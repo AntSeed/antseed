@@ -135,17 +135,24 @@ export class ChannelStore {
           nonce, auth_max, deadline, previous_session_id, previous_consumption,
           tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
           status, latest_buyer_sig, latest_metadata_auth_sig, latest_metadata,
+          reserve_salt, initial_reserve_amount, reserve_max_amount,
+          latest_reserve_auth_sig, latest_reserve_deadline, reserve_auth_pending,
+          confirmed_reserve_amount,
           created_at, updated_at
         ) VALUES (
           @sessionId, @peerId, @role, @channelKind, @sellerEvmAddr, @buyerEvmAddr,
           @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
           @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
           @status, @latestBuyerSig, @latestSpendingAuthSig, @latestMetadata,
+          @reserveSalt, @initialReserveAmount, @reserveMaxAmount,
+          @latestReserveAuthSig, @latestReserveDeadline, @reserveAuthPending,
+          @confirmedReserveAmount,
           @createdAt, @updatedAt
         )
         ON CONFLICT(session_id) DO UPDATE SET
           channel_kind = @channelKind,
           auth_max = @authMax,
+          deadline = @deadline,
           previous_consumption = @previousConsumption,
           tokens_delivered = @tokensDelivered,
           request_count = @requestCount,
@@ -155,6 +162,13 @@ export class ChannelStore {
           latest_buyer_sig = @latestBuyerSig,
           latest_metadata_auth_sig = @latestSpendingAuthSig,
           latest_metadata = @latestMetadata,
+          reserve_salt = @reserveSalt,
+          initial_reserve_amount = @initialReserveAmount,
+          reserve_max_amount = @reserveMaxAmount,
+          latest_reserve_auth_sig = @latestReserveAuthSig,
+          latest_reserve_deadline = @latestReserveDeadline,
+          reserve_auth_pending = @reserveAuthPending,
+          confirmed_reserve_amount = @confirmedReserveAmount,
           updated_at = @updatedAt
       `),
       getById: this._db.prepare(
@@ -267,6 +281,13 @@ export class ChannelStore {
       latestBuyerSig: channel.latestBuyerSig ?? null,
       latestSpendingAuthSig: channel.latestSpendingAuthSig ?? null,
       latestMetadata: channel.latestMetadata ?? null,
+      reserveSalt: channel.reserveSalt ?? null,
+      initialReserveAmount: channel.initialReserveAmount ?? null,
+      reserveMaxAmount: channel.reserveMaxAmount ?? null,
+      latestReserveAuthSig: channel.latestReserveAuthSig ?? null,
+      latestReserveDeadline: channel.latestReserveDeadline ?? null,
+      reserveAuthPending: channel.reserveAuthPending == null ? null : (channel.reserveAuthPending ? 1 : 0),
+      confirmedReserveAmount: channel.confirmedReserveAmount ?? null,
       createdAt: channel.createdAt,
       updatedAt: channel.updatedAt,
     });
@@ -619,6 +640,13 @@ interface ChannelRow {
   latest_buyer_sig: string | null;
   latest_metadata_auth_sig: string | null;
   latest_metadata: string | null;
+  reserve_salt: string | null;
+  initial_reserve_amount: string | null;
+  reserve_max_amount: string | null;
+  latest_reserve_auth_sig: string | null;
+  latest_reserve_deadline: number | null;
+  reserve_auth_pending: number | null;
+  confirmed_reserve_amount: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -668,6 +696,13 @@ function rowToChannel(row: ChannelRow): StoredChannel {
     latestBuyerSig: row.latest_buyer_sig,
     latestSpendingAuthSig: row.latest_metadata_auth_sig,
     latestMetadata: row.latest_metadata,
+    reserveSalt: row.reserve_salt,
+    initialReserveAmount: row.initial_reserve_amount,
+    reserveMaxAmount: row.reserve_max_amount,
+    latestReserveAuthSig: row.latest_reserve_auth_sig,
+    latestReserveDeadline: row.latest_reserve_deadline,
+    reserveAuthPending: row.reserve_auth_pending == null ? undefined : row.reserve_auth_pending === 1,
+    confirmedReserveAmount: row.confirmed_reserve_amount,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

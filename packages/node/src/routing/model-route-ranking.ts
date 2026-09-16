@@ -1,11 +1,13 @@
 import { normalizedModelReputationScore } from '../reputation/model-reputation.js';
 
 export type ModelRoutingPreferences = {
+  routerSettings?: Record<string, Record<string, string>>;
   preferFreePeers: boolean;
   maxInputUsdPerMillion: number;
   minTrustScore: number;
   allowedPeerIds: string[];
   blockedPeerIds: string[];
+  routerEnabled?: boolean;
 };
 
 export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {

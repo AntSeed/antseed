@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- CLI: router configuration commands accept optional routing fields and complete settings/service JSON objects from a fresh configuration. Boolean fields parse `true`/`false` correctly, string-valued payment limits retain their exact values, and invalid router settings are rejected before saving.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
@@ -15,6 +16,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Opt-in network model-router plugins can choose models and peers on successive user turns from host-validated candidates. The host provides structural turn/reuse hints instead of locking the first model for the whole conversation; plugins control classifier invocation and continuation reuse. Plugin settings remain namespaced; deadlines, cancellation, and buyer constraints are host-enforced. Explicit model requests bypass classification.
+- Classifier services support token pricing or exact fixed per-call fees through existing payment channels. Per-call fees require a valid, eligible classification before authorization; decision reuse adds no classifier fee. Discovery rejects fee-dropping downgrades and preserves existing image-pricing bytes. See `docs/router-network-integration.md` and `docs/router-per-call-billing.md`.
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
 - Contracts: standalone Base mainnet commands to deploy, verify, and wire the legacy rewards registry and switch the staking pointer ahead of cutover, then fund legacy DIEM pots and flip the emissions pointer with Channels pause/unpause handled manually.

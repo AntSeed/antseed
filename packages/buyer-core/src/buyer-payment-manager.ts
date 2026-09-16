@@ -1,4 +1,5 @@
 import { hexlify, randomBytes } from 'ethers';
+import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
 import type { PaymentMux } from './payment-mux.js';
@@ -128,6 +129,8 @@ interface PendingReserveAuthorization {
  * response was delivered.
  */
 export interface BuyerSpendEvent {
+  purpose?: 'routing';
+  parentRequestId?: string;
   sellerPeerId: string;
   /** Proxy request id, when the caller threaded one through. */
   requestId: string | null;
@@ -147,6 +150,67 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
  * with cumulative authorization, bytes/4 cost verification, and overdraft control.
  */
 export class BuyerPaymentManager {
+  private readonly _routingPeers = new Set<string>();
+  private readonly _routingGrants = new Map<string, {
+    requestId: string; parentRequestId: string; service: string; remaining: bigint; signal: AbortSignal; maxPricing?: ServicePricing; perCallAmountUsdc?: bigint;
+  }>();
+  private readonly _routingLocks = new Map<string, Promise<unknown>>();
+
+  protectRoutingPeer(sellerPeerId: string): void {
+    this._routingPeers.add(sellerPeerId);
+  }
+
+  beginRoutingRequest(options: {
+    sellerPeerId: string; requestId: string; parentRequestId: string; service: string;
+    maxAdditionalAuthorizationUsdc: bigint; signal: AbortSignal;
+    maxPricing?: ServicePricing;
+    perCallAmountUsdc?: bigint;
+  }): () => void {
+    options.signal.throwIfAborted();
+    if (options.perCallAmountUsdc !== undefined && (options.perCallAmountUsdc < 0n || options.perCallAmountUsdc > 0xffff_ffffn
+      || options.maxAdditionalAuthorizationUsdc !== options.perCallAmountUsdc)) {
+      throw buyerFault('Per-call authorization must equal one advertised fee', 'buyer-session-state');
+    }
+    if (options.maxAdditionalAuthorizationUsdc < 0n || this._routingGrants.has(options.sellerPeerId)) {
+      throw buyerFault('Routing authorization is invalid or a routing operation is already active for this seller', 'buyer-session-state');
+    }
+    this._routingPeers.add(options.sellerPeerId);
+    const grant = { ...options, remaining: options.maxAdditionalAuthorizationUsdc };
+    this._routingGrants.set(options.sellerPeerId, grant);
+    return () => {
+      if (this._routingGrants.get(options.sellerPeerId) === grant) this._routingGrants.delete(options.sellerPeerId);
+    };
+  }
+
+  private _assertRoutingRequest(sellerPeerId: string, requestId?: string, service?: string): void {
+    if (!this._routingPeers.has(sellerPeerId)) return;
+    const grant = this._routingGrants.get(sellerPeerId);
+    if (!grant || grant.signal.aborted || grant.requestId !== requestId || grant.service !== service) {
+      throw buyerFault('No active routing authorization for this request and service', 'buyer-session-state');
+    }
+  }
+
+  private _assertRoutingAmount(sellerPeerId: string, amount: bigint): void {
+    if (!this._routingPeers.has(sellerPeerId)) return;
+    const grant = this._routingGrants.get(sellerPeerId);
+    const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    if (grant?.perCallAmountUsdc !== undefined && amount > current
+      && this.getRequestBilling(grant.requestId)?.observedUnitUsage?.units.successful_requests !== 1) {
+      throw buyerFault('Per-call payment requires an observed successful response', 'buyer-session-state');
+    }
+    if (!grant || grant.signal.aborted || amount > current + grant.remaining) {
+      throw buyerFault('Routing authorization expired or exceeds the operation limit', 'buyer-session-state');
+    }
+  }
+
+  private async _withRoutingLock<T>(sellerPeerId: string, operation: () => Promise<T>): Promise<T> {
+    if (!this._routingPeers.has(sellerPeerId)) return operation();
+    const previous = this._routingLocks.get(sellerPeerId) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(operation);
+    this._routingLocks.set(sellerPeerId, pending);
+    try { return await pending; }
+    finally { if (this._routingLocks.get(sellerPeerId) === pending) this._routingLocks.delete(sellerPeerId); }
+  }
   private readonly _identity: BuyerIdentity;
   private _signer: AbstractSigner;
   private readonly _depositsClient: DepositsClient;
@@ -167,6 +231,8 @@ export class BuyerPaymentManager {
 
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
+
+
 
   /** requestId -> service/model the buyer requested (from its own request body).
    *  Used in handleNeedAuth to validate cost with the correct pricing tier
@@ -376,6 +442,7 @@ export class BuyerPaymentManager {
     this._rejectedPeers.delete(sellerPeerId);
     this._responseTokenTotals.delete(sellerPeerId);
     this._clearRequestBillingForSeller(sellerPeerId);
+
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
@@ -732,7 +799,8 @@ export class BuyerPaymentManager {
   private _reportSpend(event: BuyerSpendEvent): void {
     if (!this._spendListener) return;
     try {
-      this._spendListener(event);
+      const grant = this._routingGrants.get(event.sellerPeerId);
+      this._spendListener(grant ? { ...event, purpose: 'routing', parentRequestId: grant.parentRequestId } : event);
     } catch (err) {
       // Accounting is a bystander here — never let it break the payment path.
       debugWarn(`[BuyerPayment] spend listener threw: ${err instanceof Error ? err.message : err}`);
@@ -771,6 +839,11 @@ export class BuyerPaymentManager {
     channel: StoredChannel,
     metadata: SpendingAuthMetadata,
   ): Promise<void> {
+    this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
+    const grant = this._routingGrants.get(channel.peerId);
+    const increase = BigInt(channel.authMax) - (this._cumulativeAmount.get(channel.peerId) ?? 0n);
+    const reserved = increase > 0n ? increase : 0n;
+    if (grant) grant.remaining -= reserved;
     const sanitized = this._sanitizeMetadata(metadata);
     const services = sanitized.services;
     const snapshot: StoredChannel = {
@@ -780,13 +853,18 @@ export class BuyerPaymentManager {
       requestCount: Number(sanitized.cumulativeRequestCount),
       latestMetadata: channel.latestMetadata ?? encodeMetadata(sanitized),
     };
-    if (this._channelStore.commitAuthorization) {
-      await this._channelStore.commitAuthorization(snapshot, services);
-      return;
+    try {
+      if (this._channelStore.commitAuthorization) {
+        await this._channelStore.commitAuthorization(snapshot, services);
+        return;
+      }
+      this._channelStore.replaceMetadataServiceTotals(snapshot.sessionId, services);
+      this._channelStore.upsertChannel(snapshot);
+      await this._channelStore.flush?.();
+    } catch (error) {
+      if (grant) grant.remaining += reserved;
+      throw error;
     }
-    this._channelStore.replaceMetadataServiceTotals(snapshot.sessionId, services);
-    this._channelStore.upsertChannel(snapshot);
-    await this._channelStore.flush?.();
   }
 
   /**
@@ -840,6 +918,7 @@ export class BuyerPaymentManager {
     cumulativeAmount: bigint,
     metadata: SpendingAuthMetadata,
   ): Promise<SpendingAuthPayload> {
+    this._assertRoutingAmount(sellerPeerId, cumulativeAmount);
     const sanitizedMetadata = this._sanitizeMetadata(metadata);
     const metadataHashHex = computeMetadataHash(sanitizedMetadata);
     const encodedMetadata = encodeMetadata(sanitizedMetadata);
@@ -910,6 +989,19 @@ export class BuyerPaymentManager {
     const pricing = typeof reserveAmountOrPricing === 'bigint'
       ? pricingArg
       : reserveAmountOrPricing;
+    this._assertRoutingAmount(sellerPeerId, this._cumulativeAmount.get(sellerPeerId) ?? 0n);
+    const routingMax = this._routingGrants.get(sellerPeerId)?.maxPricing;
+    if (routingMax) {
+      const offered = pricing ?? pricingMap?.services[this._routingGrants.get(sellerPeerId)!.service] ?? pricingMap?.defaults;
+      if (!offered || !Number.isFinite(offered.inputUsdPerMillion) || !Number.isFinite(offered.outputUsdPerMillion)
+        || offered.inputUsdPerMillion < 0 || offered.outputUsdPerMillion < 0
+        || offered.inputUsdPerMillion > routingMax.inputUsdPerMillion || offered.outputUsdPerMillion > routingMax.outputUsdPerMillion
+        || !Number.isFinite(offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion)
+        || (offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion) < 0
+        || (offered.cachedInputUsdPerMillion ?? offered.inputUsdPerMillion) > (routingMax.cachedInputUsdPerMillion ?? routingMax.inputUsdPerMillion)) {
+        throw buyerFault('Routing seller changed prices above the approved snapshot', 'buyer-budget-too-low');
+      }
+    }
 
     // Budget validation: reject if seller demands more than buyer's overdraft limit
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
@@ -950,6 +1042,16 @@ export class BuyerPaymentManager {
     // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
     const channelsDomain = this._channelsDomain;
     const maxAmount = reserveAmount;
+    // Unconditional (not debugWarn -- gated behind isDebugEnabled()) because
+    // this is the only signal that made the FirstSignCapExceeded class of
+    // bug visible: a bad `explicit` reserveAmount here silently becomes a
+    // channel-opening ReserveAuth that gets rejected on-chain, with nothing
+    // else in this path naming which of the two sources (an explicit caller
+    // amount vs. the configured default) produced it.
+    console.warn(
+      `[BuyerPayment] reserve: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... maxAmount=${maxAmount} `
+      + `explicit=${typeof reserveAmountOrPricing === 'bigint'} configDefault=${this._config.maxReserveAmountUsdc}`,
+    );
     const reserveMsg: ReserveAuthMessage = {
       channelId,
       maxAmount,
@@ -1132,7 +1234,12 @@ export class BuyerPaymentManager {
   private _maxSignableForVerified(sellerPeerId: string, verified: bigint): bigint {
     const ceiling = this._getCeiling(sellerPeerId);
     const maxSignable = verified + this._config.maxPerRequestUsdc;
-    return maxSignable < ceiling ? maxSignable : ceiling;
+    const normal = maxSignable < ceiling ? maxSignable : ceiling;
+    if (!this._routingPeers.has(sellerPeerId)) return normal;
+    const grant = this._routingGrants.get(sellerPeerId);
+    const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    const limit = grant && !grant.signal.aborted ? current + grant.remaining : current;
+    return normal < limit ? normal : limit;
   }
 
   /**
@@ -1173,12 +1280,28 @@ export class BuyerPaymentManager {
       requestId?: string;
     },
   ): Promise<PerRequestAuthResult> {
+    return this._withRoutingLock(sellerPeerId, () => this._signPerRequestAuth(sellerPeerId, responseStats));
+  }
+
+  private async _signPerRequestAuth(
+    sellerPeerId: string,
+    responseStats: Parameters<BuyerPaymentManager['signPerRequestAuth']>[1],
+  ): Promise<PerRequestAuthResult> {
+    this._assertRoutingRequest(sellerPeerId, responseStats.requestId, responseStats.service);
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw buyerFault(
         `[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`,
         'buyer-session-state',
       );
+    }
+
+    if (this._routingPeers.has(sellerPeerId) && this._serviceTokensCounted.has(responseStats.requestId)) {
+      return {
+        payload: await this._commitUpdatedSpendingAuth(session, sellerPeerId,
+          this._cumulativeAmount.get(sellerPeerId) ?? 0n, this._sanitizeMetadata(this._metadata.get(sellerPeerId))),
+        topUpNeeded: false,
+      };
     }
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
@@ -1230,7 +1353,7 @@ export class BuyerPaymentManager {
         ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(cachedInputTokens)))
         : estimatedInputTokens;
       // Compute cost from reported tokens using service-specific pricing
-      const pricing = this.getSessionPricing(sellerPeerId, responseStats.service);
+      const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, responseStats.service);
       if (pricing) {
         const cost = computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(cachedInputTokens));
         buyerEstimatedRequestCost = cost;
@@ -1353,6 +1476,7 @@ export class BuyerPaymentManager {
       cumulativeAmount: newAmount,
       metadataHash: metadataHashHex,
     };
+    this._assertRoutingAmount(sellerPeerId, newAmount);
     const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
 
     // Persist updated cumulative values to BuyerChannelStore
@@ -1406,6 +1530,10 @@ export class BuyerPaymentManager {
     payload: NeedAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
+    return this._withRoutingLock(sellerPeerId, () => this._handleNeedAuth(sellerPeerId, payload, paymentMux));
+  }
+
+  private async _handleNeedAuth(sellerPeerId: string, payload: NeedAuthPayload, paymentMux: PaymentMux): Promise<void> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] NeedAuth for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
@@ -1416,6 +1544,8 @@ export class BuyerPaymentManager {
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);
     const buyerBillingContext = requestBilling?.context;
+    this._assertRoutingRequest(sellerPeerId, payload.requestId, buyerService);
+    if (this._routingPeers.has(sellerPeerId) && this._serviceTokensCounted.has(payload.requestId)) return;
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -1503,7 +1633,8 @@ export class BuyerPaymentManager {
       }
     } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
-      if (sellerCost > 0n && unitBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+      if (sellerCost > 0n && unitBillingModel && (buyerBillingContext?.serviceApiProtocol === 'openai-images'
+        || unitBillingModel.components.some((component) => component.unit === 'successful_requests'))) {
         debugWarn(
           `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
         );
@@ -1706,9 +1837,19 @@ export class BuyerPaymentManager {
       if (faultCodeOf(err) === 'buyer-deposits-insufficient') {
         throw err;
       }
-      debugWarn(
-        `[BuyerPayment] topUpReserve: unable to verify buyer deposits before signing top-up: ` +
-        `${err instanceof Error ? err.message : err}`,
+      // A failed deposit-verification read must abort the top-up, not sign
+      // blind: warning-and-continuing would let an RPC outage leave every
+      // retry re-deriving newCeiling from the same stale, unreconciled
+      // prevCeiling -- each attempt would sign another full increment on
+      // top, stacking reserve increments for as long as the read kept
+      // failing and requests kept retrying. The caller
+      // (_topUpAfterSpendAuthBestEffort) already treats topUpReserve as
+      // best-effort and just logs, so aborting here is safe -- the next
+      // natural trigger retries once the read can verify again.
+      throw buyerFault(
+        `Unable to verify buyer deposits before signing top-up: ${err instanceof Error ? err.message : err}`,
+        'chain-rpc-unavailable',
+        { cause: err },
       );
     }
 
@@ -1815,10 +1956,17 @@ export class BuyerPaymentManager {
   }
 
   trackRequestBilling(requestId: string, entry: BuyerRequestBillingEntry): void {
+    const grant = this._routingGrants.get(entry.context.sellerPeerId);
+    if (grant?.perCallAmountUsdc !== undefined && (grant.requestId !== requestId || grant.service !== entry.context.service
+      || perCallPriceMicroUsdc(entry.unitModel) !== grant.perCallAmountUsdc
+      || entry.tokenPricing?.inputUsdPerMillion !== 0 || entry.tokenPricing?.outputUsdPerMillion !== 0
+      || (entry.tokenPricing?.cachedInputUsdPerMillion ?? 0) !== 0)) {
+      throw buyerFault('Per-call billing changed after authorization', 'buyer-session-state');
+    }
     this._cleanupRequestBillingCache();
     this._requestService.track(requestId, entry.context.service);
     this._requestBillingEntries.set(requestId, {
-      ...entry,
+      ...structuredClone(entry),
       createdAtMs: Date.now(),
     });
     this._trimRequestBillingCache();
@@ -1949,5 +2097,4 @@ export class BuyerPaymentManager {
     return { available: info.available, reserved: info.reserved };
   }
 
-  // parseResponseCost removed — cost data now flows through NeedAuth on PaymentMux.
 }

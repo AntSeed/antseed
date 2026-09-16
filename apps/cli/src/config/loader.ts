@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readRouterSettings } from '@antseed/node';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -8,6 +9,7 @@ import {
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
+  BuyerCLIConfig,
   DomainVerificationConfig,
   DomainVerificationMethod,
   GithubVerificationConfig,
@@ -420,6 +422,8 @@ function mergeBuyerRoutingPreferences(
       : toFiniteOrNaN(minTrustScore),
     allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
+    ...(value['routerSettings'] !== undefined ? { routerSettings: readRouterSettings(value['routerSettings']) } : {}),
+    routerEnabled: value['routerEnabled'] === undefined ? fallback.routerEnabled ?? false : value['routerEnabled'] as boolean,
   };
 }
 
@@ -485,6 +489,9 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    routerTimeoutMs: value['routerTimeoutMs'] === undefined ? 10_000 : toFiniteOrNaN(value['routerTimeoutMs']),
+    routerFailureFallback: (value['routerFailureFallback'] ?? 'none') as 'none' | 'default',
+    ...(value['routingService'] !== undefined ? { routingService: value['routingService'] as BuyerCLIConfig['routingService'] } : {}),
     requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
       ? value['requestTimeoutMs']
       : defaults.requestTimeoutMs,

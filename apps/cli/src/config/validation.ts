@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
 import { parseHostPort } from './public-address.js';
+import { createPerCallBillingModel, readRouterSettings } from '@antseed/node';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -296,6 +297,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   const routingPreferences = config.buyer.routingPreferences;
+  try { readRouterSettings(routingPreferences.routerSettings); }
+  catch (error) { errors.push(`buyer.routingPreferences.routerSettings: ${(error as Error).message}`); }
   if (typeof routingPreferences.preferFreePeers !== 'boolean') {
     errors.push('buyer.routingPreferences.preferFreePeers must be a boolean');
   }
@@ -309,6 +312,11 @@ export function validateConfig(config: AntseedConfig): string[] {
     const peerIds = routingPreferences[key];
     if (!Array.isArray(peerIds) || peerIds.some((peerId) => typeof peerId !== 'string' || !PEER_ID_PATTERN.test(peerId.trim()))) {
       errors.push(`buyer.routingPreferences.${key} must contain only 40-character hex peer IDs`);
+    }
+  }
+  for (const key of ['routerEnabled'] as const) {
+    if (routingPreferences[key] !== undefined && typeof routingPreferences[key] !== 'boolean') {
+      errors.push(`buyer.routingPreferences.${key} must be a boolean`);
     }
   }
 
@@ -326,6 +334,42 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isInteger(config.buyer.requestTimeoutMs) || config.buyer.requestTimeoutMs < 1) {
     errors.push('buyer.requestTimeoutMs must be an integer >= 1');
+  }
+  if (config.buyer.routerTimeoutMs !== undefined && (!Number.isInteger(config.buyer.routerTimeoutMs) || config.buyer.routerTimeoutMs < 1)) {
+    errors.push('buyer.routerTimeoutMs must be an integer >= 1');
+  }
+  if (config.buyer.routerFailureFallback !== undefined && !['none', 'default'].includes(config.buyer.routerFailureFallback)) {
+    errors.push('buyer.routerFailureFallback must be none or default');
+  }
+  const routingService = config.buyer.routingService;
+  if (routingService !== undefined) {
+    if (!routingService || typeof routingService !== 'object') {
+      errors.push('buyer.routingService must be an object');
+    } else {
+      for (const key of ['routerKey', 'provider', 'serviceId'] as const) {
+        if (typeof routingService[key] !== 'string' || !routingService[key].trim()) errors.push(`buyer.routingService.${key} is required`);
+      }
+      if (typeof routingService.peerId !== 'string' || !PEER_ID_PATTERN.test(routingService.peerId)) errors.push('buyer.routingService.peerId must be a peer ID');
+      if (routingService.allowPromptSharing !== true) errors.push('buyer.routingService.allowPromptSharing must be explicitly true');
+      if (routingService.billing !== undefined && routingService.billing?.kind !== 'token' && routingService.billing?.kind !== 'per_call') {
+        errors.push('buyer.routingService.billing.kind must be token or per_call');
+      }
+      if (routingService.billing?.kind === 'per_call') {
+        try { createPerCallBillingModel(routingService.billing.maxAmountMicroUsdc); }
+        catch { errors.push('buyer.routingService.billing.maxAmountMicroUsdc must be a canonical uint32 micro-USDC amount'); }
+      } else {
+        for (const key of ['maxInputUsdPerMillion', 'maxOutputUsdPerMillion', 'maxCachedInputUsdPerMillion'] as const) {
+          const value = routingService[key];
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) errors.push(`buyer.routingService.${key} must be non-negative and finite`);
+        }
+      }
+      for (const key of ['maxRequestsPerMinute', 'maxInputBytes', 'maxOutputTokens'] as const) {
+        if (!Number.isSafeInteger(routingService[key]) || routingService[key] < 1) errors.push(`buyer.routingService.${key} must be a positive safe integer`);
+      }
+      if (typeof routingService.maxAdditionalAuthorizationUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(routingService.maxAdditionalAuthorizationUsdc)) {
+        errors.push('buyer.routingService.maxAdditionalAuthorizationUsdc must be a non-negative integer string');
+      }
+    }
   }
 
   if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS) {

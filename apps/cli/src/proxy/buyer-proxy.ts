@@ -7,6 +7,7 @@ import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
+  buildNetworkServiceOffers,
   adaptPeerFaultErrorResponse,
   computeOnChainReputationScore,
   decodeSweepRequest,
@@ -103,6 +104,13 @@ import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 import { loadConfig } from '../config/loader.js'
+import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
+import { validateRouterCandidate } from './router-policy.js'
+import { executeRouter, RouterExecutionError } from './router-execution.js'
+import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
+import { RoutingContextTracker, type RoutingCadence } from '@antseed/node'
+import { RoutingLog } from './routing-log.js'
+import { RoutingServiceExecutor } from './routing-service.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -111,8 +119,7 @@ export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoute
 /**
  * Why this daemon runs no hot-wallet deposit watcher — surfaced on
  * `/_antseed/deposits/status` so UIs can name the actual cause instead of
- * guessing (a missing watcher used to be indistinguishable from "this chain
- * has no deposit relay").
+ * guessing.
  */
 export type DepositWatcherAbsenceReason = 'external-daemon' | 'payments-disabled' | 'no-deposit-relay'
 
@@ -131,6 +138,15 @@ export interface BuyerProxyConfig {
   configPath?: string
   /** Price + trust preferences used for model-only automatic routing. */
   routingPreferences?: ModelRoutingPreferences
+  maxPricing?: HierarchicalPricingConfig
+  minPeerReputation?: number
+  routerTimeoutMs?: number
+  routerFailureFallback?: 'none' | 'default'
+  autoRouteServiceId?: string
+  routerKey?: string
+  routingService?: RoutingServiceConfig
+  routingSettingsSchema?: RouterSettingField[]
+  routingCadence?: RoutingCadence
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -162,6 +178,8 @@ export interface BuyerProxyConfig {
 // because model_not_found already has dedicated unadvertise handling while a
 // generic 404 would repeat identically on every peer.
 const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
+/** Client disclosure only (x-antseed-route-alternatives) -- not a limit on
+ *  how many candidates the router itself ranks or dispatch tries. */
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
@@ -266,10 +284,12 @@ const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
 const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 /**
- * Statuses that prove the peer is alive and serving. Any response short of a
- * server error counts: a peer that answers 400 or 404 is reachable, and
+ * Statuses that prove the peer is alive and serving. Any 4xx below 500
+ * except 408 counts: a peer that answers 400 or 404 is reachable, and
  * treating only 2xx as proof would leave a stale cooldown on a healthy peer
- * that happens to reject every request.
+ * that happens to reject every request. 408 is excluded -- it signals the
+ * seller struggling/timing out (see failureReasonForStatus's 'seller-timeout'
+ * below), not a clean, healthy reject.
  */
 function isProofOfLife(statusCode: number): boolean {
   return statusCode < 500 && statusCode !== 408
@@ -761,6 +781,7 @@ export class BuyerProxy {
    * selection) and persisted in buyer.state.json like the session peer pin.
    */
   private _defaultRoutedModel: string | null = null
+  private readonly _initialConversationRequests = new Map<string, Promise<void>>()
   private _conversations!: ConversationStore
   /**
    * Wall-clock of the last model-request activity (dispatch or streamed
@@ -774,6 +795,19 @@ export class BuyerProxy {
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _routingPreferences: ModelRoutingPreferences | null
+  private _maxPricing: HierarchicalPricingConfig | undefined
+  private _minPeerReputation: number
+  private readonly _routerTimeoutMs: number
+  private readonly _routerFailureFallback: 'none' | 'default'
+  private readonly _autoRouteServiceId: string | undefined
+  private _routingServiceConfig: RoutingServiceConfig | undefined
+  private readonly _routingSettingsSchema: RouterSettingField[]
+  private readonly _routingContext = new RoutingContextTracker()
+  private readonly _routingCadence: RoutingCadence
+  private readonly _routerKey: string
+  private readonly _routingLog: RoutingLog
+  private readonly _routingServiceExecutor: RoutingServiceExecutor
+  private readonly _routingPeerIds = new Set<string>()
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -820,12 +854,29 @@ export class BuyerProxy {
   private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
 
   constructor(config: BuyerProxyConfig) {
+    this._maxPricing = config.maxPricing
+    this._minPeerReputation = config.minPeerReputation ?? 0
+    this._routerTimeoutMs = config.routerTimeoutMs ?? 10_000
+    this._routerFailureFallback = config.routerFailureFallback ?? 'none'
+    this._autoRouteServiceId = config.autoRouteServiceId
+    this._routingServiceConfig = config.routingService
+    this._routingSettingsSchema = config.routingSettingsSchema ?? []
+    this._routingCadence = config.routingCadence ?? 'turn'
+    this._routerKey = config.routerKey ?? ''
     this._node = config.node
     this._verifier = config.verifier
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
+    this._routingLog = new RoutingLog(config.dataDir)
+    this._routingServiceExecutor = new RoutingServiceExecutor({
+      node: this._node, routerKey: config.routerKey ?? '',
+      getConfig: () => this._routingServiceConfig,
+      getPeers: () => this._getPeers(),
+      record: (event) => this._recordRoutingOperation(event),
+    })
+    if (config.routingService) this._protectRoutingPeer(config.routingService.peerId)
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._configPath = config.configPath ?? null
     this._conversations = new ConversationStore(config.dataDir)
@@ -866,6 +917,10 @@ export class BuyerProxy {
     }
     if (typeof spendEventNode.on === 'function') {
       spendEventNode.on('payment:spend', (event: BuyerSpendEvent) => {
+        if (event.purpose === 'routing') {
+          void this._recordRoutingOperation({ kind: 'authorization', ...event }).catch((error) => log('Routing accounting write failed', error))
+          return
+        }
         this._attributeSpend(event)
       })
     }
@@ -882,7 +937,16 @@ export class BuyerProxy {
     }
   }
 
-  /** Roll a signed spend delta into the conversation that triggered it. */
+  private _protectRoutingPeer(peerId: string): void {
+    const normalized = peerId.toLowerCase().replace(/^0x/, '')
+    this._routingPeerIds.add(normalized)
+    this._node.buyerPaymentManager?.protectRoutingPeer(normalized)
+  }
+
+  private async _recordRoutingOperation(event: Record<string, unknown>): Promise<void> {
+    await this._routingLog.record(event).catch((error) => log('Routing audit write failed', error))
+  }
+
   private _attributeSpend(event: BuyerSpendEvent): void {
     if (!event.requestId) return
     const entry = this._requestConversations.get(event.requestId)
@@ -992,6 +1056,7 @@ export class BuyerProxy {
   }
 
   async stop(): Promise<void> {
+    this._routingServiceExecutor.cancel()
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
@@ -1018,6 +1083,7 @@ export class BuyerProxy {
     }
     await this._writeStateFile('stopped')
     await this._conversations.flush()
+    await this._routingLog.flush()
     return new Promise((resolve) => {
       this._server.close(() => resolve())
     })
@@ -1083,7 +1149,12 @@ export class BuyerProxy {
     if (!this._configPath) return
     try {
       const config = await loadConfig(this._configPath)
+      if (JSON.stringify(config.buyer.routingService) !== JSON.stringify(this._routingServiceConfig)) this._routingServiceExecutor.cancel()
+      this._routingServiceConfig = config.buyer.routingService
+      if (this._routingServiceConfig) this._protectRoutingPeer(this._routingServiceConfig.peerId)
       const next = config.buyer.routingPreferences
+      this._maxPricing = config.buyer.maxPricing
+      this._minPeerReputation = config.buyer.minPeerReputation
       this._routingPreferences = {
         ...next,
         allowedPeerIds: [...next.allowedPeerIds],
@@ -1091,7 +1162,8 @@ export class BuyerProxy {
       }
       log(
         `Routing preferences reloaded: minTrust=${next.minTrustScore} maxInput=${next.maxInputUsdPerMillion} `
-        + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length}`,
+        + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length} `
+        + `routerEnabled=${next.routerEnabled ?? false}`,
       )
     } catch (err) {
       log(`Routing preferences reload ignored: ${err instanceof Error ? err.message : String(err)}`)
@@ -1123,7 +1195,10 @@ export class BuyerProxy {
     // in the file — the debounce may have been cancelled before
     // _reloadSessionOverrides could commit the latest CLI-written values.
     const sessionOverrides = state === 'connected'
-      ? { pinnedPeerId: this._pinnedPeer, defaultRoutedModel: this._defaultRoutedModel }
+      ? {
+        pinnedPeerId: this._pinnedPeer,
+        defaultRoutedModel: this._defaultRoutedModel,
+      }
       : {}
     await this._mergeStateFile({
       state,
@@ -2188,6 +2263,57 @@ export class BuyerProxy {
       return
     }
 
+    const identity = method === 'POST' && isCompletionRequestPath(path)
+      ? extractConversationIdentity(serializedReq.headers, parseRequestBodyObject(serializedReq.body, serializedReq.headers))
+      : null
+    const key = identity ? `${identity.tool}:${identity.sessionKey}` : null
+    const pending = key ? this._initialConversationRequests.get(key) : undefined
+    if (pending) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          pending,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('initial routing in progress')), this._routerTimeoutMs)
+          }),
+        ])
+      } catch {
+        res.writeHead(409, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'conversation_initializing', message: 'The first conversation request is still in progress. Retry without starting a new conversation.' } }))
+        return
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    if (res.destroyed || req.aborted) return
+    if (key && this._initialConversationRequests.has(key)) {
+      res.writeHead(409, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { code: 'conversation_initializing' } }))
+      return
+    }
+    let release: (() => void) | undefined
+    if (key && !this._conversations.get(key)?.lastModel) {
+      this._initialConversationRequests.set(key, new Promise<void>((resolve) => { release = resolve }))
+    }
+    try {
+      await this._routeConversationRequest(req, res, serializedReq, systemRoutedModel, requiredParameters)
+    } finally {
+      if (release && key) {
+        this._initialConversationRequests.delete(key)
+        release()
+      }
+    }
+  }
+
+  private async _routeConversationRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    serializedReq: SerializedHttpRequest,
+    systemRoutedModel: boolean,
+    requiredParameters: string[],
+  ): Promise<void> {
+    const method = req.method ?? 'GET'
+    const path = req.url ?? '/'
     // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
     const effectivePinnedPeer = this._pinnedPeer
@@ -2213,14 +2339,13 @@ export class BuyerProxy {
     const storedConversation = conversationIdentity && trackedConversationKey
       ? this._conversations.get(`${conversationIdentity.tool}:${trackedConversationKey}`)
       : null
-    const storedAutoRoute = storedConversation?.peerSource === 'auto' && storedConversation.pinnedModel
-      ? parsePeerPinnedService(storedConversation.pinnedModel)
+    const chatPinnedModel = storedConversation?.peerSource === 'user' ? storedConversation.pinnedModel : null
+    const lastRoutedPeer = storedConversation?.peerSource !== 'user' && storedConversation?.lastModel
+      ? parsePeerPinnedService(storedConversation.lastModel)
       : null
-    const chatPinnedModel = storedConversation?.peerSource === 'user'
-      ? storedConversation.pinnedModel
-      : storedAutoRoute?.service ?? storedConversation?.pinnedModel ?? null
+    const previousModel = lastRoutedPeer?.service ?? null
     const preferredPeerHeader = normalizePeerId(serializedReq.headers['x-antseed-prefer-peer'] ?? '')
-    const preferredConversationPeerId = preferredPeerHeader ?? storedAutoRoute?.peerId ?? null
+    const preferredConversationPeerId = preferredPeerHeader ?? lastRoutedPeer?.peerId ?? null
     const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
     let trackedConversationId: string | null = storedConversation?.id ?? null
 
@@ -2383,92 +2508,224 @@ export class BuyerProxy {
       return
     }
 
-    if (!explicitPeerId && requestedService) {
-      const selectModelPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection =>
-        selectCandidatePeersForRouting(candidateSources, requestProtocol, requestedService, explicitProvider, 'strict')
-      let discoveredPeers = peers
-      let { candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers)
-      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
-      if (modelPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
-        discoveredPeers = await this._getPeers({ forceRefresh: true })
-        ;({ candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers))
+    let routeSelected: Array<{ peerId: string; serviceId: string }> | null = null
+    let routingContext: import('@antseed/node').RoutingRequestContext | undefined
+    const routingStartedAt = Date.now()
+    if (requestedService === this._autoRouteServiceId
+      && this._routingPreferences?.routerEnabled !== true) {
+      res.writeHead(503, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { type: 'router_disabled', code: 'router_disabled', message: 'The selected model router is disabled.' } }))
+      return
+    }
+    try {
+      if (requestedService && requestedService === this._autoRouteServiceId && !chatPinnedModel && !explicitPeerId && this._node.router?.selectRoute
+        && !buildNetworkServiceOffers(peers).some((offer) => offer.serviceId === requestedService && offer.type === 'text')
+        && this._routingPreferences?.routerEnabled === true) {
+        routingContext = this._routingContext.observe(serializedReq, conversationIdentity, {
+          cadence: this._routingCadence,
+          settings: this._routingPreferences?.routerSettings?.[this._routerKey] ?? {},
+          isRouteAvailable: (recommendation) => {
+            const candidate = validateRouterCandidate({ recommendation, peers, request: serializedReq,
+              protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+              preferences: this._routingPreferences, maxPricing: this._maxPricing,
+              minPeerReputation: this._minPeerReputation, now: this._now() })
+            return !!candidate && !this._routingPeerIds.has(candidate.peerId)
+              && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
+              && peerAllowedByPolicy(this._node.router as BuyerPolicyRouter, candidate.request, candidate.peer)
+          },
+        })
+        const sharedPreferences = structuredClone(this._routingPreferences)
+        if (sharedPreferences) delete sharedPreferences.routerSettings
+        routeSelected = await executeRouter((context) => {
+          const candidates = buildNetworkServiceOffers(peers).flatMap((offer) => {
+            if (this._routingPeerIds.has(offer.peerId)) return []
+            const candidate = validateRouterCandidate({ recommendation: offer, peers, request: serializedReq,
+              protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+              preferences: this._routingPreferences, maxPricing: this._maxPricing,
+              minPeerReputation: this._minPeerReputation, now: this._now() })
+            return candidate && !isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())
+              && peerAllowedByPolicy(this._node.router as BuyerPolicyRouter, candidate.request, candidate.peer)
+              ? [{ peerId: candidate.peerId, serviceId: candidate.serviceId,
+                  inputUsdPerMillion: candidate.inputUsdPerMillion, cachedInputUsdPerMillion: candidate.cachedInputUsdPerMillion,
+                  outputUsdPerMillion: candidate.outputUsdPerMillion }]
+              : []
+          })
+          return this._node.router!.selectRoute!(
+            structuredClone(serializedReq),
+            structuredClone(peers),
+            structuredClone(conversationIdentity),
+            sharedPreferences,
+            null,
+            {
+              ...context,
+              routing: structuredClone(routingContext),
+              settings: validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[this._routerKey] ?? {}),
+              candidates: structuredClone(candidates),
+              invokeService: (messages, parseResponse) => this._routingServiceExecutor.invoke(serializedReq.requestId, { ...context, candidates }, messages, parseResponse),
+            },
+          )
+        }, clientAbortController.signal, this._routerTimeoutMs)
+        if (routeSelected !== null && !Array.isArray(routeSelected)) throw new RouterExecutionError('router_invalid_result')
+        if (routeSelected?.length === 0) throw new RouterExecutionError('router_unavailable')
+        void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,
+          routerKey: this._routerKey, trigger: routingContext.trigger, reuseSuggested: !routingContext.shouldRoute,
+          latencyMs: Date.now() - routingStartedAt,
+          outcome: routeSelected === null ? 'declined' : 'selected', candidates: routeSelected?.length ?? 0 })
       }
+    } catch (error) {
+      void this._recordRoutingOperation({ kind: 'selection', purpose: 'routing-decision', requestId: serializedReq.requestId,
+        routerKey: this._routerKey, trigger: routingContext?.trigger, latencyMs: Date.now() - routingStartedAt,
+        outcome: 'failed', code: error instanceof RouterExecutionError ? error.code : 'router_unavailable' })
+      if (clientAbortController.signal.aborted) return
+      const fallback = this._routerFailureFallback === 'default' ? this._defaultRoutedModel : null
+      const pin = fallback ? parsePeerPinnedService(fallback) : null
+      if (fallback && isValidRoutedModelTarget(fallback)) {
+        routeSelected = peers.filter((peer) => !pin || peer.peerId.toLowerCase() === pin.peerId.toLowerCase())
+          .map((peer) => ({ peerId: peer.peerId, serviceId: pin?.service ?? fallback }))
+      } else {
+        const code = error instanceof RouterExecutionError ? error.code : 'router_unavailable'
+        res.writeHead(code === 'router_timeout' ? 504 : 502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { type: code, code, message: 'The model router could not select a route. No inference request was sent.' } }))
+        return
+      }
+    }
+    if (clientAbortController.signal.aborted) return
 
+    if ((!explicitPeerId || routeSelected) && requestedService) {
       const router = this._node.router
       const policyRouter = router as BuyerPolicyRouter | null | undefined
-      const routeCandidates = modelPeers
-        .map((peer) => {
-          const plan = modelPlans.get(peer.peerId)
-            ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
-          if (!plan?.serviceId) return null
-          const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
-          if (!offer) return null
-          const missingRequired = plan.selection?.requiresTransform
-            ? requiredParameters
-            : findMissingRequiredParameters(
-                peer,
-                plan.provider,
-                plan.serviceId,
-                requiredParameters,
+
+      let candidates: Array<{
+        peer: PeerInfo
+        peerId: string
+        serviceId: string
+        request: SerializedHttpRequest
+        reputation: number
+        hasCachedInputPricing: boolean
+        inputUsdPerMillion: number | null
+        outputUsdPerMillion: number | null
+        minImageUsdPerImage: number | null
+        effectiveReputationScore: number | null
+        peerCooldownUntil: number | null
+        peerFailureStreak: number
+      }>
+      // modelPlans stays empty for a selectRoute-sourced walk; _dispatchToPeer
+      // falls back to resolving the route plan itself per peer+model when a
+      // peer has no entry (existing 'lenient' fallback, buyer-proxy.ts _dispatchToPeer).
+      let modelPlans: Map<string, PeerProtocolRoutePlan> = new Map()
+      if (routeSelected) {
+        // The routing peer's returned order already *is* the score/quality/
+        // cost decision -- walk it as given, no local re-ranking or
+        // reputation re-sort.
+        const currentPeers = await this._getPeers()
+        const seen = new Set<string>()
+        candidates = routeSelected.flatMap((recommendation) => {
+          const candidate = validateRouterCandidate({
+            recommendation, peers: currentPeers, request: serializedReq, protocol: requestProtocol,
+            provider: explicitProvider, requiredParameters, preferences: this._routingPreferences,
+            maxPricing: this._maxPricing, minPeerReputation: this._minPeerReputation, now: this._now(),
+          })
+          if (!candidate || this._routingPeerIds.has(candidate.peerId)
+            || !peerAllowedByPolicy(policyRouter, candidate.request, candidate.peer)) return []
+          const key = `${candidate.peerId}@${candidate.serviceId}`
+          if (seen.has(key) || isCoolingDown(this._peerHealth.get(candidate.peerId), this._now())) return []
+          seen.add(key)
+          const health = this._peerHealth.get(candidate.peerId)
+          return [{ ...candidate, peerCooldownUntil: health?.cooldownUntil ?? null, peerFailureStreak: health?.failureStreak ?? 0 }]
+        })
+      } else {
+        const selectModelPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection =>
+          selectCandidatePeersForRouting(candidateSources, requestProtocol, requestedService, explicitProvider, 'strict')
+        let discoveredPeers = peers
+        let { candidatePeers: modelPeers, routePlanByPeerId } = selectModelPeers(discoveredPeers)
+        modelPlans = routePlanByPeerId
+        const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+        if (modelPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
+          discoveredPeers = await this._getPeers({ forceRefresh: true })
+          ;({ candidatePeers: modelPeers, routePlanByPeerId } = selectModelPeers(discoveredPeers))
+          modelPlans = routePlanByPeerId
+        }
+
+        const routeCandidates = modelPeers
+          .map((peer) => {
+            if (this._routingPeerIds.has(peer.peerId)) return null
+            const plan = modelPlans.get(peer.peerId)
+              ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
+            if (!plan?.serviceId) return null
+            const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
+            if (!offer) return null
+            if (previousModel && !validateRouterCandidate({
+              recommendation: { peerId: peer.peerId, serviceId: plan.serviceId },
+              peers: discoveredPeers, request: serializedReq, protocol: requestProtocol,
+              provider: explicitProvider, requiredParameters, preferences: this._routingPreferences,
+              maxPricing: this._maxPricing, minPeerReputation: this._minPeerReputation, now: this._now(),
+            })) return null
+            const missingRequired = plan.selection?.requiresTransform
+              ? requiredParameters
+              : findMissingRequiredParameters(
+                  peer,
+                  plan.provider,
+                  plan.serviceId,
+                  requiredParameters,
+                )
+            if (missingRequired.length > 0) {
+              log(
+                `Capability filter: peer ${peer.peerId.slice(0, 12)}... service="${plan.serviceId}" `
+                + `missing required parameter(s): ${missingRequired.join(', ')}`,
               )
-          if (missingRequired.length > 0) {
-            log(
-              `Capability filter: peer ${peer.peerId.slice(0, 12)}... service="${plan.serviceId}" `
-              + `missing required parameter(s): ${missingRequired.join(', ')}`,
-            )
-            return null
-          }
-          const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
-          if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
+              return null
+            }
+            const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
+            if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
+            return {
+              peer,
+              peerId: peer.peerId,
+              serviceId: plan.serviceId,
+              request: requestForPolicy,
+              reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
+              hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
+              inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
+              outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
+              minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
+            }
+          })
+          .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+        const now = this._now()
+        const preferCachedPricing = routeCandidates.some((candidate) => candidate.hasCachedInputPricing)
+        const ranked = routeCandidates.map((candidate) => {
+          const health = this._peerHealth.get(candidate.peer.peerId)
           return {
-            peer,
-            peerId: peer.peerId,
-            serviceId: plan.serviceId,
-            request: requestForPolicy,
-            reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
-            hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
-            inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
-            outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
-            minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
+            ...candidate,
+            effectiveReputationScore: effectiveModelReputationScore(
+              candidate.reputation >= 0 ? candidate.reputation : null,
+              candidate.hasCachedInputPricing,
+              preferCachedPricing,
+              modelRouteTotalPrice(candidate) === 0,
+            ),
+            peerCooldownUntil: health?.cooldownUntil ?? null,
+            peerFailureStreak: health?.failureStreak ?? 0,
           }
         })
-        .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
-      const now = this._now()
-      const preferCachedPricing = routeCandidates.some((candidate) => candidate.hasCachedInputPricing)
-      const ranked = routeCandidates.map((candidate) => {
-        const health = this._peerHealth.get(candidate.peer.peerId)
-        return {
-          ...candidate,
-          effectiveReputationScore: effectiveModelReputationScore(
-            candidate.reputation >= 0 ? candidate.reputation : null,
-            candidate.hasCachedInputPricing,
-            preferCachedPricing,
-            modelRouteTotalPrice(candidate) === 0,
-          ),
-          peerCooldownUntil: health?.cooldownUntil ?? null,
-          peerFailureStreak: health?.failureStreak ?? 0,
+        const routingPreferences = this._routingPreferences
+        if (routingPreferences) {
+          candidates = rankModelRoutes(ranked, routingPreferences, now)
+            .filter((candidate) => isModelRouteEligible(candidate, routingPreferences))
+        } else {
+          ranked.sort((a, b) =>
+            (b.effectiveReputationScore ?? -1) - (a.effectiveReputationScore ?? -1)
+            || a.peer.peerId.localeCompare(b.peer.peerId))
+          const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
+          candidates = ready.length > 0 ? ready : ranked
         }
-      })
-      let candidates: typeof ranked
-      const routingPreferences = this._routingPreferences
-      if (routingPreferences) {
-        candidates = rankModelRoutes(ranked, routingPreferences, now)
-          .filter((candidate) => isModelRouteEligible(candidate, routingPreferences))
-      } else {
-        ranked.sort((a, b) =>
-          (b.effectiveReputationScore ?? -1) - (a.effectiveReputationScore ?? -1)
-          || a.peer.peerId.localeCompare(b.peer.peerId))
-        const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
-        candidates = ready.length > 0 ? ready : ranked
-      }
-      if (preferredConversationPeerId) {
-        const preferredIndex = candidates.findIndex((candidate) => (
-          candidate.peer.peerId.toLowerCase() === preferredConversationPeerId
-          && !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now)
-        ))
-        if (preferredIndex > 0) {
-          const [preferred] = candidates.splice(preferredIndex, 1)
-          if (preferred) candidates.unshift(preferred)
+        if (preferredConversationPeerId) {
+          const preferredIndex = candidates.findIndex((candidate) => (
+            candidate.peer.peerId.toLowerCase() === preferredConversationPeerId
+            && !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now)
+          ))
+          if (preferredIndex > 0) {
+            const [preferred] = candidates.splice(preferredIndex, 1)
+            if (preferred) candidates.unshift(preferred)
+          }
         }
       }
       if (candidates.length === 0) {
@@ -2494,7 +2751,10 @@ export class BuyerProxy {
 
       let lastRetry: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
       let lastVerificationError: string | null = null
-      for (const [index, selected] of candidates.entries()) {
+      let initialDispatchService: string | null = null
+      for (const [index, initialCandidate] of candidates.entries()) {
+        if (initialDispatchService && initialCandidate.serviceId !== initialDispatchService) continue
+        let selected = initialCandidate
         if (this._verifier) {
           const makeReach = (chosenId: string): SellerReach =>
             makeVerifierReach(this._node, selected.peer, chosenId, clientAbortController.signal)
@@ -2507,12 +2767,31 @@ export class BuyerProxy {
         }
 
         for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
+          if (clientAbortController.signal.aborted) return
+          if (routeSelected || previousModel) {
+            const current = validateRouterCandidate({
+              recommendation: selected, peers: await this._getPeers(), request: serializedReq,
+              protocol: requestProtocol, provider: explicitProvider, requiredParameters,
+              preferences: this._routingPreferences, maxPricing: this._maxPricing,
+              minPeerReputation: this._minPeerReputation, now: this._now(),
+            })
+            if (!current || !peerAllowedByPolicy(policyRouter, current.request, current.peer)) break
+            selected = { ...selected, ...current }
+          }
           log(
             `Auto-selected peer ${selected.peer.peerId.slice(0, 12)}... for model="${requestedService}" `
             + `service="${selected.serviceId}" reputation=${selected.reputation} `
             + `effective=${selected.effectiveReputationScore ?? 'unknown'} peer=${index + 1}/${candidates.length} `
             + `attempt=${peerAttempt + 1}/${MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER}`,
           )
+          if (routeSelected && !initialDispatchService) {
+            initialDispatchService = selected.serviceId
+            this._routingContext.recordRoute(conversationIdentity, serializedReq.requestId, selected)
+            if (trackedConversationId) {
+              this._conversations.recordRoutedModel(trackedConversationId, `${selected.peer.peerId}@${selected.serviceId}`)
+              await this._conversations.flush()
+            }
+          }
           const result = await this._dispatchToPeer(
             res,
             selected.request,
@@ -2527,6 +2806,11 @@ export class BuyerProxy {
             clientAbortController.signal,
           )
           if (result.done) {
+            if (routeSelected && !clientAbortController.signal.aborted && res.statusCode < 400 && result.latencyMs !== undefined) {
+              void this._recordRoutingOperation({ kind: 'dispatch', purpose: 'routing-decision', requestId: serializedReq.requestId,
+                routerKey: this._routerKey, trigger: routingContext?.trigger, peerId: selected.peerId, serviceId: selected.serviceId,
+                outcome: 'succeeded', inferenceLatencyMs: result.latencyMs })
+            }
             if (trackedConversationId) {
               this._conversations.recordRoutedModel(
                 trackedConversationId,
@@ -2718,7 +3002,7 @@ export class BuyerProxy {
       return
     }
     const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
-    if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
+    if (this._routingPeerIds.has(selectedPeer.peerId) || !peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
@@ -2876,7 +3160,7 @@ export class BuyerProxy {
     pinned: boolean,
     requestSignal: AbortSignal,
   ): Promise<
-    | { done: true }
+    | { done: true; costUsd?: number | null; latencyMs?: number }
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
   > {
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
@@ -2909,6 +3193,9 @@ export class BuyerProxy {
       'x-antseed-prefer-peer': _preferPeer,
       [REQUIRED_PARAMETERS_HEADER]: _requiredParameters,
       'x-vpr-session-id': _vprSession,
+      'x-antseed-turn-id': _turnId,
+      'x-antseed-context-revision': _contextRevision,
+      'x-antseed-route-refresh': _routeRefresh,
       // Legacy desktop builds (pre AntStation → VPR rename) still send this.
       'x-antstation-session-id': _antstationSession,
       ...headersForPeer
@@ -3069,6 +3356,11 @@ export class BuyerProxy {
               && isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
+            freshInputTokens: telemetry.usage.freshInputTokens,
+            cachedInputTokens: telemetry.usage.cachedInputTokens,
+            outputTokens: telemetry.usage.outputTokens,
+            estimatedCostUsd: telemetry.estimatedCostUsd,
+            requestId: requestForPeer.requestId,
           })
         }
 
@@ -3085,7 +3377,7 @@ export class BuyerProxy {
           if (!res.writableEnded) {
             res.end()
           }
-          return { done: true }
+          return { done: true, costUsd: telemetry.estimatedCostUsd, latencyMs }
         }
 
         // Non-streamed response — check if retryable
@@ -3108,7 +3400,7 @@ export class BuyerProxy {
 
         res.writeHead(responseForClient.statusCode, responseHeaders)
         res.end(Buffer.from(responseForClient.body))
-        return { done: true }
+        return { done: true, costUsd: telemetry.estimatedCostUsd, latencyMs }
       } else {
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
           signal: requestSignal,
@@ -3162,6 +3454,11 @@ export class BuyerProxy {
               && isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
+            freshInputTokens: telemetry.usage.freshInputTokens,
+            cachedInputTokens: telemetry.usage.cachedInputTokens,
+            outputTokens: telemetry.usage.outputTokens,
+            estimatedCostUsd: telemetry.estimatedCostUsd,
+            requestId: requestForPeer.requestId,
           })
         }
 
@@ -3179,7 +3476,7 @@ export class BuyerProxy {
         // Forward response headers and body to the HTTP client
         res.writeHead(response.statusCode, responseHeaders)
         res.end(Buffer.from(response.body))
-        return { done: true }
+        return { done: true, costUsd: telemetry.estimatedCostUsd, latencyMs }
       }
     } catch (err) {
       const latencyMs = Date.now() - startTime
@@ -3229,6 +3526,14 @@ export class BuyerProxy {
         fault === 'buyer' ? 'buyer-local' : 'request-failed',
         fault,
       )
+      if (router && fault !== 'buyer') {
+        router.onResult(selectedPeer, {
+          success: false,
+          latencyMs,
+          tokens: 0,
+          requestId: requestForPeer.requestId,
+        })
+      }
 
       if (res.headersSent) {
         // Headers already sent (streaming), can't retry

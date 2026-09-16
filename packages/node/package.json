@@ -13,6 +13,10 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./router-settings": {
+      "import": "./dist/routing/router-settings.js",
+      "types": "./dist/routing/router-settings.d.ts"
+    },
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"

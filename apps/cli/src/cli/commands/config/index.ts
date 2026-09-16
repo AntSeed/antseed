@@ -297,6 +297,9 @@ export function redactConfig(config: AntseedConfig): Record<string, unknown> {
  */
 export function setConfigValue(config: Record<string, unknown>, key: string, value: string): void {
   const parts = key.split('.');
+  if (parts.some((part) => !part || ['__proto__', 'prototype', 'constructor'].includes(part))) {
+    throw new Error(`Invalid config key: ${key}`);
+  }
   let current: Record<string, unknown> = config;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i]!;
@@ -313,6 +316,25 @@ export function setConfigValue(config: Record<string, unknown>, key: string, val
   }
   const lastKey = parts[parts.length - 1]!;
   const trimmed = value.trim();
+  const valueType = OPTIONAL_CONFIG_VALUE_TYPES[key] ?? typeof current[lastKey];
+
+  if (valueType === 'boolean') {
+    if (trimmed !== 'true' && trimmed !== 'false') throw new Error(`${key} must be true or false`);
+    current[lastKey] = trimmed === 'true';
+    return;
+  }
+  if (valueType === 'string') {
+    current[lastKey] = trimmed;
+    return;
+  }
+  if (OPTIONAL_CONFIG_VALUE_TYPES[key] === 'object') {
+    let parsed: unknown;
+    try { parsed = JSON.parse(trimmed); }
+    catch { throw new Error(`Invalid JSON value for ${key}`); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${key} must be a JSON object`);
+    current[lastKey] = parsed;
+    return;
+  }
 
   if (
     (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
@@ -332,6 +354,31 @@ export function setConfigValue(config: Record<string, unknown>, key: string, val
   const numVal = Number(trimmed);
   current[lastKey] = Number.isNaN(numVal) ? trimmed : numVal;
 }
+
+const OPTIONAL_CONFIG_VALUE_TYPES: Record<string, 'boolean' | 'number' | 'string' | 'object'> = {
+  'buyer.routingPreferences.routerEnabled': 'boolean',
+  'buyer.routingPreferences.routerSettings': 'object',
+  'buyer.routerTimeoutMs': 'number',
+  'buyer.routerFailureFallback': 'string',
+  'buyer.routingService': 'object',
+  'buyer.routingService.routerKey': 'string',
+  'buyer.routingService.peerId': 'string',
+  'buyer.routingService.provider': 'string',
+  'buyer.routingService.serviceId': 'string',
+  'buyer.routingService.allowPromptSharing': 'boolean',
+  'buyer.routingService.billing': 'object',
+  'buyer.routingService.billing.kind': 'string',
+  'buyer.routingService.billing.maxAmountMicroUsdc': 'string',
+  'buyer.routingService.maxAdditionalAuthorizationUsdc': 'string',
+  'buyer.routingService.maxRequestsPerMinute': 'number',
+  'buyer.routingService.maxInputBytes': 'number',
+  'buyer.routingService.maxOutputTokens': 'number',
+  'buyer.routingService.maxInputUsdPerMillion': 'number',
+  'buyer.routingService.maxOutputUsdPerMillion': 'number',
+  'buyer.routingService.maxCachedInputUsdPerMillion': 'number',
+  'seller.healthCheck.enabled': 'boolean',
+  'seller.gasCheck.enabled': 'boolean',
+};
 
 /**
  * Key paths that are accepted even when the intermediate segments don't
@@ -357,7 +404,7 @@ function getValidConfigKeys(config: AntseedConfig, prefix = ''): string[] {
       keys.push(path);
     }
   }
-  return keys;
+  return prefix ? keys : [...new Set([...keys, ...Object.keys(OPTIONAL_CONFIG_VALUE_TYPES)])];
 }
 
 async function setRoleScopedValue(

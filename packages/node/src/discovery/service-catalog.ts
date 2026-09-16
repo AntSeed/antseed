@@ -1,4 +1,5 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
+import { perCallPriceMicroUsdc, type UnitBillingModelV1 } from '@antseed/protocol/billing';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
@@ -56,6 +57,7 @@ export type NetworkServiceCatalogPeer = {
 };
 
 export type NetworkServiceOffer = {
+  billing?: { kind: 'per_call'; amountMicroUsdc: string };
   serviceId: string;
   provider: string;
   protocols: string[];
@@ -169,10 +171,13 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
         const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
-          ? 'image'
-          : 'text';
+            ? 'image'
+            : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
+        const unitModel = protocol ? peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId]?.[protocol] : undefined;
+        const perCallAmount = perCallPriceMicroUsdc(unitModel as UnitBillingModelV1 | undefined);
         offers.push({
+          ...(perCallAmount !== null ? { billing: { kind: 'per_call' as const, amountMicroUsdc: perCallAmount.toString() } } : {}),
           serviceId,
           provider,
           protocols,
@@ -195,6 +200,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
 }
 
 function comparableOfferPrice(offer: NetworkServiceOffer): number {
+  if (offer.billing?.kind === 'per_call') return Number.POSITIVE_INFINITY;
   if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
   if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
     return Number.POSITIVE_INFINITY;
