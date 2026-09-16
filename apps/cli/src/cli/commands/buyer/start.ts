@@ -17,7 +17,7 @@ import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy, type DepositWatcherAbsenceReason } from '../../../proxy/buyer-proxy.js'
 import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
 import { createSignDailyIfNeeded } from '../../../proxy/day-pass-signing.js'
-import { readAgreedDayPassPriceUsd, writeAgreedDayPassPriceUsd, readLastFlatFeeSignedAtMs, writeLastFlatFeeSignedAtMs, usdToUsdc, usdcToUsd } from '../../../proxy/day-pass-consent.js'
+import { readAgreedDayPassPriceUsd, readLastFlatFeeSignedAtMs, writeLastFlatFeeSignedAtMs, usdToUsdc, usdcToUsd } from '../../../proxy/day-pass-consent.js'
 import { createSignRouteAuth } from '../../../proxy/route-auth-signing.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
@@ -450,19 +450,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       // which only exists once payments are configured -- constructing the
       // router itself (above) happens before the node has started.
       if (router.configureDailySigning && paymentsConfig?.enabled) {
-        // Signing happens only for actual usage, after a routing response
-        // is served, never on a schedule. dailyAmountUsdc below is NOT a
-        // price ceiling: resolveDiscoveredPriceUsdc reads the seller's own
-        // currently-advertised price for real, and a
-        // seller with no prior agreement on file for this buyer is trusted
-        // outright, in full, on that first signature -- it's recorded as the
-        // agreed price immediately after and only a later increase past it
-        // ever gets capped. This value only ever matters as a degraded-mode
-        // fallback amount for bootstrap when nothing could be discovered at
-        // all (peer not announcing, a network hiccup, etc.), never as a
-        // limit on a real, live price.
         const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-          dailyAmountUsdc: 890_000n,
           // The loaded router plugin's own declared attribution string
           // (`AntseedRouterPlugin.dailyPassServiceId`) -- generic host code,
           // no plugin-specific literal here (unlike createSignDailyIfNeeded/
@@ -490,9 +478,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           resolveAgreedPriceUsdc: async (sellerPeerId) => {
             const agreedUsd = await readAgreedDayPassPriceUsd(globalOpts.config, sellerPeerId)
             return agreedUsd === null ? null : usdToUsdc(agreedUsd)
-          },
-          recordAgreedPriceUsdc: async (sellerPeerId, amountUsdc) => {
-            await writeAgreedDayPassPriceUsd(globalOpts.config, sellerPeerId, usdcToUsd(amountUsdc))
           },
           onPriceCappedChange: (sellerPeerId, notice) => {
             dayPassPriceIncreaseNotice = notice

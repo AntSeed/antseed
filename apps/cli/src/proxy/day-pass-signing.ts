@@ -52,105 +52,10 @@ async function flushGap(): Promise<void> {
 }
 
 export interface DayPassSigningOptions {
-  /**
-   * NOT a ceiling on the actual day-pass price (see `resolveAgreedPriceUsdc`
-   * for that) -- purely a degraded-mode fallback amount, only ever used when
-   * there is no agreed price on file yet AND `resolveDiscoveredPriceUsdc`
-   * either isn't supplied, throws, or finds nothing this cycle. Bootstrap
-   * (day one, no prior signature at all) still needs some amount to
-   * reserve/sign in that case, or it could never proceed at all.
-   *
-   * Once a real live price IS discovered, it's what gets signed, in full,
-   * with no cap against this value -- a brand-new seller's first-ever price
-   * is trusted outright (and immediately logged and recorded as the agreed
-   * price by the caller, same visibility the desktop dialog already gives
-   * VPR users before they ever toggle a router on). Only a price increase
-   * *after* that first agreement is ever capped -- see
-   * `resolveAgreedPriceUsdc`/`onPriceCappedChange`.
-   */
-  dailyAmountUsdc: bigint
-  /**
-   * Attributes the signed day pass to this serviceId in
-   * SpendingAuthMetadata.services[] (v4) -- the host, not
-   * BuyerPaymentManager, knows which concrete router this day pass belongs
-   * to. Optional; omitted means no attribution.
-   */
   serviceId?: string
-  /**
-   * Discovers the seller's currently-advertised day-pass price for real --
-   * called once per signing cycle, live, not cached, since this only runs
-   * roughly once a day per seller. `null` means "nothing discovered this
-   * cycle" (peer not currently announcing, a transient network hiccup,
-   * etc.), not an error -- the caller must always be able to fall back to
-   * `dailyAmountUsdc` alone, or bootstrap (day one, no prior signature at
-   * all) could never proceed.
-   *
-   * Once an explicit agreed price is on file for this seller
-   * (`resolveAgreedPriceUsdc`), a discovered price above it is capped, never
-   * signed, until the buyer accepts the increase -- a seller must not be
-   * able to unilaterally raise what gets auto-signed for an existing
-   * relationship just by changing its advertised catalog entry. Before that
-   * first agreement exists, though, there is nothing yet to cap against:
-   * the very first signature for a seller trusts whatever it currently
-   * advertises outright, in full. `dailyAmountUsdc` is not consulted at all
-   * once a real price is actually discovered; it's a fallback for when
-   * nothing was discovered at all (see its own doc comment).
-   */
-  resolveDiscoveredPriceUsdc?: (sellerPeerId: string) => Promise<bigint | null>
-  /**
-   * Reads the price this buyer has actually agreed to for this seller
-   * (`VprRoutingPreferences.agreedDayPassPricesUsdc`), in 6-decimal USDC
-   * base units. `null` means no agreement is on file yet -- the very first
-   * signing cycle for a seller, or one from before this capability existed.
-   * When present, this is the ceiling `resolveDiscoveredPriceUsdc`'s result
-   * is capped against: a live price above it is never signed, only the
-   * agreed value (or whatever the seller advertises below it). `null`
-   * (no agreement yet) means there is no such ceiling at all -- the
-   * discovered price is signed outright instead (see
-   * `resolveDiscoveredPriceUsdc`'s own doc comment). Omit this option
-   * entirely to get that same uncapped behavior on every cycle, forever.
-   */
-  resolveAgreedPriceUsdc?: (sellerPeerId: string) => Promise<bigint | null>
-  /**
-   * Called exactly once, the first time a day-pass amount is actually
-   * resolved for a seller with no agreed price on file yet -- records that
-   * amount as the buyer's agreed price going forward (implicit agreement to
-   * whatever was live at that moment, since there was never a consent step
-   * for a bare CLI buyer to begin with). Never called again afterward for
-   * that seller; a later price increase is capped by
-   * `resolveAgreedPriceUsdc`'s returned value instead; raising the agreed
-   * price after that requires the buyer to explicitly accept the new price
-   * through whatever surface they're using (desktop's router dialog, or a
-   * dedicated CLI command), not a second automatic call here.
-   */
-  recordAgreedPriceUsdc?: (sellerPeerId: string, amountUsdc: bigint) => Promise<void>
-  /**
-   * Fires on every cycle a seller with an agreed price on file is actually
-   * resolved (not on bootstrap, when there's nothing to compare against
-   * yet) -- `notice` is the live/agreed pair while a live price above the
-   * agreed one is being capped, or `null` once it no longer is (the live
-   * price dropped back down, or the buyer's agreed price was raised to
-   * cover it). Lets a host surface "your price changed, re-confirm" without
-   * that host needing to duplicate this module's own capping comparison --
-   * e.g. apps/cli's buyer start command uses this to expose a
-   * `/_antseed/day-pass-price-increase` admin route the desktop app polls
-   * to reopen its router dialog automatically. Purely informational; never
-   * called with signing itself blocked on it.
-   */
+  resolveDiscoveredPriceUsdc: (sellerPeerId: string) => Promise<bigint | null>
+  resolveAgreedPriceUsdc: (sellerPeerId: string) => Promise<bigint | null>
   onPriceCappedChange?: (sellerPeerId: string, notice: { agreedUsdc: bigint; discoveredUsdc: bigint } | null) => void
-  /**
-   * Reads buyer-local persisted state (day-pass-consent.ts's own storage,
-   * outside BuyerPaymentManager's channel store) for when this buyer last
-   * signed a flat-fee cumulative for this seller, in epoch ms. `null` means
-   * nothing on file (never signed before, or from before this capability
-   * existed). Called once per seller, the first time `signDailyIfNeeded`
-   * runs for it in this process, to seed `BuyerPaymentManager`'s in-memory
-   * elapsed-day clock (`seedFlatFeeSignedAt`) -- without it, a fresh process
-   * has no memory of a real recent charge and grants an unwarranted extra
-   * day's signature on its very first call. Omit to skip seeding entirely
-   * (matches pre-existing behavior: every process start is treated as if
-   * nothing was ever signed).
-   */
   resolveLastFlatFeeSignedAtMs?: (sellerPeerId: string) => Promise<number | null>
   /**
    * Persists the moment a flat-fee cumulative signing attempt completed for
@@ -261,76 +166,29 @@ async function topUpAndReconcile(
   log(`top-up confirmation timed out for ${sellerPeerId.slice(0, 12)}... -- will retry on the next signing cycle`)
 }
 
-/**
- * Resolves the amount to actually sign for one day, per
- * `DayPassSigningOptions.resolveDiscoveredPriceUsdc`'s own doc comment.
- * Discovery failures (thrown errors, not just a `null` result) fall back to
- * `dailyAmountUsdc` -- a network hiccup here must never block day-pass
- * signing entirely, since bootstrap needs some amount to reserve/sign
- * regardless.
- *
- * Only once the buyer has an explicit agreed price on file for this seller
- * (`resolveAgreedPriceUsdc`) does that become a real ceiling a discovered
- * price gets capped against. Before that first agreement exists,
- * `hadAgreedPrice: false` tells the caller no agreement existed yet this
- * cycle (so it can record whatever amount comes back as the new agreed
- * price -- see `recordAgreedPriceUsdc`'s own doc comment), and a real
- * discovered price is signed outright, uncapped -- `dailyAmountUsdc` only
- * ever applies as a fallback amount when nothing was discovered at all.
- */
 async function resolveDailyAmountUsdc(
   options: DayPassSigningOptions,
   sellerPeerId: string,
-): Promise<{ amountUsdc: bigint; hadAgreedPrice: boolean }> {
-  const agreedPrice = await options.resolveAgreedPriceUsdc?.(sellerPeerId) ?? null
-  const hadAgreedPrice = agreedPrice !== null
-  const fallback = agreedPrice ?? options.dailyAmountUsdc
-  const fallbackLabel = hadAgreedPrice ? 'your agreed price' : 'the configured fallback'
-  // Only meaningful once an explicit agreement exists -- bootstrap (no
-  // agreement yet) has nothing to compare a live price against, so it never
-  // reports a capped/uncapped state either way.
-  const notifyCapped = (notice: { agreedUsdc: bigint; discoveredUsdc: bigint } | null): void => {
-    if (hadAgreedPrice) options.onPriceCappedChange?.(sellerPeerId, notice)
+): Promise<bigint> {
+  const agreedPrice = await options.resolveAgreedPriceUsdc(sellerPeerId)
+  if (agreedPrice === null || agreedPrice < 0n) {
+    throw new Error('BILLING_APPROVAL_REQUIRED: accept the service terms before purchasing access')
   }
-
-  if (!options.resolveDiscoveredPriceUsdc) {
-    notifyCapped(null)
-    return { amountUsdc: fallback, hadAgreedPrice }
-  }
-
   let discovered: bigint | null
   try {
     discovered = await options.resolveDiscoveredPriceUsdc(sellerPeerId)
-  } catch (err) {
-    log(`day-pass price discovery failed for ${sellerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err} -- falling back to ${fallbackLabel} (${fallback})`)
-    notifyCapped(null)
-    return { amountUsdc: fallback, hadAgreedPrice }
+  } catch {
+    throw new Error('PRICING_UNAVAILABLE: cannot verify current access pricing')
   }
-
-  if (discovered === null) {
-    log(`no day-pass price discovered for ${sellerPeerId.slice(0, 12)}... this cycle -- falling back to ${fallbackLabel} (${fallback})`)
-    notifyCapped(null)
-    return { amountUsdc: fallback, hadAgreedPrice }
+  if (discovered === null || discovered < 0n) {
+    throw new Error('PRICING_UNAVAILABLE: cannot verify current access pricing')
   }
-  if (!hadAgreedPrice) {
-    // First-ever signature for this seller -- nothing on file yet to cap
-    // against, so whatever's actually discovered is trusted outright. The
-    // caller logs and records it as the agreed price immediately after this
-    // returns, giving the buyer the same visibility into the real rate a
-    // desktop user gets from the router dialog before ever toggling it on.
-    notifyCapped(null)
-    return { amountUsdc: discovered, hadAgreedPrice }
+  if (discovered !== agreedPrice) {
+    options.onPriceCappedChange?.(sellerPeerId, { agreedUsdc: agreedPrice, discoveredUsdc: discovered })
+    throw new Error('BILLING_TERMS_CHANGED: review and accept the updated service terms')
   }
-  if (discovered > agreedPrice) {
-    log(`⚠ seller ${sellerPeerId.slice(0, 12)}...'s day-pass price has increased to ${discovered} (you agreed to ${agreedPrice}) -- signing stays capped at your agreed price until you accept the new one`)
-    notifyCapped({ agreedUsdc: agreedPrice, discoveredUsdc: discovered })
-    return { amountUsdc: agreedPrice, hadAgreedPrice }
-  }
-  if (discovered < agreedPrice) {
-    log(`seller ${sellerPeerId.slice(0, 12)}... advertises a day-pass price (${discovered}) below your agreed price (${agreedPrice}) -- signing the lower, discovered price`)
-  }
-  notifyCapped(null)
-  return { amountUsdc: discovered, hadAgreedPrice }
+  options.onPriceCappedChange?.(sellerPeerId, null)
+  return discovered
 }
 
 /**
@@ -353,16 +211,7 @@ export function createSignDailyIfNeeded(
     // in this one signing pass (bootstrap reserve, the day's signature, any
     // top-up) must agree, or a mid-cycle price change could size the
     // reserve for one amount and sign a different one.
-    const { amountUsdc: dailyAmountUsdc, hadAgreedPrice } = await resolveDailyAmountUsdc(options, sellerPeerId)
-    if (!hadAgreedPrice) {
-      // First cycle ever for this seller with no agreed price on file --
-      // implicit agreement to whatever's actually about to be signed, since
-      // there was never a consent step for a bare CLI buyer to begin with.
-      // Logged regardless of whether recordAgreedPriceUsdc is wired in, so
-      // a terminal-only buyer sees the rate they're now on.
-      log(`day-pass rate for ${sellerPeerId.slice(0, 12)}...: ${dailyAmountUsdc} (6-decimal USDC) per day used`)
-      await options.recordAgreedPriceUsdc?.(sellerPeerId, dailyAmountUsdc)
-    }
+    const dailyAmountUsdc = await resolveDailyAmountUsdc(options, sellerPeerId)
     const flatFeeConfig: FlatFeeSigningConfig = {
       dailyAmountUsdc,
       serviceId: options.serviceId,
@@ -478,4 +327,3 @@ export function createSignDailyIfNeeded(
     }
   }
 }
-

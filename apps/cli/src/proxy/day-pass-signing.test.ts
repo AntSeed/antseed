@@ -142,7 +142,7 @@ test('bootstrap: first call only reserves (no charge yet); the response-triggere
       channelsClient: scripted.client,
       getOrConnectPaymentMux: async () => mux,
     }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Call 1 (reacting to the seller's "no session" 402): reserve only.
     // Day 1's real charge must not be signed before the buyer has ever been
@@ -188,266 +188,32 @@ test('bootstrap: first call only reserves (no charge yet); the response-triggere
   })
 })
 
-test('resolveDiscoveredPriceUsdc: signs the real discovered price on first contact, not the fallback', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const discovered = DAILY_AMOUNT - 1_000n // below the fallback -- no cap applies either way here
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => discovered,
+for (const scenario of [
+  { name: 'missing approval', agreed: null, discovered: DAILY_AMOUNT, error: 'BILLING_APPROVAL_REQUIRED' },
+  { name: 'missing discovery', agreed: DAILY_AMOUNT, discovered: null, error: 'PRICING_UNAVAILABLE' },
+  { name: 'failed discovery', agreed: DAILY_AMOUNT, discovered: DAILY_AMOUNT, throws: true, error: 'PRICING_UNAVAILABLE' },
+  { name: 'price increase', agreed: DAILY_AMOUNT, discovered: DAILY_AMOUNT + 1n, error: 'BILLING_TERMS_CHANGED' },
+  { name: 'price decrease', agreed: DAILY_AMOUNT, discovered: DAILY_AMOUNT - 1n, error: 'BILLING_TERMS_CHANGED' },
+  { name: 'negative price', agreed: DAILY_AMOUNT, discovered: -1n, error: 'PRICING_UNAVAILABLE' },
+]) {
+  test(`pricing fails closed before reserve or signing: ${scenario.name}`, async () => {
+    await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
+      const mux = createRecordingMux()
+      const scripted = createScriptedChannelsClient(0n)
+      const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
+      const sign = createSignDailyIfNeeded(node, {
+        resolveAgreedPriceUsdc: async () => scenario.agreed,
+        resolveDiscoveredPriceUsdc: async () => {
+          if (scenario.throws) throw new Error('discovery failed')
+          return scenario.discovered
+        },
+      })
+      await assert.rejects(sign(SELLER_PEER_ID), new RegExp(scenario.error))
+      assert.equal(mux.sent.length, 0)
+      assert.equal(buyer.getActiveSession(SELLER_PEER_ID), null)
     })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), discovered, 'signs the real discovered price, not the dailyAmountUsdc fallback')
   })
-})
-
-test('resolveDiscoveredPriceUsdc: the first-ever signature for a seller trusts a live price outright, uncapped by dailyAmountUsdc', async () => {
-  // dailyAmountUsdc is a degraded-mode fallback for when nothing is
-  // discovered at all, not a ceiling. There is no agreed price on file yet
-  // to cap against here, so whatever the seller actually advertises is
-  // signed in full.
-  await withBuyer(DAILY_AMOUNT * 10n, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT * 5n, // seller's real, live price
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), DAILY_AMOUNT * 5n, 'signs the real discovered price on first contact, not the fallback')
-  })
-})
-
-test('resolveDiscoveredPriceUsdc: falls back to dailyAmountUsdc when discovery finds nothing', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => null, // peer not currently announcing
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), DAILY_AMOUNT, 'falls back to dailyAmountUsdc when nothing was discovered')
-  })
-})
-
-test('resolveDiscoveredPriceUsdc: falls back to dailyAmountUsdc when discovery throws', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => { throw new Error('network hiccup') },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), DAILY_AMOUNT, 'a discovery failure must never block signing -- falls back to dailyAmountUsdc')
-  })
-})
-
-test('resolveAgreedPriceUsdc: the first signing cycle with no agreed price on file records whatever was actually signed', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    // A real persisted agreed-price store: resolveAgreedPriceUsdc reflects
-    // whatever recordAgreedPriceUsdc most recently wrote, same as the real
-    // file-backed implementation (day-pass-consent.ts) does across calls --
-    // a stub that always returns null regardless of recording would
-    // (incorrectly) look like "never agreed" forever, calling
-    // recordAgreedPriceUsdc again on every subsequent cycle.
-    const store = new Map<string, bigint>()
-    const recorded: Array<{ sellerPeerId: string; amountUsdc: bigint }> = []
-    const discovered = DAILY_AMOUNT - 1_000n
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => discovered,
-      resolveAgreedPriceUsdc: async (sellerPeerId) => store.get(sellerPeerId) ?? null,
-      recordAgreedPriceUsdc: async (sellerPeerId, amountUsdc) => {
-        recorded.push({ sellerPeerId, amountUsdc })
-        store.set(sellerPeerId, amountUsdc)
-      },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only, but still the first resolution this seller ever sees
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.deepEqual(recorded, [{ sellerPeerId: SELLER_PEER_ID, amountUsdc: discovered }], 'recorded exactly once, at bootstrap, with the amount actually resolved')
-  })
-})
-
-test('resolveAgreedPriceUsdc: an existing agreed price replaces the configured ceiling, and a higher live price is capped, not signed', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const agreedPrice = DAILY_AMOUNT - 2_000n // buyer previously agreed to less than the shipped ceiling
-    let recordCalls = 0
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT, // seller now advertises the full (higher) ceiling
-      resolveAgreedPriceUsdc: async () => agreedPrice,
-      recordAgreedPriceUsdc: async () => { recordCalls += 1 },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), agreedPrice, 'signs the buyer\'s own agreed price, not the higher configured ceiling or live price')
-    assert.equal(recordCalls, 0, 'an existing agreement is never silently re-recorded')
-  })
-})
-
-test('resolveAgreedPriceUsdc: a live price still below the agreed price is signed as-is, not clamped up to the agreed price', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const agreedPrice = DAILY_AMOUNT
-    const discovered = DAILY_AMOUNT - 3_000n // a real, live price drop below what was agreed
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => discovered,
-      resolveAgreedPriceUsdc: async () => agreedPrice,
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.equal(BigInt(mux.sent[1]!.cumulativeAmount), discovered, 'a price drop still applies -- the agreed price is a ceiling, not a floor')
-  })
-})
-
-test('onPriceCappedChange: fires with the notice when a live price is actually being capped', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const agreedPrice = DAILY_AMOUNT - 2_000n
-    const discovered = DAILY_AMOUNT
-    const notices: Array<{ sellerPeerId: string; notice: { agreedUsdc: bigint; discoveredUsdc: bigint } | null }> = []
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => discovered,
-      resolveAgreedPriceUsdc: async () => agreedPrice,
-      onPriceCappedChange: (sellerPeerId, notice) => { notices.push({ sellerPeerId, notice }) },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.deepEqual(notices, [
-      { sellerPeerId: SELLER_PEER_ID, notice: { agreedUsdc: agreedPrice, discoveredUsdc: discovered } },
-      { sellerPeerId: SELLER_PEER_ID, notice: { agreedUsdc: agreedPrice, discoveredUsdc: discovered } },
-    ])
-  })
-})
-
-test('onPriceCappedChange: fires with null when the live price is not (or no longer) above the agreed price', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    const notices: Array<{ agreedUsdc: bigint; discoveredUsdc: bigint } | null> = []
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT - 1_000n, // at or below the agreed price
-      resolveAgreedPriceUsdc: async () => DAILY_AMOUNT,
-      onPriceCappedChange: (_sellerPeerId, notice) => { notices.push(notice) },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
-    await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
-
-    assert.deepEqual(notices, [null, null])
-  })
-})
-
-test('onPriceCappedChange: never fires on bootstrap, when there is no agreed price yet to compare against', async () => {
-  await withBuyer(DAILY_AMOUNT, async ({ buyer }) => {
-    const mux = createRecordingMux()
-    const scripted = createScriptedChannelsClient(0n)
-    const node: DailySigningNode = {
-      buyerPaymentManager: buyer,
-      channelsClient: scripted.client,
-      getOrConnectPaymentMux: async () => mux,
-    }
-    scripted.bumpTo(DAILY_AMOUNT * 10n)
-
-    let calls = 0
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
-      resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT * 5n,
-      resolveAgreedPriceUsdc: async () => null,
-      onPriceCappedChange: () => { calls += 1 },
-    })
-    await signDailyIfNeeded(SELLER_PEER_ID)
-    await signDailyIfNeeded(SELLER_PEER_ID)
-
-    assert.equal(calls, 0)
-  })
-})
+}
 
 test('resolveLastFlatFeeSignedAtMs: a recently-persisted charge blocks an unwarranted extra sign on a fresh process', async () => {
   // Simulates restoring buyer-local persisted state after a process
@@ -464,7 +230,7 @@ test('resolveLastFlatFeeSignedAtMs: a recently-persisted charge blocks an unwarr
       getOrConnectPaymentMux: async () => mux,
     }
     const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
+      resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT,
       resolveLastFlatFeeSignedAtMs: async () => Date.now() - 60 * 60 * 1000, // persisted: "signed" 1h ago
     })
 
@@ -488,7 +254,7 @@ test('recordFlatFeeSignedAtMs: persists the moment a real flat-fee signature com
     }
     const recorded: Array<{ sellerPeerId: string; atMs: number }> = []
     const signDailyIfNeeded = createSignDailyIfNeeded(node, {
-      dailyAmountUsdc: DAILY_AMOUNT,
+      resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT,
       recordFlatFeeSignedAtMs: async (sellerPeerId, atMs) => { recorded.push({ sellerPeerId, atMs }) },
     })
 
@@ -517,7 +283,7 @@ test('ordinary day: signs exactly one more day\'s increment, no top-up when ther
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -563,7 +329,7 @@ test('repeated same-day calls never ratchet authMax up, even across many retries
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 10n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -597,7 +363,7 @@ test('catch-up: a multi-day gap tops up and signs exactly one more day, never th
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(0n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Bootstrap's own top-up raises the ceiling by exactly one day's
     // increment (the fixed topUpReserve call, not the generic per-request
@@ -646,7 +412,7 @@ test('on-chain settlement: a channel closed on-chain (local store still says act
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -708,7 +474,7 @@ test('reserve deadline renewal: an expired deadline with a healthy ceiling renew
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(DAILY_AMOUNT * 20n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     await signDailyIfNeeded(SELLER_PEER_ID) // bootstrap: reserve only
     await signDailyIfNeeded(SELLER_PEER_ID) // real day-1 signature
@@ -756,7 +522,7 @@ test('topUpAndReconcile genuinely waits for on-chain confirmation before reconci
     const mux = createRecordingMux()
     const scripted = createScriptedChannelsClient(0n)
     const node: DailySigningNode = { buyerPaymentManager: buyer, channelsClient: scripted.client, getOrConnectPaymentMux: async () => mux }
-    const signDailyIfNeeded = createSignDailyIfNeeded(node, { dailyAmountUsdc: DAILY_AMOUNT })
+    const signDailyIfNeeded = createSignDailyIfNeeded(node, { resolveAgreedPriceUsdc: async () => DAILY_AMOUNT, resolveDiscoveredPriceUsdc: async () => DAILY_AMOUNT })
 
     // Bootstrap's reserve alone never calls topUpAndReconcile -- only day
     // 1's real signature (below) does, once its own ceiling is fully
@@ -775,4 +541,3 @@ test('topUpAndReconcile genuinely waits for on-chain confirmation before reconci
     assert.ok(ceiling > DAILY_AMOUNT, 'ceiling was raised only after the polled read observed the real increase')
   })
 })
-
