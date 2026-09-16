@@ -2226,14 +2226,16 @@ describe('BuyerPaymentManager', () => {
 
     it('throws if there is no active session', async () => {
       const sellerPeerId = fakePeerId('flat-no-session');
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
       await expect(manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT)).rejects.toThrow(/No active session/);
     });
 
     it('signs exactly the requested amount on day one, when it matches one day', async () => {
       const sellerPeerId = fakePeerId('flat-day-one');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
       const { payload, topUpNeeded } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
@@ -2247,27 +2249,30 @@ describe('BuyerPaymentManager', () => {
     it('marks the metadata chargeType as day-pass-on-demand, not metered', async () => {
       const sellerPeerId = fakePeerId('flat-charge-type');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
       expect(decodeChargeType(payload.metadata)).toBe('day-pass-on-demand');
     });
 
-    it('leaves services empty when no serviceId is configured for attribution', async () => {
+    it('always attributes an access purchase to its explicit service', async () => {
       const sellerPeerId = fakePeerId('flat-no-attribution');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
-      expect(decodeMetadataServices(payload.metadata)).toEqual([]);
+      expect(decodeMetadataServices(payload.metadata)[0]?.serviceId).toBe(id('access-pass'));
     });
 
     it('attributes the running cumulative to serviceId when configured for attribution', async () => {
       const sellerPeerId = fakePeerId('flat-attribution');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
       manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'acme-router-day-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'acme-router-day-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
@@ -2282,7 +2287,8 @@ describe('BuyerPaymentManager', () => {
     it('never signs more than one day is worth on the very first call, even if asked for far more', async () => {
       const sellerPeerId = fakePeerId('flat-overask-day-one');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
       // A buggy/malicious plugin asks for far more than one day's worth on day one.
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT * 7n);
@@ -2295,7 +2301,8 @@ describe('BuyerPaymentManager', () => {
       try {
         const sellerPeerId = fakePeerId('flat-day-two');
         await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-        manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+        manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
         await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
         vi.advanceTimersByTime(DAY_MS);
@@ -2318,7 +2325,8 @@ describe('BuyerPaymentManager', () => {
       try {
         const sellerPeerId = fakePeerId('flat-catchup-cap');
         await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-        manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+        manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
         await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
         vi.advanceTimersByTime(9 * DAY_MS); // a real 9-day gap
@@ -2335,7 +2343,8 @@ describe('BuyerPaymentManager', () => {
     it('never signs below the previous cumulative, even if asked to', async () => {
       const sellerPeerId = fakePeerId('flat-monotonic');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
       await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, 1n);
@@ -2359,16 +2368,15 @@ describe('BuyerPaymentManager', () => {
         const ceilingManager = new BuyerPaymentManager(identity, makeConfig(tempDir, { maxReserveAmountUsdc: smallCeiling }), store);
         ceilingManager.setSigner(identity.wallet);
         await ceilingManager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
-        ceilingManager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+        ceilingManager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+        ceilingManager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
 
         await ceilingManager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
         vi.advanceTimersByTime(10 * DAY_MS);
         // The day-based bound after any elapsed gap now allows at most one
         // more day (2 x DAILY_AMOUNT = 20_000n) -- the ceiling (15_000n) is
         // still the tighter, actually-binding constraint.
-        const { payload } = await ceilingManager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT * 11n);
-
-        expect(payload.cumulativeAmount).toBe(smallCeiling.toString());
+        await expect(ceilingManager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT * 11n)).rejects.toThrow('ACCESS_RESERVE_INSUFFICIENT');
       } finally {
         vi.useRealTimers();
       }
@@ -2382,7 +2390,8 @@ describe('BuyerPaymentManager', () => {
       // The gate is per-seller, not per-session -- it must survive this.
       const sellerPeerId = fakePeerId('flat-retire-persists-clock');
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
       await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
       manager.retireSession(sellerPeerId, CHANNEL_STATUS.SETTLED, DAILY_AMOUNT);
@@ -2390,39 +2399,168 @@ describe('BuyerPaymentManager', () => {
       // Buyer reopens a fresh channel with the same seller, no real time
       // having passed.
       await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
       const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
 
       expect(payload.cumulativeAmount).toBe('0');
     });
 
-    it('seedFlatFeeSignedAt restores the elapsed-day clock (simulated process restart)', async () => {
-      // Without seeding, a fresh process has no memory of the real last
-      // charge and would treat this as day one -- seeding must prevent that.
-      const sellerPeerId = fakePeerId('flat-seed-restart');
-      await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
-
-      manager.seedFlatFeeSignedAt(sellerPeerId, Date.now() - 60 * 60 * 1000); // "signed" 1h ago
-
-      const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
-
-      expect(payload.cumulativeAmount).toBe('0');
+    it('activation authorizes no money, and a paused agreement blocks purchases', async () => {
+      const seller = fakePeerId('access-approval');
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      expect(manager.getActiveSession(seller)).toBeNull();
+      expect(manager.getAccessPurchase(seller, 'access-pass')).toBeNull();
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.pauseAccess(seller, 'access-pass', 'terms_changed');
+      await expect(manager.signCumulativeAuth(seller, DAILY_AMOUNT)).rejects.toThrow('BILLING_APPROVAL_REQUIRED');
+      expect(manager.getActiveSession(seller)?.authMax).toBe('0');
+      expect(manager.getAccessAgreement(seller, 'access-pass')?.pauseReason).toBe('terms_changed');
     });
 
-    it('seedFlatFeeSignedAt is a no-op once a real signature exists for this process', async () => {
-      const sellerPeerId = fakePeerId('flat-seed-no-clobber');
-      await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
-      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT });
-      await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
-
-      // A stale persisted value must never roll the clock backward past a
-      // real signature already made this process.
-      manager.seedFlatFeeSignedAt(sellerPeerId, Date.now() - 10 * DAY_MS);
-
-      const { payload } = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT * 2n);
-
-      expect(payload.cumulativeAmount).toBe(DAILY_AMOUNT.toString());
+    it('same-period replay does not move expiration and an idle gap costs only one new pass', async () => {
+      vi.useFakeTimers();
+      try {
+        const seller = fakePeerId('access-clock');
+        manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+        await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+        manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+        const first = await manager.signCumulativeAuth(seller, DAILY_AMOUNT);
+        const purchase = manager.getAccessPurchase(seller, 'access-pass');
+        vi.advanceTimersByTime(23 * 60 * 60 * 1000);
+        const retry = await manager.signCumulativeAuth(seller, DAILY_AMOUNT * 2n);
+        expect(retry.payload).toEqual(first.payload);
+        expect(manager.getAccessPurchase(seller, 'access-pass')).toEqual(purchase);
+        vi.advanceTimersByTime(8 * DAY_MS);
+        expect(manager.getActiveSession(seller)?.authMax).toBe(DAILY_AMOUNT.toString());
+        const next = await manager.signCumulativeAuth(seller, DAILY_AMOUNT * 20n);
+        expect(next.payload.cumulativeAmount).toBe((DAILY_AMOUNT * 2n).toString());
+      } finally {
+        vi.useRealTimers();
+      }
     });
+
+    it('concurrent managers cannot commit two pass charges and the losing transaction leaves no authorization', async () => {
+      const seller = fakePeerId('access-concurrent');
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      const channelId = await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.handleAuthAck(seller, { channelId });
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      const secondStore = new ChannelStore(tempDir);
+      try {
+        const other = new BuyerPaymentManager(identity, makeConfig(tempDir), secondStore);
+        other.setSigner(identity.wallet);
+        other.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+        const results = await Promise.allSettled([
+          manager.signCumulativeAuth(seller, DAILY_AMOUNT), other.signCumulativeAuth(seller, DAILY_AMOUNT),
+        ]);
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+        expect(store.getChannel(channelId)?.authMax).toBe(DAILY_AMOUNT.toString());
+        expect(manager.getAccessPurchase(seller, 'access-pass')?.cumulativeAmount).toBe(DAILY_AMOUNT.toString());
+      } finally {
+        secondStore.close();
+      }
+    });
+
+    it('aborting while the wallet signs commits neither payment nor pass state', async () => {
+      const seller = fakePeerId('access-abort');
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      const controller = new AbortController();
+      const signing = manager.signCumulativeAuth(seller, DAILY_AMOUNT, controller.signal);
+      controller.abort();
+      await expect(signing).rejects.toThrow();
+      expect(manager.getAccessPurchase(seller, 'access-pass')).toBeNull();
+      expect(manager.getActiveSession(seller)?.authMax).toBe('0');
+    });
+
+    it('pass approvals are scoped to buyer, seller, service and settlement domain', async () => {
+      const seller = fakePeerId('access-scopes');
+      manager.acceptAccessTerms(seller, 'service-one', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      expect(manager.getAccessAgreement(seller, 'service-two')).toBeNull();
+      expect(manager.getAccessAgreement(fakePeerId('other-seller'), 'service-one')).toBeNull();
+      const otherDomain = new BuyerPaymentManager(identity, makeConfig(tempDir, { chainId: 999 }), store);
+      expect(otherDomain.getAccessAgreement(seller, 'service-one')).toBeNull();
+      const otherBuyer = new BuyerPaymentManager(createTestIdentity(), makeConfig(tempDir), store);
+      expect(otherBuyer.getAccessAgreement(seller, 'service-one')).toBeNull();
+    });
+
+    it('rolls back authorization if permission is revoked while signing', async () => {
+      const seller = fakePeerId('access-revocation');
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      const pending = manager.signCumulativeAuth(seller, DAILY_AMOUNT);
+      manager.pauseAccess(seller, 'access-pass');
+      await expect(pending).rejects.toThrow('BILLING_APPROVAL_REQUIRED');
+      expect(manager.getAccessPurchase(seller, 'access-pass')).toBeNull();
+      expect(manager.getActiveSession(seller)?.authMax).toBe('0');
+    });
+
+    it('refuses to replace existing metered usage with an access fee', async () => {
+      const seller = fakePeerId('access-mixed-usage');
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.recordAndPersistTokens(seller, 100, 20);
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      await expect(manager.signCumulativeAuth(seller, DAILY_AMOUNT)).rejects.toThrow('separate seller channels');
+      expect(manager.getAccessPurchase(seller, 'access-pass')).toBeNull();
+      expect(manager.getActiveSession(seller)?.tokensDelivered).toBe('100');
+    });
+
+    it('rolls back both the signature and service totals when purchase persistence fails', async () => {
+      const seller = fakePeerId('access-write-failure');
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      const original = store.commitAuthorization.bind(store);
+      const failingWrite = vi.spyOn(store, 'commitAuthorization').mockImplementation((...args) => {
+        original(...args);
+        throw new Error('simulated persistence failure');
+      });
+      try {
+        await expect(manager.signCumulativeAuth(seller, DAILY_AMOUNT)).rejects.toThrow('simulated persistence failure');
+        const session = manager.getActiveSession(seller)!;
+        expect(session.authMax).toBe('0');
+        expect(store.getServiceTotals(session.sessionId)).toEqual([]);
+        expect(manager.getAccessPurchase(seller, 'access-pass')).toBeNull();
+      } finally {
+        failingWrite.mockRestore();
+      }
+    });
+
+    it('cannot add metered usage to a purchased access channel after restart', async () => {
+      const seller = fakePeerId('access-no-metering');
+      await manager.authorizeSpending(seller, mux, 0n, DAILY_AMOUNT * 5n);
+      manager.acceptAccessTerms(seller, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      manager.configureFlatFeeSigning(seller, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      await manager.signCumulativeAuth(seller, DAILY_AMOUNT);
+      const restarted = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
+      restarted.setSigner(identity.wallet);
+      await expect(restarted.signPerRequestAuth(seller, {
+        inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 100n,
+      })).rejects.toThrow('separate seller channels');
+      expect(restarted.getActiveSession(seller)?.authMax).toBe(DAILY_AMOUNT.toString());
+    });
+
+    it('restores the access purchase after a manager restart without config-file seeding', async () => {
+      const sellerPeerId = fakePeerId('flat-restart');
+      await manager.authorizeSpending(sellerPeerId, mux, 80_000n, TEST_PRICING);
+      manager.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      manager.acceptAccessTerms(sellerPeerId, 'access-pass', { amountMicroUsdc: DAILY_AMOUNT.toString(), durationSeconds: 86_400 });
+      const first = await manager.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT);
+      store.close();
+      store = new ChannelStore(tempDir);
+      const restarted = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
+      restarted.setSigner(identity.wallet);
+      restarted.configureFlatFeeSigning(sellerPeerId, { dailyAmountUsdc: DAILY_AMOUNT, serviceId: 'access-pass' });
+      const replay = await restarted.signCumulativeAuth(sellerPeerId, DAILY_AMOUNT * 2n);
+      expect(replay.payload.cumulativeAmount).toBe(first.payload.cumulativeAmount);
+      expect(replay.payload.spendingAuthSig).toBe(first.payload.spendingAuthSig);
+    });
+
   });
 });

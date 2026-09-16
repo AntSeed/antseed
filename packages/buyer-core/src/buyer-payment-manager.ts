@@ -1,4 +1,5 @@
-import { hexlify, randomBytes } from 'ethers';
+import { validateAccessTerms, sameAccessTerms, type AccessTerms, type AccessAgreement, type AccessPurchase, type AccessAuthorization } from './access-billing.js';
+import { AbiCoder, hexlify, randomBytes, keccak256 } from 'ethers';
 import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
@@ -110,15 +111,8 @@ export interface PerRequestAuthResult {
 export interface FlatFeeSigningConfig {
   /** e.g. $0.89/day as 890000n (6-decimal USDC). */
   dailyAmountUsdc: bigint;
-  /**
-   * Attributes the day's charge to this serviceId in metadata.services[]
-   * (SpendingAuthMetadata v4). Optional -- omitted means no attribution. The
-   * caller (not this generic manager) knows which concrete router/service
-   * this flat fee belongs to;
-   * e.g. a router plugin's own day pass passes its own serviceId, matching
-   * whatever the routing peer itself advertises.
-   */
-  serviceId?: string;
+  durationSeconds?: number;
+  serviceId: string;
 }
 
 export interface BuyerRequestBillingEntry {
@@ -205,7 +199,21 @@ export class BuyerPaymentManager {
     };
   }
 
+  private _isAccessChannel(session: StoredChannel | null): boolean {
+    if (!session?.latestMetadata) return false;
+    try {
+      return AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'string'], session.latestMetadata)[5] === CHARGE_TYPE_DAY_PASS_ON_DEMAND;
+    } catch {
+      return false;
+    }
+  }
+
   private _assertRoutingRequest(sellerPeerId: string, requestId?: string, service?: string): void {
+    const session = this.getActiveSession(sellerPeerId);
+    if (this._flatFeeConfig.has(sellerPeerId)
+      || this._isAccessChannel(session)) {
+      throw buyerFault('Access and metered usage require separate seller channels', 'buyer-session-state');
+    }
     if (!this._routingPeers.has(sellerPeerId)) return;
     const grant = this._routingGrants.get(sellerPeerId);
     if (!grant || grant.signal.aborted || grant.requestId !== requestId || grant.service !== service) {
@@ -258,8 +266,6 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> flat daily-fee signing bound (model-routing day pass). Host-set only. */
   private readonly _flatFeeConfig = new Map<string, FlatFeeSigningConfig>();
 
-  /** sellerPeerId -> wall-clock time of the last signCumulativeAuth call, for independently bounding the next one. */
-  private readonly _lastFlatFeeSignedAt = new Map<string, number>();
 
   /** requestId -> service/model the buyer requested (from its own request body).
    *  Used in handleNeedAuth to validate cost with the correct pricing tier
@@ -469,16 +475,7 @@ export class BuyerPaymentManager {
     this._rejectedPeers.delete(sellerPeerId);
     this._responseTokenTotals.delete(sellerPeerId);
     this._clearRequestBillingForSeller(sellerPeerId);
-    // _lastFlatFeeSignedAt is deliberately NOT cleared here (unlike every
-    // other map above): it gates "at most one flat-fee day per real 24h, per
-    // SELLER," not per session. Clearing it on every retirement would let a
-    // seller force an immediate extra day's charge just by closing the
-    // channel (cooperatively, or via a genuine exhaustion/top-up failure)
-    // and having the buyer reopen a fresh one -- the fresh session has no
-    // memory of the seller ever having been paid. Keyed by sellerPeerId,
-    // surviving retirement, closes that: a brand-new channel's
-    // first signCumulativeAuth call still sees the real last-paid time for
-    // this seller and grants nothing until 24h have genuinely passed.
+
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
@@ -874,6 +871,7 @@ export class BuyerPaymentManager {
   private async _commitAuthorization(
     channel: StoredChannel,
     metadata: SpendingAuthMetadata,
+    access?: AccessAuthorization,
   ): Promise<void> {
     this._assertRoutingAmount(channel.peerId, BigInt(channel.authMax));
     const grant = this._routingGrants.get(channel.peerId);
@@ -890,6 +888,12 @@ export class BuyerPaymentManager {
       latestMetadata: channel.latestMetadata ?? encodeMetadata(sanitized),
     };
     try {
+      if (access) {
+        if (!this._channelStore.commitAccessAuthorization) throw new Error('Durable access billing is not supported by this store');
+        await this._channelStore.commitAccessAuthorization(snapshot, services, access);
+        await this._channelStore.flush?.();
+        return;
+      }
       if (this._channelStore.commitAuthorization) {
         await this._channelStore.commitAuthorization(snapshot, services);
         return;
@@ -1562,30 +1566,33 @@ export class BuyerPaymentManager {
    * bounds signCumulativeAuth's trust in that plugin's requests.
    */
   configureFlatFeeSigning(sellerPeerId: string, config: FlatFeeSigningConfig): void {
+    if (!config.serviceId) throw new Error('Access signing requires an explicit service');
+    validateAccessTerms({ amountMicroUsdc: config.dailyAmountUsdc.toString(), durationSeconds: config.durationSeconds ?? 86_400 });
     this._flatFeeConfig.set(sellerPeerId, config);
   }
 
-  /**
-   * Restores this process's flat-fee elapsed-day clock for a seller from
-   * buyer-local persisted state kept OUTSIDE this manager's own channel
-   * store (this manager's own `_hydrateChannel` only restores per-channel
-   * state -- cumulative amount, metadata -- never this timestamp, since a
-   * fresh process otherwise has no memory of it at all: `_lastFlatFeeSignedAt`
-   * is a plain in-memory Map with nothing writing it back to disk). Without
-   * this, restarting the buyer process (a crash, an update, nothing
-   * adversarial) resets the clock to "never signed" and grants an
-   * unwarranted extra day's charge on the very next call, exactly like the
-   * session-retirement gap this same field's other fix addresses.
-   *
-   * Idempotent and forward-only by construction: only applies when nothing
-   * has been recorded for this seller yet THIS process. A real
-   * `signCumulativeAuth` call earlier in this same run is always more
-   * authoritative than a persisted value read afterward, so this never
-   * overwrites it.
-   */
-  seedFlatFeeSignedAt(sellerPeerId: string, atMs: number): void {
-    if (this._lastFlatFeeSignedAt.has(sellerPeerId)) return;
-    this._lastFlatFeeSignedAt.set(sellerPeerId, atMs);
+  private _accessScope(sellerPeerId: string, serviceId: string): string {
+    return JSON.stringify([this._config.chainId, this._config.channelsContractAddress.toLowerCase(),
+      this._identity.wallet.address.toLowerCase(), sellerPeerId.toLowerCase(), serviceId]);
+  }
+
+  getAccessAgreement(sellerPeerId: string, serviceId: string): AccessAgreement | null {
+    return this._channelStore.getAccessAgreement?.(this._accessScope(sellerPeerId, serviceId)) ?? null;
+  }
+
+  acceptAccessTerms(sellerPeerId: string, serviceId: string, terms: AccessTerms): void {
+    validateAccessTerms(terms);
+    if (!serviceId || !this._channelStore.setAccessAgreement) throw new Error('Durable access billing is unavailable');
+    this._channelStore.setAccessAgreement(this._accessScope(sellerPeerId, serviceId), { ...terms, enabled: true, pauseReason: null });
+  }
+
+  pauseAccess(sellerPeerId: string, serviceId: string, reason = 'disabled'): void {
+    const agreement = this.getAccessAgreement(sellerPeerId, serviceId);
+    if (agreement) this._channelStore.setAccessAgreement?.(this._accessScope(sellerPeerId, serviceId), { ...agreement, enabled: false, pauseReason: reason });
+  }
+
+  getAccessPurchase(sellerPeerId: string, serviceId: string): AccessPurchase | null {
+    return this._channelStore.getAccessPurchase?.(this._accessScope(sellerPeerId, serviceId)) ?? null;
   }
 
   /**
@@ -1608,6 +1615,7 @@ export class BuyerPaymentManager {
   async signCumulativeAuth(
     sellerPeerId: string,
     requestedCumulativeAmount: bigint,
+    signal?: AbortSignal,
   ): Promise<PerRequestAuthResult> {
     if (this._routingPeers.has(sellerPeerId)) throw buyerFault('Day-pass signing is not authorized for a metered routing seller', 'buyer-session-state');
     const session = this.getActiveSession(sellerPeerId);
@@ -1625,57 +1633,43 @@ export class BuyerPaymentManager {
       );
     }
 
-    const prevAmount = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
-    const lastSignedAt = this._lastFlatFeeSignedAt.get(sellerPeerId);
-    // Math.floor, not Math.ceil clamped to a minimum of 1: a call minutes (or
-    // even hours) after the last one must grant ZERO additional days, not a
-    // fresh one. Because prevAmount is fed forward from the previous call's
-    // own newAmount (line below, this._cumulativeAmount.set), any rounding
-    // up would compound on repeated same-day calls (e.g. every retried
-    // request while something else, like an unconfirmed reserve top-up,
-    // keeps this function getting re-invoked) -- each call would grant
-    // another full dailyAmountUsdc on top of the last, ratcheting toward a
-    // "cumulative owed" figure with zero real usage behind it. Only
-    // `lastSignedAt == null` (the very first signature ever) still grants a
-    // day immediately; every later call must wait for a real day to pass.
-    const daysElapsed = lastSignedAt == null
-      ? 1 // first-ever flat-fee signature for this seller — exactly one day's worth
-      : Math.floor((Date.now() - lastSignedAt) / (24 * 60 * 60 * 1000));
-    // Hard invariant, independent of how large daysElapsed computes to: a
-    // single call never grants more than one day's charge. A stale
-    // `lastSignedAt` from a prior channel/session, a long real gap, or a
-    // future bug in the arithmetic above all degrade to "at most one day
-    // this call" instead of "however many days daysElapsed says." Uncollected
-    // backlog beyond one day is written off, not chased in a lump sum --
-    // never overcharging matters
-    // more here than never undercharging; the next tick catches up one more
-    // day, and the one after that, however many are actually owed.
-    const maxAllowedIncrement = daysElapsed > 0 ? config.dailyAmountUsdc : 0n;
+    const serviceId = config.serviceId;
+    const durationSeconds = config.durationSeconds ?? 86_400;
+    const agreement = this.getAccessAgreement(sellerPeerId, serviceId);
+    const terms = { amountMicroUsdc: config.dailyAmountUsdc.toString(), durationSeconds };
+    if (!agreement?.enabled || !sameAccessTerms(agreement, terms)) throw new Error('BILLING_APPROVAL_REQUIRED');
+    if (!this._channelStore.getAccessPurchase || !this._channelStore.commitAccessAuthorization) throw new Error('Durable access billing is unavailable');
+    const purchase = this.getAccessPurchase(sellerPeerId, serviceId);
+    const now = Date.now();
+    const active = purchase !== null && now < purchase.authorizedAtMs + purchase.durationSeconds * 1000;
+    const prevAmount = BigInt(session.authMax);
+    const increment = !active && requestedCumulativeAmount > prevAmount ? config.dailyAmountUsdc : 0n;
+    const newAmount = prevAmount + increment;
+    if (increment > 0n && requestedCumulativeAmount < newAmount) throw new Error('ACCESS_PRICE_MISMATCH');
+    if (increment > 0n && newAmount > this._getCeiling(sellerPeerId)) throw new Error('ACCESS_RESERVE_INSUFFICIENT');
+    signal?.throwIfAborted();
+    const previousMetadata = this._channelStore.getChannelMetadata(session);
+    if (previousMetadata.cumulativeInputTokens > 0n || previousMetadata.cumulativeOutputTokens > 0n
+      || previousMetadata.cumulativeRequestCount > 0n
+      || (prevAmount > 0n && !this._isAccessChannel(session))) {
+      throw buyerFault('Access and metered usage require separate seller channels', 'buyer-session-state');
+    }
+    if (increment === 0n && session.latestSpendingAuthSig && session.latestMetadata) {
+      return { payload: { channelId: session.sessionId, cumulativeAmount: session.authMax,
+        metadata: session.latestMetadata, metadataHash: keccak256(session.latestMetadata),
+        spendingAuthSig: session.latestSpendingAuthSig }, topUpNeeded: false };
+    }
 
-    const ceiling = this._getCeiling(sellerPeerId);
-    let maxSignable = prevAmount + maxAllowedIncrement;
-    if (maxSignable > ceiling) maxSignable = ceiling;
-
-    let newAmount = requestedCumulativeAmount;
-    if (newAmount > maxSignable) newAmount = maxSignable;
-    if (newAmount < prevAmount) newAmount = prevAmount; // monotonic, same invariant as signPerRequestAuth
-
-    // No real per-request usage for a flat fee — zeroed token/request
-    // counters, same encode/hash path signPerRequestAuth uses.
-    // chargeType marks this explicitly as a flat charge rather than
-    // metered usage that happens to be zero (SpendingAuthMetadata v4 --
-    // see its own doc comment). config.serviceId attributes the running
-    // cumulative to whichever concrete router/service this flat fee is
-    // for; withServiceMetadata leaves services empty when it's unset.
     const flatMeta: SpendingAuthMetadata = withServiceMetadata<SpendingAuthMetadata>(
       {
+        ...previousMetadata,
         cumulativeInputTokens: 0n,
         cumulativeOutputTokens: 0n,
         cumulativeRequestCount: 0n,
         chargeType: CHARGE_TYPE_DAY_PASS_ON_DEMAND,
       },
       config.serviceId,
-      { amount: newAmount, inputTokens: 0n, cachedInputTokens: 0n, outputTokens: 0n, requests: 0n, outputImages: 0n },
+      { amount: increment, inputTokens: 0n, cachedInputTokens: 0n, outputTokens: 0n, requests: 0n, outputImages: 0n },
     );
     const metadataHashHex = computeMetadataHash(flatMeta);
     const encodedMetadata = encodeMetadata(flatMeta);
@@ -1688,18 +1682,22 @@ export class BuyerPaymentManager {
     };
     const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
 
-    await this._commitAuthorization({
+    signal?.throwIfAborted();
+    if (increment > 0n) await this._commitAuthorization({
       ...session,
       authMax: newAmount.toString(),
       latestBuyerSig: spendingAuthSig,
       latestSpendingAuthSig: spendingAuthSig,
       latestMetadata: encodedMetadata,
-      updatedAt: Date.now(),
-    }, flatMeta);
+      updatedAt: now,
+    }, flatMeta, {
+      scope: this._accessScope(sellerPeerId, serviceId),
+      previousAuthorizedAtMs: purchase?.authorizedAtMs ?? null,
+      purchase: { ...terms, authorizedAtMs: now, channelId: session.sessionId, cumulativeAmount: newAmount.toString() },
+    });
 
     this._cumulativeAmount.set(sellerPeerId, newAmount);
     this._metadata.set(sellerPeerId, flatMeta);
-    this._lastFlatFeeSignedAt.set(sellerPeerId, Date.now());
 
     const payload: SpendingAuthPayload = {
       channelId: session.sessionId,
