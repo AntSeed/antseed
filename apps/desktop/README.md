@@ -15,6 +15,15 @@ so end users do not need to use terminal commands directly.
 
 ## Prerequisites
 
+Use Node 24 for repository development. From the repository root, run
+`nvm install && nvm use`, then `pnpm install`. Volta users can use
+`volta run --node 24.21.0 pnpm install`; the project also declares a Volta pin.
+CI reads the same `.nvmrc`; the Nix shell uses Node 24 with its patch version
+determined by `flake.lock`.
+
+Packaged apps still use Electron's embedded Node. This development pin does
+not upgrade Electron or change the published SDK's engine range.
+
 1. Install the `antseed` CLI binary so it is available on your `PATH`.
 
 ```bash
@@ -49,6 +58,7 @@ Run multiple development worktrees at once while sharing the normal AntSeed
 buyer, configuration, plugins, and identity:
 
 ```bash
+# Run from the repository/worktree root after selecting Node 24
 pnpm dev:desktop:instance status
 pnpm dev:desktop:instance codex
 pnpm dev:desktop:instance ui
