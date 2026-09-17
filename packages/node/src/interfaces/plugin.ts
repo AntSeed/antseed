@@ -8,6 +8,9 @@ export interface ConfigField {
   required?: boolean
   default?: unknown
   description?: string
+  options?: string[]
+  min?: number
+  max?: number
 }
 
 /** @deprecated Use ConfigField instead */

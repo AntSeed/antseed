@@ -1,7 +1,23 @@
-import { describe, expect, it } from 'vitest';
-import { readRouterSettings, validateRouterSettings } from '../src/routing/router-settings.js';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { ConfigField } from '../src/interfaces/plugin.js';
+import { readRouterSettings, validateRouterSettings, type RouterSettingField } from '../src/routing/router-settings.js';
 
 describe('plugin-owned router settings', () => {
+  it('shares config field metadata while keeping routing settings scalar and string-backed', () => {
+    expectTypeOf<RouterSettingField>().toMatchTypeOf<ConfigField>();
+    expectTypeOf<RouterSettingField['type']>().toEqualTypeOf<'string' | 'number' | 'boolean'>();
+    expectTypeOf<RouterSettingField['default']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Extract<keyof RouterSettingField, 'required'>>().toEqualTypeOf<never>();
+    expectTypeOf<Pick<RouterSettingField, 'key' | 'label' | 'description' | 'options' | 'min' | 'max'>>()
+      .toEqualTypeOf<Pick<ConfigField, 'key' | 'label' | 'description' | 'options' | 'min' | 'max'>>();
+    const field: RouterSettingField = {
+      key: 'budget', label: 'Budget', type: 'number', description: 'Routing budget',
+      min: 0, max: 10, options: ['0', '5', '10'], default: '5',
+    };
+    expect(validateRouterSettings([field], { budget: '5' })).toEqual({ budget: '5' });
+    expect(() => validateRouterSettings([field], { budget: '6' })).toThrow();
+  });
+
   it('preserves independent plugin and instance namespaces', () => {
     const input = { 'plugin:classifier': { policy: 'fast' }, 'instance:premium': { policy: 'quality' } };
     expect(readRouterSettings(input)).toEqual(input);

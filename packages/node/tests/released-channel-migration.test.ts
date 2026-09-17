@@ -4,7 +4,7 @@ import { runMigrations } from '../src/storage/migrate.js';
 import { channelMigrations } from '../src/storage/migrations/channels/index.js';
 
 describe('published channel schema upgrade', () => {
-  it('preserves v5 payment records and signatures while applying the additive v6 migration', () => {
+  it('keeps the released v5 schema, payment records, and signatures unchanged', () => {
     const db = new Database(':memory:');
     try {
       runMigrations(db, channelMigrations.filter((migration) => migration.version <= 5));
@@ -28,22 +28,12 @@ describe('published channel schema upgrade', () => {
       const applied = db.prepare('SELECT * FROM schema_version ORDER BY version').all();
 
       runMigrations(db, channelMigrations);
-      expect(db.prepare('SELECT * FROM payment_channels').get()).toEqual({
-        ...channel as Record<string, unknown>,
-        reserve_salt: null, initial_reserve_amount: null, reserve_max_amount: null,
-        latest_reserve_auth_sig: null, latest_reserve_deadline: null,
-        reserve_auth_pending: null, confirmed_reserve_amount: null,
-      });
+      expect(db.prepare('SELECT * FROM payment_channels').get()).toEqual(channel);
       expect(db.prepare('SELECT * FROM payment_receipts').all()).toEqual(receipts);
       expect(db.prepare('SELECT * FROM payment_channel_service_totals').all()).toEqual(totals);
-      expect(db.prepare('SELECT * FROM schema_version WHERE version <= 5 ORDER BY version').all()).toEqual(applied);
-      db.prepare("UPDATE payment_channels SET reserve_salt = 'salt', latest_reserve_auth_sig = 'reserve-signature'").run();
-      runMigrations(db, channelMigrations);
-      expect(db.prepare('SELECT reserve_salt, latest_reserve_auth_sig FROM payment_channels').get()).toEqual({
-        reserve_salt: 'salt', latest_reserve_auth_sig: 'reserve-signature',
-      });
+      expect(db.prepare('SELECT * FROM schema_version ORDER BY version').all()).toEqual(applied);
       expect(db.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual(
-        [1, 2, 3, 4, 5, 6].map((version) => ({ version })),
+        [1, 2, 3, 4, 5].map((version) => ({ version })),
       );
     } finally {
       db.close();

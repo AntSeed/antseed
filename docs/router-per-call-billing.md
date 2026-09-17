@@ -161,7 +161,6 @@ distinction between spending authorization and reserved collateral remain.
 ```sh
 pnpm --filter @antseed/e2e run flow:local-chain-routing
 pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --model-only
 pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-route
 ```
 

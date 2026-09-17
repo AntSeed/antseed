@@ -1,12 +1,8 @@
-export type RouterSettingField = {
-  key: string;
-  label: string;
-  type: 'string' | 'number' | 'boolean';
-  description?: string;
+import type { ConfigField } from '../interfaces/plugin.js';
+
+export type RouterSettingField = Omit<ConfigField, 'type' | 'default' | 'required'> & {
+  type: Extract<ConfigField['type'], 'string' | 'number' | 'boolean'>;
   default?: string;
-  options?: string[];
-  min?: number;
-  max?: number;
 };
 
 export function readRouterSettings(value: unknown): Record<string, Record<string, string>> {

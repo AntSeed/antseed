@@ -1,12 +1,9 @@
 # Network model routing and classifier billing
 
-## Scope and history
+## Scope
 
 This change combines generic router integration and classifier billing in one
-network-only PR. It builds on the original Levanto commits with additive cleanup
-commits rather than squashing or rewriting their history. The complete previous
-implementation remains on `codex/levanto-p1-local`; the narrowed branch is
-`codex/router-network-integration`.
+network-only PR.
 
 Included:
 
@@ -19,10 +16,10 @@ Included:
 - Host-mediated classifier requests with token or fixed-per-call prices,
   separate authorization budgets and accounting, and validation before
   per-call payment.
-- Discovery, payment recovery, migration, contract, and local-chain tests.
+- Discovery, existing payment-flow, schema-compatibility, and local-chain tests.
 
 Not included: desktop/VPR changes, plugin bundling or catalog endorsement,
-Levanto-specific endpoints or authentication, access/day passes, daily spending
+Vendor-specific endpoints or authentication, access/day passes, daily spending
 controls, savings dashboards, reference prices, forecast history, universal
 cost/quality controls, and durable exactly-once classification across restarts.
 
@@ -36,7 +33,7 @@ Token counting and ordinary seller settlement behavior are unchanged.
 For a runnable, vendor-neutral implementation, see
 `plugins/router-classifier/README.md`. It sends each eligible model/seller
 offer and its individual token prices to a configured classifier, validates
-model-only or exact-seller recommendations, and honors their ordering. The local-chain routing
+one selected model, and leaves seller selection to the host. The local-chain routing
 fixture uses this real plugin with deterministic classifier responses; no
 vendor account is needed. The plugin is private and is not bundled or published.
 
@@ -178,6 +175,13 @@ Use `instance:<name>` for named plugin instances. Direct `--router` keys use the
 exact configured router argument. The host only passes that key's settings to
 the plugin, validates them against its schema, and keeps buyer policy separate.
 
+`configSchema` describes startup configuration; `routingSettingsSchema` describes
+per-selection preferences. Both share the `ConfigField` metadata definition.
+`RouterSettingField` narrows it to string, number, and boolean fields with
+string-backed defaults, without startup-only required fields or secrets. Routing
+validation enforces declared choices and numeric bounds; it does not fill in
+defaults. Plugins remain responsible for their own missing-setting defaults.
+
 For token billing, set `billing.kind` to `token` and provide all three rate caps:
 `maxInputUsdPerMillion`, `maxOutputUsdPerMillion`, and
 `maxCachedInputUsdPerMillion`. `maxAdditionalAuthorizationUsdc` bounds additional
@@ -239,9 +243,9 @@ that cost in `spentUsdc` and its `routingSpentUsdc` subtotal; classifier usage d
 not inflate inference token totals or inference request counts. Both kinds of spend
 queue a normal conversation-store write, including when classification succeeds
 but inference fails. Old records default the routing subtotal to zero; old costs
-are not reconstructed. Migration 006 persists reserve-recovery
-fields; migrations 001–005 are unchanged. No access-purchase or routing-history
-schema is shipped. Metadata preserves existing image-unit encoding and rejects
+are not reconstructed. The existing channel migrations 001–005 are unchanged;
+no new channel migration or SQLite reserve-recovery persistence is included.
+No access-purchase or routing-history schema is shipped. Metadata preserves existing image-unit encoding and rejects
 downgrades that would omit unit fees.
 
 Duplicate `invokeService` calls reuse one in-process operation for a parent
@@ -310,8 +314,7 @@ Validated after merging `origin/main` at `f2ee484a9`, using Node 24.21.0:
 | Local-chain fixed-fee classifier, malformed-response rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
 | Local-chain fixed-fee classifier, unadvertised-route rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
 
-The branch retains all commits from `codex/levanto-p1-local`. The final diff
-against the integrated main contains no desktop, Payments UI, or vendor-plugin
+The final diff against the integrated main contains no desktop, Payments UI, or vendor-plugin
 files. No package publication, push, PR creation, or production deployment is
 part of this local validation.
 
@@ -334,7 +337,11 @@ classifier or production funds. The restored host calls the plugin on every
 auto-routed request; the fixture plugin honors the host's reuse hints. This
 does not prove arbitrary plugins deduplicate paid calls or persist turn state.
 
-### Storage parity and simpler reuse validation — September 17, 2026
+### Earlier storage parity and reuse validation — September 17, 2026
+
+This historical run predates the removal of the reserve-recovery migration and
+the simplification of the example to one model-only recommendation. Its test
+counts and exact-seller fixture results do not describe the simplified example.
 
 The latest-user-text heuristic now replaces the structural-history behavior
 described in the earlier validation record. Verified with Node 24.21.0:
@@ -355,3 +362,17 @@ described in the earlier validation record. Verified with Node 24.21.0:
 
 CLI tests ran with the conflicting inherited `FORCE_COLOR` and `NO_COLOR`
 environment variables unset, so Node warnings did not pollute child-process stderr.
+
+### Simplified example and unchanged channel schema — September 17, 2026
+
+- Removed the new reserve-recovery migration and its SQLite read/write changes;
+  channel migrations remain at versions 001–005. Existing development databases
+  with additional columns remain readable without deleting their data.
+- The reference plugin now accepts only one `{ "serviceId": "..." }` selection;
+  the host chooses the seller. The shared API still supports richer plugins.
+- Node, CLI, and example-plugin builds passed; the example typecheck passed.
+- Storage, migration, settings, and buyer-payment regressions: 173 tests passed.
+  Example-plugin tests: 22 passed.
+- All three model-only local-chain scenarios passed: token billing settled
+  560 micro-USDC; each fixed-fee scenario settled 25,000 micro-USDC, rejecting
+  malformed or ineligible classifications without additional fixed fees.

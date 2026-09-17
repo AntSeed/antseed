@@ -14,7 +14,6 @@ import classifierPlugin from '../../plugins/router-classifier/dist/index.js';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const perCall = process.argv.includes('--per-call');
 const invalidRoute = process.argv.includes('--invalid-route');
-const modelOnly = process.argv.includes('--model-only');
 const routingFee = perCall ? 5000n : 140n;
 const deployerKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const temporary = await mkdtemp(join(tmpdir(), 'antseed-routing-chain-'));
@@ -141,8 +140,7 @@ try {
   const buyer = new AntseedNode({ role: 'buyer', dataDir: buyerDir, dhtPort: 0, bootstrapNodes: [], noOfficialBootstrap: true,
     allowPrivateIPs: true, payments: commonPayments });
   nodes.push(buyer);
-  fixtureProviders[0].content = JSON.stringify({ routes: [{ serviceId: 'fixture-model',
-    ...(modelOnly ? {} : { peerId: peers[1].peerId }) }] });
+  fixtureProviders[0].content = JSON.stringify({ serviceId: 'fixture-model' });
   fixtureProviders[0].validateRequest = ({ messages }) => {
     const payload = JSON.parse(messages[1].content);
     assert.deepEqual(payload.candidates, [{ peerId: peers[1].peerId, serviceId: 'fixture-model',
@@ -218,8 +216,7 @@ try {
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' });
     assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 6]);
-    const invalidContent = JSON.stringify({ routes: [{ serviceId: 'unadvertised-model',
-      ...(modelOnly ? {} : { peerId: peers[1].peerId }) }] });
+    const invalidContent = JSON.stringify({ serviceId: 'unadvertised-model' });
     fixtureProviders[0].invalidClassification = invalidRoute
       ? JSON.stringify({ choices: [{ message: { content: invalidContent } }] }) : 'not-json';
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
@@ -238,7 +235,7 @@ try {
     settlementChannel.latestMetadata, settlementChannel.latestSpendingAuthSig);
   const settled = await channels.getSession(routingChannel.sessionId);
   assert.equal(settled.settled, routingFee * BigInt(billableRoutingCalls));
-  console.log(JSON.stringify({ selectionKind: modelOnly ? 'model-only' : 'exact-seller',
+  console.log(JSON.stringify({ selectionKind: 'model-only',
     billingKind: perCall ? 'per_call' : 'token', billableRoutingCalls,
     routingTokens: perCall ? null : { input: 100, output: 20 }, routingSettledMicroUsdc: settled.settled.toString(),
     routingRequestId: routeEvent.requestId, inferenceRequestId: routeEvent.parentRequestId,

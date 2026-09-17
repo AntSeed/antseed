@@ -9,11 +9,10 @@ const candidates: NonNullable<RouteSelectionContext['candidates']> = [
 ];
 
 function recommendation(index: number) {
-  const { peerId, serviceId } = candidates[index]!;
-  return { peerId, serviceId };
+  return { serviceId: candidates[index]!.serviceId };
 }
 
-function response(content: unknown = { routes: [recommendation(0)] }): SerializedHttpResponse {
+function response(content: unknown = recommendation(0)): SerializedHttpResponse {
   return {
     requestId: 'classifier-response', statusCode: 200, headers: { 'content-type': 'application/json' },
     body: new TextEncoder().encode(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] })),
@@ -57,37 +56,12 @@ describe('generic classifier reference router', () => {
     expect(JSON.stringify(messages)).not.toContain('client-secret');
   });
 
-  it('honors an exact higher-priced seller selection and same-model fallback order', async () => {
-    const routes = [recommendation(1), recommendation(0)];
-    const invokeService = vi.fn(async (_messages, parseResponse) => {
-      const result = response({ routes });
-      expect(parseResponse!(result)).toEqual(routes);
-      return result;
-    });
-    expect(await select(context({ invokeService }))).toEqual(routes);
-    expect(invokeService).toHaveBeenCalledOnce();
-  });
-
-  it('returns model-only intent unchanged for host-owned seller selection', async () => {
-    const routes = [{ serviceId: 'small-model' }];
-    expect(await select(context({ invokeService: async () => response({ routes }) }))).toEqual(routes);
-  });
-
-  it('accepts an exact offer with explicit automatic fallback even with just one eligible seller', () => {
-    const routes = [recommendation(0), { serviceId: 'small-model' }];
-    expect(parseClassificationResponse(response({ routes }), [candidates[0]!])).toEqual(routes);
-  });
-
-  it('reuses model-only intent and fallbacks without converting them to seller pins', async () => {
-    const routes = [recommendation(1), { serviceId: 'small-model' }];
-    const selectionContext = context({ routing: { trigger: 'continuation', shouldRoute: false,
-      previousRoute: routes[0]!, previousRoutes: routes } });
-    expect(await select(selectionContext)).toEqual(routes);
-    expect(selectionContext.invokeService).not.toHaveBeenCalled();
+  it('leaves seller selection to the host even when several sellers offer the model', async () => {
+    expect(await select(context())).toEqual([{ serviceId: 'small-model' }]);
   });
 
   it('can choose a different model without a built-in model catalog', async () => {
-    expect(await select(context({ invokeService: async () => response({ routes: [recommendation(2)] }) })))
+    expect(await select(context({ invokeService: async () => response(recommendation(2)) })))
       .toEqual([recommendation(2)]);
   });
 
@@ -100,7 +74,14 @@ describe('generic classifier reference router', () => {
 
   it('reclassifies when the prior route is no longer in the eligible snapshot', async () => {
     const selectionContext = context({ routing: { trigger: 'continuation', shouldRoute: false,
-      previousRoute: { peerId: 'd'.repeat(40), serviceId: 'small-model' } } });
+      previousRoute: { serviceId: 'unavailable-model' } } });
+    expect(await select(selectionContext)).toEqual([recommendation(0)]);
+    expect(selectionContext.invokeService).toHaveBeenCalledOnce();
+  });
+
+  it('does not silently convert a prior exact-seller selection into automatic seller selection', async () => {
+    const selectionContext = context({ routing: { trigger: 'continuation', shouldRoute: false,
+      previousRoute: { serviceId: 'small-model', peerId: candidates[0]!.peerId } } });
     expect(await select(selectionContext)).toEqual([recommendation(0)]);
     expect(selectionContext.invokeService).toHaveBeenCalledOnce();
   });
@@ -144,15 +125,11 @@ describe('generic classifier reference router', () => {
   });
 
   it.each([
-    null, {}, { routes: [] }, { routes: [null] },
-    { routes: [{ serviceId: 'unadvertised-model' }] },
-    { routes: [{ serviceId: 'small-model', peerId: null }] },
-    { routes: [{ serviceId: 'small-model' }, { serviceId: 'small-model' }] },
-    { routes: [{ peerId: candidates[0]!.peerId, serviceId: 'invented-model' }] },
-    { routes: [{ peerId: 'd'.repeat(40), serviceId: 'small-model' }] },
-    { routes: [recommendation(0), recommendation(0)] },
-    { routes: [recommendation(0), recommendation(2)] },
-    { routes: [recommendation(0), { peerId: 'd'.repeat(40), serviceId: 'small-model' }] },
+    null, {}, [], { serviceId: null }, { serviceId: 42 }, { serviceId: '' },
+    { serviceId: 'unadvertised-model' },
+    { serviceId: 'small-model', peerId: candidates[0]!.peerId },
+    { serviceId: 'small-model', routes: [] },
+    { routes: [recommendation(0)] },
   ])('rejects invalid recommendations before fixed-fee authorization: %j', (content) => {
     expect(() => parseClassificationResponse(response(content), candidates)).toThrow();
   });
