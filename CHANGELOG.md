@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Buyer payments: reserve top-ups now use fixed remaining-headroom thresholds—35% of the initial reserve for the first top-up and $0.50 thereafter—instead of reserving again whenever 65% of an ever-growing channel ceiling is spent. Top-up increments remain unchanged, preventing unused locked USDC from scaling with lifetime channel volume.
+
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
