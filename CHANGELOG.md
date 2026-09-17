@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Added
+
+- `@antseed/antseed-verifier`, the capability-based buyer verifier and seller prover for TEE attestation, now lives at `packages/antseed-verifier` with its standalone repository history preserved. The package keeps its existing name, version, public API, and GPL-3.0-only license while using the monorepo build, test, and npm publishing workflow.
+
 ### Fixed
 
 - Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
