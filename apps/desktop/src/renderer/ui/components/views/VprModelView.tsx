@@ -1,6 +1,14 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Copy01Icon, PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
+import {
+  ContractsIcon,
+  Copy01Icon,
+  GithubIcon,
+  Globe02Icon,
+  PreferenceHorizontalIcon,
+  StarIcon,
+  Tick02Icon,
+} from '@hugeicons/core-free-icons';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { compareModelRoutesByReputation, routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
@@ -11,7 +19,8 @@ import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../..
 import { vprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import { modelPinKey, vprModelPinFor } from '../../../modules/routing/model-pins';
 import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
-import type { DiscoverRow } from '../../../core/state';
+import { getKnownProxy } from '../../../core/known-proxies';
+import type { DiscoverRow, DiscoverVerificationLink } from '../../../core/state';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
@@ -391,10 +400,16 @@ function SellerRow({ route, active, auto, onClick }: {
       .map((parameter) => parameter.replaceAll('_', ' ')),
   ].join(' · ');
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={`${styles.sellerRow}${active ? ` ${styles.sellerRowActive}` : ''}`}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onClick();
+      }}
       title={active && !auto ? 'Unpin this seller' : 'Pin this seller'}
     >
       {active && (
@@ -403,6 +418,7 @@ function SellerRow({ route, active, auto, onClick }: {
       <span className={styles.sellerText}>
         <span className={styles.sellerName}>
           {route.peerDisplayName || route.peerLabel || route.peerId}
+          <SellerIdentityBadges route={route} />
           {active && <VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
           {isFreeRoute(route) && <VprBadge tone="green">Free</VprBadge>}
           {hasModerationControl && <VprBadge tone="neutral">Moderation control</VprBadge>}
@@ -413,6 +429,78 @@ function SellerRow({ route, active, auto, onClick }: {
         </span>
       </span>
       <span className={styles.sellerScore}>{sellerReputationLabel(route)}</span>
-    </button>
+    </div>
+  );
+}
+
+function verificationTitle(link: DiscoverVerificationLink): string {
+  return link.kind === 'domain'
+    ? `Verified domain: ${link.label}`
+    : `Verified GitHub: ${link.label}`;
+}
+
+function SellerIdentityBadges({ route }: { route: DiscoverRow }) {
+  const knownProxy = getKnownProxy(route.sellerContract);
+  if (!knownProxy && route.verificationLinks.length === 0) return null;
+
+  return (
+    <span className={styles.sellerIdentityBadges} aria-label="Seller identity badges">
+      {knownProxy && (
+        <InfoTooltip
+          align="left"
+          content={(
+            <>
+              <strong>{knownProxy.label}</strong>
+              <span>{knownProxy.description}</span>
+            </>
+          )}
+        >
+          <span
+            className={styles.sellerProxyBadge}
+            tabIndex={0}
+            role="button"
+            aria-label={`${knownProxy.label} — ${knownProxy.description}`}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <HugeiconsIcon icon={ContractsIcon} size={11} strokeWidth={1.8} />
+          </span>
+        </InfoTooltip>
+      )}
+      {route.verificationLinks.map((link) => {
+        const title = verificationTitle(link);
+        const hasDomainPreview = link.kind === 'domain' && (link.title || link.description);
+        return (
+          <InfoTooltip
+            key={`${link.kind}:${link.href}`}
+            align="left"
+            content={(
+              <>
+                <strong>{hasDomainPreview ? (link.title ?? title) : title}</strong>
+                {link.kind === 'domain' && link.description && (
+                  <span className={styles.sellerVerificationDescription}>{link.description}</span>
+                )}
+                <span>{link.href}</span>
+              </>
+            )}
+          >
+            <a
+              className={`${styles.sellerVerificationBadge} ${link.kind === 'domain'
+                ? styles.sellerVerificationBadgeDomain
+                : styles.sellerVerificationBadgeGithub}`}
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={title}
+              title={title}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <HugeiconsIcon icon={link.kind === 'domain' ? Globe02Icon : GithubIcon} size={11} strokeWidth={1.8} />
+            </a>
+          </InfoTooltip>
+        );
+      })}
+    </span>
   );
 }

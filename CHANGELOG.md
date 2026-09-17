@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Node/CLI/Desktop: buyer discovery strips decorative emoji and symbol glyphs from seller-provided display names before persisting `buyer.state.json`; legacy cached names are cleaned during startup hydration.
 - Node: buyers on `base-mainnet` had no fresh on-chain seller stats since the epoch-22 cutover. `stakingContractAddress` points at `AntseedSellerRegistry`, which has no `sellers(address)` view; the old peer enrichment called it for stake and staked-at, failed, and skipped every peer. The trust-signal reader no longer calls it.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
 
@@ -21,6 +22,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop: model seller rows show buyer-controlled known-proxy and verified domain/GitHub badges beside seller names, with identity details available from their tooltips.
 - Node/CLI/Desktop: buyers now score sellers with a single trust score, `trust = washFlagged ? 0 : history + usage + power + identity` with weights 55 / 15 / 10 / 20 in one `TRUST_WEIGHTS` table. `history` rewards buyer-verifiable settled service history from `AntseedChannels`: channel count and USDC volume use bounded log curves, saturating at 100 settled sessions and 100 USDC, and contribute equally. `usage` is the seller pool's share of all pools' recognized-usage points in the last complete epoch (`AntseedUsageAccounting`); `power` is the pool's share of all pools' lock-weighted staking power in the current epoch (`AntseedSellerPools`); both shares go through one 0-1 log curve (`log10(1 + 999 · share) / 3`, so 10% maps to 0.67) and self-normalize as the network grows; a seller `AntseedWashTradingRegistry` has proven a wash trader scores 0. `identity` credits sellers from a verified GitHub portfolio (up to 70: stars, breadth, age) or verified domain registration age via RDAP (up to 12), collected buyer-locally with a seven-day TTL; only the strongest identity counts. All on-chain inputs are read through Multicall3 in two round trips per discovery pass, chunked at 80 calls, and refreshed per seller every 120 s. Buyers pass the new `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` payments config into the node; they are filled automatically for `base-mainnet`. Ghost count and the local sybil heuristic stay outside the score; the default `minTrustScore: 60` gate is unchanged. See [Reputation](apps/website/docs/protocol/reputation.md#trust-score).
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 

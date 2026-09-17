@@ -119,6 +119,7 @@ export {
 } from './discovery/verification-links.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
+export { sanitizePeerDisplayName } from './discovery/display-name.js';
 export {
   buildNetworkServiceOffers,
   inferServiceProtocol,
