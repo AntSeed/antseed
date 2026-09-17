@@ -8,14 +8,16 @@ import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
   adaptPeerFaultErrorResponse,
-  computeOnChainReputationScore,
+  computeTrustScore,
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
   isModelRouteEligible,
   modelRouteTotalPrice,
+  normalizedModelReputationScore,
   peerSupportsCooperativeClose,
   rankModelRoutes,
+  sanitizePeerDisplayName,
   type AntseedNode,
   type FaultAttribution,
   type BuyerSpendEvent,
@@ -57,7 +59,6 @@ import {
 import {
   buildNetworkModels,
   effectiveModelReputationScore,
-  normalizedModelReputationScore,
   parseModelTypeFilter,
 } from './network-models.js'
 import {
@@ -547,7 +548,8 @@ export function parsePersistedPeers(
       if (capabilities.length > 0) peer.capabilities = capabilities
     }
     if (lastReachedAt > 0) peer.lastReachedAt = lastReachedAt
-    if (typeof entry.displayName === 'string') peer.displayName = entry.displayName
+    const displayName = sanitizePeerDisplayName(entry.displayName)
+    if (displayName) peer.displayName = displayName
     if (typeof entry.publicAddress === 'string') peer.publicAddress = entry.publicAddress
     if (entry.providerPricing && typeof entry.providerPricing === 'object') {
       peer.providerPricing = entry.providerPricing as PeerInfo['providerPricing']
@@ -579,14 +581,8 @@ export function parsePersistedPeers(
     if (typeof entry.onChainAgentId === 'number' && Number.isFinite(entry.onChainAgentId)) {
       peer.onChainAgentId = entry.onChainAgentId
     }
-    if (typeof entry.onChainStakeUsdcMicros === 'number' && Number.isFinite(entry.onChainStakeUsdcMicros)) {
-      peer.onChainStakeUsdcMicros = entry.onChainStakeUsdcMicros
-    }
     if (typeof entry.onChainReputationScore === 'number' && Number.isFinite(entry.onChainReputationScore)) {
       peer.onChainReputationScore = entry.onChainReputationScore
-    }
-    if (typeof entry.onChainTrustScore === 'number' && Number.isFinite(entry.onChainTrustScore)) {
-      peer.onChainTrustScore = entry.onChainTrustScore
     }
     if (typeof entry.onChainSybilRisk === 'number' && Number.isFinite(entry.onChainSybilRisk)) {
       peer.onChainSybilRisk = entry.onChainSybilRisk
@@ -610,6 +606,27 @@ export function parsePersistedPeers(
     if (typeof entry.onChainStakedAtSec === 'number' && Number.isFinite(entry.onChainStakedAtSec)) {
       peer.onChainStakedAtSec = entry.onChainStakedAtSec
     }
+    if (typeof entry.onChainUsageEpoch === 'number' && Number.isFinite(entry.onChainUsageEpoch)) {
+      peer.onChainUsageEpoch = entry.onChainUsageEpoch
+    }
+    if (typeof entry.onChainUsageShareBps === 'number' && Number.isFinite(entry.onChainUsageShareBps)) {
+      peer.onChainUsageShareBps = entry.onChainUsageShareBps
+    }
+    if (typeof entry.onChainUsageLastEpochUsdcMicros === 'number' && Number.isFinite(entry.onChainUsageLastEpochUsdcMicros)) {
+      peer.onChainUsageLastEpochUsdcMicros = entry.onChainUsageLastEpochUsdcMicros
+    }
+    if (typeof entry.onChainPoolStakeAnts === 'number' && Number.isFinite(entry.onChainPoolStakeAnts)) {
+      peer.onChainPoolStakeAnts = entry.onChainPoolStakeAnts
+    }
+    if (typeof entry.onChainPoolPowerShareBps === 'number' && Number.isFinite(entry.onChainPoolPowerShareBps)) {
+      peer.onChainPoolPowerShareBps = entry.onChainPoolPowerShareBps
+    }
+    if (typeof entry.onChainWashFlagged === 'boolean') {
+      peer.onChainWashFlagged = entry.onChainWashFlagged
+    }
+    if (typeof entry.onChainWashShareBps === 'number' && Number.isFinite(entry.onChainWashShareBps)) {
+      peer.onChainWashShareBps = entry.onChainWashShareBps
+    }
     if (typeof entry.onChainStatsFetchedAt === 'number' && Number.isFinite(entry.onChainStatsFetchedAt)) {
       peer.onChainStatsFetchedAt = entry.onChainStatsFetchedAt
     }
@@ -631,9 +648,13 @@ export function parsePersistedPeers(
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
     }
-    if (peer.onChainReputationScore === undefined) {
-      const derivedScore = computeOnChainReputationScore(peer, nowMs)
-      if (derivedScore !== null) peer.onChainReputationScore = derivedScore
+    // Re-score from the persisted signals rather than trusting the stored
+    // number: identity evidence expires, so a cached score can go stale. When
+    // nothing scoreable was persisted, keep whatever score the row carried.
+    const trust = computeTrustScore(peer, nowMs)
+    if (trust) {
+      peer.trust = trust
+      peer.onChainReputationScore = trust.score
     }
     peers.push(peer)
   }
@@ -1220,19 +1241,27 @@ export class BuyerProxy {
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
         maxConcurrency: p.maxConcurrency ?? 0,
         currentLoad: p.currentLoad ?? null,
-        // On-chain stats read authoritatively by the buyer from AntseedChannels/Staking.
+        // On-chain stats read authoritatively by the buyer from AntseedChannels,
+        // the seller pools, usage accounting and the wash-trading registry.
         // Persisted so CLI/desktop surfaces can render richer UI without their
-        // own duplicate staking/channel RPC and reputation-score implementations.
+        // own duplicate RPC and trust-score implementations. The node already
+        // scored the peer; `onChainReputationScore` is the trust score and
+        // `trust` its breakdown.
         onChainAgentId: p.onChainAgentId ?? null,
-        onChainStakeUsdcMicros: p.onChainStakeUsdcMicros ?? null,
         onChainChannelCount: p.onChainChannelCount ?? null,
         onChainGhostCount: p.onChainGhostCount ?? null,
         onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStakedAtSec: p.onChainStakedAtSec ?? null,
-        // Fallback keeps pre-upgrade cache rows usable.
-        onChainReputationScore: p.onChainReputationScore ?? computeOnChainReputationScore(p) ?? null,
-        onChainTrustScore: p.onChainTrustScore ?? null,
+        onChainUsageEpoch: p.onChainUsageEpoch ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
+        onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
+        onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
+        onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
+        onChainWashFlagged: p.onChainWashFlagged ?? null,
+        onChainWashShareBps: p.onChainWashShareBps ?? null,
+        onChainReputationScore: p.onChainReputationScore ?? null,
+        trust: p.trust ?? null,
         onChainSybilRisk: p.onChainSybilRisk ?? null,
         onChainSybilFlags: p.onChainSybilFlags ?? null,
         onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
@@ -1605,6 +1634,16 @@ export class BuyerProxy {
         providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
         providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
+        onChainReputationScore: p.onChainReputationScore ?? null,
+        trust: p.trust ?? null,
+        onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
+        onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
+        onChainUsageEpoch: p.onChainUsageEpoch ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
+        onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
+        onChainWashFlagged: p.onChainWashFlagged ?? null,
+        onChainWashShareBps: p.onChainWashShareBps ?? null,
+        verificationResults: p.verificationResults,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -2236,7 +2275,7 @@ export class BuyerProxy {
         error: {
           type: 'no_default_route',
           code: 'no_default_route',
-          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in VPR, but no route is set. `
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in the AI VPN, but no route is set. `
             + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
           param: 'model',
         },
@@ -2425,7 +2464,7 @@ export class BuyerProxy {
             peerId: peer.peerId,
             serviceId: plan.serviceId,
             request: requestForPolicy,
-            reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
+            reputation: normalizedModelReputationScore(peer) ?? -1,
             hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
             inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
             outputUsdPerMillion: offer.outputUsdPerMillion ?? null,

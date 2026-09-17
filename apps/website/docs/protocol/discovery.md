@@ -8,7 +8,7 @@ hide_title: true
 
 # Peer Discovery
 
-The discovery protocol uses a DHT network (built on BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills. All nodes bootstrap through dedicated AntSeed infrastructure.
+The discovery protocol uses a DHT network (built on BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills. All nodes bootstrap through dedicated Antseed infrastructure.
 
 ## DHT Topic Hashing
 
@@ -203,7 +203,7 @@ Verifiers reject redirected proof URLs. Domain and GitHub proofs must be served 
 
 The weights below belong to the generic router-core scorer. Model-only routing
 in the buyer proxy and desktop uses the shared Price + Trust ranking described
-in [Reputation](./reputation.md#buyer-route-scoring).
+in [Reputation](./reputation.md#trust-score).
 
 | Dimension | Weight | Description |
 |---|---|---|

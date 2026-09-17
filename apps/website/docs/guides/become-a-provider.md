@@ -7,10 +7,10 @@ hide_title: true
 
 # Become a Provider
 
-Providers earn USDC by serving AI requests on the AntSeed network. This guide covers everything from setup to your first request.
+Providers earn USDC by serving AI requests on the Antseed network. This guide covers everything from setup to your first request.
 
 :::warning Provider Compliance
-AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
+Antseed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
 :::
 
 :::info Seller ANTS emissions
@@ -197,7 +197,7 @@ For durable config-file based deployments, store it under `payments.crypto.rpcUr
 antseed config set payments.crypto.rpcUrl "https://base-mainnet.g.alchemy.com/v2/<key>"
 ```
 
-Runtime precedence is: `--base-rpc-url` flag, then `ANTSEED_BASE_RPC_URL`, then `payments.crypto.rpcUrl`, then AntSeed's built-in Base defaults.
+Runtime precedence is: `--base-rpc-url` flag, then `ANTSEED_BASE_RPC_URL`, then `payments.crypto.rpcUrl`, then Antseed's built-in Base defaults.
 
 ## 5. Fund Your Wallet
 
@@ -297,7 +297,7 @@ antseed config seller add-service openai image-studio \
 
 The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
 
-For an `openai-images` service, `outputs: ["image"]` identifies an image result. Input modalities are an operational routing contract: `inputs: ["text"]` means generation only, while `inputs: ["text", "image"]` means the seller can accept both `/v1/images/generations` and multipart `/v1/images/edits`. Do not advertise `image` input merely because the upstream platform offers editing somewhere; the exact configured service and provider adapter must support the edit request end to end. In particular, Venice-backed services must remain generation-only until AntSeed has a native Venice edit adapter.
+For an `openai-images` service, `outputs: ["image"]` identifies an image result. Input modalities are an operational routing contract: `inputs: ["text"]` means generation only, while `inputs: ["text", "image"]` means the seller can accept both `/v1/images/generations` and multipart `/v1/images/edits`. Do not advertise `image` input merely because the upstream platform offers editing somewhere; the exact configured service and provider adapter must support the edit request end to end. In particular, Venice-backed services must remain generation-only until Antseed has a native Venice edit adapter.
 
 Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
 

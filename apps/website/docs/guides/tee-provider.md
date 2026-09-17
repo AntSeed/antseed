@@ -101,7 +101,7 @@ export ANTSEED_VERIFIER_PROVIDER_EVIDENCE_URL='http://127.0.0.1:9000/evidence?no
 export ANTSEED_VERIFIER_PROVIDER_TEE_FIELD=quote
 
 # The frozen report_data binding scheme the provider's quote uses:
-#   antseed-rd-v1            — AntSeed's canonical scheme
+#   antseed-rd-v1            — Antseed's canonical scheme
 #   nonce-pubkey-sha256-v1   — used by e.g. Chutes
 export ANTSEED_VERIFIER_PROVIDER_BINDING_SCHEME=antseed-rd-v1
 export ANTSEED_VERIFIER_PROVIDER_BINDING_PUBKEY_FIELD=e2e_pubkey

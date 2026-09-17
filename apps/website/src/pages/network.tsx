@@ -11,15 +11,15 @@ export default function NetworkRedirectPage() {
 
   return (
     <Layout
-      title="Redirecting to AntSeed Network Explorer"
-      description="AntSeed live network pricing, providers, and usage statistics are available in the AntSeed Network Explorer.">
+      title="Redirecting to Antseed Network Explorer"
+      description="Antseed live network pricing, providers, and usage statistics are available in the Antseed Network Explorer.">
       <Head>
         <meta name="robots" content="noindex" />
         <meta httpEquiv="refresh" content={`0; url=${EXPLORER_URL}`} />
         <link rel="canonical" href={EXPLORER_URL} />
       </Head>
       <main style={{padding: '4rem 1.5rem', textAlign: 'center'}}>
-        <h1>Redirecting to the AntSeed Network Explorer…</h1>
+        <h1>Redirecting to the Antseed Network Explorer…</h1>
         <p>
           If you are not redirected automatically,{' '}
           <a href={EXPLORER_URL} target="_blank" rel="noopener noreferrer">open the live network explorer</a>.

@@ -51,12 +51,11 @@ import {
   PAYMENTS_PORT,
   PAY_PAGE_KINDS,
   type PayPageKind,
-  fetchOnrampAvailability,
   focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
+  payPageProvider,
   readCardProviders,
-  readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
 import { closeCheckoutWindows, openCheckoutPopup } from '../payments/checkout-window.js';
@@ -135,7 +134,7 @@ export function registerPaymentsIpc(): void {
       const identity = getSecureIdentity();
       if (!identity) return { ok: false, error: 'Identity not available' };
       const providers = await readCardProviders();
-      // The chooser's fixed lineup (Meridian, AntSeed Pay) must resolve even
+      // The chooser's fixed lineup (Meridian, Antseed Pay) must resolve even
       // when a legacy config overrides the provider list with other entries.
       const provider = opts?.providerId
         ? providers.find((entry) => entry.id === opts.providerId)
@@ -166,16 +165,17 @@ export function registerPaymentsIpc(): void {
         }
       }
 
-      // AntSeed Pay authenticates the request: the page expects the buyer
+      // Antseed Pay authenticates the request: the page expects the buyer
       // address, currency and amount plus a personal-sign signature over the
       // canonical message below, proving the params came from this wallet.
       // The signed message carries the LOWERCASED address (the URL param stays
       // checksummed) — verified against the reference sig their page accepts.
-      if (provider.id === 'antseed-pay') {
+      const payPage = payPageProvider(provider.id);
+      if (payPage) {
         const cur = 'USD';
         const amountStr = hasAmount ? String(amount) : '';
         const message = [
-          'AntSeed Pay',
+          'Antseed Pay',
           `address: ${identity.wallet.address.toLowerCase()}`,
           `currency: ${cur}`,
           `amount: ${amountStr}`,
@@ -184,16 +184,16 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
-        // The chooser's Stripe row is the only path here — open the page on
-        // exactly that integration (no provider tab strip). Unsigned, UX-only.
-        parsed.searchParams.set('provider', 'stripe');
+        // Open the page on exactly one integration (no provider tab strip).
+        // Unsigned, UX-only.
+        parsed.searchParams.set('provider', payPage);
       }
       const url = parsed.toString();
 
-      // AntSeed Pay needs no wallet extension (the link is pre-signed), so it
+      // Antseed Pay needs no wallet extension (the link is pre-signed), so it
       // opens as an app-owned checkout popup: the deposit watcher closes it
       // the moment the bought USDC lands, instead of stranding a browser tab.
-      if (provider.id === 'antseed-pay') {
+      if (payPage) {
         // The full signed funding link — nothing secret in it (the sig is in
         // the URL by design), and having it in the dev log makes testing the
         // hosted page outside the popup trivial. Dev only: production output
@@ -217,31 +217,8 @@ export function registerPaymentsIpc(): void {
     }
   });
 
-  // Region-gated deposit options: the hosted pay page reports which providers
-  // it would offer this machine's region (Stripe = US only). Fail-closed —
-  // an unreachable page just hides the gated rows.
-  ipcMain.handle('payments:onramp-availability', async () => {
-    try {
-      const availability = await fetchOnrampAvailability();
-      return { ok: true, data: availability };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  ipcMain.handle('payments:funkit-config', async () => {
-    try {
-      const apiKey = await readFunkitApiKey();
-      if (!apiKey) return { ok: true, data: null };
-      return { ok: true, data: { apiKey } };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // The renderer closes the Fun checkout/sign-in popup windows on flows that
-  // never produce a deposit — e.g. a Google login, where "success" is the
-  // SDK's connection status flipping to connected, not funds arriving.
+  // The renderer closes checkout popup windows on flows that never produce
+  // a deposit.
   ipcMain.handle('payments:close-checkout-windows', () => {
     if (closeCheckoutWindows()) focusMainWindow();
     return { ok: true };
@@ -332,7 +309,7 @@ export function registerPaymentsIpc(): void {
 
       const wallet = identity.wallet;
 
-      // Sign SpendingAuth (AntSeed Channels domain)
+      // Sign SpendingAuth (Antseed Channels domain)
       const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
       const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
         channelId: params.channelId,

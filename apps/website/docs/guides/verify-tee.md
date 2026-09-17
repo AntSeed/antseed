@@ -92,7 +92,7 @@ Your node only ever runs verifier code from a **curated, version-pinned trust se
 - Attestation proves the *environment*, not the *model*. For whether the model is what the seller claims, see [model verification](/blog/model-verification-fingerprint-swarm).
 
 :::note Three different "verifications"
-AntSeed has three unrelated features that all involve the word "verify" — don't conflate them:
+Antseed has three unrelated features that all involve the word "verify" — don't conflate them:
 1. **Verifier SDKs** (this guide) — cryptographic TEE attestation of a seller, run by your node.
 2. The **`Verified` column** in `network browse` — domain/GitHub ownership proofs a seller publishes about its identity.
 3. **Model verification** — black-box fingerprint probing of the model behind a service.
