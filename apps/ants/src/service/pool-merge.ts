@@ -11,6 +11,13 @@ export interface MergeInput {
   epochs: number[];
   /** Your open positions per agent and their live power this epoch. */
   own: Map<number, { positionIds: number[]; power: bigint; stake: bigint }>;
+  /**
+   * Chain-verified stakeability per agent (the gate `stake` enforces:
+   * the agent's owner resolves to it in the seller registry, directly or via
+   * the legacy USDC staking fallback). Missing entries fall back to the
+   * indexer's `registered` flag, which only knows the direct binding.
+   */
+  stakeable?: Map<number, boolean>;
 }
 
 function bps(part: bigint, whole: bigint): number {
@@ -42,7 +49,8 @@ function volumesFor(seller: string | null, epochs: number[], sellerEpochs: Map<s
  * chain reads happen here; the caller supplies this wallet's live power.
  */
 export function mergePools(input: MergeInput): PoolView[] {
-  const { indexed, explorer, sellerEpochs, epochs, own } = input;
+  const { indexed, explorer, sellerEpochs, epochs, own, stakeable } = input;
+  const stakeableFor = (agentId: number, registered: boolean): boolean => stakeable?.get(agentId) ?? registered;
   const totalPower = BigInt(indexed.network.current?.totalPowerWeight ?? '0');
   const rows = new Map<number, PoolView>();
   const profileFor = (seller: string | null): SellerProfile | null => (seller ? explorer.byAddress.get(seller.toLowerCase()) ?? null : null);
@@ -56,7 +64,7 @@ export function mergePools(input: MergeInput): PoolView[] {
       seller,
       profile: profileFor(seller),
       hasPool: weight !== 0n || pool.openPositions > 0,
-      stakeable: pool.registered,
+      stakeable: stakeableFor(pool.agentId, pool.registered),
       activeStake: pool.activeStake,
       weight: pool.weight,
       powerShareBps: pool.powerShareBps || bps(weight, totalPower),
@@ -86,7 +94,7 @@ export function mergePools(input: MergeInput): PoolView[] {
       seller,
       profile: profileFor(seller),
       hasPool: false,
-      stakeable: false,
+      stakeable: stakeableFor(agentId, false),
       activeStake: (mine?.stake ?? 0n).toString(),
       weight: '0',
       powerShareBps: 0,

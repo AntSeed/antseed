@@ -8,7 +8,7 @@ import { EpochCell } from './Epoch';
 import { CloseIcon } from './icons';
 import { Input } from './Field';
 import { Facts } from './Panel';
-import { Pill } from './Pill';
+import { Pill, type PillTone } from './Pill';
 import { Table, type Column } from './Table';
 
 /** Display name for a pool: explorer profile name, else the short seller address, else the agent id. */
@@ -21,6 +21,13 @@ export function poolName(pool: PoolView): string {
 /** Select-option label: name plus agent id. */
 export function poolLabel(pool: PoolView): string {
   return `${poolName(pool)} · agent ${pool.agentId}`;
+}
+
+/** Staking status of a pool: powered pools are live this epoch; registered pools without power accept stakes that take effect at the next epoch. */
+export function poolStatus(pool: PoolView): { label: string; tone: PillTone; title: string } {
+  if (!pool.stakeable) return { label: 'not stakeable', tone: 'muted', title: 'No seller binding the pool contract accepts; a stake would revert.' };
+  if (pool.hasPool) return { label: 'has power', tone: 'accent', title: 'Pool has power this epoch; staking earns rewards from your first active epoch.' };
+  return { label: 'no power yet', tone: 'amber', title: 'Registered seller, but the pool has no power this epoch; stakes are accepted now and take effect at the next epoch.' };
 }
 
 export const POOL_ROW_CAP = 20;
@@ -89,16 +96,26 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
       label: 'Pool',
       render: (p) => (
         <span className="cell-stack">
-          <span>
-            {poolName(p)}
-            {!p.stakeable ? <span className="dim small"> · not stakeable yet</span> : null}
-          </span>
+          <span>{poolName(p)}</span>
           <span className="cell-sub mono">
             agent {p.agentId}
             {p.profile?.name && p.seller ? ` · ${shortAddress(p.seller)}` : ''}
           </span>
         </span>
       ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      title: 'Whether staking into this pool is live now: has power = pool is powered this epoch, no power yet = stakes take effect at the next epoch',
+      render: (p) => {
+        const s = poolStatus(p);
+        return (
+          <Pill tone={s.tone} title={s.title}>
+            {s.label}
+          </Pill>
+        );
+      },
     },
     {
       key: 'power',
@@ -151,7 +168,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
         <div className="pools-toolbar">
           <Input label="" mono={false} width="md" placeholder="Filter by name or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
           <span className="muted small">
-            {formatInt(filtered.length)} of {formatInt(pools.length)} sellers · {formatInt(pools.filter((p) => p.stakeable).length)} stakeable
+            {formatInt(filtered.length)} of {formatInt(pools.length)} sellers · {formatInt(pools.filter((p) => p.stakeable).length)} stakeable · {formatInt(pools.filter((p) => p.stakeable && p.hasPool).length)} with power
           </span>
         </div>
       ) : null}
@@ -225,14 +242,25 @@ export function PoolDrawer({ pool, view, onClose, onStake }: { pool: PoolView; v
         </header>
         <div className="drawer-body">
           <div className="row">
-            {pool.stakeable ? <Pill tone="accent">stakeable</Pill> : <Pill tone="muted">not stakeable</Pill>}
-            {pool.hasPool ? null : <Pill tone="muted">no pool yet</Pill>}
+            {(() => {
+              const s = poolStatus(pool);
+              return (
+                <Pill tone={s.tone} title={s.title}>
+                  {pool.stakeable ? `stakeable · ${s.label}` : s.label}
+                </Pill>
+              );
+            })()}
             {pool.stakeable ? (
               <Button variant="primary" size="sm" onClick={() => onStake(pool)}>
                 Stake into this pool
               </Button>
             ) : null}
           </div>
+          {pool.stakeable && !pool.hasPool ? (
+            <div className="status-line status-line--muted">
+              This pool has no power this epoch — stakes are accepted now and take effect at the next epoch.
+            </div>
+          ) : null}
 
           <section className="drawer-section">
             <h3 className="drawer-section-title">Pool</h3>

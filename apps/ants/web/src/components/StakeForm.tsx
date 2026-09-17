@@ -4,7 +4,7 @@ import { formatAnts, formatBps, isPositiveDecimal, parseUnits } from '../format'
 import { ActionButton } from './Confirm';
 import { Field, Input, Select } from './Field';
 import { LockSlider } from './LockSlider';
-import { poolLabel } from './Pools';
+import { poolLabel, poolStatus } from './Pools';
 
 interface Props {
   config: PoolConfigView | null;
@@ -73,7 +73,7 @@ export function StakeForm({ config, pools, balance, defaultAgentId, onStarted, o
             {noPools ? <option value="">No stakeable pools</option> : null}
             {pools.map((p) => (
               <option key={p.agentId} value={p.agentId}>
-                {poolLabel(p)}
+                {`${poolLabel(p)} · ${poolStatus(p).label}`}
               </option>
             ))}
           </Select>
@@ -98,6 +98,11 @@ export function StakeForm({ config, pools, balance, defaultAgentId, onStarted, o
         />
         <LockSlider value={epochs} min={minEpochs} max={maxEpochs} onChange={setEpochs} disabled={!config || noPools} />
       </div>
+      {pool && pool.stakeable && !pool.hasPool ? (
+        <div className="status-line status-line--muted">
+          This pool has no power this epoch — your stake is accepted now and takes effect at the next epoch.
+        </div>
+      ) : null}
       <div className="row mt">
         <ActionButton
           label="Stake"

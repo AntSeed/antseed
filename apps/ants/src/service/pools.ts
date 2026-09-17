@@ -28,7 +28,11 @@ const POOLS_IFACE = new Interface([
   'function stakerAgentActiveStake(address staker, uint256 agentId) view returns (uint256)',
   'function positionWeightAtEpoch(uint256 positionId, uint256 epoch) view returns (uint256)',
 ]);
-const REGISTRY_IFACE = new Interface(['function agentSeller(uint256 agentId) view returns (address)']);
+const REGISTRY_IFACE = new Interface([
+  'function agentSeller(uint256 agentId) view returns (address)',
+  'function getAgentId(address seller) view returns (uint256)',
+]);
+const IDENTITY_IFACE = new Interface(['function ownerOf(uint256 agentId) view returns (address)']);
 const ACCOUNTING_IFACE = new Interface([
   'function agentEpochUsage(uint256 epoch, uint256 agentId) view returns (tuple(uint256 points, uint256 weightedPoints))',
   'function totalWeightedPoolPointsByEpoch(uint256 epoch) view returns (uint256)',
@@ -115,28 +119,64 @@ async function poolContext(ctx: AntsContext): Promise<PoolContext> {
 }
 
 /**
+ * The stake gate `AntseedSellerPools.stake` actually enforces: the ERC-8004
+ * agent must have an owner, and the seller registry must resolve that owner to
+ * the agent — through the new `agentSeller` binding or its fallback to the
+ * legacy USDC staking contract, which still covers sellers that registered
+ * before the pool migration. Entries are present only where both reads
+ * succeeded; callers fall back to the indexer's `registered` flag for the rest.
+ */
+async function stakeableAgents(ctx: AntsContext, agentIds: number[]): Promise<Map<number, boolean>> {
+  const registryAddress = ctx.chain.sellerRegistryAddress;
+  const identityAddress = ctx.chain.identityRegistryAddress;
+  const stakeable = new Map<number, boolean>();
+  if (!registryAddress || !identityAddress || agentIds.length === 0) return stakeable;
+  const owners = new Batch();
+  const ownerReads = agentIds.map((agentId) => ({ agentId, owner: owners.add(identityAddress, IDENTITY_IFACE, 'ownerOf', [agentId]) }));
+  await owners.run(ctx);
+  const bindings = new Batch();
+  const bindingReads = new Map<string, () => unknown[] | null>();
+  for (const read of ownerReads) {
+    const owner = read.owner()?.[0] as string | undefined;
+    if (!owner || owner === ZeroAddress) continue;
+    const key = owner.toLowerCase();
+    if (!bindingReads.has(key)) bindingReads.set(key, bindings.add(registryAddress, REGISTRY_IFACE, 'getAgentId', [owner]));
+  }
+  await bindings.run(ctx);
+  for (const read of ownerReads) {
+    const owner = read.owner()?.[0] as string | undefined;
+    if (!owner || owner === ZeroAddress) continue;
+    const resolved = bindingReads.get(owner.toLowerCase())?.();
+    if (!resolved) continue;
+    stakeable.set(read.agentId, Number(resolved[0]) === read.agentId);
+  }
+  return stakeable;
+}
+
+/**
  * Describe many pools in two multicall rounds. Round one is cheap for every
  * candidate (seller binding + current power); round two reads the full
  * analytics only for agents with a pool, a binding, or your stake, and just
  * the settled volume for the rest (explorer sellers without a pool yet).
  */
-async function describePools(ctx: AntsContext, agents: Array<[number, string | null]>, context: PoolContext): Promise<PoolView[]> {
+async function describePools(ctx: AntsContext, agentIds: number[], context: PoolContext): Promise<PoolView[]> {
   const poolsAddress = ctx.requirePools().contractAddress;
   const epoch = context.stack.currentEpoch;
   const first = new Batch();
-  const firstReads = agents.map(([agentId, bound]) => ({
-    seller: bound ? null : first.add(ctx.chain.sellerRegistryAddress, REGISTRY_IFACE, 'agentSeller', [agentId]),
+  const firstReads = agentIds.map((agentId) => ({
+    seller: first.add(ctx.chain.sellerRegistryAddress, REGISTRY_IFACE, 'agentSeller', [agentId]),
     weight: first.add(poolsAddress, POOLS_IFACE, 'poolWeightAtEpoch', [agentId, epoch]),
   }));
   await first.run(ctx);
-  const resolved = agents.map(([agentId, bound], index) => {
+  const stakeable = await stakeableAgents(ctx, agentIds);
+  const resolved = agentIds.map((agentId, index) => {
     const read = firstReads[index]!;
-    const registrySeller = bound ?? (read.seller ? (read.seller()?.[0] as string | undefined) ?? ZeroAddress : ZeroAddress);
-    const stakeable = !!registrySeller && registrySeller !== ZeroAddress;
-    const seller = stakeable ? registrySeller : context.explorer.byAgent.get(agentId) ?? null;
+    const registrySeller = (read.seller ? (read.seller()?.[0] as string | undefined) : undefined) ?? ZeroAddress;
+    const isStakeable = stakeable.get(agentId) ?? false;
+    const seller = registrySeller !== ZeroAddress ? registrySeller : context.explorer.byAgent.get(agentId) ?? null;
     const weight = big(read.weight);
     const yourIds = context.ownPositions.get(agentId) ?? [];
-    return { agentId, stakeable, seller, weight, yourIds, full: weight !== 0n || stakeable || yourIds.length > 0 };
+    return { agentId, stakeable: isStakeable, seller, weight, yourIds, full: weight !== 0n || isStakeable || yourIds.length > 0 };
   });
 
   const none = () => null;
@@ -242,7 +282,12 @@ export async function poolsView(ctx: AntsContext): Promise<PoolsView> {
   if (indexer) {
     try {
       const [indexed, sellerEpochs, metrics, own] = await Promise.all([indexer.pools(), indexer.sellerEpochs(VOLUME_EPOCHS), indexer.epochMetrics(), ownPools(ctx, context)]);
-      const views = mergePools({ indexed, explorer: context.explorer, sellerEpochs, epochs, own });
+      // The indexer's `registered` flag mirrors the new agentSeller binding
+      // only; verify stakeability against the chain so sellers bound through
+      // the registry's legacy USDC-staking fallback are not misreported.
+      const agentIds = [...new Set([...indexed.pools.map((pool) => pool.agentId), ...context.explorer.byAgent.keys(), ...own.keys()])];
+      const stakeable = await stakeableAgents(ctx, agentIds);
+      const views = mergePools({ indexed, explorer: context.explorer, sellerEpochs, epochs, own, stakeable });
       const totalPower = BigInt(indexed.network.current?.totalPowerWeight ?? '0') || context.totalPowerWeight;
       const yourTotalPower = [...own.values()].reduce((sum, entry) => sum + entry.power, 0n);
       return toJson({
@@ -271,8 +316,8 @@ async function chainOnlyPools(
   sourceError: string | null,
 ): Promise<PoolsView> {
   const pools = ctx.requirePools();
-  const agents: Array<[number, string | null]> = [...context.ownPositions.keys()].map((agentId) => [agentId, null]);
-  const views = sortPools(await describePools(ctx, agents, context));
+  const agentIds = [...context.ownPositions.keys()];
+  const views = sortPools(await describePools(ctx, agentIds, context));
   const [totalActiveStake, network] = await Promise.all([
     safe(() => pools.totalActiveStakeAtEpoch(context.stack.currentEpoch), 0n),
     networkVolumes(ctx, context.stack, context.epochs),
@@ -299,13 +344,14 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
       const [indexed, sellerEpochs, own] = await Promise.all([indexer.pools(), indexer.sellerEpochs(VOLUME_EPOCHS), ownPools(ctx, context)]);
       const ownHere = new Map([...own.entries()].filter(([id]) => id === agentId));
       const explorer = { byAddress: context.explorer.byAddress, byAgent: new Map([...context.explorer.byAgent.entries()].filter(([id]) => id === agentId)) };
-      const merged = mergePools({ indexed: { ...indexed, pools: indexed.pools.filter((pool) => pool.agentId === agentId) }, explorer, sellerEpochs, epochs: context.epochs, own: ownHere });
+      const stakeable = await stakeableAgents(ctx, [agentId]);
+      const merged = mergePools({ indexed: { ...indexed, pools: indexed.pools.filter((pool) => pool.agentId === agentId) }, explorer, sellerEpochs, epochs: context.epochs, own: ownHere, stakeable });
       const view = merged.find((pool) => pool.agentId === agentId);
       if (view) return toJson({ ...view, currentEpoch: context.stack.currentEpoch });
     } catch (error) {
       if (!(error instanceof IndexerError)) throw error;
     }
   }
-  const [view] = await describePools(ctx, [[agentId, null]], context);
+  const [view] = await describePools(ctx, [agentId], context);
   return toJson({ ...view!, currentEpoch: context.stack.currentEpoch });
 }
