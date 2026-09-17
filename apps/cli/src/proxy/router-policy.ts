@@ -24,7 +24,9 @@ export function validateRouterCandidate(options: {
   const plan = resolvePeerRoutePlan(peer, protocol, recommendation.serviceId, provider, 'strict')
   if (!plan?.serviceId || plan.serviceId !== recommendation.serviceId) return null
   const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
-  if (!offer || offer.billing?.kind === 'per_call') return null
+  if (!offer || offer.capabilities?.routing === true) return null
+  const targetProtocol = plan.selection?.targetProtocol ?? protocol ?? offer.protocol
+  if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_call') return null
   const missing = plan.selection?.requiresTransform
     ? requiredParameters
     : findMissingRequiredParameters(peer, plan.provider, plan.serviceId, requiredParameters)
@@ -33,7 +35,8 @@ export function validateRouterCandidate(options: {
   if ((options.minPeerReputation ?? 0) > (reputation ?? 0)) return null
   if (preferences && !isModelRouteEligible({ peerId: peer.peerId, reputationScore: reputation }, preferences)) return null
   if (maxPricing) {
-    const limits = maxPricing.defaults
+    const providerLimits = maxPricing.providers?.[plan.provider]
+    const limits = providerLimits?.services?.[plan.serviceId] ?? providerLimits?.defaults ?? maxPricing.defaults
     const input = offer.inputUsdPerMillion
     const output = offer.outputUsdPerMillion
     const cached = offer.cachedInputUsdPerMillion ?? input
@@ -42,7 +45,7 @@ export function validateRouterCandidate(options: {
       || cached == null || !Number.isFinite(cached) || cached < 0
       || cached > (limits.cachedInputUsdPerMillion ?? limits.inputUsdPerMillion)) return null
   }
-  const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId)
+  const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId, true)
   return {
     peer,
     peerId: peer.peerId,

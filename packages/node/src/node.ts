@@ -1426,6 +1426,9 @@ export class AntseedNode extends EventEmitter {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
+    if (options?.routingAuthorization) {
+      throw buyerFault('Streaming requests do not support routing authorization', 'invalid-request');
+    }
     return this._buyerHandler.sendRequest(peer, req, callbacks, options);
   }
 

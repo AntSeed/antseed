@@ -20,6 +20,32 @@ test('loads namespaced router settings without converting plugin vocabulary', as
   });
 });
 
+test('loads explicit routing mode and scoped buyer price limits', async () => {
+  const providers = { openai: {
+    defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
+    services: { model: { inputUsdPerMillion: 10, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 1 } },
+  } };
+  await withTempConfig(JSON.stringify({ buyer: { routingMode: 'router', maxPricing: { providers } } }), async (path) => {
+    const config = await loadConfig(path);
+    assert.equal(config.buyer.routingMode, 'router');
+    assert.deepEqual(config.buyer.maxPricing.providers, providers);
+  });
+});
+
+test('rejects malformed explicit routing mode and scoped buyer price limits', async () => {
+  for (const buyer of [
+    { routingMode: 'classifier-name' },
+    { maxPricing: { providers: [] } },
+    { maxPricing: { providers: { openai: null } } },
+    { maxPricing: { providers: { openai: { defaults: { inputUsdPerMillion: -1, outputUsdPerMillion: 1 } } } } },
+    { maxPricing: { providers: { openai: { services: { model: { inputUsdPerMillion: 1 } } } } } },
+  ]) {
+    await withTempConfig(JSON.stringify({ buyer }), async (path) => {
+      await assert.rejects(loadConfig(path), /buyer\.(routingMode|maxPricing)/);
+    });
+  }
+});
+
 async function withTempConfig(contents: string, fn: (configPath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-cli-config-'));
   const configPath = join(dir, 'config.json');

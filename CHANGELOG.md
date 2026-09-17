@@ -8,10 +8,14 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Routing: explicit `model`/`router` mode replaces plugin model-name activation; request headers and persisted session/chat selection control classification while concrete requests stay fixed by default. The reference classifier still returns only `{ "serviceId": "..." }`.
+- Discovery: classifier services must advertise `routing: true` and are excluded from inference listings/candidates. Metadata v13 carries this capability; ordinary announcements remain v12 and v10–v12 wire baselines are unchanged.
 - Billing helpers use normalized unit limits instead of carrying duplicate image request facts through buyer and seller billing. Image/per-call pricing, token-price calculation, and payment encoding remain unchanged.
 
 ### Fixed
 
+- CLI: retain and validate scoped buyer price caps with service > provider > global precedence; selecting router mode clears conflicting session/chat pins and preserves the optional session fallback model.
+- Routing payments: recovery replays do not advance spending, optional reserve top-up failures preserve paid classifications, seller preflight accounts for `successful_requests`, and unit billing checks the requested protocol. SDK streaming rejects routing authorization without affecting normal inference streaming.
 - CLI: concurrent automatic requests for one conversation wait only for a validated routing decision, not for the first inference response. Fixed-model requests bypass the routing wait; cancelled and failed routing attempts release their coordination state safely.
 
 - CLI: router configuration commands accept optional routing fields and complete settings/service JSON objects from a fresh configuration. Boolean fields parse `true`/`false` correctly, string-valued payment limits retain their exact values, and invalid router settings are rejected before saving.

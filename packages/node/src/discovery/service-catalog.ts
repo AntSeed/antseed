@@ -1,5 +1,6 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { perCallPriceMicroUsdc, type UnitBillingModelV1 } from '@antseed/protocol/billing';
+import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from '@antseed/protocol/service-api';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
@@ -8,6 +9,7 @@ export type CatalogServiceProtocol =
   | 'openai-images';
 
 export type CatalogServiceCapabilities = {
+  routing?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
   inputs?: string[];
@@ -56,8 +58,11 @@ export type NetworkServiceCatalogPeer = {
   defaultCachedInputUsdPerMillion?: number;
 };
 
+export type CatalogServiceBilling = { kind: 'per_call'; amountMicroUsdc: string };
+
 export type NetworkServiceOffer = {
-  billing?: { kind: 'per_call'; amountMicroUsdc: string };
+  billing?: CatalogServiceBilling;
+  billingByProtocol?: Partial<Record<string, CatalogServiceBilling>>;
   serviceId: string;
   provider: string;
   protocols: string[];
@@ -174,10 +179,18 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
             ? 'image'
             : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
-        const unitModel = protocol ? peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId]?.[protocol] : undefined;
-        const perCallAmount = perCallPriceMicroUsdc(unitModel as UnitBillingModelV1 | undefined);
+        const unitModels = peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId];
+        const billingByProtocol: Partial<Record<string, CatalogServiceBilling>> = {};
+        for (const billingProtocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
+          const perCallAmount = perCallPriceMicroUsdc(unitModels?.[billingProtocol] as UnitBillingModelV1 | undefined);
+          if (perCallAmount !== null) {
+            billingByProtocol[billingProtocol] = { kind: 'per_call', amountMicroUsdc: perCallAmount.toString() };
+          }
+        }
+        const billing = protocol ? billingByProtocol[protocol] : undefined;
         offers.push({
-          ...(perCallAmount !== null ? { billing: { kind: 'per_call' as const, amountMicroUsdc: perCallAmount.toString() } } : {}),
+          ...(billing ? { billing } : {}),
+          ...(Object.keys(billingByProtocol).length > 0 ? { billingByProtocol } : {}),
           serviceId,
           provider,
           protocols,

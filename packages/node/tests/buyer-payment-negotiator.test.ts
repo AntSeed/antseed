@@ -309,8 +309,11 @@ describe('BuyerPaymentNegotiator', () => {
 
       const activeSession = makeActiveSession(peer.peerId);
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
-      (bpm.getCumulativeAmount as ReturnType<typeof vi.fn>).mockReturnValueOnce(0n).mockReturnValueOnce(100n);
-      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      (bpm.clearLockConfirmation as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      });
+      (bpm.resendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        expect(bpm.isLockConfirmed(peer.peerId)).toBe(false);
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       });
       bufferPaymentRequired(negotiator, peer.peerId, conn);
@@ -318,13 +321,8 @@ describe('BuyerPaymentNegotiator', () => {
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
       expect(bpm.clearLockConfirmation).toHaveBeenCalledWith(peer.peerId);
-      expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalledWith(
-        peer.peerId,
-        BigInt(paymentRequiredPayload.minBudgetPerRequest),
-        expect.anything(),
-        undefined,
-      );
-      expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.resendCurrentSpendingAuth).toHaveBeenCalledWith(peer.peerId, expect.anything());
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -454,7 +452,9 @@ describe('BuyerPaymentNegotiator', () => {
       });
       bufferPaymentRequired(negotiator, peer.peerId, conn);
 
-      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      const result = await negotiator.handle402(make402Response({
+        minBudgetPerRequest: '10000', suggestedAmount: '100000', requiredCumulativeAmount: '600',
+      }), peer, conn, makeRequest());
 
       expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalled();
       expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);

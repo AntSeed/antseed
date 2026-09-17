@@ -2,6 +2,7 @@ import type {
   ServiceApiProtocol,
   ServiceCapabilities,
   UnitBillingModelV1,
+  RoutingMode,
 } from '@antseed/node';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
@@ -20,6 +21,10 @@ export interface TokenPricingUsdPerMillion {
  */
 export interface HierarchicalPricingConfig {
   defaults: TokenPricingUsdPerMillion;
+  providers?: Record<string, {
+    defaults?: TokenPricingUsdPerMillion;
+    services?: Record<string, TokenPricingUsdPerMillion>;
+  }>;
 }
 
 /**
@@ -183,6 +188,7 @@ export interface SellerCLIConfig {
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
+  routingMode?: RoutingMode;
   routingService?: RoutingServiceConfig;
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;

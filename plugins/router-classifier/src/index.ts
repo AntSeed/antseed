@@ -1,8 +1,6 @@
 import { isRouteRecommendationEligible, type AntseedRouterPlugin, type RouteRecommendation, type RouteSelectionContext, type Router, type SerializedHttpResponse } from '@antseed/node';
 import localPlugin from '@antseed/router-local';
 
-export const AUTO_ROUTE_SERVICE_ID = 'classifier-auto';
-
 type Candidates = NonNullable<RouteSelectionContext['candidates']>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -23,9 +21,9 @@ export function parseClassificationResponse(response: SerializedHttpResponse, ca
 }
 
 const selectRoute: NonNullable<Router['selectRoute']> = async (request, _peers, _conversation, _preferences, _defaultRoute, context) => {
+  if (context?.mode !== 'router') return null;
   const body: unknown = JSON.parse(new TextDecoder().decode(request.body));
-  if (!object(body) || body.model !== AUTO_ROUTE_SERVICE_ID) return null;
-  if (!context) throw new Error('Classifier router requires a route selection context');
+  if (!object(body)) throw new Error('Classifier router requires a request object');
   context.signal.throwIfAborted();
   const candidates = structuredClone(context.candidates ?? []);
   if (candidates.length === 0) return [];
@@ -63,7 +61,6 @@ const plugin: AntseedRouterPlugin = {
   description: 'Vendor-neutral reference integration using a buyer-authorized AntSeed classifier service',
   version: '0.1.0',
   type: 'router',
-  autoRouteServiceId: AUTO_ROUTE_SERVICE_ID,
   configSchema: localPlugin.configSchema,
   routingSettingsSchema: [
     { key: 'instructions', label: 'Selection instructions', type: 'string', description: 'Buyer instructions for choosing among eligible model/seller offers' },

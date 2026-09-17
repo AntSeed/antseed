@@ -387,7 +387,11 @@ export class BuyerPaymentNegotiator {
 
       if (topUpNeeded) {
         debugLog(`[BuyerNegotiator] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
-        await this._bpm.topUpReserve(peer.peerId, pmux);
+        try {
+          await this._bpm.topUpReserve(peer.peerId, pmux);
+        } catch (err) {
+          debugWarn(`[BuyerNegotiator] Reserve top-up failed after per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
+        }
       }
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
@@ -1254,7 +1258,7 @@ export class BuyerPaymentNegotiator {
     if (hasPendingReserve) {
       await this._bpm.resendPendingReserveAuth(peer.peerId, pmux);
     }
-    if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
+    if (!requireFreshAck && minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
       const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
       await this._bpm.extendCurrentSpendingAuth(
         peer.peerId,

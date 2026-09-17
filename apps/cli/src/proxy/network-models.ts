@@ -219,7 +219,7 @@ export function buildNetworkModels(
     normalizedReputationByPeerId.set(peer.peerId, normalizedModelReputationScore(peer, nowMs))
   }
 
-  const allOffers = buildNetworkServiceOffers(peers)
+  const allOffers = buildNetworkServiceOffers(peers).filter((offer) => offer.capabilities?.routing !== true)
   const offersByPeerModel = new Map<string, NetworkServiceOffer[]>()
   for (const offer of allOffers) {
     const key = canonicalModelKey(offer.serviceId)

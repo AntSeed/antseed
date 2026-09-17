@@ -37,11 +37,16 @@ one selected model, and leaves seller selection to the host. The local-chain rou
 fixture uses this real plugin with deterministic classifier responses; no
 vendor account is needed. The plugin is private and is not bundled or published.
 
-An installed router plugin declares `autoRouteServiceId` and optionally
+An installed router plugin implements `selectRoute` and optionally declares
 `routingSettingsSchema`. The buyer loads it using the existing `buyer start
 --router <plugin>` or `--instance <instance>` flow. Nothing special is registered
 for a particular vendor. A paid classifier is a normal advertised provider
-service using `/v1/chat/completions`, not a custom routing-server endpoint.
+service using `/v1/chat/completions`, not a custom routing-server endpoint. It
+must advertise `serviceCapabilities[serviceId].routing: true`; the buyer rejects
+a configured classifier without that capability. Seller service configuration
+sets `service.capabilities.routing: true`. Service names never establish whether
+a service is a classifier. Routing-capable services are excluded from inference
+model listings and eligible inference candidates.
 
 `selectRoute(request, peers, conversation, preferences, defaultRoute, context)`
 returns ordered `{ serviceId, peerId? }` recommendations. The host reconstructs requests, peers, and prices from its own
@@ -61,7 +66,7 @@ Before dispatch, unusable recommendations can be skipped; once dispatch starts,
 fallback cannot change the selected model. A malformed seller ID is rejected,
 not interpreted as an omitted seller ID.
 
-The context supplies namespaced settings, an eligible candidate snapshot,
+The context supplies `mode: 'router'`, namespaced settings, an eligible candidate snapshot,
 `signal`, `deadlineMs`, and `invokeService(messages, parseResponse)`. Its trigger
 identifies new sessions, changed latest user text, continuations, and unavailable
 routes. `shouldRoute` suggests whether to reconsider the decision; it does not
@@ -78,24 +83,47 @@ their fee requires the separate classifier authorization described below.
   fallback. That fallback still passes host policy checks.
 - Late results after cancellation cannot cause inference dispatch.
 
-The buyer must explicitly set `buyer.routingPreferences.routerEnabled: true`
-and request the plugin's sentinel model. Unknown model names do not trigger
-classification. Concrete advertised models and explicit pins bypass it.
-The sentinel must not collide with an advertised inference model.
+The buyer must explicitly set `buyer.routingPreferences.routerEnabled: true`.
+Routing selection uses a separate `'model' | 'router'` mode, not a special model
+name or plugin property:
+
+- `x-antseed-routing-mode: router` requests classification regardless of
+  `body.model`; the model may be omitted.
+- `x-antseed-routing-mode: model` bypasses classification.
+- Without a per-request router override, normal concrete model requests remain
+  fixed, even when the session mode is `router`. Unknown model names do not
+  activate classification.
+- The existing `model: "antseed"` alias opts into the conversation/session
+  selection. `buyer.routingMode: "router"` initializes the session mode;
+  persisted session overrides take precedence over that initial configuration.
+- Explicit user model pins bypass classification. Select router mode for that
+  conversation to clear its pin before routing it automatically.
+
+The example plugin checks `context.mode`, not the request's model name.
 
 The host calls `selectRoute` on every explicitly auto-routed request, including
 later turns. It never substitutes the conversation's last model before calling
 the plugin. A plugin can reconsider each user turn and keep the same model or
-choose another eligible model. Explicit user pins and concrete models still
-bypass classification.
+choose another eligible model. Explicit user pins and concrete models without
+a router override still bypass classification.
 
-The user selection is a fixed model **or** the router sentinel. Choosing a fixed
-model bypasses classification, even when a tool still sends the router sentinel.
-Choosing the router keeps routing active across turns; its chosen inference
-model is history, not a new user pin. The existing conversation update endpoint
-(`POST /_antseed/conversations/update`) accepts the sentinel in `pinnedModel` to
-represent an explicit router selection. Changing that selection clears cached
-routing decisions. This is a backend contract, not a desktop selector redesign.
+The user selection is a fixed model **or** explicit router mode. Its chosen
+inference model is history, not a new user pin. The backend endpoints persist
+selection independently from the fallback model:
+
+- `POST /_antseed/route` with `{ "routingMode": "router" }` persists session
+  router mode and clears the session peer pin. It preserves `defaultRoutedModel`
+  as an optional failure fallback, used only when `routerFailureFallback` is
+  `"default"`. The optional `model` field can set or clear that fallback.
+  GET and POST responses expose `{ "ok": true, "model": ..., "routingMode": ... }`.
+- `POST /_antseed/conversations/update` with
+  `{ "id": "<conversation-id>", "routingMode": "router" }` clears `pinnedModel`
+  and persists an explicit chat router selection. A fixed `pinnedModel` sets
+  mode to `model`; combining a fixed pin with router mode is rejected. The
+  response exposes `conversation.routingMode`. Changing the selection clears
+  cached routing decisions.
+
+This is a backend contract, not a desktop selector redesign.
 
 For tool continuations and repeated requests with unchanged history, the context
 suggests reuse and includes the still-eligible original recommendations in
@@ -147,6 +175,7 @@ belongs to that plugin, not to AntSeed.
 ```json
 {
   "buyer": {
+    "routingMode": "router",
     "routerTimeoutMs": 10000,
     "routerFailureFallback": "none",
     "routingPreferences": {
@@ -175,6 +204,23 @@ Use `instance:<name>` for named plugin instances. Direct `--router` keys use the
 exact configured router argument. The host only passes that key's settings to
 the plugin, validates them against its schema, and keeps buyer policy separate.
 
+For the reference plugin, use `plugin:@antseed/router-classifier` for both keys
+and replace `{ "policy": "balanced" }` with its optional
+`{ "instructions": "Choose a suitable model while considering prices." }` setting.
+Send an explicit router request without a model, for example:
+
+```sh
+curl http://127.0.0.1:8377/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H 'x-antseed-routing-mode: router' \
+  -d '{"messages":[{"role":"user","content":"Explain this code."}],"max_tokens":128}'
+```
+
+Use your configured buyer proxy port. Clients using `model: "antseed"` instead
+follow the saved conversation/session selection without a per-request override.
+The classifier's chat-completions content remains the simple JSON object
+`{ "serviceId": "model-x" }`; the plugin converts it to host recommendations.
+
 `configSchema` describes startup configuration; `routingSettingsSchema` describes
 per-selection preferences. Both share the `ConfigField` metadata definition.
 `RouterSettingField` narrows it to string, number, and boolean fields with
@@ -188,6 +234,12 @@ For token billing, set `billing.kind` to `token` and provide all three rate caps
 signed spending for one classifier operation, not the channel's reserved
 collateral and not a daily spending allowance.
 
+Inference `buyer.maxPricing.providers` overrides are retained and validated
+alongside global defaults. Host policy resolves caps in this order:
+`providers[provider].services[serviceId]` > `providers[provider].defaults` >
+`defaults`. Classifier authorization still uses the separate `routingService`
+limits, not these inference caps.
+
 ## Payment and operational boundaries
 
 ### CLI configuration
@@ -200,6 +252,7 @@ antseed config buyer set routingPreferences.routerSettings '{"plugin:example-rou
 antseed config buyer set routerTimeoutMs 10000
 antseed config buyer set routerFailureFallback none
 antseed config buyer set routingPreferences.routerEnabled true
+antseed config buyer set routingMode router
 ```
 
 Set `routingService` as one complete JSON object using the configuration example
@@ -245,8 +298,18 @@ queue a normal conversation-store write, including when classification succeeds
 but inference fails. Old records default the routing subtotal to zero; old costs
 are not reconstructed. The existing channel migrations 001–005 are unchanged;
 no new channel migration or SQLite reserve-recovery persistence is included.
-No access-purchase or routing-history schema is shipped. Metadata preserves existing image-unit encoding and rejects
-downgrades that would omit unit fees.
+No access-purchase or routing-history schema is shipped. Metadata v13 encodes the
+explicit service routing capability; announcements without that field remain
+v12. The v10–v12 wire baselines and existing image-unit encoding stay unchanged.
+Encoding rejects downgrades that would omit routing capabilities or unit fees.
+
+SDK streaming requests explicitly reject `routingAuthorization`; classifier
+calls use complete buffered responses. Normal inference streaming remains
+supported, including inference selected by the router. Reserve recovery can
+replay existing authorization without advancing spending. Optional reserve
+top-up failures do not discard an already paid, accepted classification.
+Seller preflight includes `successful_requests` when estimating fixed-fee
+budgets, and billing checks use the requested API protocol's unit model.
 
 Duplicate `invokeService` calls reuse one in-process operation for a parent
 request. Restarting during an unfinished classification is not durable
@@ -296,6 +359,10 @@ Before release: review the diff against current `origin/main`, run the suite on
 that integrated tree, and perform the normal package-version/release process.
 This PR does not activate a production router or validate a private vendor's
 seller. A later desktop or access-billing PR must be reviewed separately.
+
+The dated runs below describe earlier revisions, not validation of the finalized
+explicit-mode and routing-capability changes. Re-run the checks above after
+integration before treating those changes as verified.
 
 ### Initial-selection baseline validation — September 16, 2026
 

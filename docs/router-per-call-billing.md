@@ -46,19 +46,15 @@ network requests or invent a fallback when a response cannot be parsed.
 Prepayment validation uses this parser only in per-call mode; token-priced
 routing retains its existing billing behavior.
 
-For example, a plugin whose classifier returns `{ "selected_model": "..." }`
-can use this adapter (that payload format is only an example, not a protocol):
+The reference classifier returns `{ "serviceId": "model-x" }` as the JSON string
+in `choices[0].message.content`. Its exported parser checks that envelope and
+returns one model-only recommendation, leaving seller selection to the host:
 
 ```ts
-const parseResponse = (response: SerializedHttpResponse) => {
-  const result = JSON.parse(new TextDecoder().decode(response.body));
-  const selected = context.candidates?.find(
-    (candidate) => candidate.serviceId === result.selected_model,
-  );
-  return selected
-    ? [{ peerId: selected.peerId, serviceId: selected.serviceId }]
-    : [];
-};
+import { parseClassificationResponse } from '@antseed/router-classifier';
+
+const parseResponse = (response: SerializedHttpResponse) =>
+  parseClassificationResponse(response, context.candidates ?? []);
 
 const response = await context.invokeService!(messages, parseResponse);
 return parseResponse(response);
@@ -81,11 +77,15 @@ vendor-specific definition embedded in the generic unit calculator.
 
 ## Configuration
 
-A provider advertises zero token rates and a fixed unit price:
+A classifier provider advertises the routing capability, zero token rates,
+and a fixed unit price for the requested protocol:
 
 ```ts
 provider.pricing = {
   defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+};
+provider.serviceCapabilities = {
+  classifier: { routing: true },
 };
 provider.serviceUnitBillingModels = {
   classifier: {
@@ -98,11 +98,20 @@ provider.serviceUnitBillingModels = {
 integers within uint32 bounds. Pricing is encoded exactly in micro-USDC; no
 synthetic token counts are needed. Forecasts and token usage can be absent.
 
+Seller configuration expresses the capability as
+`service.capabilities.routing: true`. The buyer rejects classifier offers
+without it and excludes routing-capable services from inference listings and
+candidates, regardless of service name. Metadata v13 carries this field;
+ordinary announcements without it remain v12, with v10–v12 wire baselines
+unchanged. Routing capability cannot be encoded by downgrading to v12.
+
 Buyer configuration:
 
 ```json
 {
   "buyer": {
+    "routingMode": "router",
+    "routingPreferences": { "routerEnabled": true },
     "routingService": {
       "routerKey": "instance:my-router",
       "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -125,6 +134,20 @@ rejected. Without `billing`, existing token-priced routing remains the default.
 This does not add a desktop billing selector or automatically convert any
 private vendor billing implementation into a per-call service.
 
+Send `x-antseed-routing-mode: router` to classify a request with any model or
+without a model. Alternatively, `model: "antseed"` follows the saved
+conversation/session mode. Concrete model requests remain fixed without the
+router override, even when `buyer.routingMode` is `router`;
+`x-antseed-routing-mode: model` explicitly bypasses classification.
+The reference classifier returns `{ "serviceId": "model-x" }` in its
+chat-completions message content, not a list of routes.
+
+Unit billing is checked for the requested API protocol rather than unrelated
+protocols advertised by the same service. Seller preflight includes the
+`successful_requests` unit in its fixed-fee reserve estimate. The SDK rejects
+streaming requests with `routingAuthorization`; ordinary inference streaming
+remains supported after classification.
+
 ## Invalid responses: stop safely, do not pay to unblock
 
 A seller that returns an invalid classification with HTTP 200 may already have
@@ -144,6 +167,11 @@ automatic paid retry follows an invalid classification. Duplicate invocations
 for one parent request reuse the same in-process operation; this is not durable
 exactly-once behavior across restarts. Dedicated routing sellers and the
 distinction between spending authorization and reserved collateral remain.
+
+Reserve recovery may replay an existing authorization but does not advance
+cumulative spending to pay an unaccepted classification. Optional reserve
+top-up failures after payment do not discard an accepted classification that
+has already been paid. Neither behavior authorizes disputed catch-up fees.
 
 ## Tests
 
@@ -170,6 +198,7 @@ Each settles five accepted classifications at 5,000 micro-USDC each; the rejecte
 classification, HTTP error, blocked retry, and reused decision add no fee.
 
 The fixture plugin reuses the accepted route for a tool continuation, then
-classifies again on a new user turn, context rewrite, and explicit refresh.
+classifies again when the latest user text changes, including after a context
+rewrite. A refresh header alone does not invalidate reuse.
 Those accepted classifications are charged even when the selected model stays
 the same. See `router-network-integration.md` for the plugin-controlled policy.

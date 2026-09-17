@@ -14,6 +14,7 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
   const config = { ...settings, ...overrides }
   const peer: PeerInfo = {
     peerId: settings.peerId as PeerInfo['peerId'], lastSeen: Date.now(), providers: ['openai'],
+    providerServiceCapabilities: { openai: { services: { 'route-classifier': { routing: true } } } },
     providerServiceApiProtocols: { openai: { services: { 'route-classifier': ['openai-chat-completions'] } } },
     providerPricing: { openai: { defaults: { inputUsdPerMillion: price, outputUsdPerMillion: price * 2 },
       services: { 'route-classifier': { inputUsdPerMillion: price, outputUsdPerMillion: price * 2 } } } },
@@ -84,6 +85,13 @@ test('free routing does not grant paid negotiation', async () => {
   const state = setup({ maxAdditionalAuthorizationUsdc: '0' }, 0)
   await state.executor.invoke('parent', state.context, state.messages)
   assert.equal(state.sent[0][2].routingAuthorization.maxAdditionalAuthorizationUsdc, '0')
+})
+
+test('a configured classifier must advertise the routing capability', async () => {
+  const state = setup()
+  delete state.peer.providerServiceCapabilities
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /routing capability/)
+  assert.equal(state.sent.length, 0)
 })
 
 for (const price of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {

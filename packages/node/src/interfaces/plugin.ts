@@ -35,14 +35,6 @@ export interface AntseedRouterPlugin extends AntseedPluginBase {
   type: 'router'
   routingSettingsSchema?: import('../routing/router-settings.js').RouterSettingField[]
   createRouter(config: Record<string, string>): Router | Promise<Router>
-  /**
-   * The `serviceId` this router's "auto" model-picker entry responds to --
-   * what a host UI shows as a synthetic catalog entry, and what
-   * `Router.selectRoute` checks the requested model against to decide
-   * whether to take over routing at all. Omit if this plugin has no
-   * dedicated auto-routing sentinel model.
-   */
-  autoRouteServiceId?: string
 }
 
 export interface ClaimResult {

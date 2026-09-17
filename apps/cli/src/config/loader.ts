@@ -84,7 +84,10 @@ function mergeHierarchicalPricing(
   if (!isRecord(value)) {
     return { defaults: clonePricing(defaults.defaults) };
   }
-  return { defaults: mergeTokenPricing(defaults.defaults, value['defaults']) };
+  return {
+    defaults: mergeTokenPricing(defaults.defaults, value['defaults']),
+    ...(value['providers'] !== undefined ? { providers: value['providers'] as HierarchicalPricingConfig['providers'] } : {}),
+  };
 }
 
 /* ── Seller provider + services merge ──────────────────────────────────── */
@@ -490,6 +493,7 @@ function mergeBuyerConfig(
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
     routerTimeoutMs: value['routerTimeoutMs'] === undefined ? 10_000 : toFiniteOrNaN(value['routerTimeoutMs']),
+    routingMode: (value['routingMode'] ?? 'model') as BuyerCLIConfig['routingMode'],
     routerFailureFallback: (value['routerFailureFallback'] ?? 'none') as 'none' | 'default',
     ...(value['routingService'] !== undefined ? { routingService: value['routingService'] as BuyerCLIConfig['routingService'] } : {}),
     requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'

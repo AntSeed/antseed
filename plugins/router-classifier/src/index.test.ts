@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RouteSelectionContext, SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node';
-import plugin, { AUTO_ROUTE_SERVICE_ID, parseClassificationResponse } from './index.js';
+import plugin, { parseClassificationResponse } from './index.js';
 
 const candidates: NonNullable<RouteSelectionContext['candidates']> = [
   { peerId: 'a'.repeat(40), serviceId: 'small-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
@@ -19,7 +19,7 @@ function response(content: unknown = recommendation(0)): SerializedHttpResponse 
   };
 }
 
-function request(model = AUTO_ROUTE_SERVICE_ID): SerializedHttpRequest {
+function request(model = 'unused-client-model'): SerializedHttpRequest {
   return {
     requestId: 'client-request', method: 'POST', path: '/v1/chat/completions',
     headers: { authorization: 'Bearer client-secret', 'content-type': 'application/json' },
@@ -29,7 +29,7 @@ function request(model = AUTO_ROUTE_SERVICE_ID): SerializedHttpRequest {
 
 function context(overrides: Partial<RouteSelectionContext> = {}): RouteSelectionContext {
   return {
-    candidates: structuredClone(candidates), signal: new AbortController().signal, deadlineMs: Date.now() + 10_000,
+    mode: 'router', candidates: structuredClone(candidates), signal: new AbortController().signal, deadlineMs: Date.now() + 10_000,
     invokeService: vi.fn(async (_messages, parseResponse) => {
       const result = response();
       expect(parseResponse?.(result)).toEqual([recommendation(0)]);
@@ -95,7 +95,7 @@ describe('generic classifier reference router', () => {
 
   it('bypasses classification for an explicit model and preserves local-router hooks', async () => {
     const selectionContext = context();
-    expect(await select(selectionContext, request('small-model'))).toBeNull();
+    expect(await select({ ...selectionContext, mode: 'model' }, request('small-model'))).toBeNull();
     expect(selectionContext.invokeService).not.toHaveBeenCalled();
     const router = await plugin.createRouter({});
     expect(typeof (router as unknown as Record<string, unknown>).allowsPeerForPolicy).toBe('function');

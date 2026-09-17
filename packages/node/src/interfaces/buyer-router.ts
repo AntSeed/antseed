@@ -30,7 +30,10 @@ export type RouteRecommendation = {
   peerId?: string;
 };
 
+export type RoutingMode = 'model' | 'router';
+
 export type RouteSelectionContext = {
+  mode?: RoutingMode;
   routing?: import('../routing/routing-context.js').RoutingRequestContext;
   settings?: Record<string, string>;
   signal: AbortSignal;
@@ -77,14 +80,14 @@ export interface Router {
    * usual fixed-model peer narrowing. Called on each explicitly auto-routed
    * request, including later turns. Plugins can reuse context.routing.previousRoutes
    * when shouldRoute is false rather than invoking a paid classifier again.
-   * Returning `null` (or not implementing it) falls through to the unmodified
-   * `selectPeer` pipeline.
+   * Returning `null` declines selection; an explicitly selected router mode
+   * fails closed or uses the host's configured fallback.
    * An empty array means the router claimed the request but has no route;
    * it must not be treated as a decline. Throw for execution failures.
    * Hosts enforce the context deadline even if a plugin ignores its signal.
    *
-   * `req` contains the resolved router sentinel after applying user selections
-   * and aliases, before substituting an inference model. The host reconstructs
+   * `context.mode` identifies explicit router selection independently of model
+   * names. `req` contains the client payload. The host reconstructs
    * dispatch requests and validates all recommendations against buyer policy.
    */
   selectRoute?(

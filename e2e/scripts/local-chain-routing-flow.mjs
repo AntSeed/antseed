@@ -109,6 +109,7 @@ try {
     identityRegistryAddress: addresses.identity, usdcAddress: addresses.usdc, minBudgetPerRequest: '1',
     maxPerRequestUsdc: '100000', maxReserveAmountUsdc: '1000000', settlementIdleMs: 300_000 };
   const fixtureProviders = [provider('route-classifier', 'fixture-model', 100, 20), provider('fixture-model', 'fixture answer', 200, 30)];
+  fixtureProviders[0].serviceCapabilities = { 'route-classifier': { routing: true } };
   if (perCall) {
     fixtureProviders[0].pricing = { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
     fixtureProviders[0].serviceUnitBillingModels = { 'route-classifier': { 'openai-chat-completions': createPerCallBillingModel('5000') } };
@@ -135,6 +136,7 @@ try {
       evmAddress: identity.wallet.address, publicAddress: `127.0.0.1:${node.signalingPort}`, reputationScore: 100,
       providerPricing: { openai: { defaults: fixture.pricing.defaults, services: { [serviceId]: fixture.pricing.defaults } } },
       ...(fixture.serviceUnitBillingModels ? { providerServiceUnitBillingModels: { openai: { services: fixture.serviceUnitBillingModels } } } : {}),
+      ...(fixture.serviceCapabilities ? { providerServiceCapabilities: { openai: { services: fixture.serviceCapabilities } } } : {}),
       providerServiceApiProtocols: { openai: { services: { [serviceId]: ['openai-chat-completions'] } } } });
   }
   const buyer = new AntseedNode({ role: 'buyer', dataDir: buyerDir, dhtPort: 0, bootstrapNodes: [], noOfficialBootstrap: true,
@@ -145,7 +147,7 @@ try {
     const payload = JSON.parse(messages[1].content);
     assert.deepEqual(payload.candidates, [{ peerId: peers[1].peerId, serviceId: 'fixture-model',
       inputUsdPerMillion: 1, cachedInputUsdPerMillion: null, outputUsdPerMillion: 2 }]);
-    assert.equal(payload.request.body.model, classifierPlugin.autoRouteServiceId);
+    assert.ok(payload.request.body.model === undefined || payload.request.body.model === 'fixture-model');
     assert.equal(payload.request.path, '/v1/chat/completions');
   };
   buyer.setRouter(await classifierPlugin.createRouter({}));
@@ -153,7 +155,7 @@ try {
   const events = [];
   buyer.on('payment:spend', (event) => events.push(event));
   proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:@antseed/router-classifier',
-    autoRouteServiceId: classifierPlugin.autoRouteServiceId, routingSettingsSchema: classifierPlugin.routingSettingsSchema,
+    routingMode: 'router', routingSettingsSchema: classifierPlugin.routingSettingsSchema,
     routerTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
       allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
@@ -164,10 +166,10 @@ try {
   proxy._getPeers = async () => peers;
   await proxy.start();
   console.log('[routing-flow] requesting router selection and downstream inference through the buyer proxy');
-  const sendInference = async (messages, headers = {}, expectedStatus = 200) => {
+  const sendInference = async (messages, headers = {}, expectedStatus = 200, model) => {
     const response = await fetch(`http://127.0.0.1:${proxy._server.address().port}/v1/chat/completions`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-vpr-session-id': 'routing-fixture', ...headers },
-      body: JSON.stringify({ model: classifierPlugin.autoRouteServiceId, messages, max_tokens: 32 }), signal: AbortSignal.timeout(90_000),
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-antseed-routing-mode': 'router', 'x-vpr-session-id': 'routing-fixture', ...headers },
+      body: JSON.stringify({ model, messages, max_tokens: 32 }), signal: AbortSignal.timeout(90_000),
     });
     const responseText = await response.text();
     assert.equal(response.status, expectedStatus, responseText);
@@ -185,7 +187,7 @@ try {
   await sendInference(toolContinuation);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 2]);
   assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee));
-  await sendInference([...toolContinuation, { role: 'assistant', content: 'fixture answer' }, { role: 'user', content: 'fixture continuation' }]);
+  await sendInference([...toolContinuation, { role: 'assistant', content: 'fixture answer' }, { role: 'user', content: 'fixture continuation' }], {}, 200, 'fixture-model');
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 3]);
   assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee * 2n));
   const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture next task' }];

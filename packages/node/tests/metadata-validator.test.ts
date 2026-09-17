@@ -43,6 +43,32 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 
 
 describe('validateMetadata', () => {
+  it.each([true, false, undefined])('accepts v13 routing %s', (routing) => {
+    const metadata = validMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing } };
+    expect(validateMetadata(metadata)).toEqual([]);
+  });
+
+  it.each([10, 11, 12])('rejects routing capabilities on metadata v%s', (version) => {
+    for (const routing of [true, false]) {
+      const metadata = validMetadata({ version });
+      metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing } };
+      expect(validateMetadata(metadata)).toContainEqual({
+        field: 'providers[0].serviceCapabilities.claude-3-opus.routing',
+        message: 'Service routing capability requires metadata version 13',
+      });
+    }
+  });
+
+  it.each([null, 0, 'true'].map((routing) => ({ routing })))('rejects malformed routing $routing', ({ routing }) => {
+    const metadata = validMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing: routing as unknown as boolean } };
+    expect(validateMetadata(metadata)).toContainEqual({
+      field: 'providers[0].serviceCapabilities.claude-3-opus',
+      message: 'routing must be a boolean',
+    });
+  });
+
   it('accepts advertised per-call chat pricing', () => {
     const metadata = validMetadata();
     metadata.providers[0]!.defaultPricing = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };

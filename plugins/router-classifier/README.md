@@ -5,8 +5,9 @@ service. It is source-only: not bundled, published, or automatically installed.
 
 ## How it works
 
-1. A request for `classifier-auto` asks this plugin to choose a model. Explicit
-   model requests use ordinary routing instead.
+1. Explicit router mode asks this plugin to choose a model. The plugin checks
+   `context.mode === 'router'`, not the request's model name. A per-request
+   `x-antseed-routing-mode: router` header works with any model or no model.
 2. The plugin sends the request body, optional selection instructions, and the
    host's eligible model/seller offers to `context.invokeService`.
 3. The classifier returns one model. The plugin checks that it is eligible and
@@ -36,8 +37,21 @@ Use the buyer setup in `docs/router-network-integration.md`, with
 `@antseed/router-classifier` as the plugin and `plugin:@antseed/router-classifier`
 as its settings and routing-service key. Point the routing service at an actual
 advertised classifier seller, explicitly approve prompt sharing and spending
-limits, and request `classifier-auto`. See `docs/router-per-call-billing.md`
-for fixed-fee configuration.
+limits, and enable `buyer.routingPreferences.routerEnabled`. The classifier
+provider must advertise `serviceCapabilities[serviceId].routing: true` (seller
+configuration: `service.capabilities.routing: true`). The host rejects absent
+routing capability and excludes routing-capable services from inference
+listings and candidates; names do not classify services.
+
+Use `x-antseed-routing-mode: router` for a per-request selection, or configure
+`buyer.routingMode: "router"` and send the existing `model: "antseed"` alias to
+follow session selection. Normal concrete model requests stay fixed without
+the router header, even in a router-mode session; `x-antseed-routing-mode: model`
+explicitly bypasses classification. For a pinned conversation, select
+`routingMode: "router"` through `POST /_antseed/conversations/update` to clear
+its `pinnedModel`. `POST /_antseed/route` persists session mode and clears the
+session peer pin while retaining an optional failure fallback model. See
+`docs/router-per-call-billing.md` for fixed-fee configuration.
 
 The optional `instructions` setting describes your selection preference.
 To adapt this example to another response format, change the request messages

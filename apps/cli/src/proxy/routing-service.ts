@@ -67,7 +67,7 @@ export class RoutingServiceExecutor {
       const peer = peers.find((candidate) => candidate.peerId.toLowerCase() === config.peerId.toLowerCase().replace(/^0x/, ''))
       const offer = peer ? buildNetworkServiceOffers([peer]).find((entry) => entry.serviceId === config.serviceId
         && entry.provider === config.provider && entry.protocols.includes('openai-chat-completions')) : null
-      if (!peer || !offer || offer.inputUsdPerMillion == null || offer.outputUsdPerMillion == null) throw new Error('Routing service unavailable')
+      if (!peer || !offer || offer.capabilities?.routing !== true || offer.inputUsdPerMillion == null || offer.outputUsdPerMillion == null) throw new Error('Routing service unavailable or missing routing capability')
       if ([offer.inputUsdPerMillion, offer.outputUsdPerMillion, offer.cachedInputUsdPerMillion ?? offer.inputUsdPerMillion]
         .some((rate) => !Number.isFinite(rate) || rate < 0)) throw new Error('Routing service has invalid prices')
       const unitModel = peer.providerServiceUnitBillingModels?.[config.provider]?.services[config.serviceId]?.['openai-chat-completions']

@@ -22,6 +22,27 @@ function setup() {
 }
 
 describe('native SDK per-call routing authorization', () => {
+  it.each(['per-call', 'tokens', 'zero-cap'])('rejects %s streaming routing authorization before dispatch', async (billing) => {
+    const state = setup();
+    if (billing !== 'per-call') delete (state.options.routingAuthorization as any).billing;
+    if (billing === 'zero-cap') state.options.routingAuthorization.maxAdditionalAuthorizationUsdc = '0';
+    const callbacks = { onResponseStart: vi.fn(), onResponseChunk: vi.fn() };
+    await expect(state.node.sendRequestStream(state.peer, state.request, callbacks, state.options))
+      .rejects.toMatchObject({ code: 'invalid-request' });
+    expect(state.sendRequest).not.toHaveBeenCalled();
+    expect(state.beginRoutingRequest).not.toHaveBeenCalled();
+  });
+
+  it('preserves ordinary streaming callbacks and options', async () => {
+    const state = setup();
+    const callbacks = { onResponseStart: vi.fn(), onResponseChunk: vi.fn() };
+    const options = { signal: new AbortController().signal };
+    const response = await state.node.sendRequestStream(state.peer, state.request, callbacks, options);
+    expect(response.statusCode).toBe(200);
+    expect(state.sendRequest).toHaveBeenCalledWith(state.peer, state.request, callbacks, options);
+    expect(state.beginRoutingRequest).not.toHaveBeenCalled();
+  });
+
   it('passes validation through to the handler with exactly one fee and closes the grant', async () => {
     const state = setup();
     await state.node.sendRequest(state.peer, state.request, state.options);

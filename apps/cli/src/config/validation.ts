@@ -51,6 +51,31 @@ function validateHierarchicalPricing(
   errors: string[]
 ): void {
   validatePricingLeaf(`${path}.defaults`, pricing.defaults, errors);
+  if (pricing.providers === undefined) return;
+  if (!pricing.providers || typeof pricing.providers !== 'object' || Array.isArray(pricing.providers)) {
+    errors.push(`${path}.providers must be an object`);
+    return;
+  }
+  for (const [provider, limits] of Object.entries(pricing.providers)) {
+    if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+      errors.push(`${path}.providers.${provider} must be an object`);
+      continue;
+    }
+    if (limits.defaults !== undefined) {
+      if (!limits.defaults || typeof limits.defaults !== 'object') errors.push(`${path}.providers.${provider}.defaults must be an object`);
+      else validatePricingLeaf(`${path}.providers.${provider}.defaults`, limits.defaults, errors);
+    }
+    if (limits.services !== undefined) {
+      if (!limits.services || typeof limits.services !== 'object' || Array.isArray(limits.services)) {
+        errors.push(`${path}.providers.${provider}.services must be an object`);
+      } else {
+        for (const [service, price] of Object.entries(limits.services)) {
+          if (!price || typeof price !== 'object') errors.push(`${path}.providers.${provider}.services.${service} must be an object`);
+          else validatePricingLeaf(`${path}.providers.${provider}.services.${service}`, price, errors);
+        }
+      }
+    }
+  }
 }
 
 function validateCategoryList(
@@ -337,6 +362,9 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
   if (config.buyer.routerTimeoutMs !== undefined && (!Number.isInteger(config.buyer.routerTimeoutMs) || config.buyer.routerTimeoutMs < 1)) {
     errors.push('buyer.routerTimeoutMs must be an integer >= 1');
+  }
+  if (config.buyer.routingMode !== undefined && !['model', 'router'].includes(config.buyer.routingMode)) {
+    errors.push('buyer.routingMode must be model or router');
   }
   if (config.buyer.routerFailureFallback !== undefined && !['none', 'default'].includes(config.buyer.routerFailureFallback)) {
     errors.push('buyer.routerFailureFallback must be none or default');

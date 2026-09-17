@@ -74,6 +74,14 @@ describe('parseServiceUnitBillingModelsJson', () => {
 });
 
 describe('parseServiceCapabilitiesJson', () => {
+  it('preserves and validates the explicit routing capability', () => {
+    expect(parseServiceCapabilitiesJson(JSON.stringify({ classifier: { routing: true } })))
+      .toEqual({ classifier: { routing: true } });
+    expect(parseServiceCapabilitiesJson(JSON.stringify({ model: { routing: false } })))
+      .toEqual({ model: { routing: false } });
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({ classifier: { routing: 'true' } })))
+      .toThrow(/routing must be a boolean/);
+  });
   it('returns undefined for empty input', () => {
     expect(parseServiceCapabilitiesJson(undefined)).toBeUndefined();
     expect(parseServiceCapabilitiesJson('{}')).toBeUndefined();

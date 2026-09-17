@@ -6,11 +6,12 @@ import {
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 12;
+export const METADATA_VERSION = 13;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+export const SERVICE_ROUTING_CAPABILITY_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -36,6 +37,7 @@ export type ServiceCapabilityModality = (typeof SERVICE_CAPABILITY_MODALITIES)[n
  * optional: absent means unknown, so buyers fall back to their own defaults.
  */
 export interface ServiceCapabilities {
+  routing?: boolean;
   /** Total context window in tokens. */
   contextWindow?: number;
   /** Maximum output tokens per response. */
@@ -98,7 +100,7 @@ export function validateServiceCapabilityFields(caps: ServiceCapabilities): stri
       seen.add(modality);
     }
   }
-  for (const key of ["reasoning", "toolUse", "structuredOutput"] as const) {
+  for (const key of ["reasoning", "toolUse", "structuredOutput", "routing"] as const) {
     const value = caps[key];
     if (value !== undefined && typeof value !== "boolean") {
       errors.push(`${key} must be a boolean`);

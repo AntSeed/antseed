@@ -356,6 +356,8 @@ export function setConfigValue(config: Record<string, unknown>, key: string, val
 }
 
 const OPTIONAL_CONFIG_VALUE_TYPES: Record<string, 'boolean' | 'number' | 'string' | 'object'> = {
+  'buyer.routingMode': 'string',
+  'buyer.maxPricing.providers': 'object',
   'buyer.routingPreferences.routerEnabled': 'boolean',
   'buyer.routingPreferences.routerSettings': 'object',
   'buyer.routerTimeoutMs': 'number',

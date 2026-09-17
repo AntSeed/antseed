@@ -228,7 +228,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       let router
       let toolHints: Array<{ name: string; envVar: string }> = []
-      let autoRouteServiceId: string | undefined
       let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
       const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
@@ -254,7 +253,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
@@ -272,7 +270,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
-          autoRouteServiceId = plugin.autoRouteServiceId
           routingSettingsSchema = plugin.routingSettingsSchema
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
@@ -469,7 +466,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routerTimeoutMs: Math.min(effectiveBuyerConfig.routerTimeoutMs ?? 10_000, effectiveBuyerConfig.requestTimeoutMs),
         routerFailureFallback: effectiveBuyerConfig.routerFailureFallback,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
-        autoRouteServiceId,
+        routingMode: effectiveBuyerConfig.routingMode,
         routingSettingsSchema,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         routingService: effectiveBuyerConfig.routingService,

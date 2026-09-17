@@ -325,6 +325,7 @@ export function overrideRoutedModelInBody(
   body: Uint8Array,
   headers: Record<string, string>,
   pinnedModel: string,
+  allowMissingModel = false,
 ): { body: Uint8Array; headers: Record<string, string>; overridden: boolean } {
   if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
     return { body, headers, overridden: false }
@@ -334,7 +335,7 @@ export function overrideRoutedModelInBody(
     return { body, headers, overridden: false }
   }
   const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
-  if (!rawModel || rawModel === pinnedModel) {
+  if ((!rawModel && !allowMissingModel) || rawModel === pinnedModel) {
     return { body, headers, overridden: false }
   }
   obj['model'] = pinnedModel

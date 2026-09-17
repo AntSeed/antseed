@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
+import { Wallet } from 'ethers';
+import { signData, verifySignature } from '@antseed/protocol/signing';
 import { createPerCallBillingModel, perCallPriceMicroUsdc } from '../src/types/billing.js';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
@@ -33,6 +36,107 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('encodeMetadata / decodeMetadata', () => {
+  it.each([
+    [10, '7fbaff7b6bf576f77b540c6451116131f9dc59a5c69c6bb7e6dbf57cf9d90192'],
+    [11, 'df3b03a4dd68378b40583606fe32f9a246ae3fd5ca18df23eb534a66b4eb58b0'],
+    [12, '2e7d69eb927b550484287475aad0ba6b0f295e2eadaba574ce60e2e5c0e8129a'],
+  ] as const)('preserves the v%s wire baseline', (version, expectedHash) => {
+    const metadata = makeMetadata({ version });
+    const provider = metadata.providers[0]!;
+    provider.serviceApiProtocols = { 'claude-3-opus': ['anthropic-messages'] };
+    if (version >= 11) {
+      provider.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel('16777217') } };
+    }
+    if (version >= 12) {
+      provider.serviceCapabilities = {
+        'claude-3-opus': {
+          contextWindow: 200000,
+          maxOutputTokens: 8192,
+          inputs: ['text', 'image'],
+          outputs: ['text'],
+          reasoning: false,
+          toolUse: true,
+          structuredOutput: true,
+          supportedParameters: ['temperature', 'seed'],
+        },
+      };
+    }
+    const encoded = encodeMetadata(metadata);
+    expect(createHash('sha256').update(encoded).digest('hex')).toBe(expectedHash);
+    expect(encodeMetadata(decodeMetadata(encoded))).toEqual(encoded);
+  });
+
+  it.each([true, false, undefined])('verifies signed v13 routing %s after round-trip', (routing) => {
+    const wallet = new Wallet('0x' + '01'.repeat(32));
+    const metadata = makeMetadata({ version: 13, peerId: wallet.address.slice(2).toLowerCase() as PeerMetadata['peerId'] });
+    metadata.providers[0]!.serviceCapabilities = {
+      'claude-3-opus': {
+        ...(routing !== undefined ? { routing } : {}),
+        reasoning: false,
+        toolUse: true,
+        structuredOutput: true,
+        contextWindow: 200000,
+        maxOutputTokens: 8192,
+        inputs: ['text', 'image'],
+        outputs: ['text'],
+        supportedParameters: ['seed', 'temperature'],
+      },
+      'claude-3-sonnet': { toolUse: false },
+    };
+    metadata.providers[0]!.serviceUnitBillingModels = {
+      'claude-3-opus': {
+        'anthropic-messages': createPerCallBillingModel('16777217'),
+        'openai-chat-completions': createPerCallBillingModel('0'),
+      },
+    };
+    metadata.signature = Buffer.from(signData(wallet, encodeMetadataForSigning(metadata))).toString('hex');
+    const decoded = decodeMetadata(encodeMetadata(metadata));
+    expect(decoded.providers[0]!.serviceCapabilities).toEqual(metadata.providers[0]!.serviceCapabilities);
+    expect(decoded.providers[0]!.serviceUnitBillingModels).toEqual(metadata.providers[0]!.serviceUnitBillingModels);
+    expect(encodeMetadataForSigning(decoded)).toEqual(encodeMetadataForSigning(metadata));
+    expect(verifySignature(decoded.peerId, Buffer.from(decoded.signature, 'hex'), encodeMetadataForSigning(decoded))).toBe(true);
+    decoded.providers[0]!.serviceCapabilities!['claude-3-opus']!.routing = routing !== true;
+    expect(verifySignature(decoded.peerId, Buffer.from(decoded.signature, 'hex'), encodeMetadataForSigning(decoded))).toBe(false);
+  });
+
+  it.each([10, 11, 12])('rejects routing capability downgrades to v%s', (version) => {
+    for (const routing of [true, false]) {
+      const metadata = makeMetadata({ version });
+      metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing } };
+      expect(() => encodeMetadata(metadata)).toThrow('Service routing capability requires metadata v13 or newer');
+      expect(() => encodeMetadataForSigning(metadata)).toThrow('Service routing capability requires metadata v13 or newer');
+    }
+  });
+
+  it('rejects non-boolean routing during encoding', () => {
+    const metadata = makeMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing: 'true' as unknown as boolean } };
+    expect(() => encodeMetadata(metadata)).toThrow('Service routing capability must be a boolean');
+  });
+
+  it.each([
+    { presence: 0x0200, value: 0, message: 'Unknown service capability presence bits' },
+    { presence: 0x0100, value: 0x10, message: 'Unknown service capability value bits' },
+    { presence: 0, value: 0x08, message: 'Service routing capability value requires presence bit' },
+  ])('rejects malformed v13 capability flags $presence/$value', ({ presence, value, message }) => {
+    const metadata = makeMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing: true } };
+    const encoded = Buffer.from(encodeMetadata(metadata));
+    const presenceOffset = encoded.lastIndexOf('claude-3-opus') + Buffer.byteLength('claude-3-opus');
+    encoded.writeUInt16BE(presence, presenceOffset);
+    encoded[presenceOffset + 2] = value;
+    expect(() => decodeMetadata(encoded)).toThrow(message);
+  });
+
+  it('rejects routing value bits in a v12 capability entry', () => {
+    const metadata = makeMetadata({ version: 12 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { reasoning: false } };
+    const encoded = Buffer.from(encodeMetadata(metadata));
+    const presenceOffset = encoded.lastIndexOf('claude-3-opus') + Buffer.byteLength('claude-3-opus');
+    encoded[presenceOffset + 1] = 0x08;
+    expect(() => decodeMetadata(encoded)).toThrow('Unknown service capability value bits');
+  });
+
   it.each([7, 8, 9, 10])('rejects a per-call advertisement downgraded to metadata v%s', (version) => {
     const metadata = makeMetadata({ version });
     metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel('5000') } };
@@ -46,7 +150,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(perCallPriceMicroUsdc(decoded.providers[0]!.serviceUnitBillingModels?.['claude-3-opus']?.['anthropic-messages'])).toBe(BigInt(amount));
     expect(encodeMetadataForSigning(decoded)).toEqual(encodeMetadataForSigning(original));
   });
-  it('round-trips v12 catalogs with more than 255 service entries', () => {
+  it.each([12, 13])('round-trips v%s catalogs with more than 255 service entries', (version) => {
     const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
     const servicePricing = Object.fromEntries(
       services.map((service) => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]),
@@ -67,6 +171,7 @@ describe('encodeMetadata / decodeMetadata', () => {
       services.map((service) => [service, { inputs: ['text'] as const }]),
     );
     const original = makeMetadata({
+      version,
       providers: [{
         provider: 'openai',
         services,
@@ -83,7 +188,7 @@ describe('encodeMetadata / decodeMetadata', () => {
 
     const decoded = decodeMetadata(encodeMetadata(original));
 
-    expect(decoded.version).toBe(METADATA_VERSION);
+    expect(decoded.version).toBe(version);
     expect(decoded.providers[0]?.services).toHaveLength(300);
     expect(Object.keys(decoded.providers[0]?.servicePricing ?? {})).toHaveLength(300);
     expect(Object.keys(decoded.providers[0]?.serviceCategories ?? {})).toHaveLength(300);

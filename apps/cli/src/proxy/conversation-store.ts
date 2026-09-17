@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { RoutingMode } from '@antseed/node'
 import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversation-identity.js'
 
 /**
@@ -14,6 +15,7 @@ import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversatio
  */
 
 export type StoredConversation = {
+  routingMode: RoutingMode | null
   /** `${tool}:${sessionKey}` — unique per tool chat. */
   id: string
   tool: string
@@ -91,6 +93,7 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     snippet: sanitizeStoredSnippet(rawSnippet),
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
+    routingMode: record.routingMode === 'router' || record.routingMode === 'model' ? record.routingMode : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
@@ -220,6 +223,7 @@ export class ConversationStore {
         snippet: input.snippet ?? '',
         label: null,
         pinnedModel: null,
+        routingMode: null,
         peerSource: 'auto',
         lastModel: input.lastModel ?? null,
         spentUsdc: '0',
@@ -336,7 +340,22 @@ export class ConversationStore {
     const record = {
       ...existing,
       pinnedModel: pinnedModel || null,
+      routingMode: pinnedModel ? 'model' as const : null,
       peerSource: pinnedModel ? peerSource : 'auto' as const,
+    }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
+  }
+
+  setRoutingMode(id: string, routingMode: RoutingMode | null): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    const record = {
+      ...existing,
+      routingMode,
+      pinnedModel: routingMode === 'router' ? null : existing.pinnedModel,
+      peerSource: routingMode === 'router' || existing.pinnedModel ? 'user' as const : 'auto' as const,
     }
     this._byId.set(id, record)
     void this._persist()
