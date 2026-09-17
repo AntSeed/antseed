@@ -117,8 +117,9 @@ export interface EmissionsEpochParams {
 
 export interface EmissionsPendingRow {
   epoch: number;
+  protocol: 'legacy' | 'recognized';
   epochEmission: string;
-  params: EmissionsEpochParams;
+  params: EmissionsEpochParams | null;
   seller: { amount: string; userPoints: string; totalPoints: string; claimed: boolean };
   buyer:  { amount: string; userPoints: string; totalPoints: string; claimed: boolean };
   isCurrent: boolean;

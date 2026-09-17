@@ -10,6 +10,9 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
 - Desktop VPR: keep TEE sellers beyond the 512-result cache eligible for automatic checks, prioritize displayed sellers, and preserve retry backoff across discovery updates. Explain missing local verification credentials without changing routing or searching other data directories.
+- Buyer payments: reserve top-ups now use fixed remaining-headroom thresholds—35% of the initial reserve for the first top-up and $0.50 thereafter—instead of reserving again whenever 65% of an ever-growing channel ceiling is spent. Top-up increments remain unchanged, preventing unused locked USDC from scaling with lifetime channel volume.
+
+- Desktop/Payments: reward balances and claims now support both legacy emissions epochs and the recognized-usage protocol. Claims route legacy rewards through Emissions V2, current seller rewards through UsageAccounting, and current buyer rewards through UsageRewards instead of sending every claim to the new accounting contract with the legacy ABI.
 - Node/CLI/Desktop: buyer discovery strips decorative emoji and symbol glyphs from seller-provided display names before persisting `buyer.state.json`; legacy cached names are cleaned during startup hydration.
 - Node: buyers on `base-mainnet` had no fresh on-chain seller stats since the epoch-22 cutover. `stakingContractAddress` points at `AntseedSellerRegistry`, which has no `sellers(address)` view; the old peer enrichment called it for stake and staked-at, failed, and skipped every peer. The trust-signal reader no longer calls it.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
@@ -19,6 +22,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Node/CLI/Desktop: trust-score weights rebalance from history 55 / usage 15 / power 10 / identity 20 to history 60 / usage 15 / power 5 / identity 20. A seller that has saturated both service-history targets (100 settled sessions, 100 USDC settled volume) now reaches 60 from demonstrated service alone, so established sellers clear the default `minTrustScore: 60` routing gate without needing usage-epoch or staking-power share first.
 - Website and docs: wording only. "VPR" and "Virtual Private Router" → "AI VPN", "AntSeed" → "Antseed" in copy (URLs, package names and identifiers unchanged), "seller" → "provider" and "on-chain" → "onchain" in marketing copy. No code or layout changes.
 - Desktop and agent skills: same wording pass. The app is now "Antseed AI VPN" (window title, notifications, update hints, DMG/installer product name, help center, connected-app provider names written into third-party configs, chat system prompt). Runtime internals (IPC channels, local-storage keys, bundle id, packaged bundle/executable name, data directory, `x-vpr-session-id`, local CA name) are intentionally unchanged so existing installs, updates, conversations, and trusted certificates keep working. The macOS updater also clears stale ShipIt registrations before handing off an install.
 
