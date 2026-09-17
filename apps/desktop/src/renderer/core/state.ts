@@ -169,11 +169,14 @@ export type VprModelCatalogEntry = {
  * (`packages/node/src/reputation/trust-score.ts`). The renderer only imports
  * `@antseed/node` subpath modules, so the shape is restated here.
  *
- *   trust = washFlagged ? 0 : usage + power + identity   (weights 40 / 20 / 40)
+ *   trust = washFlagged ? 0 : history + usage + power + identity
+ *   (weights 55 / 15 / 10 / 20)
  */
 export type TrustBreakdown = {
   /** Final trust score, 0-100. */
   score: number;
+  /** Settled service history; `null` when channel stats are unavailable. */
+  history: { score: number; channelCount: number; totalVolumeUsdcMicros: number } | null;
   /** Last epoch's share of all pools' usage points; `null` when usage accounting data is unavailable. */
   usage: { score: number; shareBps: number; epoch: number } | null;
   /** Current epoch's share of all pools' staking power; `null` when pool data is unavailable. */

@@ -352,11 +352,21 @@ export function normalizeTrustBreakdown(raw: unknown): TrustBreakdown | null {
   if (score === null) return null;
   return {
     score,
+    history: normalizeHistoryPart(asPlainObject(value.history)),
     usage: normalizeSharePart(asPlainObject(value.usage)),
     power: normalizeSharePart(asPlainObject(value.power)),
     identity: normalizeIdentityPart(asPlainObject(value.identity)),
     washFlagged: typeof value.washFlagged === 'boolean' ? value.washFlagged : null,
   };
+}
+
+function normalizeHistoryPart(raw: Record<string, unknown> | null): TrustBreakdown['history'] {
+  if (!raw) return null;
+  const score = boundedScore(raw.score);
+  const channelCount = nonNegative(raw.channelCount);
+  const totalVolumeUsdcMicros = nonNegative(raw.totalVolumeUsdcMicros);
+  if (score === null || channelCount === null || totalVolumeUsdcMicros === null) return null;
+  return { score, channelCount, totalVolumeUsdcMicros };
 }
 
 /** A usage or power part: weighted score plus the share and epoch it came from. */

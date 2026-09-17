@@ -5,9 +5,10 @@ import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discove
 test('normalizeDiscoverRow validates the trust breakdown and its nullable parts', () => {
   const trust = {
     score: 74,
-    usage: { score: 59, shareBps: 500, epoch: 11 },
-    power: { score: 15, shareBps: 20, epoch: 12 },
-    identity: { score: 50, kind: 'github', claim: 'portfolio' },
+    history: { score: 40, channelCount: 50, totalVolumeUsdcMicros: 75_000_000 },
+    usage: { score: 10, shareBps: 500, epoch: 11 },
+    power: { score: 4, shareBps: 20, epoch: 12 },
+    identity: { score: 20, kind: 'github', claim: 'portfolio' },
     washFlagged: false,
   };
   const raw = { peerId: 'abc', serviceId: 'example', trust, poolStakeAnts: 1234.5, washFlagged: false };
@@ -18,8 +19,8 @@ test('normalizeDiscoverRow validates the trust breakdown and its nullable parts'
 
   // Parts are independently nullable; an unknown identity kind drops just that part.
   assert.deepEqual(
-    normalizeDiscoverRow({ ...raw, trust: { ...trust, usage: null, power: null, identity: { score: 5, kind: 'twitter', claim: 'x' }, washFlagged: null } })?.trust,
-    { score: 74, usage: null, power: null, identity: null, washFlagged: null },
+    normalizeDiscoverRow({ ...raw, trust: { ...trust, history: null, usage: null, power: null, identity: { score: 5, kind: 'twitter', claim: 'x' }, washFlagged: null } })?.trust,
+    { score: 74, history: null, usage: null, power: null, identity: null, washFlagged: null },
   );
   // The whole breakdown is dropped when the final score is missing or out of range.
   assert.equal(normalizeDiscoverRow({ ...raw, trust: { ...trust, score: 101 } })?.trust, null);

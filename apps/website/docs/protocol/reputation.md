@@ -7,26 +7,27 @@ hide_title: true
 
 # Reputation
 
-Buyers score sellers locally from data they can check themselves: the seller pool's share of recognized usage and of staking power, and wash-trading verdicts, all read from the chain, plus public history of identities the seller has proven it owns. There is no central reputation authority and no seller allowlist.
+Buyers score sellers locally from data they can check themselves: settled service history, the seller pool's share of recognized usage and staking power, and wash-trading verdicts, all read from the chain, plus public history of identities the seller has proven it owns. There is no central reputation authority and no seller allowlist.
 
 ## Trust score
 
 Every buyer computes one number per seller, 0-100, as a weighted sum of independent parts:
 
 ```
-trust = washFlagged ? 0 : usage + power + identity
+trust = washFlagged ? 0 : history + usage + power + identity
 ```
 
 | Part | Weight | On-chain source | What it means |
 |---|---|---|---|
-| `usage` | 40 | `AntseedUsageAccounting.sellerPointsByEpoch / totalPoolPointsByEpoch` for the last complete weekly epoch | The seller pool's share of all pools' recognized-usage points: what it actually delivered last week relative to the network. Points only accrue for sellers with a pool and have already passed the on-chain [reward policies](./reward-policies.md), so a proven wash trader's share is already zero. |
-| `power` | 20 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` for the current epoch (lock-weighted ANTS) | The pool's share of all pools' staking power this week, which is what decides what a buyer's spend with this seller earns. |
-| `identity` | 40 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Public history of an identity the seller has proven it owns, so an established operator earns credit before it has a pool record. |
+| `history` | 55 | `AntseedChannels.getAgentStats` lifetime settled channel count and volume | Demonstrated service history. Channel count and settled USDC volume each use a bounded log curve, saturating at 100 settled sessions and 100 USDC, then contribute equally to this part. |
+| `usage` | 15 | `AntseedUsageAccounting.sellerPointsByEpoch / totalPoolPointsByEpoch` for the last complete weekly epoch | The seller pool's share of all pools' recognized-usage points: what it actually delivered last week relative to the network. Points only accrue for sellers with a pool and have already passed the on-chain [reward policies](./reward-policies.md), so a proven wash trader's share is already zero. |
+| `power` | 10 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` for the current epoch (lock-weighted ANTS) | The pool's share of all pools' staking power this week, which is what decides what a buyer's spend with this seller earns. |
+| `identity` | 20 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Public history of an identity the seller has proven it owns, so an established operator earns credit before it has a pool record. |
 | `washFlagged` | true/false | `AntseedWashTradingRegistry.isProvenWashTrader` | A proven wash trader scores 0 whatever the other parts say. |
 
-Each part is a 0-1 value times its weight. Both shares are unitless and go through the same log curve, `log10(1 + 999 · share) / 3`: a 100% share maps to 1, 10% to 0.67, and 1% to 0.35, so shares self-normalize as the network grows or as more ANTS is staked. Identity maps its points (GitHub up to 70, domain up to 12, below) onto 0-1 over 70. The weights sum to 100 and live in one table (`TRUST_WEIGHTS`); a future model-verification part will take its weight from there.
+Each part is a 0-1 value times its weight. History averages `log10(1 + channelCount) / log10(101)` and `log10(1 + settledVolumeUsdc) / log10(101)`, with each term capped at 1. Both network shares are unitless and go through the same log curve, `log10(1 + 999 · share) / 3`: a 100% share maps to 1, 10% to 0.67, and 1% to 0.35, so shares self-normalize as the network grows or as more ANTS is staked. Identity maps its points (GitHub up to 70, domain up to 12, below) onto 0-1 over 70. The weights sum to 100 and live in one table (`TRUST_WEIGHTS`); a future model-verification part will take its weight from there.
 
-The on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/config), filled automatically for `base-mainnet`. On chains without it only `identity` can score a peer, and in the first epoch after activation there is no previous-epoch usage share yet. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
+The history part only needs the channels and seller-registry contracts already required for paid routing. The other on-chain parts need the recognized-usage stack: `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` in the [chain config](/docs/config), filled automatically for `base-mainnet`. On chains without the recognized-usage stack, service history and identity can still score a peer; in the first epoch after activation there is no previous-epoch usage share yet. Buyers read every on-chain input for a discovery pass in two Multicall3 round trips (chunked at 80 calls each) and refresh a seller at most every 120 seconds.
 
 ### Identity
 
@@ -39,7 +40,7 @@ The identity part is the strongest single verified identity; several accounts or
 
 ### Not in the score
 
-These stay separate router rules and never change the number: the local sybil heuristic (a display-only warning in the CLI and desktop, derived from lifetime channel stats), failure streaks and cooldowns, price limits, and allow/block lists. A seller-reported `reputationScore` is used only when the buyer has not scored the peer.
+These stay separate router rules and never change the number: the local sybil heuristic (a display-only warning in the CLI and desktop), ghost-channel count, settlement recency, failure streaks and cooldowns, price limits, and allow/block lists. A seller-reported `reputationScore` is used only when the buyer has not scored the peer.
 
 ## Routing
 
@@ -55,7 +56,7 @@ The buyer proxy and desktop share the route ranking exported by `@antseed/node/m
 }
 ```
 
-`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded. With the weights above, a seller with a 10% share of last epoch's usage points and of this epoch's staking power scores 40, and needs a verified identity worth 20 or more (a solid GitHub portfolio) to pass; identity alone reaches at most 40. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
+`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded. An established seller that has reached both history targets scores 55 before usage, power, or identity; a 10% power share adds about 6.7 points, so demonstrated service plus meaningful pool participation passes the default gate even while the weekly usage system is still bootstrapping. Identity alone reaches at most 20. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
 
 Eligible offers are ranked by trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible. Latency is tracked as an exponential moving average (alpha: 0.3), and peers with consecutive failures enter exponential backoff cooldown.
 

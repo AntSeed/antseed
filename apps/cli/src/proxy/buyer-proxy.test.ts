@@ -2478,7 +2478,7 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
         lastSeen: NOW - 5_000,
         // A stale cached score and breakdown must never win over the signals.
         onChainReputationScore: 3,
-        trust: { score: 3, usage: null, power: null, identity: null, washFlagged: null },
+        trust: { score: 3, history: null, usage: null, power: null, identity: null, washFlagged: null },
         onChainChannelCount: 20,
         onChainGhostCount: 0,
         onChainTotalVolumeUsdcMicros: 100_000_000,
@@ -2509,8 +2509,11 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
   assert.ok(!('onChainTrustScore' in peer))
   assert.deepEqual(peer.trust, computeTrustScore(peer, NOW))
   assert.equal(peer.onChainReputationScore, peer.trust?.score)
-  // A 10% share of last epoch's pool points and of this epoch's power scores 60 * 0.667 = 40.
-  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 40)
+  // Twenty settled sessions and 100 USDC of volume contribute about 45 history
+  // points; 10% usage and power shares add about 17 more.
+  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 62)
+  assert.equal(peer.trust?.history?.channelCount, 20)
+  assert.equal(peer.trust?.history?.totalVolumeUsdcMicros, 100_000_000)
   assert.equal(peer.trust?.usage?.epoch, 21)
   assert.equal(peer.trust?.usage?.shareBps, 1_000)
   assert.equal(peer.trust?.power?.shareBps, 1_000)
@@ -2618,9 +2621,10 @@ test('parsePersistedPeers restores external verification claims and results', ()
     domains: [{ domain: 'example.com', methods: ['dns-txt'] }],
   })
   assert.deepEqual(peer!.verificationResults, verificationResults)
-  // A ten-year-old verified domain earns the full 12 identity points, worth 40 * 12 / 70 trust.
-  assert.equal(peer!.onChainReputationScore, 40 * 12 / 70)
-  assert.deepEqual(peer!.trust?.identity, { score: 40 * 12 / 70, kind: 'domain', claim: 'example.com' })
+  // A ten-year-old verified domain earns the full 12 identity points, worth 20 * 12 / 70 trust.
+  assert.equal(peer!.onChainReputationScore, 20 * 12 / 70)
+  assert.deepEqual(peer!.trust?.identity, { score: 20 * 12 / 70, kind: 'domain', claim: 'example.com' })
+  assert.equal(peer!.trust?.history, null)
   assert.equal(peer!.trust?.usage, null)
   assert.equal(peer!.trust?.washFlagged, null)
   // Ownership proofs and identity evidence expire after seven days: once
@@ -2640,7 +2644,7 @@ test('parsePersistedPeers restores GitHub identity history but never trusts pers
   const stored = { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW - 1_000,
     verifications: { github: [{ username: 'portfolio', repository: 'proof' }] },
     onChainReputationScore: 100,
-    trust: { score: 100, usage: { score: 100, shareBps: 10_000, epoch: 1 }, power: null, identity: null, washFlagged: false },
+    trust: { score: 100, history: { score: 55, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 }, usage: { score: 15, shareBps: 10_000, epoch: 1 }, power: { score: 10, shareBps: 10_000, epoch: 1 }, identity: { score: 20, kind: 'github', claim: 'portfolio' }, washFlagged: false },
     verificationResults: { verified: true, checkedAtMs: NOW - 500, domains: [],
       github: [{ username: 'portfolio', repository: 'proof', peerId: validPeerId, verified: true, checkedAtMs: NOW - 500 }],
       identityHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',
@@ -2662,7 +2666,7 @@ test('parsePersistedPeers restores GitHub identity history but never trusts pers
   assert.equal(trust.identity?.kind, 'github')
   assert.equal(trust.identity?.claim, 'portfolio')
   assert.equal(trust.usage, null)
-  assert.ok(trust.score > 0 && trust.score < 40, `expected a modest identity-only score, got ${trust.score}`)
+  assert.ok(trust.score > 0 && trust.score < 20, `expected a modest identity-only score, got ${trust.score}`)
   const [stale] = parsePersistedPeers(JSON.parse(JSON.stringify(stored)), NOW + 8 * 86_400_000)
   assert.equal(stale, undefined)
 })
