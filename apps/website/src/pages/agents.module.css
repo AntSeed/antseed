@@ -1,0 +1,254 @@
+/* ============================================================
+   /agents — page-specific pieces. Rhythm, buttons, section
+   headers and the closing band come from components/ui.
+   ============================================================ */
+
+/* ---- hero: copy left, live demo right ---- */
+.hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--as-soil-1);
+  padding: 138px 16px 145px;
+}
+
+.heroInner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 44%, 520px);
+  column-gap: 48px;
+  align-items: center;
+}
+
+.heroCopy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.heroTitle {
+  font-family: var(--as-font-display);
+  font-weight: 600;
+  font-size: clamp(36px, 3.6vw, 52px);
+  line-height: 1.1;
+  letter-spacing: -1px;
+  color: var(--as-heading);
+  margin: 0 0 16px;
+  max-width: 21ch;
+}
+
+.heroSub {
+  max-width: 48ch;
+  margin: 0 0 24px;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--as-text);
+}
+
+.heroCtas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.heroNote {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.heroDemo {
+  justify-self: end;
+  width: 100%;
+}
+
+/* ---- section 3: connect your favorite agent ---- */
+.connectGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 1024px;
+  margin: 40px auto 0;
+}
+
+.connectCard {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.connectCard:hover {
+  border-color: var(--as-line-strong);
+  box-shadow: 0 12px 28px -18px rgba(0, 30, 18, 0.35);
+  transform: translateY(-2px);
+}
+
+.connectCardLink {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.connectCardLink:hover {
+  text-decoration: none;
+  color: inherit;
+}
+
+.connectLogo {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  background: var(--as-soil-0);
+  color: var(--as-heading);
+  margin-bottom: 16px;
+}
+
+.connectLogo img,
+.connectLogo svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.connectCardLink h3 {
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--as-heading);
+  margin: 0 0 6px;
+}
+
+.connectCardLink p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 16px;
+  flex: 1;
+}
+
+.connectMore {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--as-green-deep);
+}
+
+.connectCard:hover .connectMore {
+  gap: 7px;
+}
+
+.connectAny {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 24px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.connectAny code {
+  font-family: var(--as-font-data);
+  font-size: 13px;
+  background: var(--as-soil-0);
+  border: 1px solid var(--as-line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--as-heading);
+}
+
+.setupLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--as-heading);
+  text-decoration: none;
+}
+
+.setupLink:hover {
+  color: var(--as-green-deep);
+}
+
+/* ---- steps + faq (shared blocks; page-local title accents) ---- */
+.stepsCtaRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.titleAccent {
+  color: var(--as-green);
+}
+
+.faqTitle {
+  font-family: var(--as-font-display);
+  font-size: clamp(28px, 2.6vw, 36px);
+  line-height: 43px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-align: center;
+  color: var(--as-heading);
+  margin: 0 0 40px;
+}
+
+/* ---- responsive ---- */
+@media (max-width: 996px) {
+  .hero {
+    text-align: center;
+    padding-top: 32px;
+  }
+  .heroInner {
+    grid-template-columns: 1fr;
+    row-gap: 32px;
+  }
+  .heroCopy {
+    align-items: center;
+  }
+  .heroTitle {
+    max-width: none;
+  }
+  .heroCtas {
+    justify-content: center;
+  }
+  .heroDemo {
+    justify-self: center;
+    max-width: 520px;
+  }
+  .connectGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* inline code chip inside the shared "Point your agents at localhost" section */
+.inlineCode {
+  font-family: var(--as-font-data);
+  font-size: 13px;
+  color: var(--as-live-bright);
+  background: none;
+  border: none;
+  padding: 0;
+}
