@@ -136,6 +136,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@antseed/antseed-verifier':
+        specifier: workspace:*
+        version: link:../../packages/antseed-verifier
       '@antseed/node':
         specifier: workspace:*
         version: link:../../packages/node
