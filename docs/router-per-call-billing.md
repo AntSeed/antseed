@@ -24,6 +24,17 @@ Reusing a routing decision without invoking the classifier authorizes no new
 classification fee. Calling the classifier again is a new billable operation,
 even if it selects the same model. Inference charges remain separate.
 
+## Shared unit measurement
+
+The shared unit-billing helpers consume normalized request attributes and
+`UnitBillingContext.unitLimits`, not image-specific request objects. Image parsing
+stays at the API-format boundary; `estimatedPromptTokens` is kept separately for
+existing usage attribution. `extractUnitResponseUsage` accepts a unit-limit map
+and optional billable-unit list; `computeFinalUnitBilling` takes the billing model,
+context, and response. The helpers emit the applicable measured units directly.
+Image and per-call prices, usage reports, and payment encoding are unchanged.
+Token prices still use the separate `computeCostUsdc` path.
+
 ## One parser, before payment
 
 The shared hook is `context.invokeService(messages, parseResponse)`. The parser

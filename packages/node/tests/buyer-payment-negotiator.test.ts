@@ -790,12 +790,6 @@ describe('BuyerPaymentNegotiator', () => {
           },
           unitLimits: { output_images: 1 },
         },
-        requestFacts: {
-          model: 'gpt-image-1',
-          size: 'auto',
-          quality: 'auto',
-          requestedImages: 1,
-        },
         unitModel: {
           version: 1,
           components: [

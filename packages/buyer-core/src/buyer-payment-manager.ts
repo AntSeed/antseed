@@ -39,7 +39,6 @@ import {
   type ServicePricing,
 } from './pricing.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
-import type { ImageRequestFacts } from '@antseed/api-adapter';
 import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { buyerFault, faultCodeOf } from './errors.js';
 
@@ -100,7 +99,7 @@ export interface PerRequestAuthResult {
 
 export interface BuyerRequestBillingEntry {
   context: UnitBillingContext;
-  requestFacts: ImageRequestFacts;
+  estimatedPromptTokens?: number;
   unitModel?: UnitBillingModelV1;
   tokenPricing?: ServicePricing;
   observedUnitUsage?: UnitBillingUsage;
@@ -1398,7 +1397,7 @@ export class BuyerPaymentManager {
       }
       estimatedOutputTokens += estimatedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
       if (estimatedInputTokens <= 0n) {
-        estimatedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+        estimatedInputTokens = BigInt(requestBilling?.estimatedPromptTokens ?? 0);
       }
     }
 
@@ -1750,7 +1749,7 @@ export class BuyerPaymentManager {
     if (acceptedOutputImages > 0n) {
       attributedOutputTokens += acceptedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
       if (attributedInputTokens <= 0n) {
-        attributedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+        attributedInputTokens = BigInt(requestBilling?.estimatedPromptTokens ?? 0);
       }
     }
     const newMeta = this._advanceUsageMetadata(
@@ -2028,7 +2027,6 @@ export class BuyerPaymentManager {
   trackRequestBillingContext(requestId: string, context: UnitBillingContext): void {
     this.trackRequestBilling(requestId, {
       context,
-      requestFacts: {},
     });
   }
 

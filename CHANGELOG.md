@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- Billing helpers use normalized unit limits instead of carrying duplicate image request facts through buyer and seller billing. Image/per-call pricing, token-price calculation, and payment encoding remain unchanged.
+
 ### Fixed
 
 - CLI: router configuration commands accept optional routing fields and complete settings/service JSON objects from a fresh configuration. Boolean fields parse `true`/`false` correctly, string-valued payment limits retain their exact values, and invalid router settings are rejected before saving.

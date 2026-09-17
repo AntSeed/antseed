@@ -160,7 +160,7 @@ describe('BuyerPaymentManager', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
     manager.handleAuthAck(sellerPeerId, { channelId });
     const entry = { context: { sellerPeerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' as const },
-      requestFacts: {}, unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+      unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
     manager.trackRequestBilling(requestId, entry);
     const response = { requestId, service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('selection'),
       reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { units: { successful_requests: 1 } } };
@@ -1089,7 +1089,6 @@ describe('BuyerPaymentManager', () => {
         attributes: { model: service },
         unitLimits: { output_images: 1 },
       },
-      requestFacts: { model: service, requestedImages: 1 },
       unitModel,
     });
     mux.sentSpendingAuths.length = 0;
@@ -1199,7 +1198,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [
@@ -1260,7 +1258,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '256x256' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [
@@ -1312,7 +1309,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       tokenPricing: TEST_PRICING,
       unitModel: imageModel,
     });
@@ -1364,7 +1360,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [

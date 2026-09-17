@@ -59,7 +59,7 @@ describe("unit billing runtime", () => {
   it("computes final output image cost from delivered response images", () => {
     const result = computeFinalUnitBilling(
       imageModel,
-      imageContext,
+      { ...imageContext, unitLimits: { output_images: 4 } },
       {
         requestId: "req-1",
         statusCode: 200,
@@ -67,12 +67,6 @@ describe("unit billing runtime", () => {
         body: new TextEncoder().encode(JSON.stringify({
           data: [{ b64_json: "first" }, { url: "https://example.test/second.png" }],
         })),
-      },
-      {
-        requestedImages: 4,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
       },
     );
 
@@ -96,12 +90,6 @@ describe("unit billing runtime", () => {
           data: [{ b64_json: "first" }, { b64_json: "second" }],
         })),
       },
-      {
-        requestedImages: 1,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
-      },
     );
 
     expect(result.usage.units.output_images).toBe(1);
@@ -111,18 +99,12 @@ describe("unit billing runtime", () => {
   it("does not bill placeholder response entries as delivered images", () => {
     const result = computeFinalUnitBilling(
       imageModel,
-      imageContext,
+      { ...imageContext, unitLimits: { output_images: 2 } },
       {
         requestId: "req-placeholder",
         statusCode: 200,
         headers: { "content-type": "application/json" },
         body: new TextEncoder().encode(JSON.stringify({ data: [{}, { b64_json: "" }] })),
-      },
-      {
-        requestedImages: 2,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
       },
     );
 
@@ -312,13 +294,8 @@ describe("unit billing runtime", () => {
       },
       unitLimits: { output_images: 1 },
     });
-    expect(captured.requestFacts).toEqual({
-      model: "gpt-image-2",
-      size: "1024x1024",
-      quality: "low",
-      requestedImages: 1,
-      promptTokens: 1,
-    });
+    expect(captured.estimatedPromptTokens).toBe(1);
+    expect(captured.requestUsage.units).toEqual({ successful_requests: 1, output_images: 1 });
   });
 
   it("captures unit context from a multipart image edits request", () => {
@@ -368,13 +345,8 @@ describe("unit billing runtime", () => {
       attributes: { model: "gpt-image-2", size: "1024x1024", quality: "auto" },
       unitLimits: { output_images: 2 },
     });
-    expect(captured.requestFacts).toEqual({
-      model: "gpt-image-2",
-      size: "1024x1024",
-      quality: "auto",
-      requestedImages: 2,
-      promptTokens: 4,
-    });
+    expect(captured.estimatedPromptTokens).toBe(4);
+    expect(captured.requestUsage.units).toEqual({ successful_requests: 1, output_images: 2 });
   });
 
   it("normalizes omitted image tiers and invalid counts before billing", () => {

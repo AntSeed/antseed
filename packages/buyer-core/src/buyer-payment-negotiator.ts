@@ -277,7 +277,7 @@ export class BuyerPaymentNegotiator {
       });
       this._bpm.trackRequestBilling(request.requestId, {
         context: captured.context,
-        requestFacts: captured.requestFacts,
+        estimatedPromptTokens: captured.estimatedPromptTokens,
         ...(route.unitModel ? { unitModel: route.unitModel } : {}),
         ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
       });
@@ -712,16 +712,15 @@ export class BuyerPaymentNegotiator {
     // Post-response cost estimation feeds the next SpendingAuth. Token pricing
     // stays on computeCostUsdc; image unit billing is an optional surcharge.
     const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
-    const requestFacts = billingEntry?.requestFacts;
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
     const unitModel = billingEntry?.unitModel;
     let unitBilling: FinalUnitBillingResult | null = null;
     if (unitModel && billingEntry) {
       try {
-        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);
+        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response);
       } catch (err) {
-        const observed = extractUnitResponseUsage(response, requestFacts);
+        const observed = extractUnitResponseUsage(response, billingEntry.context.unitLimits);
         if (requestId) {
           this._bpm.recordObservedUnitUsage(requestId, observed.usage);
         }
