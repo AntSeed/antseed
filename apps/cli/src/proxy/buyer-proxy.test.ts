@@ -2329,6 +2329,23 @@ test('parsePersistedPeers drops entries with non-array providers', () => {
   assert.equal(result.length, 0)
 })
 
+test('parsePersistedPeers removes decorative icons from legacy display names', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          displayName: '▲ Hana Gateway ✅ 🌐',
+          providers: ['openai'],
+          lastSeen: NOW,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result[0]?.displayName, 'Hana Gateway')
+})
+
 test('parsePersistedPeers drops entries with stale or missing freshness anchors', () => {
   const result = parsePersistedPeers(
     {

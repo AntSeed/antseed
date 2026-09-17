@@ -26,6 +26,17 @@ function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('AntseedNode publicAddress override', () => {
+  it('removes decorative icons from discovered peer display names', () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = (node as any)._lookupResultToPeerInfo({
+      host: '34.134.97.133',
+      port: 6882,
+      metadata: buildMetadata({ displayName: '▲ Hana Gateway ✅ 🌐' }),
+    });
+
+    expect(peer.displayName).toBe('Hana Gateway');
+  });
+
   it('prefers metadata publicAddress over the DHT source host', () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = (node as any)._lookupResultToPeerInfo({

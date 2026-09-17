@@ -17,6 +17,7 @@ import {
   normalizedModelReputationScore,
   peerSupportsCooperativeClose,
   rankModelRoutes,
+  sanitizePeerDisplayName,
   type AntseedNode,
   type FaultAttribution,
   type BuyerSpendEvent,
@@ -547,7 +548,8 @@ export function parsePersistedPeers(
       if (capabilities.length > 0) peer.capabilities = capabilities
     }
     if (lastReachedAt > 0) peer.lastReachedAt = lastReachedAt
-    if (typeof entry.displayName === 'string') peer.displayName = entry.displayName
+    const displayName = sanitizePeerDisplayName(entry.displayName)
+    if (displayName) peer.displayName = displayName
     if (typeof entry.publicAddress === 'string') peer.publicAddress = entry.publicAddress
     if (entry.providerPricing && typeof entry.providerPricing === 'object') {
       peer.providerPricing = entry.providerPricing as PeerInfo['providerPricing']

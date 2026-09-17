@@ -93,6 +93,7 @@ import {
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
+import { sanitizePeerDisplayName } from "./discovery/display-name.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { RpcHealthMonitor, type RpcHealthStatus } from "./payments/rpc-health.js";
@@ -2417,6 +2418,7 @@ export class AntseedNode extends EventEmitter {
   }
 
   private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
+    const displayName = sanitizePeerDisplayName(result.metadata.displayName);
     const providers = result.metadata.providers.map((p) => p.provider);
     const firstProvider = result.metadata.providers[0];
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
@@ -2508,7 +2510,7 @@ export class AntseedNode extends EventEmitter {
 
     return {
       peerId: result.metadata.peerId,
-      displayName: result.metadata.displayName,
+      displayName,
       // `metadata.timestamp` is signed by the seller and can reflect the
       // seller's wall clock, not this buyer's. Freshness validation in
       // PeerLookup already handles seller/buyer clock skew using the HTTP Date
