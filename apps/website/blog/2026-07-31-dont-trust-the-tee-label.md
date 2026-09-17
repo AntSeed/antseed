@@ -45,7 +45,7 @@ Details: [Verify a seller's TEE](/docs/guides/verify-tee) · [The protocol speci
 
 ## What the first verifier proves
 
-The first verifier SDK, [antseed-verifier](https://github.com/AntSeed/antseed-verifier), checks Intel TDX. A passing verdict rests on two proofs, both required:
+The first verifier SDK, [antseed-verifier](https://github.com/AntSeed/antseed/tree/main/packages/antseed-verifier), checks Intel TDX. A passing verdict rests on two proofs, both required:
 
 **The hardware is genuine, and the proof is fresh.** Your node sends the seller a random challenge number, used once. The seller's hardware mints a quote bound to that exact number, and your node verifies the quote's signature chain up to Intel's root certificates — confirming a genuine TDX machine, with its security patches at an acceptable level and debugging switched off. A recorded quote from an earlier session, a machine faking it in software, or an enclave borrowed from someone else all fail.
 
@@ -61,7 +61,7 @@ Details: [Run a TEE-attested seller](/docs/guides/tee-provider)
 
 Trust requires honesty about limits, so here are this feature's, stated plainly.
 
-A passing verdict proves the seller was genuine, sealed hardware, freshly attested, under the identity you chose — *at the moment of attestation*. What it does not yet do is cryptographically tie every response byte that follows to that same sealed compartment: today the proof gates where your traffic goes, and is refreshed as you keep routing, but the responses themselves are not individually signed by a key held inside the hardware. That stronger binding — a signing key created inside the compartment, attested along with it, signing every response — is the [agreed next milestone](https://github.com/AntSeed/antseed-verifier/blob/main/docs/milestone-a2-channel-binding.md) for the verifier, with a working reference implementation already running.
+A passing verdict proves the seller was genuine, sealed hardware, freshly attested, under the identity you chose — *at the moment of attestation*. What it does not yet do is cryptographically tie every response byte that follows to that same sealed compartment: today the proof gates where your traffic goes, and is refreshed as you keep routing, but the responses themselves are not individually signed by a key held inside the hardware. That stronger binding — a signing key created inside the compartment, attested along with it, signing every response — is the agreed next milestone for the verifier, with a working reference implementation already running.
 
 It's also worth being precise about what question attestation answers. It proves the *environment* — sealed, genuine, yours-to-verify. Whether the *model* behind the service is the one advertised is a different question, answered by different evidence: [reputation and recognized usage](/blog/trust-without-a-middleman) tell you a seller has a history of delivering, and [model fingerprinting](/blog/model-verification-fingerprint-swarm) probes what's actually answering. Different questions, different proofs — attestation adds the missing one.
 
