@@ -124,7 +124,7 @@ function RunFirstBanner() {
         <div>
           <p className={styles.runFirstKicker}>
             <span className={styles.runFirstDot} aria-hidden="true" />
-            Run AntSeed first
+            Run Antseed first
           </p>
           <p className={styles.runFirstSub}>
             Every integration assumes a buyer proxy at <code>http://localhost:8377</code>.
@@ -148,7 +148,7 @@ function RunFirstBanner() {
             <li>
               <strong>Buyer proxy</strong> - a small server on{' '}
               <code>localhost:8377</code> that accepts API calls from your tools and
-              forwards them to the AntSeed network. It speaks{' '}
+              forwards them to the Antseed network. It speaks{' '}
               <em>all four LLM protocols</em> at once -{' '}
               <code>/v1/messages</code> (Anthropic),{' '}
               <code>/v1/chat/completions</code> (OpenAI Chat),{' '}
@@ -214,7 +214,7 @@ function RunFirstBanner() {
                 Install the CLI and start the buyer proxy.
               </p>
               <p className={styles.runFirstHint}>
-                <strong>Recommended:</strong> the <Link to="/install">VPR desktop app</Link>{' '}
+                <strong>Recommended:</strong> the <Link to="/install">AI VPN desktop app</Link>{' '}
                 wraps everything below in one app — its <strong>Apps</strong> view
                 launches tools like this one pre-wired to the proxy and saves its
                 Price + Trust preferences into the buyer config used by every client.
@@ -519,7 +519,7 @@ function RunFirstBanner() {
 }
 
 /**
- * Explains, in one block, exactly what wire format the tool sends, what AntSeed
+ * Explains, in one block, exactly what wire format the tool sends, what Antseed
  * peers advertise per service (the `protocols` array), and what happens when
  * they differ.
  *
@@ -538,8 +538,8 @@ function WireFormatPanel({i}: {i: Integration}) {
       <section className={styles.wireFormat}>
         <p className={styles.wireFormatTitle}>Wire format • multi-protocol</p>
         <p className={styles.wireFormatBody}>
-          {i.name} can send <strong>any</strong> of AntSeed's supported protocols -
-          configure per call. AntSeed will match each request to the peer's advertised
+          {i.name} can send <strong>any</strong> of Antseed's supported protocols -
+          configure per call. Antseed will match each request to the peer's advertised
           service protocols (see <code>providerServiceApiProtocols</code> on a peer)
           and translate when they don't match.
         </p>
@@ -566,7 +566,7 @@ function WireFormatPanel({i}: {i: Integration}) {
 
   return (
     <section className={styles.wireFormat}>
-      <p className={styles.wireFormatTitle}>How {i.name} talks to AntSeed</p>
+      <p className={styles.wireFormatTitle}>How {i.name} talks to Antseed</p>
       <ul className={styles.wireFormatFacts}>
         <li>
           <strong>Wire format sent by {i.name}:</strong>{' '}
@@ -588,7 +588,7 @@ function WireFormatPanel({i}: {i: Integration}) {
           browse command exposes the same field per peer.
         </li>
         <li>
-          <strong>What happens when protocols don't match:</strong> AntSeed's{' '}
+          <strong>What happens when protocols don't match:</strong> Antseed's{' '}
           <a
             href="https://github.com/AntSeed/antseed/tree/main/packages/api-adapter"
             target="_blank"
@@ -651,7 +651,7 @@ export default function IntegrationPage({integration}: {integration: Integration
   // Mirrors what Docusaurus renders into <title> (Layout title + site title), so
   // og:title can't drift from the page title (X falls back to og:title).
   const titleText = i.seoTitle ?? i.name;
-  const pageTitle = `${titleText} | AntSeed`;
+  const pageTitle = `${titleText} | Antseed`;
 
   // Marks up the breadcrumb rendered below so search engines read the hierarchy.
   const breadcrumbLd = {
@@ -669,8 +669,8 @@ export default function IntegrationPage({integration}: {integration: Integration
   const howToLd = {
     '@context': 'https://schema.org',
     '@type': 'HowTo',
-    name: `Connect ${i.name} to AntSeed`,
-    description: `Route ${i.name} through the AntSeed peer-to-peer inference network.`,
+    name: `Connect ${i.name} to Antseed`,
+    description: `Route ${i.name} through the Antseed peer-to-peer inference network.`,
     step: [
       ...(i.install.length > 0
         ? [{
@@ -682,8 +682,8 @@ export default function IntegrationPage({integration}: {integration: Integration
         : []),
       {
         '@type': 'HowToStep',
-        name: `Point ${i.name} at AntSeed`,
-        text: `Configure ${i.name} to send requests to the local AntSeed proxy at http://localhost:8377.`,
+        name: `Point ${i.name} at Antseed`,
+        text: `Configure ${i.name} to send requests to the local Antseed proxy at http://localhost:8377.`,
         url: `${pageUrl}#configure`,
       },
       ...(i.modelHints
@@ -708,7 +708,7 @@ export default function IntegrationPage({integration}: {integration: Integration
   return (
     <Layout
       title={titleText}
-      description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${metaOneLiner}`}>
+      description={`Connect ${i.name} to the Antseed peer-to-peer inference network. ${metaOneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
         <meta property="og:title" content={pageTitle} />
@@ -774,7 +774,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
         <Section
           eyebrow={i.install.length > 0 ? 'Step 2' : 'Step 1'}
-          title={`Point ${i.name} at AntSeed`}>
+          title={`Point ${i.name} at Antseed`}>
           <div className={styles.configList}>
             {i.configure.map((b, idx) => <ConfigBlockRenderer key={idx} b={b} />)}
           </div>
@@ -847,7 +847,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             <h3>For agents</h3>
             <p><Ticks>{i.agentSummary}</Ticks></p>
             <p>
-              Full machine-readable catalog of every AntSeed integration:{' '}
+              Full machine-readable catalog of every Antseed integration:{' '}
               <a href="/skill.md">/skill.md</a>
             </p>
           </aside>
@@ -869,14 +869,14 @@ export default function IntegrationPage({integration}: {integration: Integration
 
       <FinalCta
         title={`Run ${i.name} on the open market`}
-        sub="Install AntSeed, point this tool at your local proxy, and pay per request in USDC."
+        sub="Install Antseed, point this tool at your local proxy, and pay per request in USDC."
         note={
           <>
             <a href="/integrations">All integrations</a>
             <a href="/docs/guides/using-the-api">Protocol guide</a>
           </>
         }>
-        <Button to="/docs/install" variant="white" size="lg" arrow>Install AntSeed</Button>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Install Antseed</Button>
         <Button to="/providers" variant="light" size="lg">Become a provider</Button>
       </FinalCta>
     </Layout>

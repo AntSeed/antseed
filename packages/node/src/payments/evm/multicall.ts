@@ -22,14 +22,14 @@ export interface MulticallRequest {
 export async function multicallRead(
   provider: AbstractProvider,
   requests: MulticallRequest[],
-  options: { chunkSize?: number; concurrency?: number; address?: string; blockTag?: number | string } = {},
+  options: { chunkSize?: number; concurrency?: number; address?: string; blockTag?: number | string; /** Skip the `eth_getCode` probe; the caller knows Multicall3 is deployed. */ assumeDeployed?: boolean } = {},
 ): Promise<Array<unknown[] | null>> {
   if (requests.length === 0) return [];
   const chunkSize = options.chunkSize ?? 80;
   const concurrency = Math.max(1, options.concurrency ?? 4);
   const multicall = new Contract(options.address ?? MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
   const results: Array<unknown[] | null> = new Array(requests.length).fill(null);
-  const code = await provider.getCode(options.address ?? MULTICALL3_ADDRESS).catch(() => '0x');
+  const code = options.assumeDeployed ? '0x1' : await provider.getCode(options.address ?? MULTICALL3_ADDRESS).catch(() => '0x');
   if (code === '0x') {
     await Promise.all(requests.map(async (request, index) => {
       try {

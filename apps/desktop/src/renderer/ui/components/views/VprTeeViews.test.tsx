@@ -99,6 +99,33 @@ test('verified TEE badge follows the seller name outside the pin button', () => 
   assert.ok(!renderToStaticMarkup(<VprModelView />).includes(`class="${styles.sellerVerification}"`));
 });
 
+test('identity links and verified TEE badges coexist outside the seller pin button', () => {
+  const state = initialize();
+  const selection = structuredClone(state.vprRouteSelection);
+  const route = state.vprRoutableRows.find((entry) => entry.peerId === 'tee');
+  assert.ok(route);
+  route.verificationLinks = [
+    { kind: 'domain', label: 'example.com', href: 'https://example.com' },
+    { kind: 'github', label: 'example', href: 'https://github.com/example' },
+  ];
+  verification.evidence = [{
+    peerId: 'tee', verifierId: 'antseed-verifier', fingerprint: 'caps',
+    checkedAt: 500, expiresAt: 2000, sellerNodeVerified: true, claims: [],
+  }];
+  const markup = renderToStaticMarkup(<VprModelView />);
+  const nameStart = markup.indexOf(`class="${styles.sellerNameLabel}">TEE Seller</span>`);
+  const metaStart = markup.indexOf(`class="${styles.sellerMeta}"`, nameStart);
+  const badges = markup.slice(nameStart, metaStart);
+  assert.match(badges, /aria-label="Seller identity badges"/);
+  assert.match(badges, /href="https:\/\/example.com"/);
+  assert.match(badges, /aria-label="Verified GitHub: example"/);
+  assert.match(badges, /aria-label="TEE\. We use TEEs to enhance user privacy\."/);
+  assert.match(markup, /<button[^>]*aria-label="Pin TEE Seller"[^>]*><\/button>/);
+  assert.doesNotMatch(badges, /<button/);
+  assert.deepEqual(state.vprRouteSelection, selection);
+  assert.equal(action.mock.calls.length, 0);
+});
+
 test('TEE detail filtering hides standard sellers without clearing the active pin', () => {
   const state = initialize();
   const selection = structuredClone(state.vprRouteSelection);

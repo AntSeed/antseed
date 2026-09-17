@@ -95,7 +95,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
           clicks working; interactive elements overlapping it opt out with
           -webkit-app-region: no-drag. */}
       <div className={styles.dragStrip} aria-hidden="true" />
-      <nav className={styles.sidebar} aria-label="VPR navigation">
+      <nav className={styles.sidebar} aria-label="AI VPN navigation">
         <div className={styles.navGroup}>
           {mainNavEntries.map(({ view, nav }) => {
             const active = activeView === view;

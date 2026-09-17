@@ -9,7 +9,7 @@ import type { ViewName } from '../../types';
 import styles from './VprKit.module.scss';
 
 /**
- * Shared brand-guideline primitives for the VPR screens (Figma: Toggle -
+ * Shared brand-guideline primitives for the AI VPN screens (Figma: Toggle -
  * Switch, Badge, Slider - Center-biased, Default model tiles, search).
  */
 

@@ -1,20 +1,20 @@
-# Join AntSeed as a Provider
+# Join Antseed as a Provider
 
-Help the user set up an AntSeed provider node to offer AI services on the peer-to-peer network. Walk them through installation, on-chain registration, staking, provider configuration, pricing, and starting the seeder.
+Help the user set up Antseed provider node to offer AI services on the peer-to-peer network. Walk them through installation, on-chain registration, staking, provider configuration, pricing, and starting the seeder.
 
 ## Terms of Use — Read First
 
-> **AntSeed is designed for providers who add value on top of AI APIs — not for raw resale of API keys or subscription access.**
+> **Antseed is designed for providers who add value on top of AI APIs — not for raw resale of API keys or subscription access.**
 >
 > Acceptable use cases include: running inference inside a Trusted Execution Environment (TEE), packaging domain-specific skills or agent workflows, serving fine-tuned or self-hosted models, or building a managed product experience.
 >
 > **Subscription-based plugins (`provider-claude-code`, `provider-claude-oauth`) are for local testing and development only.** Reselling personal subscription credentials (e.g., Claude Pro/Team plans) violates Anthropic's Terms of Service and is not permitted.
 >
-> Always review your upstream API provider's usage policies before offering capacity on the network. AntSeed provides the infrastructure; compliance with third-party terms is the provider's responsibility.
+> Always review your upstream API provider's usage policies before offering capacity on the network. Antseed provides the infrastructure; compliance with third-party terms is the provider's responsibility.
 
 ## Overview
 
-A **provider** (seller) offers AI services on the AntSeed network. Buyers pay per-token in USDC via on-chain payment channels. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
+A **provider** (seller) offers AI services on the Antseed network. Buyers pay per-token in USDC via on-chain payment channels. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
 
 **Requirements:**
 - Node.js 20+

@@ -37,7 +37,7 @@ const gtmPlugin: PluginConfig[] = GTM_CONTAINER_ID
   : [];
 
 const config: Config = {
-  title: 'AntSeed',
+  title: 'Antseed',
   tagline: 'The open market for AI inference. No gatekeepers.',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
@@ -78,7 +78,7 @@ const config: Config = {
         blog: {
           showLastUpdateTime: true,
           showReadingTime: true,
-          blogTitle: 'AntSeed Blog',
+          blogTitle: 'Antseed Blog',
           blogDescription: 'Insights on OpenRouter alternatives, P2P AI networks, and the future of AI inference.',
           postsPerPage: 10,
           blogSidebarCount: 'ALL',
@@ -159,7 +159,7 @@ const config: Config = {
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'SoftwareApplication',
-        name: 'AntSeed',
+        name: 'Antseed',
         url: 'https://antseed.com',
         description:
           'The open market for AI inference. Serve or consume AI peer-to-peer. Pay per request in USDC. Anonymous by design, with independent providers and no central account.',
@@ -173,7 +173,7 @@ const config: Config = {
         },
         creator: {
           '@type': 'Organization',
-          name: 'AntSeed',
+          name: 'Antseed',
           url: 'https://antseed.com',
           sameAs: [
             'https://github.com/AntSeed/antseed',
@@ -188,7 +188,7 @@ const config: Config = {
           'Reputation-based provider scoring',
           'TEE attestation for privacy-preserving inference',
           'AI agents with on-demand knowledge and custom tools',
-          'Desktop app (VPR)',
+          'Desktop app (AI VPN)',
           'Agent-to-agent commerce support',
         ],
         downloadUrl: 'https://github.com/AntSeed/antseed/releases',
@@ -203,16 +203,16 @@ const config: Config = {
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
       {name: 'description', content: 'The open market for AI inference. Every model, no middleman. Anonymous, best price, works with the tools you already use. Owned by no one.'},
       {property: 'og:title', content: 'Every AI model, best price, no middleman'},
-      {property: 'og:description', content: 'AntSeed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone.'},
+      {property: 'og:description', content: 'Antseed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone.'},
       {property: 'og:type', content: 'website'},
-      {property: 'og:site_name', content: 'AntSeed'},
+      {property: 'og:site_name', content: 'Antseed'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:site', content: '@antseed'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.png'},
       {property: 'og:image', content: 'https://antseed.com/og-image.png'},
       {property: 'og:image:width', content: '1200'},
       {property: 'og:image:height', content: '630'},
-      {property: 'og:image:alt', content: 'AntSeed, the open market for AI inference'},
+      {property: 'og:image:alt', content: 'Antseed, the open market for AI inference'},
     ],
     colorMode: {
       defaultMode: 'light',
@@ -222,7 +222,7 @@ const config: Config = {
     navbar: {
       title: '',
       logo: {
-        alt: 'AntSeed',
+        alt: 'Antseed',
         src: 'logo-light.svg',
         srcDark: 'logo-dark.svg',
         width: 104,
@@ -271,7 +271,7 @@ const config: Config = {
           // straight to the installer for the visitor's OS/arch, falling back
           // to the releases page when detection fails.
           type: 'custom-download',
-          label: 'Download VPR',
+          label: 'Download AI VPN',
           position: 'right',
           className: 'header-download-link',
         },

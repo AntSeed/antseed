@@ -2,6 +2,7 @@ import type {
   CatalogServiceCapabilities,
   CatalogServiceProtocol,
   NetworkServiceCatalogPeer,
+  PeerInfo,
 } from '@antseed/node';
 import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
 import {
@@ -172,7 +173,7 @@ export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): Cha
   return buildNetworkServiceOffers(peers).flatMap((offer) => {
     if (!offer.protocol) return [];
     const peer = peersById.get(offer.peerId);
-    const effectiveReputationScore = peer ? normalizedModelReputationScore(peer) : null;
+    const effectiveReputationScore = peer ? normalizedModelReputationScore(peer as PeerInfo) : null;
     return [{
       advertisedVerifierIds: offer.advertisedVerifierIds,
       id: offer.serviceId,
