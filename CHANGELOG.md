@@ -12,6 +12,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop: bundle the pinned TEE verifier and its runtime dependencies so automatic seller verification and TEE badges work without a separate npm install. Local development runs can prepare the published verifier automatically.
 - Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
 - Desktop VPR: keep TEE sellers beyond the 512-result cache eligible for automatic checks, prioritize displayed sellers, and preserve retry backoff across discovery updates. Explain missing local verification credentials without changing routing or searching other data directories.
 - Buyer payments: reserve top-ups now use fixed remaining-headroom thresholds—35% of the initial reserve for the first top-up and $0.50 thereafter—instead of reserving again whenever 65% of an ever-growing channel ceiling is spent. Top-up increments remain unchanged, preventing unused locked USDC from scaling with lifetime channel volume.

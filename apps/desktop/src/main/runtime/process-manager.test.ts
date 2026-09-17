@@ -4,7 +4,17 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ProcessManager, resolveCommandArgs } from './process-manager.js';
+import { buildCliChildEnv, ProcessManager, resolveCommandArgs } from './process-manager.js';
+
+test('local desktop CLI runs may prepare trusted plugins', () => {
+  const env = buildCliChildEnv({ ANTSEED_SKIP_PLUGIN_UPDATE_CHECK: '1' }, true);
+  assert.equal(env['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'], undefined);
+});
+
+test('packaged desktop CLI runs remain offline-only', () => {
+  const env = buildCliChildEnv({}, false);
+  assert.equal(env['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'], '1');
+});
 
 test('live QA does not bypass native-module preflight', async () => {
   const previousDirectory = process.cwd();
