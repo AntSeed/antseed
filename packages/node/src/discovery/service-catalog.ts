@@ -1,4 +1,5 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
+import { parseVerifierCapabilities } from './verifier-capabilities.js';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
@@ -19,6 +20,7 @@ export type CatalogServiceCapabilities = {
 
 export type NetworkServiceCatalogPeer = {
   peerId: string;
+  capabilities?: string[];
   displayName?: string;
   providers?: string[];
   services?: string[];
@@ -55,6 +57,7 @@ export type NetworkServiceCatalogPeer = {
 };
 
 export type NetworkServiceOffer = {
+  advertisedVerifierIds?: string[];
   serviceId: string;
   provider: string;
   protocols: string[];
@@ -172,6 +175,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
         offers.push({
+          advertisedVerifierIds: parseVerifierCapabilities(peer.capabilities).supported,
           serviceId,
           provider,
           protocols,

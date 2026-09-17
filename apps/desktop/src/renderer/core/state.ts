@@ -170,7 +170,7 @@ export type VprModelCatalogEntry = {
  * `@antseed/node` subpath modules, so the shape is restated here.
  *
  *   trust = washFlagged ? 0 : history + usage + power + identity
- *   (weights 55 / 15 / 10 / 20)
+ *   (weights 60 / 15 / 5 / 20)
  */
 export type TrustBreakdown = {
   /** Final trust score, 0-100. */
@@ -197,6 +197,7 @@ export type DiscoverVerificationLink = {
 };
 
 export type DiscoverRow = {
+  advertisedVerifierIds?: string[];
   // Identity
   rowKey: string;              // `${peerId}:${serviceId}`
   serviceId: string;

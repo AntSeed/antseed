@@ -18,6 +18,7 @@ import {
   type SerializedHttpResponse,
 } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import { TeeVerification } from './tee-verification.js'
 import {
   BuyerProxy,
   isModelNotFoundResponse,
@@ -45,6 +46,41 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
     providers,
   }
 }
+
+test('existing required CLI verification rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {
+  const rejected = makePeer('a', ['openai'])
+  const accepted = makePeer('b', ['openai'])
+  for (const peer of [rejected, accepted]) {
+    peer.capabilities = ['verifier.antseed-verifier']
+    peer.providerServiceApiProtocols = { openai: { services: { 'gpt-4o': ['openai-chat-completions'] } } }
+  }
+  rejected.reputationScore = 99
+  accepted.reputationScore = 90
+  const peers = [rejected, accepted]
+  const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
+  const policy = { require: true, prefer: ['antseed-verifier'] }
+  const verification = new TeeVerification(policy)
+  ;(proxy as any)._verifier = policy
+  ;(proxy as any)._teeVerification = verification
+  ;(proxy as any)._cachedPeers = peers
+  await verification.verify(rejected, policy, async () => ({ ok: false, verified: false, reason: 'Seller binding failed' }))
+  await verification.verify(accepted, policy, async () => ({ ok: true, verified: true, sellerNodeVerified: true }))
+  const dispatches: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    dispatches.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }
+  }
+  const pinned = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': rejected.peerId } }))
+  assert.equal(pinned.statusCode, 502)
+  assert.match(pinned.body, /failed required verification/)
+  assert.deepEqual(dispatches, [])
+  const automatic = await invokeProxy(proxy, makeProxyRequest({}))
+  assert.equal(automatic.statusCode, 200)
+  assert.deepEqual(dispatches, [accepted.peerId])
+  const explicit = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': accepted.peerId } }))
+  assert.equal(explicit.statusCode, 200)
+  assert.deepEqual(dispatches, [accepted.peerId, accepted.peerId])
+});
 
 function makeProxyRequest(options: {
   method?: string
@@ -2526,9 +2562,9 @@ test('parsePersistedPeers re-derives the trust score from persisted on-chain sig
   assert.ok(!('onChainTrustScore' in peer))
   assert.deepEqual(peer.trust, computeTrustScore(peer, NOW))
   assert.equal(peer.onChainReputationScore, peer.trust?.score)
-  // Twenty settled sessions and 100 USDC of volume contribute about 45 history
-  // points; 10% usage and power shares add about 17 more.
-  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 62)
+  // Twenty settled sessions and 100 USDC of volume contribute about 49 history
+  // points; a 10% usage share adds about 10 and a 10% power share about 3 more.
+  assert.equal(Math.round(peer.onChainReputationScore ?? 0), 63)
   assert.equal(peer.trust?.history?.channelCount, 20)
   assert.equal(peer.trust?.history?.totalVolumeUsdcMicros, 100_000_000)
   assert.equal(peer.trust?.usage?.epoch, 21)
@@ -2661,7 +2697,7 @@ test('parsePersistedPeers restores GitHub identity history but never trusts pers
   const stored = { discoveredPeers: [{ peerId: validPeerId, providers: ['openai'], lastSeen: NOW - 1_000,
     verifications: { github: [{ username: 'portfolio', repository: 'proof' }] },
     onChainReputationScore: 100,
-    trust: { score: 100, history: { score: 55, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 }, usage: { score: 15, shareBps: 10_000, epoch: 1 }, power: { score: 10, shareBps: 10_000, epoch: 1 }, identity: { score: 20, kind: 'github', claim: 'portfolio' }, washFlagged: false },
+    trust: { score: 100, history: { score: 60, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 }, usage: { score: 15, shareBps: 10_000, epoch: 1 }, power: { score: 5, shareBps: 10_000, epoch: 1 }, identity: { score: 20, kind: 'github', claim: 'portfolio' }, washFlagged: false },
     verificationResults: { verified: true, checkedAtMs: NOW - 500, domains: [],
       github: [{ username: 'portfolio', repository: 'proof', peerId: validPeerId, verified: true, checkedAtMs: NOW - 500 }],
       identityHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42', status: 'available',

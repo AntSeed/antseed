@@ -67,6 +67,8 @@ import {
 import {
   ANTSTokenClient,
   EmissionsClient,
+  UsageAccountingClient,
+  UsageRewardsClient,
   makeChannelsDomain,
   peerIdToAddress,
   signSpendingAuth,
@@ -424,26 +426,19 @@ export function registerPaymentsIpc(): void {
       await ensureSecureIdentity();
       const identity = getSecureIdentity();
       const cc = await loadCachedCryptoConfig();
-      if (!identity || !cc?.emissionsAddress) {
+      if (!identity || !cc || (!cc.emissionsAddress && !cc.usageAccountingAddress)) {
         return { ok: true, data: EMPTY_REWARDS_SUMMARY, error: null };
       }
 
-      let emissionsClient = getCachedEmissionsClient();
-      if (!emissionsClient) {
-        emissionsClient = new EmissionsClient({
-          rpcUrl: cc.rpcUrl,
-          ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
-          contractAddress: cc.emissionsAddress,
-          evmChainId: cc.chainId,
-        });
-        setCachedEmissionsClient(emissionsClient);
-      }
+      const clientConfig = {
+        rpcUrl: cc.rpcUrl,
+        ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+        evmChainId: cc.chainId,
+      };
       if (cc.antsTokenAddress && !getCachedAntsTokenClient()) {
         setCachedAntsTokenClient(new ANTSTokenClient({
-          rpcUrl: cc.rpcUrl,
-          ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+          ...clientConfig,
           contractAddress: cc.antsTokenAddress,
-          evmChainId: cc.chainId,
         }));
       }
       const tokenClient = getCachedAntsTokenClient();
@@ -451,6 +446,43 @@ export function registerPaymentsIpc(): void {
       // with the epoch + pending-emissions chain.
       const [{ currentEpoch, pending }, transfersEnabled] = await Promise.all([
         (async () => {
+          if (cc.usageAccountingAddress && cc.usageRewardsAddress && cc.recognizedUsageEffectiveEpoch !== undefined) {
+            const accounting = new UsageAccountingClient({ ...clientConfig, contractAddress: cc.usageAccountingAddress });
+            const rewards = new UsageRewardsClient({ ...clientConfig, contractAddress: cc.usageRewardsAddress });
+            const currentEpoch = await accounting.currentEpoch();
+            const recognizedEpochs = Array.from(
+              { length: Math.max(0, currentEpoch - cc.recognizedUsageEffectiveEpoch) },
+              (_, index) => cc.recognizedUsageEffectiveEpoch! + index,
+            );
+            let seller = 0n;
+            for (let offset = 0; offset < recognizedEpochs.length; offset += 32) {
+              seller += (await accounting.pendingEmissions(identity.wallet.address, recognizedEpochs.slice(offset, offset + 32))).seller;
+            }
+            let buyer = 0n;
+            for (const epoch of recognizedEpochs) buyer += await rewards.pendingBuyerReward(identity.wallet.address, epoch);
+
+            if (cc.legacyEmissionsAddress) {
+              let legacyClient = getCachedEmissionsClient();
+              if (!legacyClient) {
+                legacyClient = new EmissionsClient({ ...clientConfig, contractAddress: cc.legacyEmissionsAddress });
+                setCachedEmissionsClient(legacyClient);
+              }
+              const legacyEpochs = Array.from({ length: Math.min(currentEpoch, cc.recognizedUsageEffectiveEpoch) }, (_, epoch) => epoch);
+              for (let offset = 0; offset < legacyEpochs.length; offset += 32) {
+                const legacy = await legacyClient.pendingEmissions(identity.wallet.address, legacyEpochs.slice(offset, offset + 32));
+                seller += legacy.seller;
+                buyer += legacy.buyer;
+              }
+            }
+            return { currentEpoch, pending: { seller, buyer } };
+          }
+
+          let emissionsClient = getCachedEmissionsClient();
+          if (!emissionsClient) {
+            if (!cc.emissionsAddress) throw new Error('Emissions contract is not configured.');
+            emissionsClient = new EmissionsClient({ ...clientConfig, contractAddress: cc.emissionsAddress });
+            setCachedEmissionsClient(emissionsClient);
+          }
           const info = await emissionsClient.getEpochInfo();
           const startEpoch = Math.max(0, info.epoch - 9);
           const epochs = Array.from({ length: info.epoch - startEpoch + 1 }, (_, index) => startEpoch + index);
