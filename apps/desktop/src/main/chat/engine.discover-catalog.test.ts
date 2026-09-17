@@ -9,6 +9,33 @@ import {
 const venicePeerId = '9'.repeat(40);
 const flashPeerId = 'f'.repeat(40);
 
+test('persisted catalog uses the buyer trust score and falls back to the seller-reported score', () => {
+  const protocols = { openai: { services: { 'example-model': ['openai-chat-completions'] } } };
+  const scored = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: flashPeerId, providers: ['openai'], onChainReputationScore: 70, reputationScore: 99,
+    providerServiceApiProtocols: protocols,
+  }] });
+  assert.equal(scored[0]?.effectiveReputationScore, 70);
+
+  const zero = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: flashPeerId, providers: ['openai'], onChainReputationScore: 0, reputationScore: 99,
+    providerServiceApiProtocols: protocols,
+  }] });
+  assert.equal(zero[0]?.effectiveReputationScore, 0);
+
+  const unscored = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: flashPeerId, providers: ['openai'], reputationScore: 42,
+    providerServiceApiProtocols: protocols,
+  }] });
+  assert.equal(unscored[0]?.effectiveReputationScore, 42);
+
+  const unknown = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: flashPeerId, providers: ['openai'],
+    providerServiceApiProtocols: protocols,
+  }] });
+  assert.equal(unknown[0]?.effectiveReputationScore, null);
+});
+
 function modelsPayload(): unknown {
   return {
     object: 'list',

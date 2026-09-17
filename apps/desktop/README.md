@@ -1,8 +1,8 @@
-# AntSeed Desktop (Electron)
+# Antseed Desktop (Electron)
 
-Alternative GUI interface for AntSeed on macOS/Linux/Windows.
+Alternative GUI interface for Antseed on macOS/Linux/Windows.
 
-This app runs AntSeed runtime commands in the background (seller start / buyer start / dashboard)
+This app runs Antseed runtime commands in the background (seller start / buyer start / dashboard)
 so end users do not need to use terminal commands directly.
 
 ## What it controls
@@ -14,6 +14,15 @@ so end users do not need to use terminal commands directly.
 - Live process logs and daemon state snapshot (`~/.antseed/daemon.state.json`)
 
 ## Prerequisites
+
+Use Node 24 for repository development. From the repository root, run
+`nvm install && nvm use`, then `pnpm install`. Volta users can use
+`volta run --node 24.21.0 pnpm install`; the project also declares a Volta pin.
+CI reads the same `.nvmrc`; the Nix shell uses Node 24 with its patch version
+determined by `flake.lock`.
+
+Packaged apps still use Electron's embedded Node. This development pin does
+not upgrade Electron or change the published SDK's engine range.
 
 1. Install the `antseed` CLI binary so it is available on your `PATH`.
 
@@ -45,10 +54,11 @@ Development mode:
 npm run dev
 ```
 
-Run multiple development worktrees at once while sharing the normal AntSeed
+Run multiple development worktrees at once while sharing the normal Antseed
 buyer, configuration, plugins, and identity:
 
 ```bash
+# Run from the repository/worktree root after selecting Node 24
 pnpm dev:desktop:instance status
 pnpm dev:desktop:instance codex
 pnpm dev:desktop:instance ui
@@ -58,7 +68,7 @@ pnpm dev:desktop:instance feature-x
 Any instance name receives stable, separate renderer, payments, and system-proxy ports
 plus its own temporary Electron Chromium profile and volatile system-proxy
 runtime files. The buyer proxy and durable `~/.antseed` data remain shared.
-The first instance starts the buyer; later instances validate its AntSeed
+The first instance starts the buyer; later instances validate its Antseed
 status endpoint and attach without starting duplicate buyer nodes.
 In multi-instance mode, stopping, quitting, or disconnecting any
 window does not remove shared Codex/tool config patches or kill the shared

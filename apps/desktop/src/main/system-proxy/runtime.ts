@@ -543,7 +543,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (profile?.configPatch) {
       removeConfigPatch(profile.configPatch, systemProxyWslTargetsPath());
-      deps().appendLog('system-proxy', 'system', `${profile.label}: removed AntSeed provider from config`);
+      deps().appendLog('system-proxy', 'system', `${profile.label}: removed Antseed provider from config`);
     }
   }
 
@@ -584,7 +584,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
       }
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
-      // the floating pill / VPR applies to running tool sessions.
+      // the floating pill / AI VPN applies to running tool sessions.
       applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort, systemProxyWslTargetsPath());
       deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
     } catch (err) {
