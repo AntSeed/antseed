@@ -7,7 +7,7 @@ hide_title: true
 
 # Configuration
 
-AntSeed stores configuration at `~/.antseed/config.json`. This file is the normal source of truth for your node.
+Antseed stores configuration at `~/.antseed/config.json`. This file is the normal source of truth for your node.
 
 The intended workflow is:
 
@@ -109,7 +109,7 @@ antseed seller start
 
 ## Override Precedence
 
-When the same setting exists in multiple places, AntSeed resolves it in this order:
+When the same setting exists in multiple places, Antseed resolves it in this order:
 
 1. CLI flags for the current command
 2. Environment variables
@@ -316,7 +316,7 @@ See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before u
 
 ## Buyer Settings
 
-Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop VPR. The defaults are:
+Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop AI VPN. The defaults are:
 
 ```json
 {
@@ -445,7 +445,7 @@ Do not redirect the well-known URL; verifiers require the proof to be served dir
 
 ### GitHub proof
 
-Create a public repository and place `antseed.json` at the repository root. AntSeed fetches:
+Create a public repository and place `antseed.json` at the repository root. Antseed fetches:
 
 ```text
 https://raw.githubusercontent.com/<username>/<repository>/HEAD/antseed.json
@@ -518,7 +518,7 @@ See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/ma
 | Priority | Method | Best for |
 |---|---|---|
 | 1 | `ANTSEED_IDENTITY_HEX` env var | CLI and server deployments |
-| 2 | Desktop keychain (Electron `safeStorage`) | AntSeed Desktop app |
+| 2 | Desktop keychain (Electron `safeStorage`) | Antseed Desktop app |
 | 3 | Custom `IdentityStore` | KMS/HSM integrations |
 | 4 | `~/.antseed/identity.key` (plaintext) | Not recommended for production |
 

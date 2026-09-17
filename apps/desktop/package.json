@@ -1,10 +1,10 @@
 {
   "name": "@antseed/desktop",
-  "productName": "AntSeed VPR",
+  "productName": "Antseed AI VPN",
   "version": "0.2.40",
   "private": true,
-  "description": "Desktop app for AntSeed",
-  "author": "AntSeed <hello@antseed.com>",
+  "description": "Desktop app for Antseed",
+  "author": "Antseed <hello@antseed.com>",
   "homepage": "https://antseed.com",
   "type": "module",
   "main": "dist/main/main.js",

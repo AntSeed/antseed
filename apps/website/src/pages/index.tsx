@@ -105,7 +105,7 @@ function CountUp({value, duration = 1100}: {value: string; duration?: number}) {
 
 /* ============================================================
    HERO DOT CANVAS — dot grid that ripples out from the demo and
-   surfaces the AntSeed ant, in sync with the live demo timeline.
+   surfaces the Antseed ant, in sync with the live demo timeline.
    Ported from the design prototype (Remotion beats at 30 fps).
    ============================================================ */
 const BEATS = DEMO_BEATS;
@@ -437,7 +437,7 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
   return (
     <div className={styles.ctaBlock}>
       <Button href={download.href} osIcons size={size} className="vprBtn" onClick={onGetStarted}>
-        <span className="vprLabelDesktop">Download VPR</span>
+        <span className="vprLabelDesktop">Download AI VPN</span>
         <span className="vprLabelMobile">Get Started<ArrowRight /></span>
       </Button>
       <AllVersionsLink />
@@ -616,7 +616,7 @@ function PricingSection() {
         </Reveal>
         <Reveal className={styles.buttonRow} delay={60}>
           <Button href={download.href} osIcons className="vprBtn" onClick={onGetStarted}>
-            <span className="vprLabelDesktop">Download VPR</span>
+            <span className="vprLabelDesktop">Download AI VPN</span>
             <span className="vprLabelMobile">Get Started<ArrowRight /></span>
           </Button>
           <Button href="https://antseedstats.com/network" variant="ghost" arrow>See live pricing</Button>
@@ -727,7 +727,7 @@ function PrivateByDesign() {
 const OWNED_CARDS = [
   {
     title: 'Open Source and On‑Chain',
-    body: 'The Protocol, VPR, Verifications, Network Data and Payments',
+    body: 'The Protocol, AI VPN, Verifications, Network Data and Payments',
     illo: <img src="/img/home/illo-best-prices.svg" alt="" aria-hidden="true" />,
     link: {href: 'https://github.com/AntSeed/antseed', label: 'View on GitHub'},
   },
@@ -756,7 +756,7 @@ function OwnedByNoOne() {
                 <span className={styles.titleAccent}>Available to everyone.</span>
               </>
             }
-            lead="AntSeed is a decentralized peer to peer network. It moves AI requests the way BitTorrent moves files. There is no central server, no company in the middle."
+            lead="Antseed is a decentralized peer to peer network. It moves AI requests the way BitTorrent moves files. There is no central server, no company in the middle."
           />
         </Reveal>
         <Reveal className={styles.buttonRow} delay={60}>
@@ -822,8 +822,8 @@ function RunsOnYourComputer() {
             Works with every tool you use.
           </h2>
           <p className={styles.runsLead}>
-            The Virtual Private Router is self-hosted software that connects your favorite AI tools
-            to any model on the AntSeed network. No limits, no lock-in.
+            The AI VPN is self-hosted software that connects your favorite AI tools
+            to any model on the Antseed network. No limits, no lock-in.
           </p>
         </Reveal>
         <div className={styles.cardGrid3}>
@@ -858,7 +858,7 @@ type TBlock = {comment: string; tokens: TToken[]};
 
 const TERMINAL_BLOCKS: TBlock[] = [
   {
-    comment: '# Route Claude Code through AntSeed',
+    comment: '# Route Claude Code through Antseed',
     tokens: [
       {text: '$ ', cls: 'tGreen'},
       {text: 'antseed', cls: 'tPurple'},
@@ -1104,7 +1104,7 @@ function LocalhostSection() {
           <Reveal className={styles.localhostCopy}>
             <h2 className={styles.darkTitle}>Point your tools<br />at localhost.</h2>
             <p className={styles.darkLead}>
-              AntSeed exposes OpenAI and Anthropic compatible APIs at{' '}
+              Antseed exposes OpenAI and Anthropic compatible APIs at{' '}
               <code className={styles.inlineCode}>localhost:8377</code>, then routes each request
               across the open provider market by price, latency, reputation, capability, or privacy.
               The router runs on your computer, not on a hosted service, so your requests never pass
@@ -1141,7 +1141,7 @@ const buildSteps = (providers: string) => [
   {
     num: '1',
     title: 'Pick your model',
-    body: "Top tier names, fresh releases, and unique models you won't find anywhere else, all routed on the AntSeed P2P network.",
+    body: "Top tier names, fresh releases, and unique models you won't find anywhere else, all routed on the Antseed P2P network.",
   },
   {
     num: '2',
@@ -1269,23 +1269,23 @@ function SellSection() {
 const FAQ_DATA = [
   {
     q: 'How is this different from OpenRouter?',
-    a: "OpenRouter is a centralized aggregator: it decides which models are listed, routes every request through its own servers, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
+    a: "OpenRouter is a centralized aggregator: it decides which models are listed, routes every request through its own servers, and holds provider payouts until withdrawal. Antseed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
   },
   {
     q: 'What happens when LLMs become so good that anyone can do anything?',
-    a: 'That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers - the supply side grows, not shrinks. But "anyone can do anything" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider.',
+    a: 'That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become Antseed providers - the supply side grows, not shrinks. But "anyone can do anything" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider.',
   },
   {
     q: "Isn't this just like P2P file sharing? Netflix killed that.",
     a: "Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. That logic only applies to humans who care about experience. Agents don't - in a world of agents, UI is not a moat. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability - and on those axes, an open P2P network with no middleman and no markup wins every time.",
   },
   {
-    q: 'Is AntSeed built for agents specifically?',
-    a: 'It works for humans today and is being used by humans now. But the architecture decisions - USDC-native payments, no account system, open discovery, always-on peers - are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use.',
+    q: 'Is Antseed built for agents specifically?',
+    a: 'It works for humans today and is being used by humans now. But the architecture decisions - USDC-native payments, no account system, open discovery, always-on peers - are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network Antseed is building is the one autonomous agents will naturally discover and use.',
   },
   {
-    q: 'Why would a provider use AntSeed instead of just building their own API?',
-    a: 'Because distribution is the hard part. On AntSeed a provider plugs into existing demand - buyers, discovery, reputation, and on-chain settlement come with the network. No billing stack to build, no customers to acquire, no payment risk to carry. Serve a request, get paid, automatically.',
+    q: 'Why would a provider use Antseed instead of just building their own API?',
+    a: 'Because distribution is the hard part. On Antseed a provider plugs into existing demand - buyers, discovery, reputation, and on-chain settlement come with the network. No billing stack to build, no customers to acquire, no payment risk to carry. Serve a request, get paid, automatically.',
   },
 ];
 
@@ -1328,7 +1328,7 @@ function FinalCtaButton() {
   const onGetStarted = useMobileGetStarted();
   return (
     <Button href={download.href} variant="white" size="lg" osIcons className="vprBtn" onClick={onGetStarted}>
-      <span className="vprLabelDesktop">Download VPR</span>
+      <span className="vprLabelDesktop">Download AI VPN</span>
       <span className="vprLabelMobile">Get Started<ArrowRight /></span>
     </Button>
   );
@@ -1359,11 +1359,11 @@ export default function Home(): JSX.Element {
   const orgLd = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
-    name: 'AntSeed',
+    name: 'Antseed',
     url: 'https://antseed.com/',
     logo: 'https://antseed.com/logo.svg',
     description:
-      'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
+      'Antseed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
     sameAs: [
       'https://github.com/AntSeed/antseed',
       'https://x.com/antseed',
@@ -1391,7 +1391,7 @@ export default function Home(): JSX.Element {
         <meta property="og:title" content="Every AI model, best price, no middleman" />
         <meta
           property="og:description"
-          content="AntSeed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone."
+          content="Antseed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone."
         />
         <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>

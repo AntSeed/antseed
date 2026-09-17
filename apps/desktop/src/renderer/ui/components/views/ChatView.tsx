@@ -697,7 +697,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     };
   }, [currentDiscoverRow, currentServiceOption?.peerId, snap.chatSelectedPeerId, snap.chatRoutedPeerId, peerDisplayName]);
 
-  // Switching models routes through the VPR selection (auto seller pick);
+  // Switching models routes through the AI VPN selection (auto seller pick);
   // with an open conversation this also rebinds the thread to the new model.
   const applyModelChange = useCallback(
     (entry: VprModelCatalogEntry) => {
@@ -1273,7 +1273,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           className={styles.chatExternalHint}
           onClick={() => onSelectView?.('tools')}
         >
-          <span>Connect tools through your VPR profiles</span>
+          <span>Connect tools through your AI VPN profiles</span>
           <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.5} />
         </button>
       )}

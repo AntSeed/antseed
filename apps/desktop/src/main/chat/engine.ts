@@ -996,7 +996,7 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-select-peer', async (_event, payload: ChatPeerSelectionRequest | string | null) => applyPeerSelection(payload));
 
   // Keep the buyer proxy's default route (`antseed` model alias, and the
-  // route the Telegram bridge reads) on the renderer's current VPR selection.
+  // route the Telegram bridge reads) on the renderer's current AI VPN selection.
   // Best-effort: the buyer proxy may not be running yet — the renderer calls
   // this again on its catalog poll, so the route lands once the proxy is up.
   let lastPostedDefaultRoute = '';

@@ -213,7 +213,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
 export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServiceOptionEntry[] {
   const grouped = new Map<string, ChatServiceOptionEntry>();
   for (const row of rows) {
-    // VPR can browse image generators, but the built-in chat pipeline must
+    // AI VPN can browse image generators, but the built-in chat pipeline must
     // only receive protocols it knows how to serialize and stream.
     if (!isTextCapableRow(row)) continue;
     const key = `${row.provider}${CHAT_SERVICE_SELECTION_SEPARATOR}${row.serviceId}${CHAT_SERVICE_SELECTION_SEPARATOR}${row.peerId}`;

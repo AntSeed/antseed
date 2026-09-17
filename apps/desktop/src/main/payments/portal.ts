@@ -80,7 +80,7 @@ export function openPaymentsPopup(url: string): void {
     minWidth: 420,
     minHeight: 620,
     ...(parent ? { parent } : {}),
-    title: 'AntSeed — Secure payment',
+    title: 'Antseed — Secure payment',
     autoHideMenuBar: true,
     backgroundColor: '#ffffff',
     webPreferences: {
@@ -110,7 +110,7 @@ export function openPaymentsPopup(url: string): void {
 // via the P2P deposit relay — same path as a direct QR transfer.
 //
 // Providers come from config (payments.card.providers) as HTTPS URL templates
-// with {address} and optional {amount} placeholders. The default is AntSeed's
+// with {address} and optional {amount} placeholders. The default is Antseed's
 // hosted card page, which handles the Coinbase Onramp session server-side so
 // the CDP secret key never ships inside the app.
 export type CardProvider = { id: string; label: string; url: string };
@@ -124,9 +124,9 @@ const ANTSEED_PAY_URL =
 
 export const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
   { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/?buyer={address}' },
-  { id: 'antseed-pay', label: 'AntSeed Pay', url: ANTSEED_PAY_URL },
+  { id: 'antseed-pay', label: 'Antseed Pay', url: ANTSEED_PAY_URL },
   // Same page, opened on its Stripe integration (US only).
-  { id: 'antseed-pay-stripe', label: 'AntSeed Pay (Stripe)', url: ANTSEED_PAY_URL },
+  { id: 'antseed-pay-stripe', label: 'Antseed Pay (Stripe)', url: ANTSEED_PAY_URL },
 ];
 
 /** Which pay-page integration a provider id opens; null for other providers. */

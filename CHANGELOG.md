@@ -1,6 +1,6 @@
 # Changelog
 
-All notable user-facing changes to AntSeed packages are documented here.
+All notable user-facing changes to Antseed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
@@ -13,6 +13,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
+
+### Changed
+
+- Website and docs: wording only. "VPR" and "Virtual Private Router" → "AI VPN", "AntSeed" → "Antseed" in copy (URLs, package names and identifiers unchanged), "seller" → "provider" and "on-chain" → "onchain" in marketing copy. No code or layout changes.
+- Desktop and agent skills: same wording pass. The app is now "Antseed AI VPN" (window title, notifications, update hints, DMG/installer product name, help center, connected-app provider names written into third-party configs, chat system prompt). Runtime internals (IPC channels, local-storage keys, bundle id, packaged bundle/executable name, data directory, `x-vpr-session-id`, local CA name) are intentionally unchanged so existing installs, updates, conversations, and trusted certificates keep working. The macOS updater also clears stale ShipIt registrations before handing off an install.
 
 ### Added
 

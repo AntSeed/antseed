@@ -1,8 +1,8 @@
-# AntSeed Desktop (Electron)
+# Antseed Desktop (Electron)
 
-Alternative GUI interface for AntSeed on macOS/Linux/Windows.
+Alternative GUI interface for Antseed on macOS/Linux/Windows.
 
-This app runs AntSeed runtime commands in the background (seller start / buyer start / dashboard)
+This app runs Antseed runtime commands in the background (seller start / buyer start / dashboard)
 so end users do not need to use terminal commands directly.
 
 ## What it controls
@@ -54,7 +54,7 @@ Development mode:
 npm run dev
 ```
 
-Run multiple development worktrees at once while sharing the normal AntSeed
+Run multiple development worktrees at once while sharing the normal Antseed
 buyer, configuration, plugins, and identity:
 
 ```bash
@@ -68,7 +68,7 @@ pnpm dev:desktop:instance feature-x
 Any instance name receives stable, separate renderer, payments, and system-proxy ports
 plus its own temporary Electron Chromium profile and volatile system-proxy
 runtime files. The buyer proxy and durable `~/.antseed` data remain shared.
-The first instance starts the buyer; later instances validate its AntSeed
+The first instance starts the buyer; later instances validate its Antseed
 status endpoint and attach without starting duplicate buyer nodes.
 In multi-instance mode, stopping, quitting, or disconnecting any
 window does not remove shared Codex/tool config patches or kill the shared

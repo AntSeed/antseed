@@ -1597,7 +1597,7 @@ test('a pinned seller failure explains the peer boundary and preserves the selle
   assert.equal(parsed.error.peer_status, 503)
   assert.equal(parsed.error.message, [
     'Oops, pinned peer could not complete the request.',
-    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Antseed is a peer-to-peer network. Try another peer or use Auto routing.',
     'Original Response: {"message":"No billing tier matches this request.","status":503}',
   ].join('\n'))
 })
@@ -3509,7 +3509,7 @@ test('adaptPeerFaultErrorResponse upgrades a generic wrapper for a pinned route'
   assert.equal(parsed.error.peer_status, 429)
   assert.equal(parsed.error.message, [
     'Oops, pinned peer could not complete the request.',
-    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Antseed is a peer-to-peer network. Try another peer or use Auto routing.',
     'Original Response: {"message":"Insufficient balance or no resource package. Please recharge.","status":429}',
   ].join('\n'))
 })
