@@ -52,7 +52,7 @@ All factors are min-max normalised across the eligible candidate pool before wei
 reputationFactor = peerReputation / 100
 ```
 
-When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified). Official routers use the buyer-computed trust score (`trust = washFlagged ? 0 : history + usage + power + identity`, weights 55 / 15 / 10 / 20) before falling back to the locally reported score. `history` comes from the lifetime settled channel count and volume in `AntseedChannels`; ghost count and the local sybil warning remain display-only.
+When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified). Official routers use the buyer-computed trust score (`trust = washFlagged ? 0 : history + usage + power + identity`, weights 60 / 15 / 5 / 20) before falling back to the locally reported score. `history` comes from the lifetime settled channel count and volume in `AntseedChannels`; ghost count and the local sybil warning remain display-only.
 
 ### Minimum Reputation Filter
 
