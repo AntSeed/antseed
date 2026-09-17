@@ -302,6 +302,17 @@ export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
 export {
+  computeTrustScore, historyCurve, trustScore, shareCurve, SHARE_CURVE_RANGE,
+  TRUST_HISTORY_CHANNEL_TARGET, TRUST_HISTORY_VOLUME_USDC_MICROS_TARGET, TRUST_WEIGHTS,
+  type TrustBreakdown,
+} from './reputation/trust-score.js';
+export {
+  IdentityHistoryCollector, scoreIdentityHistory,
+  IDENTITY_HISTORY_VERSION, IDENTITY_HISTORY_TTL_MS, IDENTITY_GITHUB_MAX_POINTS, IDENTITY_DOMAIN_MAX_POINTS,
+  type IdentityHistoryEvidence, type IdentityHistory, type IdentityScore,
+} from './reputation/identity-history.js';
+export { TrustSignalsClient, type TrustSignals, type TrustSignalsAddresses } from './payments/evm/trust-signals-client.js';
+export {
   MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER,
   compareEffectiveModelReputation,
   effectiveModelReputationScore,
@@ -309,22 +320,8 @@ export {
   type ModelReputationSource,
 } from './reputation/model-reputation.js';
 export {
-  computeOnChainTrust,
-  computeOnChainTrustBreakdown,
   buildSybilContext,
   computeOnChainSybilRisk,
-  computeOnChainScore,
-  scoreFromTrust,
-  computeOnChainReputationScore,
-  ON_CHAIN_TRUST_TICKET_TARGET_USDC,
-  ON_CHAIN_TRUST_TICKET_MIN,
-  ON_CHAIN_TRUST_TICKET_MAX,
-  ON_CHAIN_TRUST_RECENCY_FRESH_DAYS,
-  ON_CHAIN_TRUST_RECENCY_STALE_DAYS,
-  ON_CHAIN_TRUST_RECENCY_DORMANT_FACTOR,
-  ON_CHAIN_TRUST_STAKE_THRESHOLD_USDC,
-  ON_CHAIN_TRUST_NO_STAKE_FACTOR,
-  ON_CHAIN_SCORE_LOG_CAP_EXPONENT,
   SYBIL_WEIGHT_SUBFLOOR_TICKET,
   SYBIL_WEIGHT_BURN_RATE,
   SYBIL_WEIGHT_NARROW_CUSTOM,
@@ -337,11 +334,10 @@ export {
   SYBIL_YOUNG_CHANNEL_FLOOR,
   SYBIL_YOUNG_CHANNEL_SATURATION,
   SYBIL_ADVERTISED_CHEAP_INPUT_USD_PER_MILLION,
-  type OnChainTrustBreakdown,
   type SybilContext,
   type SybilRiskResult,
   type SybilFlag,
-} from './reputation/on-chain-reputation.js';
+} from './reputation/sybil-risk.js';
 export type { UptimeWindow, PeerUptimeRecord } from './reputation/uptime-tracker.js';
 export { ReportManager } from './reputation/report-manager.js';
 export type { PeerReport, ReportReason, ReportEvidence, ReportStatus } from './types/report.js';
