@@ -25,6 +25,11 @@ export type RouteCandidate = {
   minImageUsdPerImage: number | null;
 };
 
+export type RouteRecommendation = {
+  serviceId: string;
+  peerId?: string;
+};
+
 export type RouteSelectionContext = {
   routing?: import('../routing/routing-context.js').RoutingRequestContext;
   settings?: Record<string, string>;
@@ -33,7 +38,7 @@ export type RouteSelectionContext = {
   candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion'>>;
   invokeService?: (
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-    parseResponse?: (response: SerializedHttpResponse) => Array<Pick<RouteCandidate, 'peerId' | 'serviceId'>>,
+    parseResponse?: (response: SerializedHttpResponse) => RouteRecommendation[],
   ) => Promise<SerializedHttpResponse>;
 };
 
@@ -68,9 +73,9 @@ export interface Router {
   }): void;
 
   /**
-   * Optional, additive: pick both model and seller together, ahead of the
+   * Optional, additive: pick a model and optionally an exact seller, ahead of
    * usual fixed-model peer narrowing. Called on each explicitly auto-routed
-   * request, including later turns. Plugins can reuse context.routing.previousRoute
+   * request, including later turns. Plugins can reuse context.routing.previousRoutes
    * when shouldRoute is false rather than invoking a paid classifier again.
    * Returning `null` (or not implementing it) falls through to the unmodified
    * `selectPeer` pipeline.
@@ -78,9 +83,9 @@ export interface Router {
    * it must not be treated as a decline. Throw for execution failures.
    * Hosts enforce the context deadline even if a plugin ignores its signal.
    *
-   * `req` is the same raw, unmodified request `selectPeer` gets, before any
-   * model substitution — a router implementing this parses `req.body` itself
-   * to read the model field.
+   * `req` contains the resolved router sentinel after applying user selections
+   * and aliases, before substituting an inference model. The host reconstructs
+   * dispatch requests and validates all recommendations against buyer policy.
    */
   selectRoute?(
     req: SerializedHttpRequest,
@@ -99,7 +104,7 @@ export interface Router {
      */
     defaultRoutedModel?: string | null,
     context?: RouteSelectionContext,
-  ): Promise<Array<Pick<RouteCandidate, 'peerId' | 'serviceId'> & Partial<RouteCandidate>> | null>;
+  ): Promise<Array<RouteRecommendation & Partial<RouteCandidate>> | null>;
 
 }
 

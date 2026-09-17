@@ -14,7 +14,7 @@ Included:
   existing `selectPeer` interface.
 - Plugin-owned settings, explicit activation, eligible candidates, host-enforced
   deadlines, cancellation, and fail-closed fallback.
-- Plugin-controlled per-turn model selection, structural routing context,
+- Plugin-controlled model selection with latest-user-text reuse hints,
   concurrent-first-request coordination, and explicit user pins.
 - Host-mediated classifier requests with token or fixed-per-call prices,
   separate authorization budgets and accounting, and validation before
@@ -26,11 +26,19 @@ Levanto-specific endpoints or authentication, access/day passes, daily spending
 controls, savings dashboards, reference prices, forecast history, universal
 cost/quality controls, and durable exactly-once classification across restarts.
 
-The existing conversation store only distinguishes a real user pin from the
-model last selected by the host. No new per-turn cost/latency fields are added.
+The existing conversation store distinguishes a real user pin from the
+model last selected by the host and includes classifier spending in the total,
+with a `routingSpentUsdc` subtotal. No per-turn history store is added.
 Token counting and ordinary seller settlement behavior are unchanged.
 
 ## Router contract
+
+For a runnable, vendor-neutral implementation, see
+`plugins/router-classifier/README.md`. It sends each eligible model/seller
+offer and its individual token prices to a configured classifier, validates
+model-only or exact-seller recommendations, and honors their ordering. The local-chain routing
+fixture uses this real plugin with deterministic classifier responses; no
+vendor account is needed. The plugin is private and is not bundled or published.
 
 An installed router plugin declares `autoRouteServiceId` and optionally
 `routingSettingsSchema`. The buyer loads it using the existing `buyer start
@@ -39,17 +47,28 @@ for a particular vendor. A paid classifier is a normal advertised provider
 service using `/v1/chat/completions`, not a custom routing-server endpoint.
 
 `selectRoute(request, peers, conversation, preferences, defaultRoute, context)`
-returns ordered `{ peerId, serviceId }` recommendations. Only those two fields
-are necessary: the host reconstructs requests, peers, and prices from its own
+returns ordered `{ serviceId, peerId? }` recommendations. The host reconstructs requests, peers, and prices from its own
 discovery data. A prediction, token estimate, quality score, or cost forecast
 is never required.
 
+- `{ serviceId }`: AntSeed chooses an eligible seller using the same ranking as
+  an ordinary model request, including buyer preferences and conversation affinity.
+  Retryable failures may fall back to another eligible seller of that model.
+- `{ serviceId, peerId }`: choose that exact offer. Its seller and prices matter;
+  there is no implicit automatic-seller fallback.
+- `[ { serviceId, peerId }, { serviceId } ]`: try the exact offer first, then
+  explicitly allow automatic same-model seller fallback.
+
+Buyer price, trust, capability, and payment restrictions apply in every mode.
+Before dispatch, unusable recommendations can be skipped; once dispatch starts,
+fallback cannot change the selected model. A malformed seller ID is rejected,
+not interpreted as an omitted seller ID.
+
 The context supplies namespaced settings, an eligible candidate snapshot,
 `signal`, `deadlineMs`, and `invokeService(messages, parseResponse)`. Its trigger
-identifies new sessions, new user turns, tool continuations, context rewrites,
-explicit refreshes, changed settings, and unavailable routes. A plugin can
-declare `routingCadence: 'turn' | 'session' | 'request'`; the buyer defaults to
-`turn`. This controls the `shouldRoute` hint, not whether `selectRoute` runs.
+identifies new sessions, changed latest user text, continuations, and unavailable
+routes. `shouldRoute` suggests whether to reconsider the decision; it does not
+control whether `selectRoute` runs or require a paid classifier call.
 
 Candidate prices include input, output, and cached-input rates. An unknown
 cached-input rate is `null`, not a fabricated zero or a token forecast.
@@ -73,30 +92,53 @@ the plugin. A plugin can reconsider each user turn and keep the same model or
 choose another eligible model. Explicit user pins and concrete models still
 bypass classification.
 
+The user selection is a fixed model **or** the router sentinel. Choosing a fixed
+model bypasses classification, even when a tool still sends the router sentinel.
+Choosing the router keeps routing active across turns; its chosen inference
+model is history, not a new user pin. The existing conversation update endpoint
+(`POST /_antseed/conversations/update`) accepts the sentinel in `pinnedModel` to
+represent an explicit router selection. Changing that selection clears cached
+routing decisions. This is a backend contract, not a desktop selector redesign.
+
 For tool continuations and repeated requests with unchanged history, the context
-suggests reuse and includes the previously validated route. A plugin should
-return that route without calling `invokeService` when reuse is appropriate:
+suggests reuse and includes the still-eligible original recommendations in
+`previousRoutes` (and the first in legacy `previousRoute`). These preserve
+model-only versus exact-seller intent separately from the actual dispatched
+seller. A plugin should return the list without calling `invokeService` when
+reuse is appropriate:
 
 ```ts
-if (context.routing?.shouldRoute === false && context.routing.previousRoute) {
-  return [context.routing.previousRoute];
+if (context.routing?.shouldRoute === false && context.routing.previousRoutes?.length) {
+  return context.routing.previousRoutes;
 }
 ```
 
 The host validates reused recommendations against current price, trust, and
-capability constraints just like new recommendations. An unavailable route
+capability constraints just like new recommendations. No remaining eligible route
 triggers reconsideration; no valid recommendation means no inference dispatch.
 Each accepted new per-call classification can incur a fee, even when it chooses
 the same model. Merely calling the local `selectRoute` hook does not incur a fee.
 
-Turn detection uses message structure and optional `x-antseed-turn-id` hints,
-not equality of the last prompt's text. Repeated text appended as a new user
-message is a new turn. Anthropic tool-result-only user messages are continuations.
-Compaction and explicit refresh request reconsideration without claiming the
-cache is cold. Missing conversation identity or unobservable history (such as
-Responses API `previous_response_id`) provides no safe reuse hint. Plugins remain
-responsible for reuse and concurrent classification deduplication; the host's
-hint is not a guarantee of one paid call per human turn.
+Reuse compares only the latest user text within a conversation. A changed text
+suggests reconsideration; identical text suggests reuse, including identical text
+appended as a new user turn. Tool-result-only user messages are skipped. Earlier
+history, system instructions, tool definitions, settings, and legacy turn/revision/
+refresh headers do not invalidate reuse. This intentionally simpler heuristic
+does not detect compaction or distinguish repeated identical human turns.
+Missing conversation identity or no observable user text provides no reuse hint.
+Only a hash of the latest text is retained in the bounded in-memory tracker;
+no prompt content is persisted by it. Reused routes still pass current host policy.
+Plugins remain responsible for classifier invocation; the hint does not guarantee
+one paid call per human turn.
+
+The host coordinates only the routing-decision phase for automatic requests
+with the same conversation identity. After validating and recording a decision,
+it releases waiting requests before downstream inference starts; a slow answer
+does not keep the routing lock. Each waiter observes its own history against
+the updated routing context, so an unchanged continuation can reuse the decision
+while a new turn can request a new classification. Fixed-model and explicit
+seller requests bypass this coordination. Waiting is bounded and cancellable;
+failed routing releases the lock without recording a reusable decision.
 
 ## Configuration example
 
@@ -181,16 +223,23 @@ The classifier peer is kept separate from inference peers to prevent ordinary
 inference requests from using its scoped payment authority.
 
 Fixed-per-call payment requires a complete HTTP 2xx response, a successful
-plugin parser, and only eligible exact model/peer recommendations. Invalid
+plugin parser, and only eligible recommendations. Exact recommendations must
+match a model/seller pair; model-only recommendations must have an eligible
+seller in the host's snapshot. Invalid
 output, HTTP errors, timeout, cancellation, and route reuse authorize no new
 fixed fee. Token-priced services charge verified usage; they do not promise a
 free classification when a plugin rejects the content. See
 `router-per-call-billing.md` for the parser contract and failure cases.
 
-Bounded local `routing-operations.jsonl` diagnostics record IDs, selection
-outcomes, latency, and authorization events, without prompt bodies or settings.
-They are not a savings database or the payment ledger. Cumulative authorizations
-remain in the payment channel store. Migration 006 persists reserve-recovery
+Routing diagnostics use the normal CLI logger, without a dedicated JSONL file.
+Cumulative authorizations and service totals remain in the payment channel store,
+just like inference. Classifier spend events use `parentRequestId` to attribute
+authorized spending to the originating conversation. `conversations.json` stores
+that cost in `spentUsdc` and its `routingSpentUsdc` subtotal; classifier usage does
+not inflate inference token totals or inference request counts. Both kinds of spend
+queue a normal conversation-store write, including when classification succeeds
+but inference fails. Old records default the routing subtotal to zero; old costs
+are not reconstructed. Migration 006 persists reserve-recovery
 fields; migrations 001–005 are unchanged. No access-purchase or routing-history
 schema is shipped. Metadata preserves existing image-unit encoding and rejects
 downgrades that would omit unit fees.
@@ -218,6 +267,9 @@ Run builds before tests so dependent packages use current declarations:
 ```sh
 pnpm run build:tier0
 pnpm --filter @antseed/ant-agent build
+pnpm --filter @antseed/router-local build
+pnpm --filter @antseed/router-classifier build
+pnpm --filter @antseed/router-classifier test
 pnpm --filter @antseed/cli test
 pnpm --filter @antseed/node test
 pnpm --filter @antseed/buyer-core test
@@ -281,3 +333,25 @@ These use a fixture router and isolated Anvil wallets, not a live vendor's
 classifier or production funds. The restored host calls the plugin on every
 auto-routed request; the fixture plugin honors the host's reuse hints. This
 does not prove arbitrary plugins deduplicate paid calls or persist turn state.
+
+### Storage parity and simpler reuse validation — September 17, 2026
+
+The latest-user-text heuristic now replaces the structural-history behavior
+described in the earlier validation record. Verified with Node 24.21.0:
+
+- Core, CLI, and reference classifier-plugin builds passed; workspace typechecks
+  and diff whitespace checks passed.
+- SDK: 1,190 tests passed, including 24 routing-context tests and existing image,
+  per-call, response-acceptance, and payment-race coverage.
+- CLI: 648 tests passed, including actual spend-event subscription, parent-chat
+  attribution, inference-only counters, persistence, and legacy-record defaults.
+- Reference classifier plugin: 26 tests passed.
+- Isolated local-chain token scenario: four classifications settled 560 micro-USDC.
+- Fixed-fee exact-seller/malformed-output and model-only/ineligible-output scenarios:
+  five accepted classifications each settled 25,000 micro-USDC, with no new fixed
+  fees for tool reuse, HTTP failure, rejected output, or blocked retries.
+- All three chain scenarios also checked persisted conversation totals and routing
+  subtotals against emitted authorized-spend deltas, without a routing JSONL file.
+
+CLI tests ran with the conflicting inherited `FORCE_COLOR` and `NO_COLOR`
+environment variables unset, so Node warnings did not pollute child-process stderr.

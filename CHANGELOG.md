@@ -12,6 +12,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- CLI: concurrent automatic requests for one conversation wait only for a validated routing decision, not for the first inference response. Fixed-model requests bypass the routing wait; cancelled and failed routing attempts release their coordination state safely.
+
 - CLI: router configuration commands accept optional routing fields and complete settings/service JSON objects from a fresh configuration. Boolean fields parse `true`/`false` correctly, string-valued payment limits retain their exact values, and invalid router settings are rejected before saving.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
 
@@ -20,7 +22,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Opt-in network model-router plugins can choose models and peers on successive user turns from host-validated candidates. The host provides structural turn/reuse hints instead of locking the first model for the whole conversation; plugins control classifier invocation and continuation reuse. Plugin settings remain namespaced; deadlines, cancellation, and buyer constraints are host-enforced. Explicit model requests bypass classification.
+- Routers can recommend a model with automatic seller selection or an exact model/seller offer, with explicit same-model fallback. Continuations retain that intent separately from the dispatched seller; selecting a fixed model bypasses classification and selecting the router re-enables it. Fixed-fee classifier acceptance supports both recommendation forms under buyer policy.
+
+- Added a private, vendor-neutral classifier-router reference plugin with per-seller price context, exact model/seller selection, validated same-model fallbacks, and runnable local-chain billing fixtures. See `plugins/router-classifier/README.md`.
+- Opt-in network model-router plugins can choose models and peers from host-validated candidates. The host suggests reuse when the latest user text is unchanged, including repeated identical turns, instead of locking the first model for the whole conversation; plugins control classifier invocation. Plugin settings remain namespaced; deadlines, cancellation, and buyer constraints are host-enforced. Explicit model requests bypass classification.
+- Classifier spending uses the existing payment and conversation stores: conversation totals include routing fees with a `routingSpentUsdc` subtotal, without inflating inference usage or request counts. Spend updates persist without waiting for another request. Routing diagnostics use the normal CLI logger rather than a separate JSONL store.
 - Classifier services support token pricing or exact fixed per-call fees through existing payment channels. Per-call fees require a valid, eligible classification before authorization; decision reuse adds no classifier fee. Discovery rejects fee-dropping downgrades and preserves existing image-pricing bytes. See `docs/router-network-integration.md` and `docs/router-per-call-billing.md`.
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 

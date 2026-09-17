@@ -1,6 +1,6 @@
-import { isModelRouteEligible, type ModelRoutingPreferences, type PeerInfo, type SerializedHttpRequest } from '@antseed/node'
+import { isModelRouteEligible, isModelRouteCoolingDown, isRouteRecommendation, modelRouteTotalPrice, rankModelRoutes, type ModelRouteCandidate, type ModelRoutingPreferences, type PeerInfo, type RouteRecommendation, type SerializedHttpRequest } from '@antseed/node'
 import type { HierarchicalPricingConfig } from '../config/types.js'
-import { normalizedModelReputationScore } from './network-models.js'
+import { effectiveModelReputationScore, normalizedModelReputationScore } from './network-models.js'
 import { findAdvertisedServiceOffer, findMissingRequiredParameters, resolvePeerRoutePlan } from './routing.js'
 import { overrideRoutedModelInBody } from './request-utils.js'
 import type { ServiceApiProtocol } from './service-api-adapter.js'
@@ -56,4 +56,46 @@ export function validateRouterCandidate(options: {
     outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
     minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
   }
+}
+
+export function resolveRouterRecommendation(options: Omit<Parameters<typeof validateRouterCandidate>[0], 'recommendation'> & {
+  recommendation: RouteRecommendation
+}) {
+  if (!isRouteRecommendation(options.recommendation)) return []
+  const { recommendation } = options
+  const matchingPeers = recommendation.peerId === undefined ? options.peers
+    : options.peers.filter((peer) => peer.peerId.toLowerCase() === recommendation.peerId!.toLowerCase())
+  return matchingPeers.flatMap((peer) => {
+    const candidate = validateRouterCandidate({ ...options,
+      recommendation: { serviceId: recommendation.serviceId, peerId: peer.peerId } })
+    return candidate ? [candidate] : []
+  })
+}
+
+export function rankAutomaticCandidates<T extends ModelRouteCandidate & { reputation: number; hasCachedInputPricing: boolean }>(
+  candidates: T[], preferences: ModelRoutingPreferences | null, now: number, preferredPeerId?: string | null,
+) {
+  const preferCachedPricing = candidates.some((candidate) => candidate.hasCachedInputPricing)
+  const ranked = candidates.map((candidate) => ({ ...candidate,
+    effectiveReputationScore: effectiveModelReputationScore(candidate.reputation >= 0 ? candidate.reputation : null,
+      candidate.hasCachedInputPricing, preferCachedPricing, modelRouteTotalPrice(candidate) === 0),
+  }))
+  let selected: typeof ranked
+  if (preferences) {
+    selected = rankModelRoutes(ranked, preferences, now).filter((candidate) => isModelRouteEligible(candidate, preferences))
+  } else {
+    ranked.sort((left, right) => (right.effectiveReputationScore ?? -1) - (left.effectiveReputationScore ?? -1)
+      || left.peerId.localeCompare(right.peerId))
+    const ready = ranked.filter((candidate) => !isModelRouteCoolingDown(candidate, now))
+    selected = ready.length > 0 ? ready : ranked
+  }
+  if (preferredPeerId) {
+    const preferredIndex = selected.findIndex((candidate) => candidate.peerId.toLowerCase() === preferredPeerId
+      && !isModelRouteCoolingDown(candidate, now))
+    if (preferredIndex > 0) {
+      const [preferred] = selected.splice(preferredIndex, 1)
+      if (preferred) selected.unshift(preferred)
+    }
+  }
+  return selected
 }

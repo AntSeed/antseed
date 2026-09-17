@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { buildNetworkServiceOffers, createPerCallBillingModel, perCallPriceMicroUsdc, isFreeUnitBillingModel, validateUnitBillingModelV1, type AntseedNode, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
+import { buildNetworkServiceOffers, createPerCallBillingModel, perCallPriceMicroUsdc, isFreeUnitBillingModel, isRouteRecommendationEligible, validateUnitBillingModelV1, type AntseedNode, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
 import type { RoutingServiceConfig } from '../config/types.js'
 
 type Messages = Parameters<NonNullable<RouteSelectionContext['invokeService']>>[0]
@@ -104,9 +104,8 @@ export class RoutingServiceExecutor {
               statusCode = response.statusCode
               if (response.body.byteLength > 256 * 1024) return false
               const routes = parseResponse!(response)
-              return Array.isArray(routes) && routes.length > 0 && routes.every((route) => route
-                && typeof route.peerId === 'string' && typeof route.serviceId === 'string'
-                && context.candidates?.some((candidate) => candidate.peerId === route.peerId && candidate.serviceId === route.serviceId))
+              return Array.isArray(routes) && routes.length > 0
+                && routes.every((route) => isRouteRecommendationEligible(route, context.candidates ?? []))
             },
           } : {}) },
       })

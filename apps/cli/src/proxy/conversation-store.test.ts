@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,6 +8,30 @@ import { ConversationStore, CONVERSATIONS_FILE, conversationId } from './convers
 async function makeDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'antseed-conv-'))
 }
+
+test('routing-only spend persists without another request and old conversations default to zero routing spend', async () => {
+  const directory = await makeDir()
+  try {
+    const store = new ConversationStore(directory)
+    const conversation = store.touch({ tool: 'test', sessionKey: 'routing-only' })
+    await store.flush()
+    store.addSpend(conversation.id, { purpose: 'routing', amountUsdc: '5000', inputTokens: '100', cachedInputTokens: '20', outputTokens: '10' })
+    await store.flush()
+    const reloaded = new ConversationStore(directory).get(conversation.id)!
+    assert.equal(reloaded.spentUsdc, '5000')
+    assert.equal(reloaded.routingSpentUsdc, '5000')
+    assert.equal(reloaded.inputTokens, '0')
+    assert.equal(reloaded.cachedInputTokens, '0')
+    assert.equal(reloaded.outputTokens, '0')
+    assert.equal(reloaded.requestCount, 0)
+    const { routingSpentUsdc: _routingSpend, ...legacy } = reloaded
+    await writeFile(join(directory, CONVERSATIONS_FILE), JSON.stringify({ conversations: [legacy] }))
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.routingSpentUsdc, '0')
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.spentUsdc, '5000')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('touch creates a conversation and keeps the original snippet', async () => {
   const dir = await makeDir()

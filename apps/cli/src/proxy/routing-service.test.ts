@@ -193,3 +193,26 @@ test('eligibility cannot be expanded by mutating the candidate snapshot during t
   state.context.candidates!.push({ peerId: 'c'.repeat(40), serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 })
   await assert.rejects(pending, /invalid classification/)
 })
+
+test('per-call routing accepts a model-only answer with an eligible seller', async () => {
+  const state = setupPerCall()
+  await state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }])
+  assert.equal(state.sent.length, 1)
+  assert.equal(state.sent[0][2].routingAuthorization.billing.kind, 'per_call')
+})
+
+for (const candidates of [[], [{ peerId: 'b'.repeat(40), serviceId: 'another-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]]) {
+  test(`per-call routing rejects model-only answers without an eligible seller (${candidates.length} candidates)`, async () => {
+    const state = setupPerCall()
+    state.context.candidates = candidates
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }]), /invalid classification/)
+  })
+}
+
+test('per-call routing accepts an exact seller followed by same-model automatic fallback', async () => {
+  const state = setupPerCall()
+  const exact = state.context.candidates![0]!
+  await state.executor.invoke('parent', state.context, state.messages,
+    () => [{ peerId: exact.peerId, serviceId: exact.serviceId }, { serviceId: exact.serviceId }])
+  assert.equal(state.sent.length, 1)
+})

@@ -17,46 +17,72 @@ function started() {
   return tracker;
 }
 
-describe('routing context and local cadence gate', () => {
+describe('routing context and latest-user-text reuse', () => {
+  it('preserves model-only intent and ordered exact-to-auto fallbacks across continuations', () => {
+    const tracker = started();
+    const recommendations = [route, { serviceId: 'model' }];
+    tracker.recordRoutes(conversation, 'request', recommendations);
+    recommendations.pop();
+    const observed = tracker.observe(request(), conversation);
+    expect(observed.previousRoutes).toEqual([route, { serviceId: 'model' }]);
+    observed.previousRoutes!.pop();
+    expect(tracker.observe(request(), conversation, { isRouteAvailable: (candidate) => !candidate.peerId }))
+      .toMatchObject({ shouldRoute: false, previousRoute: { serviceId: 'model' }, previousRoutes: [{ serviceId: 'model' }] });
+  });
+
+  it('forgets a changed conversation selection and its children but not other conversations', () => {
+    const tracker = started();
+    const child = { ...conversation, sessionKey: 'child', parentSessionKey: 'one' };
+    const other = { ...conversation, sessionKey: 'other' };
+    tracker.observe(request(), child);
+    tracker.recordRoute(child, 'request', route);
+    tracker.observe(request(), other);
+    tracker.recordRoute(other, 'request', route);
+    tracker.forgetConversation('test', 'one');
+    expect(tracker.observe(request(), conversation).trigger).toBe('new-session');
+    expect(tracker.observe(request(), child).trigger).toBe('new-session');
+    expect(tracker.observe(request(), other).shouldRoute).toBe(false);
+  });
+
   it('does not claim a session or reuse without identity', () => {
-    expect(started().observe(request(), null, { cadence: 'session' })).toMatchObject({ shouldRoute: true, previousRoute: null });
+    expect(started().observe(request(), null)).toMatchObject({ shouldRoute: true, previousRoute: null });
   });
   it.each([
     { role: 'tool', content: 'result', tool_call_id: 'one' },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'one', content: 'result' }] },
     { type: 'function_call_output', call_id: 'one', output: 'result' },
   ])('reuses on tool-result continuation %j', (tool) => {
-    expect(started().observe(request([user, { role: 'assistant', content: 'working' }, tool]), conversation, { cadence: 'turn' }))
+    expect(started().observe(request([user, { role: 'assistant', content: 'working' }, tool]), conversation))
       .toMatchObject({ trigger: 'continuation', shouldRoute: false, previousRoute: route });
   });
-  it('recognizes an identical user message appended as a new turn', () => {
-    expect(started().observe(request([user, { role: 'assistant', content: 'answer' }, user]), conversation, { cadence: 'turn' }))
+  it('intentionally reuses when identical user text is appended as another turn', () => {
+    expect(started().observe(request([user, { role: 'assistant', content: 'answer' }, user]), conversation))
+      .toMatchObject({ trigger: 'continuation', shouldRoute: false, previousRoute: route });
+  });
+  it('reconsiders when the latest user text changes', () => {
+    expect(started().observe(request([user, { role: 'user', content: 'different task' }]), conversation))
       .toMatchObject({ trigger: 'new-turn', shouldRoute: true });
   });
-  it('uses an explicit turn ID when clients send only the same text', () => {
-    expect(started().observe(request([user], { 'x-antseed-turn-id': 'next' }), conversation, { cadence: 'turn' }))
-      .toMatchObject({ trigger: 'new-turn', shouldRoute: true });
-  });
-  it('distinguishes session stickiness from turn and request cadence', () => {
-    const next = request([user, { role: 'assistant', content: 'answer' }, user]);
-    expect(started().observe(next, conversation, { cadence: 'session' }).shouldRoute).toBe(false);
-    expect(started().observe(next, conversation, { cadence: 'turn' }).shouldRoute).toBe(true);
-    expect(started().observe(request(), conversation, { cadence: 'request' }).shouldRoute).toBe(true);
+  it('handles text blocks and Responses API inputs', () => {
+    for (const content of [[{ type: 'text', text: user.content }], [{ type: 'input_text', text: user.content }]]) {
+      expect(started().observe(request([{ role: 'user', content }]), conversation).shouldRoute).toBe(false);
+    }
+    expect(started().observe(request([], {}, { input: user.content }), conversation).shouldRoute).toBe(false);
+    expect(started().observe(request([], {}, { messages: undefined, input: [user] }), conversation).shouldRoute).toBe(false);
   });
   it.each([
     request([{ role: 'system', content: 'compacted summary' }, user]),
     request([user], {}, { system: 'rewritten system' }),
     request([user], { 'x-antseed-context-revision': 'compacted-v2' }),
     request([user], {}, { tools: [{ name: 'new-tool' }] }),
-  ])('reconsiders rewritten context without asserting a cold cache', (next) => {
-    expect(started().observe(next, conversation, { cadence: 'session' })).toMatchObject({
-      trigger: 'context-rewrite', shouldRoute: true, contextRewritten: true, cacheState: 'unknown', previousRoute: route,
+    request([user], { 'x-antseed-turn-id': 'next', 'x-antseed-route-refresh': 'true' }),
+  ])('intentionally ignores earlier history and legacy refresh hints when user text is unchanged', (next) => {
+    expect(started().observe(next, conversation)).toMatchObject({
+      trigger: 'continuation', shouldRoute: false, previousRoute: route,
     });
   });
-  it('routes again on explicit refresh, settings change, or ineligible previous route', () => {
-    expect(started().observe(request([user], { 'x-antseed-route-refresh': 'true' }), conversation, { cadence: 'session' }).trigger).toBe('explicit');
-    expect(started().observe(request(), conversation, { cadence: 'session', settings: { policy: 'new' } }).trigger).toBe('settings-changed');
-    expect(started().observe(request(), conversation, { cadence: 'session', isRouteAvailable: () => false }))
+  it('routes again when the previous route is ineligible', () => {
+    expect(started().observe(request(), conversation, { isRouteAvailable: () => false }))
       .toMatchObject({ trigger: 'route-unavailable', shouldRoute: true, previousRoute: null });
   });
   it('does not let late completion overwrite a newer decision', () => {
@@ -82,26 +108,33 @@ describe('routing context and local cadence gate', () => {
   it('stores hashes instead of prompt content and reroutes when no decision completed', () => {
     const tracker = new RoutingContextTracker();
     tracker.observe(request(), conversation);
-    expect(tracker.observe(request(), conversation, { cadence: 'session' }).shouldRoute).toBe(true);
+    expect(tracker.observe(request(), conversation).shouldRoute).toBe(true);
     tracker.recordRoute(conversation, 'request', { ...route, request: { body: 'private repeated prompt' } } as typeof route);
     expect(JSON.stringify([...(tracker as any).sessions.values()])).not.toContain('private repeated prompt');
   });
-  it('does not infer unseen Responses API history from a previous-response pointer', () => {
-    expect(started().observe(request([user], {}, { previous_response_id: 'remote' }), conversation, { cadence: 'session' }))
+  it('does not reuse when no user text can be observed', () => {
+    expect(started().observe(request([], {}, { previous_response_id: 'remote' }), conversation))
       .toMatchObject({ trigger: 'request', shouldRoute: true, previousRoute: null });
   });
 
-  it('does not reuse an old route after a rewritten-context selection failed or was cancelled', () => {
+  it('does not reuse an old route after a changed-text selection failed or was cancelled', () => {
     const tracker = started();
-    const rewritten = request([{ role: 'system', content: 'summary' }, user]);
-    expect(tracker.observe(rewritten, conversation, { cadence: 'session' }).trigger).toBe('context-rewrite');
-    expect(tracker.observe(rewritten, conversation, { cadence: 'session' }))
+    const changed = request([{ role: 'user', content: 'new task' }]);
+    expect(tracker.observe(changed, conversation).trigger).toBe('new-turn');
+    expect(tracker.observe(changed, conversation))
       .toMatchObject({ trigger: 'route-unavailable', shouldRoute: true, previousRoute: null });
   });
 
   it('discards old tracking when an intervening request has unobservable history', () => {
     const tracker = started();
-    tracker.observe(request([user], {}, { previous_response_id: 'remote' }), conversation, { cadence: 'session' });
-    expect(tracker.observe(request(), conversation, { cadence: 'session' }).trigger).toBe('new-session');
+    tracker.observe(request([], {}, { previous_response_id: 'remote' }), conversation);
+    expect(tracker.observe(request(), conversation).trigger).toBe('new-session');
+  });
+  it.each([
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: 'image' } }] },
+    { role: 'user', content: null },
+    { role: 'user', content: [] },
+  ])('does not reuse for a latest user message without observable text: %j', (message) => {
+    expect(started().observe(request([user, message]), conversation).shouldRoute).toBe(true);
   });
 });

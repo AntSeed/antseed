@@ -9,10 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { AntseedNode, ChannelsClient, createPerCallBillingModel, loadOrCreateIdentity, makeDepositsDomain, signSetOperator } from '@antseed/node';
 import { BuyerProxy } from '../../apps/cli/dist/proxy/buyer-proxy.js';
+import classifierPlugin from '../../plugins/router-classifier/dist/index.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const perCall = process.argv.includes('--per-call');
 const invalidRoute = process.argv.includes('--invalid-route');
+const modelOnly = process.argv.includes('--model-only');
 const routingFee = perCall ? 5000n : 140n;
 const deployerKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const temporary = await mkdtemp(join(tmpdir(), 'antseed-routing-chain-'));
@@ -48,7 +50,7 @@ async function waitFor(check, label, timeout = 30_000) {
 
 function provider(serviceId, content, inputTokens, outputTokens) {
   return {
-    name: 'openai', services: [serviceId], maxConcurrency: 1, calls: 0,
+    name: 'openai', services: [serviceId], maxConcurrency: 1, calls: 0, content,
     pricing: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } },
     serviceApiProtocols: { [serviceId]: ['openai-chat-completions'] },
     getCapacity() { return { current: 0, max: 1 }; },
@@ -64,10 +66,12 @@ function provider(serviceId, content, inputTokens, outputTokens) {
         this.invalidClassification = undefined;
         return { requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode(body) };
       }
-      assert.equal(JSON.parse(new TextDecoder().decode(request.body)).model, serviceId);
+      const requestBody = JSON.parse(new TextDecoder().decode(request.body));
+      assert.equal(requestBody.model, serviceId);
+      this.validateRequest?.(requestBody);
       return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' },
         body: new TextEncoder().encode(JSON.stringify({ id: request.requestId, object: 'chat.completion', model: serviceId,
-          choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+          choices: [{ index: 0, message: { role: 'assistant', content: this.content }, finish_reason: 'stop' }],
           ...(this.omitUsage ? {} : { usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }) })) };
     },
   };
@@ -137,40 +141,35 @@ try {
   const buyer = new AntseedNode({ role: 'buyer', dataDir: buyerDir, dhtPort: 0, bootstrapNodes: [], noOfficialBootstrap: true,
     allowPrivateIPs: true, payments: commonPayments });
   nodes.push(buyer);
-  const fakeRouter = {
-    selectPeer() { return null; }, onResult() {},
-    async selectRoute(request, _available, _conversation, _preferences, _default, context) {
-      if (JSON.parse(new TextDecoder().decode(request.body)).model !== 'fixture-auto') return null;
-      if (!context.routing.shouldRoute && context.routing.previousRoute) return [context.routing.previousRoute];
-      assert.equal(context.candidates.length, 1);
-      const parseResponse = (response) => {
-        const model = JSON.parse(new TextDecoder().decode(response.body)).choices[0].message.content;
-        const choice = context.candidates.find((candidate) => candidate.serviceId === model);
-        return [{ peerId: choice?.peerId ?? peers[1].peerId, serviceId: model }];
-      };
-      const response = await context.invokeService([{ role: 'user', content: 'Choose a model for this fixture' }], parseResponse);
-      return parseResponse(response);
-    },
+  fixtureProviders[0].content = JSON.stringify({ routes: [{ serviceId: 'fixture-model',
+    ...(modelOnly ? {} : { peerId: peers[1].peerId }) }] });
+  fixtureProviders[0].validateRequest = ({ messages }) => {
+    const payload = JSON.parse(messages[1].content);
+    assert.deepEqual(payload.candidates, [{ peerId: peers[1].peerId, serviceId: 'fixture-model',
+      inputUsdPerMillion: 1, cachedInputUsdPerMillion: null, outputUsdPerMillion: 2 }]);
+    assert.equal(payload.request.body.model, classifierPlugin.autoRouteServiceId);
+    assert.equal(payload.request.path, '/v1/chat/completions');
   };
-  buyer.setRouter(fakeRouter);
+  buyer.setRouter(await classifierPlugin.createRouter({}));
   await buyer.start();
   const events = [];
   buyer.on('payment:spend', (event) => events.push(event));
-  proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:fixture', autoRouteServiceId: 'fixture-auto',
+  proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:@antseed/router-classifier',
+    autoRouteServiceId: classifierPlugin.autoRouteServiceId, routingSettingsSchema: classifierPlugin.routingSettingsSchema,
     routerTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
       allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
-    routingService: { routerKey: 'plugin:fixture', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
+    routingService: { routerKey: 'plugin:@antseed/router-classifier', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
       ...(perCall ? { billing: { kind: 'per_call', maxAmountMicroUsdc: '5000' } } : {}),
       allowPromptSharing: true, maxInputUsdPerMillion: 1, maxOutputUsdPerMillion: 2, maxCachedInputUsdPerMillion: 1,
-      maxAdditionalAuthorizationUsdc: perCall ? '20000' : '1000', maxRequestsPerMinute: 10, maxInputBytes: 4096, maxOutputTokens: 32 } });
+      maxAdditionalAuthorizationUsdc: perCall ? '20000' : '1000', maxRequestsPerMinute: 10, maxInputBytes: 8192, maxOutputTokens: 128 } });
   proxy._getPeers = async () => peers;
   await proxy.start();
   console.log('[routing-flow] requesting router selection and downstream inference through the buyer proxy');
   const sendInference = async (messages, headers = {}, expectedStatus = 200) => {
     const response = await fetch(`http://127.0.0.1:${proxy._server.address().port}/v1/chat/completions`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-vpr-session-id': 'routing-fixture', ...headers },
-      body: JSON.stringify({ model: 'fixture-auto', messages, max_tokens: 32 }), signal: AbortSignal.timeout(90_000),
+      body: JSON.stringify({ model: classifierPlugin.autoRouteServiceId, messages, max_tokens: 32 }), signal: AbortSignal.timeout(90_000),
     });
     const responseText = await response.text();
     assert.equal(response.status, expectedStatus, responseText);
@@ -191,24 +190,25 @@ try {
   await sendInference([...toolContinuation, { role: 'assistant', content: 'fixture answer' }, { role: 'user', content: 'fixture continuation' }]);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 3]);
   assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee * 2n));
-  const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture continuation' }];
-  await sendInference(rewritten, { 'x-antseed-context-revision': '2' });
+  const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture next task' }];
+  await sendInference(rewritten);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [3, 4]);
-  await sendInference(rewritten, { 'x-antseed-context-revision': '2', 'x-antseed-route-refresh': 'true' });
+  rewritten[1].content = 'fixture final task';
+  await sendInference(rewritten);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [4, 5]);
   await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === String(routingFee * 4n), 'four routing authorizations');
-  await proxy._routingLog.flush();
-  const records = (await readFile(join(buyerDir, 'routing-operations.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.ok(records.some((record) => record.parentRequestId === routeEvent.parentRequestId && record.outcome === 'succeeded'));
-  const decisions = records.filter((record) => record.kind === 'selection');
-  assert.deepEqual(decisions.map((record) => record.trigger), ['new-session', 'continuation', 'new-turn', 'context-rewrite', 'explicit']);
-  assert.equal(decisions.length, 5);
-  const operations = records.filter((record) => record.purpose === 'routing' && record.outcome === 'succeeded');
+  const operations = events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n);
   assert.equal(operations.length, 4);
   assert.equal(new Set(operations.map((record) => record.requestId)).size, 4);
   assert.equal(new Set(operations.map((record) => record.parentRequestId)).size, 4);
   assert.ok(operations.every((record) => record.requestId !== record.parentRequestId));
-  assert.doesNotMatch(JSON.stringify(records), /fixture prompt|compacted summary|fixture continuation/);
+  await proxy._conversations.flush();
+  const conversations = JSON.parse(await readFile(join(buyerDir, 'conversations.json'), 'utf8')).conversations;
+  const conversation = conversations.find((record) => record.sessionKey === 'routing-fixture');
+  assert.ok(conversation);
+  assert.equal(conversation.routingSpentUsdc, String(routingFee * 4n));
+  assert.equal(BigInt(conversation.spentUsdc), events.reduce((total, event) => total + BigInt(event.amountUsdc), 0n));
+  assert.equal(conversation.requestCount, 5);
   if (perCall) {
     fixtureProviders[0].failureStatus = 503;
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' }, 502);
@@ -218,8 +218,10 @@ try {
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' });
     assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 6]);
+    const invalidContent = JSON.stringify({ routes: [{ serviceId: 'unadvertised-model',
+      ...(modelOnly ? {} : { peerId: peers[1].peerId }) }] });
     fixtureProviders[0].invalidClassification = invalidRoute
-      ? JSON.stringify({ choices: [{ message: { content: 'unadvertised-model' } }] }) : 'not-json';
+      ? JSON.stringify({ choices: [{ message: { content: invalidContent } }] }) : 'not-json';
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [7, 6]);
     assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
@@ -236,7 +238,8 @@ try {
     settlementChannel.latestMetadata, settlementChannel.latestSpendingAuthSig);
   const settled = await channels.getSession(routingChannel.sessionId);
   assert.equal(settled.settled, routingFee * BigInt(billableRoutingCalls));
-  console.log(JSON.stringify({ billingKind: perCall ? 'per_call' : 'token', billableRoutingCalls,
+  console.log(JSON.stringify({ selectionKind: modelOnly ? 'model-only' : 'exact-seller',
+    billingKind: perCall ? 'per_call' : 'token', billableRoutingCalls,
     routingTokens: perCall ? null : { input: 100, output: 20 }, routingSettledMicroUsdc: settled.settled.toString(),
     routingRequestId: routeEvent.requestId, inferenceRequestId: routeEvent.parentRequestId,
     providerCalls: fixtureProviders.map((fixture) => fixture.calls) }, null, 2));

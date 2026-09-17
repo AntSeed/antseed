@@ -9,8 +9,10 @@ acceptance message, refund system, or automatic paid retry is introduced.
 Authorize one advertised fixed fee only after all three checks pass:
 
 1. The classifier response is complete and HTTP 2xx.
-2. The router plugin can parse it into a nonempty list of exact model/peer routes.
-3. Every returned route belongs to the host's eligible candidate snapshot for
+2. The router plugin can parse it into a nonempty list of model-only or exact
+   model/seller recommendations.
+3. Every exact pair belongs to the host's eligible candidate snapshot, and
+   every model-only recommendation has at least one eligible seller there for
    that request. The snapshot includes pricing, trust, capabilities, cooldown,
    and router policy checks and is separate from the plugin's mutable copy.
 
@@ -159,6 +161,7 @@ distinction between spending authorization and reserved collateral remain.
 ```sh
 pnpm --filter @antseed/e2e run flow:local-chain-routing
 pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call
+pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --model-only
 pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-route
 ```
 

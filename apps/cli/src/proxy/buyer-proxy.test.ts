@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +38,7 @@ import {
   overrideRoutedModelInBody,
   SYSTEM_ROUTED_MODEL_HEADER,
 } from './request-utils.js'
+import { ConversationStore, CONVERSATIONS_FILE } from './conversation-store.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -172,6 +174,205 @@ function routerPeer(seed: string, serviceId = 'test-model'): PeerInfo {
     providerServiceApiProtocols: { openai: { services: { [serviceId]: ['openai-chat-completions'] } } },
   }
 }
+
+test('model-only recommendations use the same automatic seller ordering as explicit models', async () => {
+  const cheap = routerPeer('a')
+  const expensive = routerPeer('b')
+  expensive.providerPricing!.openai!.services!['test-model'] = { inputUsdPerMillion: 10, outputUsdPerMillion: 20 }
+  const selected: string[] = []
+  for (const model of ['test-model', 'router-test']) {
+    const proxy = makeBuyerProxyWithPeers([expensive, cheap], [expensive, cheap], {
+      ...permissiveRouter(), selectRoute: async () => [{ serviceId: 'test-model' }],
+    })
+    ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+      selected.push(peer.peerId)
+      assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'test-model')
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+    }
+    assert.equal((await invokeProxy(proxy, makeProxyRequest({ body: { model, messages: [] } }))).statusCode, 200)
+  }
+  assert.deepEqual(selected, [cheap.peerId, cheap.peerId])
+})
+
+for (const mode of ['model-only', 'exact', 'exact-with-auto-fallback']) {
+  test(`router seller fallback honors ${mode} intent`, async () => {
+    const first = routerPeer('a')
+    const backup = routerPeer('b')
+    const attempted: string[] = []
+    const exact = { serviceId: 'test-model', peerId: first.peerId }
+    const proxy = makeBuyerProxyWithPeers([first, backup], [first, backup], {
+      ...permissiveRouter(), selectRoute: async () => mode === 'model-only' ? [{ serviceId: 'test-model' }]
+        : mode === 'exact' ? [exact] : [exact, { serviceId: 'test-model' }],
+    })
+    ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+      attempted.push(peer.peerId)
+      return { requestId: request.requestId, statusCode: peer.peerId === first.peerId ? 503 : 200, headers: {}, body: Buffer.from('{}') }
+    }
+    const result = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(result.statusCode, mode === 'exact' ? 503 : 200)
+    assert.deepEqual(attempted, mode === 'exact' ? [first.peerId] : [first.peerId, backup.peerId])
+  })
+}
+
+test('an exact router choice is not replaced by a cheaper eligible seller', async () => {
+  const cheap = routerPeer('a')
+  const selected = routerPeer('b')
+  selected.providerPricing!.openai!.services!['test-model'] = { inputUsdPerMillion: 10, outputUsdPerMillion: 20 }
+  const proxy = makeBuyerProxyWithPeers([cheap, selected], [cheap, selected], {
+    ...permissiveRouter(), selectRoute: async () => [{ serviceId: 'test-model', peerId: selected.peerId }],
+  })
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+    assert.equal(peer.peerId, selected.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))).statusCode, 200)
+})
+
+test('model-only recommendations cannot bypass buyer price limits and blocked sellers', async () => {
+  const blocked = routerPeer('a')
+  const expensive = routerPeer('b')
+  expensive.providerPricing!.openai!.services!['test-model'] = { inputUsdPerMillion: 10, outputUsdPerMillion: 20 }
+  const proxy = makeBuyerProxyWithPeers([blocked, expensive], [blocked, expensive], {
+    ...permissiveRouter(), selectRoute: async () => [{ serviceId: 'test-model' }],
+  }, undefined, { ...priceAndTrustPreferences, blockedPeerIds: [blocked.peerId] })
+  ;(proxy as any)._maxPricing = { defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 } }
+  ;(proxy as any)._node.sendRequest = async () => { throw new Error('ineligible seller must not be contacted') }
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))).statusCode, 502)
+})
+
+for (const recommendation of [{ serviceId: 'unavailable-model' }, { serviceId: 'test-model', peerId: null },
+  { serviceId: 'test-model', peerId: '' }, { serviceId: 'test-model', peerId: 'c'.repeat(40) }]) {
+  test(`unusable router recommendation never becomes an automatic seller choice: ${JSON.stringify(recommendation)}`, async () => {
+    const peer = routerPeer('a')
+    let dispatched = false
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(), selectRoute: async () => [recommendation],
+    })
+    ;(proxy as any)._node.sendRequest = async () => { dispatched = true; throw new Error('unexpected dispatch') }
+    const result = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    assert.equal(result.statusCode, 502)
+    assert.equal(dispatched, false)
+  })
+}
+
+test('router fallback cannot switch models after inference dispatch starts', async () => {
+  const first = routerPeer('a')
+  const alternative = routerPeer('b', 'another-model')
+  const attempted: string[] = []
+  const proxy = makeBuyerProxyWithPeers([first, alternative], [first, alternative], {
+    ...permissiveRouter(), selectRoute: async () => [{ serviceId: 'test-model' }, { serviceId: 'another-model' }],
+  })
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+    attempted.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: 503, headers: {}, body: Buffer.from('{}') }
+  }
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))).statusCode, 503)
+  assert.deepEqual(attempted, [first.peerId])
+})
+
+test('model-only continuations preserve router intent rather than pinning the first seller', async () => {
+  const first = routerPeer('a')
+  const backup = routerPeer('b')
+  const attempted: string[] = []
+  let classifications = 0
+  const proxy = makeBuyerProxyWithPeers([first, backup], [first, backup], {
+    ...permissiveRouter(),
+    selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
+      if (!context.routing.shouldRoute) {
+        assert.deepEqual(context.routing.previousRoutes, [{ serviceId: 'test-model' }])
+        return context.routing.previousRoutes
+      }
+      classifications++
+      return [{ serviceId: 'test-model' }]
+    },
+  })
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+    attempted.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = () => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'model-only-reuse' },
+    body: { model: 'router-test', messages: [{ role: 'user', content: 'hello' }] } }))
+  assert.equal((await send()).statusCode, 200)
+  ;(proxy as any)._getPeers = async () => [backup]
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(classifications, 1)
+  assert.deepEqual(attempted, [first.peerId, backup.peerId])
+  const conversation = (proxy as any)._conversations.get('vpr:model-only-reuse')
+  assert.equal(conversation.pinnedModel, null)
+  assert.equal(conversation.lastModel, `${backup.peerId}@test-model`)
+})
+
+test('router recommendations retain exact-to-auto fallback on continuations', async () => {
+  const first = routerPeer('a')
+  const backup = routerPeer('b')
+  const recommendations = [{ serviceId: 'test-model', peerId: first.peerId }, { serviceId: 'test-model' }]
+  let classifications = 0
+  let failFirst = false
+  const attempted: string[] = []
+  const proxy = makeBuyerProxyWithPeers([first, backup], [first, backup], {
+    ...permissiveRouter(),
+    selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
+      if (!context.routing.shouldRoute) return context.routing.previousRoutes
+      classifications++
+      return recommendations
+    },
+  })
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: any) => {
+    attempted.push(peer.peerId)
+    return { requestId: request.requestId, statusCode: failFirst && peer.peerId === first.peerId ? 503 : 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = () => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'fallback-reuse' },
+    body: { model: 'router-test', messages: [{ role: 'user', content: 'hello' }] } }))
+  assert.equal((await send()).statusCode, 200)
+  failFirst = true
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(classifications, 1)
+  assert.deepEqual(attempted, [first.peerId, first.peerId, backup.peerId])
+})
+
+test('selecting a fixed model exits router mode and selecting the router again clears the model pin', async () => {
+  const peer = routerPeer('a')
+  let classifications = 0
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
+      if (!context.routing.shouldRoute) return context.routing.previousRoutes
+      assert.equal(context.routing.trigger, 'new-session')
+      classifications++
+      return [{ serviceId: 'test-model' }]
+    },
+  })
+  ;(proxy as any)._defaultRoutedModel = 'router-test'
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+    assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'test-model')
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = (model = 'router-test') => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'selection-mode' },
+    body: { model, messages: [{ role: 'user', content: 'hello' }] } }))
+  const choose = (pinnedModel: string) => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/conversations/update',
+    body: { id: 'vpr:selection-mode', pinnedModel, peerSource: 'user' } }))
+  assert.equal((await send()).statusCode, 200)
+  assert.equal((await choose('test-model')).statusCode, 200)
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(classifications, 1)
+  assert.equal((await choose('router-test')).statusCode, 200)
+  assert.equal((await send('antseed')).statusCode, 200)
+  assert.equal(classifications, 2)
+  assert.equal((proxy as any)._conversations.get('vpr:selection-mode').pinnedModel, 'router-test')
+})
+
+test('selecting a router as the default clears the previous session seller pin', async () => {
+  const peer = routerPeer('a')
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(), selectRoute: async () => [{ serviceId: 'test-model' }],
+  })
+  ;(proxy as any)._pinnedPeer = 'b'.repeat(40)
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'router-test' } }))).statusCode, 200)
+  assert.equal((proxy as any)._pinnedPeer, null)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({ requestId: request.requestId,
+    statusCode: 200, headers: {}, body: Buffer.from('{}') })
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [] } }))).statusCode, 200)
+})
 
 test('disabled routers are blocked by the host without invoking a plugin', async () => {
   const peer = routerPeer('a')
@@ -318,20 +519,64 @@ for (const requestedModel of ['router-test', 'antseed']) {
     assert.equal(classifications, 1)
     assert.equal(seen.length, 2)
     assert.equal((await send([...toolHistory, { role: 'assistant', content: 'answer' }, user])).statusCode, 200)
-    assert.equal(classifications, 2)
-    assert.equal(parseJsonBody(forwarded[2].request.body).model, 'other-model')
+    assert.equal(classifications, 1)
+    assert.equal(parseJsonBody(forwarded[2].request.body).model, 'test-model')
     assert.equal((await send([{ role: 'system', content: 'summary' }, user], { 'x-antseed-context-revision': '2' })).statusCode, 200)
-    assert.equal(forwarded[3].classified, 3)
+    assert.equal(forwarded[3].classified, 1)
     assert.equal(forwarded[3].request.headers['x-antseed-context-revision'], undefined)
     await send([user], { 'x-antseed-route-refresh': 'true' })
-    assert.deepEqual(seen.map((context) => context.trigger), ['new-session', 'continuation', 'new-turn', 'context-rewrite', 'explicit'])
+    assert.equal(classifications, 1)
+    const nextUser = { role: 'user', content: 'different task' }
+    assert.equal((await send([user, nextUser])).statusCode, 200)
+    assert.equal(classifications, 2)
+    assert.equal(parseJsonBody(forwarded[5].request.body).model, 'other-model')
+    assert.deepEqual(seen.map((context) => context.trigger), ['new-session', 'continuation', 'continuation', 'continuation', 'continuation', 'new-turn'])
     ;(proxy as any)._routingPreferences.blockedPeerIds = [otherPeer.peerId]
-    assert.equal((await send([user])).statusCode, 502)
+    assert.equal((await send([user, nextUser])).statusCode, 502)
     assert.equal(seen.at(-1).previousRoute, null)
-    assert.equal(forwarded.length, 5)
+    assert.equal(forwarded.length, 6)
     assert.doesNotMatch(JSON.stringify(audit), /repeat|summary/)
   })
 }
+
+test('routing spend uses the parent conversation without changing inference usage or request counts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-routing-spend-'))
+  const node = new EventEmitter()
+  const proxy = new BuyerProxy({ node: node as any, port: 0, dataDir: directory })
+  const store: ConversationStore = (proxy as any)._conversations
+  try {
+    const conversation = store.touch({ tool: 'test', sessionKey: 'parent' })
+    const other = store.touch({ tool: 'test', sessionKey: 'other' })
+    ;(proxy as any)._trackRequestConversation('inference', conversation.id)
+    ;(proxy as any)._trackRequestConversation('classifier', other.id)
+    const event = { sellerPeerId: 'a'.repeat(40), requestId: 'classifier', parentRequestId: 'inference',
+      purpose: 'routing', amountUsdc: '5000', inputTokens: '900', cachedInputTokens: '100', outputTokens: '20', outputImages: '0' }
+    node.emit('payment:spend', event)
+    assert.equal(store.get(conversation.id)?.spentUsdc, '5000')
+    assert.equal(store.get(conversation.id)?.routingSpentUsdc, '5000')
+    assert.equal(store.get(conversation.id)?.requestCount, 0)
+    assert.equal(store.get(other.id)?.spentUsdc, '0')
+    node.emit('payment:spend', { ...event, purpose: undefined, parentRequestId: undefined, requestId: 'inference',
+      amountUsdc: '1000', inputTokens: '10', cachedInputTokens: '2', outputTokens: '3' })
+    node.emit('payment:spend', { ...event, amountUsdc: '200' })
+    node.emit('payment:spend', { ...event, purpose: undefined, requestId: 'inference', amountUsdc: '50',
+      inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
+    node.emit('payment:spend', { ...event, parentRequestId: 'untracked' })
+    node.emit('payment:spend', { ...event, parentRequestId: undefined })
+    await store.flush()
+    const reloaded = new ConversationStore(directory).get(conversation.id)!
+    assert.equal(reloaded.spentUsdc, '6250')
+    assert.equal(reloaded.routingSpentUsdc, '5200')
+    assert.equal(reloaded.inputTokens, '10')
+    assert.equal(reloaded.cachedInputTokens, '2')
+    assert.equal(reloaded.outputTokens, '3')
+    assert.equal(reloaded.requestCount, 1)
+    assert.deepEqual((await readdir(directory)).sort(), [CONVERSATIONS_FILE])
+  } finally {
+    await store.flush()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('an explicit user pin still bypasses the router after automatic selection', async () => {
   const peer = routerPeer('a')
@@ -371,7 +616,7 @@ test('plugins can reuse an accepted turn decision when inference fails', async (
     requestId: request.requestId, statusCode: ++dispatches === 1 ? 503 : 200, headers: {}, body: Buffer.from('{}'),
   })
   const send = () => invokeProxy(proxy, makeProxyRequest({
-    headers: { 'x-vpr-session-id': 'failed-first-inference' }, body: { model: 'router-test', messages: [] },
+    headers: { 'x-vpr-session-id': 'failed-first-inference' }, body: { model: 'router-test', messages: [{ role: 'user', content: 'test task' }] },
   }))
   assert.equal((await send()).statusCode, 503)
   ;(proxy as any)._peerHealth.clear()
@@ -389,7 +634,7 @@ test('plugins receive route-unavailable after a price increase and can select an
     selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
       classifications++
       if (classifications > 1) assert.equal(context.routing.trigger, 'route-unavailable')
-      return context.candidates
+      return context.candidates.slice(0, 1)
     },
   })
   ;(proxy as any)._maxPricing = { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 } }
@@ -398,7 +643,7 @@ test('plugins receive route-unavailable after a price increase and can select an
     return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
   }
   const send = () => invokeProxy(proxy, makeProxyRequest({
-    headers: { 'x-vpr-session-id': 'reuse-price-policy' }, body: { model: 'router-test', messages: [] },
+    headers: { 'x-vpr-session-id': 'reuse-price-policy' }, body: { model: 'router-test', messages: [{ role: 'user', content: 'test task' }] },
   }))
   assert.equal((await send()).statusCode, 200)
   firstPeer.providerPricing!.openai!.services!['test-model']!.inputUsdPerMillion = 10
@@ -455,13 +700,16 @@ test('an explicit advertised model bypasses initial classification', async () =>
   assert.equal(calls, 0)
 })
 
-test('concurrent initial requests let the plugin reuse the accepted decision', async () => {
+test('concurrent initial requests reuse the decision without waiting for the first inference response', async () => {
   const peer = routerPeer('a')
   let calls = 0
+  let dispatches = 0
   let release!: () => void
   let entered!: () => void
+  let releaseInference!: () => void
   const started = new Promise<void>((resolve) => { entered = resolve })
   const gate = new Promise<void>((resolve) => { release = resolve })
+  const inferenceGate = new Promise<void>((resolve) => { releaseInference = resolve })
   const proxy = makeBuyerProxyWithPeers([peer], [peer], {
     ...permissiveRouter(),
     selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
@@ -472,10 +720,11 @@ test('concurrent initial requests let the plugin reuse the accepted decision', a
       return [{ peerId: peer.peerId, serviceId: 'test-model' }]
     },
   }, undefined, priceAndTrustPreferences)
-  ;(proxy as any)._autoRouteServiceId = 'router-test'
-  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
-    requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}'),
-  })
+  ;(proxy as any)._routerTimeoutMs = 200
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+    if (++dispatches === 1) await inferenceGate
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
   const send = () => invokeProxy(proxy, makeProxyRequest({
     headers: { 'x-vpr-session-id': 'concurrent-first-model' },
     body: { model: 'router-test', messages: [{ role: 'user', content: 'hello' }] },
@@ -483,13 +732,195 @@ test('concurrent initial requests let the plugin reuse the accepted decision', a
   const first = send()
   await started
   const second = send()
+  const third = send()
+  await new Promise((resolve) => setImmediate(resolve))
+  try {
+    release()
+    const results = await Promise.all([second, third])
+    assert.deepEqual(results.map((result) => result.statusCode), [200, 200])
+    assert.equal(dispatches, 3)
+    assert.equal(calls, 1)
+    assert.equal((proxy as any)._conversationRoutingRequests.size, 0)
+  } finally {
+    release()
+    releaseInference()
+    await Promise.all([first, second, third])
+  }
+  assert.equal((await first).statusCode, 200)
+})
+
+test('fixed-model requests never wait for another response in the same new conversation', async () => {
+  const peer = routerPeer('a')
+  let dispatches = 0
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  ;(proxy as any)._routerTimeoutMs = 30
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+    if (++dispatches === 1) { entered(); await gate }
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = () => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'concurrent-fixed-model' },
+    body: { model: 'test-model', messages: [] } }))
+  const first = send()
+  await started
+  try {
+    assert.equal((await send()).statusCode, 200)
+    assert.equal(dispatches, 2)
+  } finally {
+    release()
+    await first
+  }
+})
+
+test('fixed-model requests bypass a pending classifier for the same conversation', async () => {
+  const peer = routerPeer('a')
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(), selectRoute: async () => { entered(); await gate; return [{ serviceId: 'test-model' }] },
+  })
+  ;(proxy as any)._routerTimeoutMs = 200
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
+    requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}'),
+  })
+  const send = (model: string) => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'fixed-bypasses-router' },
+    body: { model, messages: [] } }))
+  const first = send('router-test')
+  await started
+  try {
+    assert.equal((await send('test-model')).statusCode, 200)
+    assert.equal((proxy as any)._conversationRoutingRequests.size, 1)
+  } finally {
+    release()
+    await first
+  }
+})
+
+test('a queued new turn gets its own routing decision while the prior answer is still running', async () => {
+  const peer = routerPeer('a')
+  const triggers: string[] = []
+  let entered!: () => void
+  let release!: () => void
+  let releaseInference!: () => void
+  let dispatches = 0
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const inferenceGate = new Promise<void>((resolve) => { releaseInference = resolve })
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(),
+    selectRoute: async (_request: any, _peers: any, _conversation: any, _preferences: any, _fallback: any, context: any) => {
+      triggers.push(context.routing.trigger)
+      if (triggers.length === 1) { entered(); await gate }
+      assert.equal(context.routing.shouldRoute, true)
+      return [{ serviceId: 'test-model' }]
+    },
+  })
+  ;(proxy as any)._routerTimeoutMs = 200
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+    if (++dispatches === 1) await inferenceGate
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const send = (messages: Array<{ role: string; content: string }>) => invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-vpr-session-id': 'concurrent-new-turn' }, body: { model: 'router-test', messages },
+  }))
+  const messages = [{ role: 'user', content: 'hello' }]
+  const first = send(messages)
+  await started
+  const second = send([...messages, { role: 'user', content: 'a different task' }])
+  try {
+    release()
+    assert.equal((await second).statusCode, 200)
+    assert.deepEqual(triggers, ['new-session', 'new-turn'])
+  } finally {
+    release()
+    releaseInference()
+    await Promise.all([first, second])
+  }
+})
+
+test('failed classification releases waiting requests without reusing the failed decision', async () => {
+  const peer = routerPeer('a')
+  let calls = 0
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+    ...permissiveRouter(), selectRoute: async () => {
+      if (++calls === 1) { entered(); await gate; throw new Error('classifier unavailable') }
+      return [{ serviceId: 'test-model' }]
+    },
+  })
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => ({
+    requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}'),
+  })
+  const send = () => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'failed-concurrent-router' },
+    body: { model: 'router-test', messages: [] } }))
+  const first = send()
+  await started
+  const second = send()
   await new Promise((resolve) => setImmediate(resolve))
   release()
   const results = await Promise.all([first, second])
-  assert.deepEqual(results.map((result) => result.statusCode), [200, 200])
-  assert.equal(calls, 1)
-  assert.equal((proxy as any)._initialConversationRequests.size, 0)
+  assert.deepEqual(results.map((result) => result.statusCode), [502, 200])
+  assert.equal(calls, 2)
+  assert.equal((proxy as any)._conversationRoutingRequests.size, 0)
 })
+
+for (const stopReason of ['deadline', 'disconnect']) {
+  test(`a routing waiter stopped by ${stopReason} cannot release or acquire another request's lock`, async () => {
+    const peer = routerPeer('a')
+    let discoveryCalls = 0
+    let classifications = 0
+    let dispatches = 0
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], {
+      ...permissiveRouter(), selectRoute: async () => { classifications++; return [{ serviceId: 'test-model' }] },
+    })
+    ;(proxy as any)._routerTimeoutMs = 30
+    ;(proxy as any)._getPeers = async () => {
+      if (++discoveryCalls === 2) { entered(); await gate }
+      return [peer]
+    }
+    ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+      dispatches++
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+    }
+    const request = () => makeProxyRequest({ headers: { 'x-vpr-session-id': `waiting-${stopReason}` },
+      body: { model: 'router-test', messages: [] } })
+    const first = invokeProxy(proxy, request())
+    await started
+    const waitingRequest = request()
+    const second = invokeProxy(proxy, waitingRequest)
+    try {
+      if (stopReason === 'disconnect') {
+        await new Promise((resolve) => setImmediate(resolve))
+        ;(waitingRequest as any).complete = false
+        waitingRequest.emit('close')
+      }
+      const response = await second
+      assert.equal(response.statusCode, stopReason === 'deadline' ? 409 : 0)
+      assert.equal(classifications, 1)
+      assert.equal((proxy as any)._conversationRoutingRequests.size, 1)
+    } finally {
+      release()
+      await Promise.all([first, second])
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal((proxy as any)._conversationRoutingRequests.size, 0)
+    assert.equal(dispatches, 1)
+    assert.equal((await invokeProxy(proxy, request())).statusCode, 200)
+    assert.equal(dispatches, 2)
+  })
+}
 
 test('requests without conversation identity remain independent', async () => {
   const peer = routerPeer('a')
@@ -535,6 +966,7 @@ for (const stopReason of ['deadline', 'disconnect']) {
     resolveLate([{ peerId: peer.peerId, serviceId: 'test-model' }])
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(calls, 0)
+    assert.equal((proxy as any)._conversationRoutingRequests.size, 0)
   })
 }
 
@@ -554,10 +986,12 @@ for (const failure of ['throw', 'empty', 'malformed', 'timeout']) {
     ;(proxy as any)._defaultRoutedModel = 'test-model'
     let calls = 0
     ;(proxy as any)._node.sendRequest = async () => { calls++; throw new Error('must not send') }
-    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'router-test', messages: [] } }))
+    const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': `failed-router-${failure}` },
+      body: { model: 'router-test', messages: [] } }))
     assert.equal(response.statusCode, failure === 'timeout' ? 504 : 502)
     assert.equal(calls, 0)
     assert.doesNotMatch(response.body, /private upstream/)
+    assert.equal((proxy as any)._conversationRoutingRequests.size, 0)
   })
 }
 

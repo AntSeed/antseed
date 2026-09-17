@@ -33,7 +33,8 @@ export {
 // Re-exported so CLI callers can format/parse gas balances without depending
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
-export type { Router, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
+export type { Router, RouteCandidate, RouteRecommendation, RouteSelectionContext } from './interfaces/buyer-router.js';
+export { isRouteRecommendation, isRouteRecommendationEligible } from './routing/route-recommendation.js';
 export type { ConversationIdentity } from './routing/conversation-identity.js';
 
 // Types (re-export everything)
@@ -367,4 +368,4 @@ export {
   type LoadedRouter,
 } from './config/plugin-loader.js'
 export { readRouterSettings, validateRouterSettings, type RouterSettingField } from './routing/router-settings.js';
-export { RoutingContextTracker, type RoutingCadence, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
+export { RoutingContextTracker, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
