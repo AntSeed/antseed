@@ -18,7 +18,7 @@ export function VprTeeStatus({ evidence, now, checking, available, error, classN
   if (!available || checking || error || !isFreshSellerNodeEvidence(evidence, now)) return null;
   return (
     <div className={className}>
-      <InfoTooltip content={TEE_DESCRIPTION}>
+      <InfoTooltip align="left" content={TEE_DESCRIPTION}>
         <span tabIndex={0} className={styles.badge} aria-label={`TEE. ${TEE_DESCRIPTION}`}>
           <span className={modelRowStyles.modelTag}>TEE</span>
         </span>

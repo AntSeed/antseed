@@ -7,7 +7,7 @@ import { VprTeeStatus } from './VprTeeStatus';
 import modelRowStyles from './VprModelRows.module.scss';
 import kitStyles from './VprKit.module.scss';
 
-vi.mock('../InfoTooltip', () => ({ InfoTooltip: ({ content, children }: { content: ReactNode; children: ReactNode }) => <div>{children}{content}</div> }));
+vi.mock('../InfoTooltip', () => ({ InfoTooltip: ({ content, children, align }: { content: ReactNode; children: ReactNode; align?: 'left' | 'right' }) => <div data-tooltip-align={align}>{children}{content}</div> }));
 
 const evidence: TeeEvidence = { peerId: 'seller', verifierId: 'antseed-verifier', fingerprint: 'caps', checkedAt: 100, expiresAt: 200, claims: [], sellerNodeVerified: true };
 const props = { now: 150, checking: false, available: true };
@@ -26,6 +26,7 @@ test('only a current successful check shows the TEE badge with the requested acc
   assert.match(markup, /We use TEEs to enhance user privacy\./);
   assert.match(markup, /tabindex="0"/);
   assert.match(markup, /class="seller-badge"/);
+  assert.match(markup, /data-tooltip-align="left"/);
   assert.ok(markup.includes(`class="${modelRowStyles.modelTag}"`));
   assert.ok(!markup.includes(kitStyles.badgeGreen));
   assert.doesNotMatch(markup, /Checking|Seller node verified|TEE advertised|Verification unavailable|Verification failed|Technical details|Last checked|Verify now|Recheck|<button|<details/);

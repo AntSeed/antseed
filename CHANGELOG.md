@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
 - Desktop VPR: keep TEE sellers beyond the 512-result cache eligible for automatic checks, prioritize displayed sellers, and preserve retry backoff across discovery updates. Explain missing local verification credentials without changing routing or searching other data directories.
 - Node/CLI/Desktop: buyer discovery strips decorative emoji and symbol glyphs from seller-provided display names before persisting `buyer.state.json`; legacy cached names are cleaned during startup hydration.
 - Node: buyers on `base-mainnet` had no fresh on-chain seller stats since the epoch-22 cutover. `stakingContractAddress` points at `AntseedSellerRegistry`, which has no `sellers(address)` view; the old peer enrichment called it for stake and staked-at, failed, and skipped every peer. The trust-signal reader no longer calls it.
