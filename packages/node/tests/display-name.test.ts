@@ -3,7 +3,7 @@ import { sanitizePeerDisplayName } from '../src/discovery/display-name.js';
 
 describe('sanitizePeerDisplayName', () => {
   it('removes decorative emoji and collapses the remaining whitespace', () => {
-    expect(sanitizePeerDisplayName('Hana Gateway ✅  🌐')).toBe('Hana Gateway');
+    expect(sanitizePeerDisplayName('Example Seller ✅  🌐')).toBe('Example Seller');
     expect(sanitizePeerDisplayName('Fast 🚀 Seller')).toBe('Fast Seller');
     expect(sanitizePeerDisplayName('▲ Apex Ant')).toBe('Apex Ant');
   });

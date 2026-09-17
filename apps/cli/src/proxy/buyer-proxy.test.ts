@@ -2335,7 +2335,7 @@ test('parsePersistedPeers removes decorative icons from legacy display names', (
       discoveredPeers: [
         {
           peerId: validPeerId,
-          displayName: '▲ Hana Gateway ✅ 🌐',
+          displayName: '▲ Example Seller ✅ 🌐',
           providers: ['openai'],
           lastSeen: NOW,
         },
@@ -2343,7 +2343,7 @@ test('parsePersistedPeers removes decorative icons from legacy display names', (
     },
     NOW,
   )
-  assert.equal(result[0]?.displayName, 'Hana Gateway')
+  assert.equal(result[0]?.displayName, 'Example Seller')
 })
 
 test('parsePersistedPeers drops entries with stale or missing freshness anchors', () => {

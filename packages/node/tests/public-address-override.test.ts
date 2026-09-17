@@ -31,10 +31,10 @@ describe('AntseedNode publicAddress override', () => {
     const peer = (node as any)._lookupResultToPeerInfo({
       host: '34.134.97.133',
       port: 6882,
-      metadata: buildMetadata({ displayName: '▲ Hana Gateway ✅ 🌐' }),
+      metadata: buildMetadata({ displayName: '▲ Example Seller ✅ 🌐' }),
     });
 
-    expect(peer.displayName).toBe('Hana Gateway');
+    expect(peer.displayName).toBe('Example Seller');
   });
 
   it('prefers metadata publicAddress over the DHT source host', () => {
