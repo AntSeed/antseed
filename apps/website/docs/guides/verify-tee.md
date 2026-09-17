@@ -51,7 +51,7 @@ Sellers advertise verifier support as capabilities (`verifier.<id>`) in ordinary
 
 ## What a passing verdict proves
 
-With the [`antseed-verifier`](https://github.com/AntSeed/antseed-verifier) SDK, the verdict gates on two required capabilities:
+With the [`antseed-verifier`](https://github.com/AntSeed/antseed/tree/main/packages/antseed-verifier) SDK, the verdict gates on two required capabilities:
 
 | Capability | Proves |
 |---|---|
@@ -96,7 +96,7 @@ Your node only ever runs verifier code from a **curated, version-pinned trust se
 
 ## Limits worth knowing
 
-- A passing verdict proves the enclave was genuine and fresh **at attestation time**, and the cached verdict covers the following minutes. Binding every response byte to an enclave-held signing key is the [next milestone](https://github.com/AntSeed/antseed-verifier/blob/main/docs/milestone-a2-channel-binding.md) in the verifier SDK.
+- A passing verdict proves the enclave was genuine and fresh **at attestation time**, and the cached verdict covers the following minutes. Binding every response byte to an enclave-held signing key is the next milestone in the verifier SDK.
 - Attestation proves the *environment*, not the *model*. For whether the model is what the seller claims, see [model verification](/blog/model-verification-fingerprint-swarm).
 
 :::note Three different "verifications"
