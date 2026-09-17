@@ -3,6 +3,8 @@ import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
 import {
   DepositsClient,
   EmissionsClient,
+  UsageAccountingClient,
+  UsageRewardsClient,
   ANTSTokenClient,
   formatUsdc,
   signSetOperator,
@@ -98,6 +100,34 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return legacyEmissionsClient;
   }
 
+  let usageAccountingClient: UsageAccountingClient | null = null;
+  function getUsageAccountingClient(): UsageAccountingClient | null {
+    if (!ctx.chainConfig.usageAccountingAddress) return null;
+    if (!usageAccountingClient) {
+      usageAccountingClient = new UsageAccountingClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
+        contractAddress: ctx.chainConfig.usageAccountingAddress,
+        evmChainId: ctx.chainConfig.evmChainId,
+      });
+    }
+    return usageAccountingClient;
+  }
+
+  let usageRewardsClient: UsageRewardsClient | null = null;
+  function getUsageRewardsClient(): UsageRewardsClient | null {
+    if (!ctx.chainConfig.usageRewardsAddress) return null;
+    if (!usageRewardsClient) {
+      usageRewardsClient = new UsageRewardsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
+        contractAddress: ctx.chainConfig.usageRewardsAddress,
+        evmChainId: ctx.chainConfig.evmChainId,
+      });
+    }
+    return usageRewardsClient;
+  }
+
   let antsTokenClient: ANTSTokenClient | null = null;
   function getAntsTokenClient(): ANTSTokenClient | null {
     // ANTSToken address is typically fetched via the registry, but for v1 we
@@ -149,6 +179,14 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       emissionsContractAddress: ctx.chainConfig.emissionsContractAddress ?? null,
+      legacyEmissionsContractAddress: ctx.chainConfig.recognizedUsage?.status === 'active'
+        ? ctx.chainConfig.legacyEmissionsContractAddress ?? null
+        : ctx.chainConfig.emissionsContractAddress ?? null,
+      usageAccountingAddress: ctx.chainConfig.usageAccountingAddress ?? null,
+      usageRewardsAddress: ctx.chainConfig.usageRewardsAddress ?? null,
+      recognizedUsageEffectiveEpoch: ctx.chainConfig.recognizedUsage?.status === 'active'
+        ? ctx.chainConfig.recognizedUsage.effectiveEpoch
+        : null,
       antsTokenAddress: ctx.chainConfig.antsTokenAddress ?? null,
       networkStatsUrl: ctx.chainConfig.networkStatsUrl ?? null,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
@@ -309,8 +347,16 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   });
 
   fastify.get('/api/emissions/pending', async (request, reply) => {
-    const client = getEmissionsClient();
-    if (!client) {
+    const legacyClient = ctx.chainConfig.recognizedUsage?.status === 'active'
+      ? getLegacyEmissionsClient()
+      : getEmissionsClient();
+    const usageAccounting = getUsageAccountingClient();
+    const usageRewards = getUsageRewardsClient();
+    const effectiveEpoch = ctx.chainConfig.recognizedUsage?.status === 'active'
+      ? ctx.chainConfig.recognizedUsage.effectiveEpoch
+      : null;
+    const recognizedActive = effectiveEpoch !== null && usageAccounting !== null && usageRewards !== null;
+    if (!legacyClient && !recognizedActive) {
       return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
     }
     const query = request.query as { address?: string; epochs?: string } | undefined;
@@ -320,73 +366,70 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
     const scanN = Math.min(Math.max(parseInt(query?.epochs ?? '10', 10) || 10, 1), 104);
     try {
-      const info = await retryRead(() => client.getEpochInfo());
-      const current = info.epoch;
+      const current = recognizedActive
+        ? await retryRead(() => usageAccounting.currentEpoch())
+        : (await retryRead(() => legacyClient!.getEpochInfo())).epoch;
       const startEpoch = Math.max(0, current - (scanN - 1));
       const epochList = Array.from({ length: current - startEpoch + 1 }, (_, i) => startEpoch + i);
-      const legacyClient = getLegacyEmissionsClient();
-      const migrationEpoch = legacyClient ? await retryRead(() => client.getMigrationEpoch()) : null;
 
       const rows = await Promise.all(
         epochList.map(async (epoch) => {
-          const [pending, v2UserSP, v2UserBP, v2SellerClaimed, v2BuyerClaimed, v2TotalSP, v2TotalBP, epEmission, params] = await Promise.all([
-            retryRead(() => client.pendingEmissions(address, [epoch])),
-            retryRead(() => client.userSellerPoints(address, epoch)),
-            retryRead(() => client.userBuyerPoints(address, epoch)),
-            retryRead(() => client.sellerEpochClaimed(address, epoch)),
-            retryRead(() => client.buyerEpochClaimed(address, epoch)),
-            retryRead(() => client.epochTotalSellerPoints(epoch)),
-            retryRead(() => client.epochTotalBuyerPoints(epoch)),
-            retryRead(() => client.getEpochEmission(epoch)),
-            retryRead(() => client.getEpochParams(epoch)),
-          ]);
-
-          let userSP = v2UserSP;
-          let userBP = v2UserBP;
-          let totalSP = v2TotalSP;
-          let totalBP = v2TotalBP;
-          let sellerClaimed = v2SellerClaimed;
-          let buyerClaimed = v2BuyerClaimed;
-
-          if (legacyClient && migrationEpoch !== null) {
-            if (epoch <= migrationEpoch) {
-              const [legacyUserSP, legacyUserBP, legacyTotalSP, legacyTotalBP] = await Promise.all([
-                retryRead(() => legacyClient.userSellerPoints(address, epoch)),
-                retryRead(() => legacyClient.userBuyerPoints(address, epoch)),
-                retryRead(() => legacyClient.epochTotalSellerPoints(epoch)),
-                retryRead(() => legacyClient.epochTotalBuyerPoints(epoch)),
-              ]);
-              userSP += legacyUserSP;
-              userBP += legacyUserBP;
-              totalSP += legacyTotalSP;
-              totalBP += legacyTotalBP;
-            }
-
-            if (epoch < migrationEpoch) {
-              const [legacySellerClaimed, legacyBuyerClaimed] = await Promise.all([
-                retryRead(() => legacyClient.sellerEpochClaimed(address, epoch)),
-                retryRead(() => legacyClient.buyerEpochClaimed(address, epoch)),
-              ]);
-              sellerClaimed = legacySellerClaimed;
-              buyerClaimed = legacyBuyerClaimed;
-            }
+          if (recognizedActive && epoch >= effectiveEpoch) {
+            const [pending, buyerAmount] = await Promise.all([
+              retryRead(() => usageAccounting.pendingEmissions(address, [epoch])),
+              retryRead(() => usageRewards.pendingBuyerReward(address, epoch)),
+            ]);
+            return {
+              epoch,
+              protocol: 'recognized' as const,
+              epochEmission: '0',
+              params: null,
+              seller: {
+                amount: pending.seller.toString(),
+                userPoints: '0',
+                totalPoints: '0',
+                claimed: false,
+              },
+              buyer: {
+                amount: buyerAmount.toString(),
+                userPoints: '0',
+                totalPoints: '0',
+                claimed: false,
+              },
+              isCurrent: epoch === current,
+            };
           }
+
+          if (!legacyClient) {
+            return {
+              epoch,
+              protocol: 'legacy' as const,
+              epochEmission: '0',
+              params: null,
+              seller: { amount: '0', userPoints: '0', totalPoints: '0', claimed: false },
+              buyer: { amount: '0', userPoints: '0', totalPoints: '0', claimed: false },
+              isCurrent: epoch === current,
+            };
+          }
+
+          const pending = await retryRead(() => legacyClient.pendingEmissions(address, [epoch]));
 
           return {
             epoch,
-            epochEmission: epEmission.toString(),
-            params,
+            protocol: 'legacy' as const,
+            epochEmission: '0',
+            params: null,
             seller: {
               amount: pending.seller.toString(),
-              userPoints: userSP.toString(),
-              totalPoints: totalSP.toString(),
-              claimed: sellerClaimed,
+              userPoints: '0',
+              totalPoints: '0',
+              claimed: false,
             },
             buyer: {
               amount: pending.buyer.toString(),
-              userPoints: userBP.toString(),
-              totalPoints: totalBP.toString(),
-              claimed: buyerClaimed,
+              userPoints: '0',
+              totalPoints: '0',
+              claimed: false,
             },
             isCurrent: epoch === current,
           };
