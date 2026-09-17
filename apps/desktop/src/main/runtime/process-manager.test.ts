@@ -2,8 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ProcessManager, resolveCommandArgs } from './process-manager.js';
+
+test('live QA does not bypass native-module preflight', async () => {
+  const previousDirectory = process.cwd();
+  const previousQa = process.env['ANTSEED_LIVE_QA'];
+  process.chdir(fileURLToPath(new URL('../../../', import.meta.url)));
+  process.env['ANTSEED_LIVE_QA'] = '1';
+  try {
+    const manager = new ProcessManager(() => {}) as unknown as {
+      ensureRuntimeNativeModules(mode: string, executable: string, isLocalDevScript: boolean): Promise<void>;
+      runRuntimeNativeAlignment(): Promise<void>;
+    };
+    let alignments = 0;
+    manager.runRuntimeNativeAlignment = async () => { alignments += 1; };
+    await manager.ensureRuntimeNativeModules('connect', process.execPath, true);
+    await manager.ensureRuntimeNativeModules('connect', process.execPath, true);
+    assert.equal(alignments, 1);
+  } finally {
+    process.chdir(previousDirectory);
+    if (previousQa === undefined) delete process.env['ANTSEED_LIVE_QA'];
+    else process.env['ANTSEED_LIVE_QA'] = previousQa;
+  }
+});
 
 test('resolveCommandArgs launches the grouped buyer runtime command without forcing the default router', () => {
   const args = resolveCommandArgs({

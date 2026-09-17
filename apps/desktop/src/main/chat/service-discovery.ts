@@ -7,7 +7,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { readPeerHealth, type RawPeerHealth } from '../runtime/peer-cache.js';
+import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
+import { readPeerHealth, type RawPeerHealth } from '../runtime/peer-health.js';
 import {
   DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
   DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
@@ -37,6 +38,7 @@ export type BuyerMaxPricingDefaults = {
 };
 
 export type DiscoverRowEntry = {
+  advertisedVerifierIds?: string[];
   /** Parts that make up `onChainReputationScore`; `null` when the buyer has not scored the peer. */
   trust?: TrustBreakdown | null;
   rowKey: string;
@@ -260,6 +262,7 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
     protocol,
     ...(capabilities ? { capabilities } : {}),
     count: normalizedCount,
+    advertisedVerifierIds: normalizeAdvertisedVerifierIds(entry.advertisedVerifierIds),
     ...(peerId ? { peerId } : {}),
     ...(peerLabel ? { peerLabel } : {}),
     ...(effectiveReputationScore != null && effectiveReputationScore >= 0 ? { effectiveReputationScore } : {}),
@@ -441,6 +444,7 @@ export async function buildDiscoverRows(
       provider: entry.provider,
       protocol: entry.protocol,
       capabilities: entry.capabilities ?? null,
+      advertisedVerifierIds: normalizeAdvertisedVerifierIds(entry.advertisedVerifierIds),
       peerId,
       peerEvmAddress,
       sellerEvmAddress,
