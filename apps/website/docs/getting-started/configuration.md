@@ -332,7 +332,7 @@ Model-only requests use one shared Price + Trust policy in the CLI buyer proxy a
 }
 ```
 
-`minTrustScore` is a hard eligibility gate. At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
+`minTrustScore` is a hard eligibility gate on the buyer-computed [trust score](/docs/reputation#trust-score). At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
 
 Eligible offers are ranked using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and `preferFreePeers`. `maxInputUsdPerMillion` is a strong price preference in that ranking; the separate hierarchical `maxPricing` policy remains the hard price-cap mechanism:
 

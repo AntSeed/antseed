@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Node: buyers on `base-mainnet` had no fresh on-chain seller stats since the epoch-22 cutover. `stakingContractAddress` points at `AntseedSellerRegistry`, which has no `sellers(address)` view; the old peer enrichment called it for stake and staked-at, failed, and skipped every peer. The trust-signal reader no longer calls it.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
 
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
@@ -15,6 +16,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Node/CLI/Desktop: buyers now score sellers with a single trust score, `trust = washFlagged ? 0 : history + usage + power + identity` with weights 55 / 15 / 10 / 20 in one `TRUST_WEIGHTS` table. `history` rewards buyer-verifiable settled service history from `AntseedChannels`: channel count and USDC volume use bounded log curves, saturating at 100 settled sessions and 100 USDC, and contribute equally. `usage` is the seller pool's share of all pools' recognized-usage points in the last complete epoch (`AntseedUsageAccounting`); `power` is the pool's share of all pools' lock-weighted staking power in the current epoch (`AntseedSellerPools`); both shares go through one 0-1 log curve (`log10(1 + 999 · share) / 3`, so 10% maps to 0.67) and self-normalize as the network grows; a seller `AntseedWashTradingRegistry` has proven a wash trader scores 0. `identity` credits sellers from a verified GitHub portfolio (up to 70: stars, breadth, age) or verified domain registration age via RDAP (up to 12), collected buyer-locally with a seven-day TTL; only the strongest identity counts. All on-chain inputs are read through Multicall3 in two round trips per discovery pass, chunked at 80 calls, and refreshed per seller every 120 s. Buyers pass the new `sellerPoolsAddress`, `usageAccountingAddress`, and `washTradingRegistryAddress` payments config into the node; they are filled automatically for `base-mainnet`. Ghost count and the local sybil heuristic stay outside the score; the default `minTrustScore: 60` gate is unchanged. See [Reputation](apps/website/docs/protocol/reputation.md#trust-score).
 - Protocol: recorded the completed Base mainnet M001 activation, including the legacy rewards registry adapter and all eight preparation/cutover transactions; updated active chain configuration and published contract addresses.
 
 - Contracts: standalone Base mainnet commands to deploy, verify, and wire the legacy rewards registry and switch the staking pointer ahead of cutover, then fund legacy DIEM pots and flip the emissions pointer with Channels pause/unpause handled manually.
@@ -84,6 +86,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Node/CLI/Desktop: buyer state replaces `onChainStakeUsdcMicros` / `onChainTrustScore` with `onChainPoolStakeAnts` / `trust` (the trust breakdown). The exported `computeOnChain*` / `computeRouting*` reputation APIs are removed in favour of `computeTrustScore` / `trustScore`; the local sybil heuristic is display-only and no longer part of any score.
 - Development and CI/release builds now standardize on Node 24, with Node 24.21.0 pinned for nvm and Volta and Node 24-compatible SQLite prebuilds for Nix. Electron's bundled runtime, published package engine ranges, and application behavior are unchanged.
 - Desktop: "More options" in the Add Credits chooser gains a "Deposit using Outerfound" row that opens the AntSeed Pay page on its Stripe integration (card, US only), alongside Meridian.
 
