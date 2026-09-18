@@ -971,6 +971,8 @@ test('applyConfigPatch writes the Claude third-party profile and flips both depl
     assert.equal(profile['deploymentDisplayName'], 'Antseed');
     assert.equal(profile['disableDeploymentModeChooser'], true);
     assert.deepEqual(profile['coworkEgressAllowedHosts'], ['*']);
+    // The published model catalog would relabel gateway slots by Claude id.
+    assert.equal(profile['modelCatalogEnabled'], false);
 
     const metaPath = path.join(patch.thirdPartyDir, 'configLibrary', '_meta.json');
     const meta = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
