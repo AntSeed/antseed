@@ -8,13 +8,13 @@ import { IDENTITY_GITHUB_MAX_POINTS as IDENTITY_MAX_POINTS, scoreIdentityHistory
  *
  * Each part is a 0-1 value times its weight from `TRUST_WEIGHTS`:
  *
- * - history (60):  settled service history from `AntseedChannels`, combining
+ * - history (55):  settled service history from `AntseedChannels`, combining
  *                  channel count and USDC volume on bounded log curves.
  * - usage (15):    the seller pool's share of all pools' recognized-usage points
  *                  in the last complete weekly epoch (`AntseedUsageAccounting`).
  *                  Points only accrue for sellers with a pool and already pass
  *                  the on-chain points policies.
- * - power (5):     the pool's share of all pools' lock-weighted staking power in
+ * - power (10):    the pool's share of all pools' lock-weighted staking power in
  *                  the current epoch (`AntseedSellerPools`): what a buyer's spend
  *                  with this seller earns this week.
  * - identity (20): public history of a verified identity (GitHub portfolio or
@@ -30,7 +30,7 @@ import { IDENTITY_GITHUB_MAX_POINTS as IDENTITY_MAX_POINTS, scoreIdentityHistory
  */
 
 /** Maximum contribution of each part; the weights sum to 100. */
-export const TRUST_WEIGHTS = { history: 60, usage: 15, power: 5, identity: 20 } as const;
+export const TRUST_WEIGHTS = { history: 55, usage: 15, power: 10, identity: 20 } as const;
 
 /** Settled sessions needed to saturate the channel-count half of service history. */
 export const TRUST_HISTORY_CHANNEL_TARGET = 100;
@@ -44,11 +44,11 @@ export const SHARE_CURVE_RANGE = 1_000;
 export interface TrustBreakdown {
   /** Final trust score, 0-100. */
   score: number;
-  /** Settled service history, weighted 0-60; `null` when channel stats are unavailable. */
+  /** Settled service history, weighted 0-55; `null` when channel stats are unavailable. */
   history: { score: number; channelCount: number; totalVolumeUsdcMicros: number } | null;
   /** Last epoch's usage-points share, weighted 0-15; `null` when usage accounting data is unavailable. */
   usage: { score: number; shareBps: number; epoch: number } | null;
-  /** Current epoch's staking-power share, weighted 0-5; `null` when pool data is unavailable. */
+  /** Current epoch's staking-power share, weighted 0-10; `null` when pool data is unavailable. */
   power: { score: number; shareBps: number; epoch: number } | null;
   /** Verified-identity part, weighted 0-20; `null` when no verified identity has usable history. */
   identity: { score: number; kind: 'github' | 'domain'; claim: string } | null;

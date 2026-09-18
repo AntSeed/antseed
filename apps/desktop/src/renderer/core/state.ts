@@ -170,7 +170,7 @@ export type VprModelCatalogEntry = {
  * `@antseed/node` subpath modules, so the shape is restated here.
  *
  *   trust = washFlagged ? 0 : history + usage + power + identity
- *   (weights 60 / 15 / 5 / 20)
+ *   (weights 55 / 15 / 10 / 20)
  */
 export type TrustBreakdown = {
   /** Final trust score, 0-100. */

@@ -49,21 +49,21 @@ describe('computeTrustScore', () => {
     expect(computeTrustScore({ peerId: PEER_ID, providers: [], lastSeen: NOW, reputationScore: 100 }, NOW)).toBeNull();
   });
 
-  it('gives established sellers up to 60 points for settled service history', () => {
+  it('gives established sellers up to 55 points for settled service history', () => {
     const established = chainPeer({
       onChainChannelCount: TRUST_HISTORY_CHANNEL_TARGET,
       onChainTotalVolumeUsdcMicros: TRUST_HISTORY_VOLUME_USDC_MICROS_TARGET,
     });
     expect(computeTrustScore(established, NOW)).toMatchObject({
-      score: 60,
+      score: 55,
       history: {
-        score: 60,
+        score: 55,
         channelCount: TRUST_HISTORY_CHANNEL_TARGET,
         totalVolumeUsdcMicros: TRUST_HISTORY_VOLUME_USDC_MICROS_TARGET,
       },
     });
-    expect(trustScore(chainPeer({ onChainChannelCount: 9, onChainTotalVolumeUsdcMicros: 0 }), NOW)).toBeCloseTo(60 * 0.499 / 2, 1);
-    expect(trustScore(chainPeer({ onChainChannelCount: 0, onChainTotalVolumeUsdcMicros: 9_000_000 }), NOW)).toBeCloseTo(60 * 0.499 / 2, 1);
+    expect(trustScore(chainPeer({ onChainChannelCount: 9, onChainTotalVolumeUsdcMicros: 0 }), NOW)).toBeCloseTo(55 * 0.499 / 2, 1);
+    expect(trustScore(chainPeer({ onChainChannelCount: 0, onChainTotalVolumeUsdcMicros: 9_000_000 }), NOW)).toBeCloseTo(55 * 0.499 / 2, 1);
   });
 
   it('lets an established seller clear the default gate while usage is bootstrapping', () => {
@@ -71,9 +71,9 @@ describe('computeTrustScore', () => {
       onChainChannelCount: TRUST_HISTORY_CHANNEL_TARGET,
       onChainTotalVolumeUsdcMicros: TRUST_HISTORY_VOLUME_USDC_MICROS_TARGET,
       onChainUsageShareBps: 0,
-      onChainPoolPowerShareBps: 0,
+      onChainPoolPowerShareBps: 588,
     });
-    expect(trustScore(seller, NOW)).toBeGreaterThanOrEqual(60);
+    expect(trustScore(seller, NOW)).toBeGreaterThan(60);
   });
 
   it('adds weighted last-epoch usage share and current-epoch power share', () => {
@@ -81,11 +81,11 @@ describe('computeTrustScore', () => {
     expect(computeTrustScore(balanced, NOW)).toMatchObject({
       usage: { shareBps: 1_000, epoch: 21 }, power: { shareBps: 1_000, epoch: 22 }, identity: null, washFlagged: false,
     });
-    expect(trustScore(balanced, NOW)).toBeCloseTo(20 * shareCurve(1_000));
+    expect(trustScore(balanced, NOW)).toBeCloseTo(25 * shareCurve(1_000));
     const powerOnly = chainPeer({ onChainPoolPowerShareBps: 1_000 });
-    expect(trustScore(powerOnly, NOW)).toBeCloseTo(5 * shareCurve(1_000));
+    expect(trustScore(powerOnly, NOW)).toBeCloseTo(10 * shareCurve(1_000));
     expect(trustScore(chainPeer(), NOW)).toBe(0);
-    expect(trustScore(chainPeer({ onChainUsageShareBps: 10_000, onChainPoolPowerShareBps: 10_000 }), NOW)).toBe(20);
+    expect(trustScore(chainPeer({ onChainUsageShareBps: 10_000, onChainPoolPowerShareBps: 10_000 }), NOW)).toBe(25);
   });
 
   it('has no usage part in the first epoch and no power part without pool data', () => {
@@ -102,7 +102,7 @@ describe('computeTrustScore', () => {
       onChainUsageShareBps: 10_000, onChainPoolPowerShareBps: 10_000 }) };
     expect(trustScore(strong, NOW)).toBe(100);
     const typical = { ...peerWithGithub(), ...chainPeer({ onChainUsageShareBps: 1_000, onChainPoolPowerShareBps: 1_000 }) };
-    expect(trustScore(typical, NOW)).toBeCloseTo(20 + 20 * shareCurve(1_000));
+    expect(trustScore(typical, NOW)).toBeCloseTo(20 + 25 * shareCurve(1_000));
     const domainOnly = peerWithGithub([]);
     domainOnly.verificationResults!.identityHistory = { version: 1, identities: [{ kind: 'domain', claim: 'portfolio.example',
       status: 'available', identityId: 'domain:portfolio.example', fetchedAtMs: NOW, createdAtMs: NOW - 20 * 365.25 * 86_400_000 }] };
@@ -118,7 +118,7 @@ describe('computeTrustScore', () => {
   it('ignores ghost count, stake amount and the local sybil heuristic', () => {
     const peer = chainPeer({ onChainUsageShareBps: 1_000, onChainPoolPowerShareBps: 1_000, onChainChannelCount: 0, onChainGhostCount: 500,
       onChainSybilRisk: 1, onChainTotalVolumeUsdcMicros: 0, onChainPoolStakeAnts: 1_000_000, onChainUsageLastEpochUsdcMicros: 5 });
-    expect(trustScore(peer, NOW)).toBeCloseTo(20 * shareCurve(1_000));
+    expect(trustScore(peer, NOW)).toBeCloseTo(25 * shareCurve(1_000));
   });
 
   it('feeds the default router: price-first among eligible peers, trust as the eligibility gate', () => {

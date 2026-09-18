@@ -19,9 +19,9 @@ trust = washFlagged ? 0 : history + usage + power + identity
 
 | Part | Weight | On-chain source | What it means |
 |---|---|---|---|
-| `history` | 60 | `AntseedChannels.getAgentStats` lifetime settled channel count and volume | Demonstrated service history. Channel count and settled USDC volume each use a bounded log curve, saturating at 100 settled sessions and 100 USDC, then contribute equally to this part. |
+| `history` | 55 | `AntseedChannels.getAgentStats` lifetime settled channel count and volume | Demonstrated service history. Channel count and settled USDC volume each use a bounded log curve, saturating at 100 settled sessions and 100 USDC, then contribute equally to this part. |
 | `usage` | 15 | `AntseedUsageAccounting.sellerPointsByEpoch / totalPoolPointsByEpoch` for the last complete weekly epoch | The seller pool's share of all pools' recognized-usage points: what it actually delivered last week relative to the network. Points only accrue for sellers with a pool and have already passed the on-chain [reward policies](./reward-policies.md), so a proven wash trader's share is already zero. |
-| `power` | 5 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` for the current epoch (lock-weighted ANTS) | The pool's share of all pools' staking power this week, which is what decides what a buyer's spend with this seller earns. |
+| `power` | 10 | `AntseedSellerPools.poolWeightAtEpoch / totalPowerWeightAtEpoch` for the current epoch (lock-weighted ANTS) | The pool's share of all pools' staking power this week, which is what decides what a buyer's spend with this seller earns. |
 | `identity` | 20 | None (buyer-local lookups of verified GitHub accounts and domains, see below) | Public history of an identity the seller has proven it owns, so an established operator earns credit before it has a pool record. |
 | `washFlagged` | true/false | `AntseedWashTradingRegistry.isProvenWashTrader` | A proven wash trader scores 0 whatever the other parts say. |
 
@@ -56,7 +56,7 @@ The buyer proxy and desktop share the route ranking exported by `@antseed/node/m
 }
 ```
 
-`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded. An established seller that has reached both history targets scores 60 before usage, power, or identity, so demonstrated service alone passes the default gate even while the weekly usage system is still bootstrapping. Identity alone reaches at most 20. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
+`minTrustScore` and the allow/block lists are hard eligibility rules. At the default `60`, unscored sellers are excluded. An established seller that has reached both history targets scores 55 before usage, power, or identity; a 10% power share adds about 6.7 points, so demonstrated service plus meaningful pool participation passes the default gate even while the weekly usage system is still bootstrapping. Identity alone reaches at most 20. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored peers. `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the ranking.
 
 Eligible offers are ranked by trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible. Latency is tracked as an exponential moving average (alpha: 0.3), and peers with consecutive failures enter exponential backoff cooldown.
 
