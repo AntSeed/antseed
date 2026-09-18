@@ -81,3 +81,28 @@ it('does not advance a job when the submitted transaction reverted', async () =>
   await bridge.complete(bridge.request!.id, hash);
   await rejected;
 });
+
+it('keeps polling through an ethers TIMEOUT and tolerates a lagging endpoint on the read-back', async () => {
+  const { bridge, signer, provider, tx } = fixture();
+  const timeout = Object.assign(new Error('timeout'), { code: 'TIMEOUT' });
+  provider.waitForTransaction = vi.fn().mockRejectedValueOnce(timeout).mockResolvedValueOnce({ status: 1 }) as never;
+  provider.getTransaction = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(tx) as never;
+  const sent = signer.sendTransaction({ to, data: '0x1234', value: 2n });
+  await vi.waitFor(() => expect(bridge.request).not.toBeNull());
+  await bridge.complete(bridge.request!.id, hash);
+  expect(await sent).toBe(tx);
+  expect(provider.waitForTransaction).toHaveBeenCalledTimes(2);
+  expect(provider.getTransaction).toHaveBeenCalledTimes(2);
+}, 15_000);
+
+it('rejects a wallet cancellation after the prompt was opened so a reloaded tab is not stuck', async () => {
+  const { bridge, signer } = fixture();
+  const sent = signer.sendTransaction({ to, data: '0x1234', value: 2n });
+  const rejected = expect(sent).rejects.toThrow('rejected or failed');
+  await vi.waitFor(() => expect(bridge.request).not.toBeNull());
+  const id = bridge.request!.id;
+  bridge.begin(id);
+  await bridge.complete(id, undefined, 'Cancelled');
+  await rejected;
+  expect(bridge.request).toBeNull();
+});

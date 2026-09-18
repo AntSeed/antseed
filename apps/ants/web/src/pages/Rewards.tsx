@@ -100,7 +100,7 @@ function RewardsBody({ data }: { data: RewardsView }) {
   return (
     <>
       <Card className="hero">
-        {data.historySource === 'chain' ? <p className="status-line">No indexer is configured. These are known rewards; rewards from closed positions may be missing.</p> : null}
+        {data.historySource === 'chain' ? <p className="status-line">Closed-position history is unavailable (no indexer configured, or the indexer is unreachable). These are known rewards; rewards from closed positions may be missing. Refresh to retry.</p> : null}
         {data.historySource === 'local' ? <p className="status-line">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
         <div className="tile-label">Wallet rewards</div>
         <div className="hero-value">

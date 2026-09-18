@@ -24,9 +24,10 @@ class FakeContext extends AntsContext {
     if (!this.chain.emissionsGateAddress) return null;
     return { currentEpoch: async () => this.epoch, effectiveEpoch: async () => 22, genesis: async () => 1_775_728_461, epochDuration: async () => 604_800 } as never;
   }
+  poolLookupFails = false;
   override legacyEmissionsAt(address: string | null) {
     if (!address) return null;
-    return { sellerRewardsPool: async () => '0x00000000000000000000000000000000000000CC', getEpochInfo: async () => ({ epoch: this.epoch, emission: 0n, epochDuration: 604_800 }), getGenesis: async () => 1_775_728_461 } as never;
+    return { sellerRewardsPool: async () => { if (this.poolLookupFails) throw new Error('could not decode result data (value="0x", info={ "method": "sellerRewardsPool" }, code=BAD_DATA)'); return '0x00000000000000000000000000000000000000CC'; }, getEpochInfo: async () => ({ epoch: this.epoch, emission: 0n, epochDuration: 604_800 }), getGenesis: async () => 1_775_728_461 } as never;
   }
 }
 
@@ -40,6 +41,14 @@ describe('AntsContext.stack', () => {
     expect(stack.legacyEmissionsV1).toBe(chain.legacyEmissionsContractAddress);
     expect(stack.lockedRewardsPool).toBe('0x00000000000000000000000000000000000000CC');
     expect(await ctx.claimableEpochs()).toEqual({ legacy: Array.from({ length: 21 }, (_, i) => i), recognized: [] });
+  });
+
+  it('treats a legacy contract without sellerRewardsPool() as having no locked pool', async () => {
+    const ctx = new FakeContext(chain, { emissions: chain.emissionsContractAddress!, staking: chain.stakingContractAddress! }, 21);
+    ctx.poolLookupFails = true;
+    const stack = await ctx.stack();
+    expect(stack.phase).toBe('deployed');
+    expect(stack.lockedRewardsPool).toBeNull();
   });
 
   it('reports active with a pre-regeneration config (emissions still names V2)', async () => {

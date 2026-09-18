@@ -21,15 +21,12 @@ export function SellerPage() {
   const page = usePageData(disconnected ? null : `seller:${config.address.toLowerCase()}`, api.seller);
   const data = page.data;
 
-  if (disconnected || (data && data.agentId === 0)) {
+  if (disconnected) {
     return (
       <Panel title="Open your seller dashboard">
         <p className="muted">
           Open this dashboard from your seller’s CLI with <code>antseed ants</code>, then connect the wallet registered to your seller.
         </p>
-        {!disconnected && (
-          <p className="muted">The connected wallet is not registered as a seller on this network. Switch to your seller wallet to view its details.</p>
-        )}
       </Panel>
     );
   }
@@ -39,6 +36,13 @@ export function SellerPage() {
   return (
     <>
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
+      {data.agentId === 0 ? (
+        <Panel title="Not registered as a seller">
+          <p className="muted">
+            The connected wallet has no seller identity on this network. Switch to your seller wallet, or register this wallet below to create its identity and bind it in the seller registry.
+          </p>
+        </Panel>
+      ) : null}
       <SellerBody data={data} />
 
       <Panel title="Wash-trading status">

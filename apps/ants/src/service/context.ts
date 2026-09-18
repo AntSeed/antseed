@@ -361,8 +361,14 @@ export class AntsContext {
     let lockedRewardsPool: string | null = null;
     const legacy = this.legacyEmissionsAt(legacyEmissions);
     if (legacy) {
-      const pool = await legacy.sellerRewardsPool();
-      lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
+      // V1 AntseedEmissions (base-local, base-sepolia) has no sellerRewardsPool(); a
+      // BAD_DATA revert there must not take every dashboard view down.
+      try {
+        const pool = await legacy.sellerRewardsPool();
+        lockedRewardsPool = sameAddress(pool, ZeroAddress) ? null : pool;
+      } catch {
+        lockedRewardsPool = null;
+      }
     }
     return {
       phase, currentEpoch, effectiveEpoch, genesis, epochDuration, registryPointers,

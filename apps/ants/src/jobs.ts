@@ -28,7 +28,7 @@ export class JobRunner {
     }
     if (!Array.isArray(records)) throw new Error('Invalid saved activity file.');
     for (const record of records) {
-      if (!record || typeof record.id !== 'string' || typeof record.kind !== 'string' || !['running', 'done', 'failed'].includes(record.status) || !Number.isFinite(record.startedAt) || !Array.isArray(record.steps) || !record.steps.every((step: JobStep) => step && typeof step.label === 'string' && Number.isFinite(step.at) && (step.hash === undefined || typeof step.hash === 'string'))) {
+      if (!record || typeof record.id !== 'string' || typeof record.kind !== 'string' || !['running', 'done', 'failed'].includes(record.status) || !Number.isFinite(record.startedAt) || (record.owner !== undefined && typeof record.owner !== 'string') || !Array.isArray(record.steps) || !record.steps.every((step: JobStep) => step && typeof step.label === 'string' && Number.isFinite(step.at) && (step.hash === undefined || typeof step.hash === 'string'))) {
         throw new Error('Invalid saved activity record.');
       }
       const job = record as JobView;
@@ -51,9 +51,12 @@ export class JobRunner {
     renameSync(temporary, this.options.journalPath);
   }
 
-  list(): JobView[] {
+  /** All jobs, or only those started for `owner` (case-insensitive address match). */
+  list(owner?: string): JobView[] {
     this.prune();
-    return [...this.jobs.values()].sort((a, b) => b.startedAt - a.startedAt);
+    const all = [...this.jobs.values()].sort((a, b) => b.startedAt - a.startedAt);
+    if (!owner) return all;
+    return all.filter((job) => job.owner?.toLowerCase() === owner.toLowerCase());
   }
 
   get(id: string): JobView | undefined {
@@ -72,12 +75,12 @@ export class JobRunner {
   }
 
   /** Run `work` as a job. Only one signing job runs at a time so nonces stay ordered. */
-  start(kind: string, work: (report: StepReporter) => Promise<unknown>): JobView {
+  start(kind: string, work: (report: StepReporter) => Promise<unknown>, owner?: string): JobView {
     if (!this.acceptingWrites) throw new Error('This staking session has ended. Reopen Staking to continue.');
     if (this.active && this.jobs.get(this.active)?.status === 'running') {
       throw new Error(`Another action (${this.jobs.get(this.active)?.kind}) is still running. Wait for it to finish.`);
     }
-    const job: JobView = { id: randomUUID(), kind, status: 'running', steps: [], startedAt: Date.now() };
+    const job: JobView = { id: randomUUID(), kind, status: 'running', steps: [], startedAt: Date.now(), ...(owner ? { owner } : {}) };
     this.jobs.set(job.id, job);
     try {
       this.prune();

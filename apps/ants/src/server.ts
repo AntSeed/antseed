@@ -133,7 +133,8 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     await writeFile(temporary, JSON.stringify([...context.localPositionIds]), { mode: 0o600 });
     await rename(temporary, historyPath);
   };
-  const journalPath = path.join(dataDir, 'ants-activity', `${chain.evmChainId}-${context.address.toLowerCase()}.json`);
+  // Browser sessions have no wallet at startup; one journal per chain, with jobs tagged by owner.
+  const journalPath = path.join(dataDir, 'ants-activity', browserSigning ? `${chain.evmChainId}-browser.json` : `${chain.evmChainId}-${context.address.toLowerCase()}.json`);
   const jobs = new JobRunner({
     onFinish: () => {
       views.invalidate();
@@ -144,19 +145,23 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   });
   registerRoutes(app, { ctx: context, jobs, views, readOnly, dataDir, browserSigning, onAuthorize: options.onAuthorize, rememberTransaction });
   if (browserSigning) {
-    app.post<{ Body: { address?: string; chainId?: number; refresh?: boolean } }>('/api/wallet', async (request, reply) => {
+    app.post<{ Body: { address?: string; chainId?: number; refresh?: boolean; disconnect?: boolean } }>('/api/wallet', async (request, reply) => {
       const body = request.body ?? {};
       try {
         const next = body.address ? getAddress(body.address) : null;
         if (next && body.chainId !== chain.evmChainId) throw new Error('Switch your wallet to the dashboard network.');
-        if (next === (context.signer ? context.address : null)) {
+        const current = context.signer ? context.address : null;
+        // A tab without a wallet (still reconnecting, or a second tab opened from VPR) must not
+        // downgrade the connected session; only an explicit disconnect clears the signer.
+        if (next === current || (next === null && !body.disconnect)) {
           // A no-op initial sync must not discard reads already loading. An explicit
           // focus refresh still rechecks permissions after the authorization flow.
           if (body.refresh) { context.invalidate(); views.invalidate(); }
           return { ok: true, data: { changed: false } };
         }
-        browserSigning.cancel();
+        // Check before cancelling: a refused switch must not poison the running job's signer.
         if (jobs.busy) return reply.code(409).send({ ok: false, error: 'Waiting for the previous wallet action to finish. Submitted transactions are still tracked.' });
+        browserSigning.cancel();
         context.address = next ?? ZeroAddress;
         context.signer = next ? browserSigning.signer(next, context.provider()) : undefined;
         context.invalidate(); views.invalidate();

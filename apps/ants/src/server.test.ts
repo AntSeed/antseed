@@ -71,6 +71,9 @@ it('browser sessions ignore host signing keys and retain the original buyer acro
   expect(await server.context.signer?.getAddress()).toBe(external.address);
   expect(server.context.buyerAddress).toBe(buyer.address);
   expect(server.context.signer).not.toBe(buyer);
-  await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: {} });
+  // A wallet-less sync (second tab, extension still reconnecting) keeps the connected signer.
+  expect((await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: {} })).json().data).toEqual({ changed: false });
+  expect(await server.context.signer?.getAddress()).toBe(external.address);
+  await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { disconnect: true } });
   expect(server.context.signer).toBeUndefined();
 });

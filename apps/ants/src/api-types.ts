@@ -290,6 +290,8 @@ export interface JobStep { at: number; label: string; hash?: string; }
 export interface JobView {
   id: string;
   kind: string;
+  /** Signing wallet that started the job (browser sessions; absent for local-signer runs). */
+  owner?: string;
   status: 'running' | 'done' | 'failed';
   steps: JobStep[];
   result?: unknown;

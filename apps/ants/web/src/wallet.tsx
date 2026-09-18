@@ -37,10 +37,15 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
   const syncQueue = useRef<Promise<void>>(Promise.resolve());
   const submitted = useRef(new Map<string, string>());
   const wrongChain = !!account.address && account.chainId !== config.evmChainId;
+  const settling = account.status === 'connecting' || account.status === 'reconnecting';
   useEffect(() => {
+    // Wait for wagmi to settle; a transient wallet-less state must not be reported as a disconnect.
+    if (settling) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const identity = `${account.address?.toLowerCase() ?? ''}:${account.chainId ?? ''}`;
+    // Only a tab that previously synced a wallet may clear the server's signer.
+    const hadWallet = !!syncedIdentity.current && !syncedIdentity.current.startsWith(':');
     let queued = false;
     function sync(refresh = false) {
       if (queued || stopped) return;
@@ -50,7 +55,8 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
         if (stopped) return;
         try {
           const refreshAccount = refresh && !wrongChain;
-          const result = await request<{ changed?: boolean }>('/api/wallet', { method: 'POST', body: { address: wrongChain ? undefined : account.address, chainId: account.chainId, refresh: refreshAccount } });
+          const disconnect = wrongChain || (!account.address && hadWallet);
+          const result = await request<{ changed?: boolean }>('/api/wallet', { method: 'POST', body: { address: wrongChain ? undefined : account.address, chainId: account.chainId, refresh: refreshAccount, disconnect } });
           if (!stopped) {
             const changed = result.changed ?? (syncedIdentity.current !== identity);
             syncedIdentity.current = identity;
@@ -66,7 +72,7 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
     const onFocus = () => { void sync(true); };
     window.addEventListener('focus', onFocus);
     return () => { stopped = true; clearTimeout(timer); window.removeEventListener('focus', onFocus); };
-  }, [account.address, account.chainId, wrongChain]);
+  }, [account.address, account.chainId, wrongChain, settling]);
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -112,7 +118,7 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
       {action && <span>{action.steps.at(-1)?.label ?? action.kind}</span>}
       <span className="small mono">{pending.from.slice(0, 8)}…{pending.from.slice(-4)} · {config.chainId}</span>
       {!pending.submittedHash && <><button className="btn" disabled={busy || wrongChain || !wallet || (!!pending.approvalStarted && !submitted.current.has(pending.id))} onClick={() => void approve()}>{busy || pending.approvalStarted && !submitted.current.has(pending.id) ? 'Check your wallet…' : submitted.current.has(pending.id) ? 'Track submitted transaction' : 'Approve in wallet'}</button>
-        {!submitted.current.has(pending.id) && <button className="link-button" disabled={busy || pending.approvalStarted} onClick={() => void request('/api/wallet/result', { method: 'POST', body: { id: pending.id, error: 'Cancelled' } })}>Cancel</button>}</>}
+        {!submitted.current.has(pending.id) && <button className="link-button" disabled={busy} title={pending.approvalStarted ? 'Only cancel if you rejected or closed the wallet prompt. A transaction already confirmed in the wallet is not tracked after cancelling.' : undefined} onClick={() => void request('/api/wallet/result', { method: 'POST', body: { id: pending.id, error: 'Cancelled' } })}>{pending.approvalStarted ? 'Cancel (rejected in wallet)' : 'Cancel'}</button>}</>}
     </div>}
   </div>;
 }

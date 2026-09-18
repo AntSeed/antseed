@@ -63,8 +63,9 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   const walletConnected = !sameAddress(ctx.address, ZeroAddress);
   const agentId = walletConnected ? await agentIdOf(ctx) : 0;
 
+  // An unreachable indexer degrades to chain reads plus verified local history;
+  // `historySource` tells the UI that closed-position rewards may be missing.
   const closed = walletConnected ? await closedPositionIds(ctx) : { ids: [], source: undefined };
-  if (closed.source === 'chain' && ctx.indexer()) throw new Error('Reward history is unavailable from the indexer. Retry to include rewards from closed positions.');
   const stakerPositions = walletConnected && pools && poolRewards
     ? await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })
     : [];

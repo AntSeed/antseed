@@ -134,3 +134,14 @@ it('refuses session replacement during work and prevents new jobs after pausing'
   expect(() => runner.start('stake', work)).toThrow(/session has ended/);
   expect(work).not.toHaveBeenCalled();
 });
+
+it('lists only the owner\'s jobs when an owner filter is given', async () => {
+  const runner = new JobRunner();
+  const a = runner.start('stake', async () => 1, '0x00000000000000000000000000000000000000AA');
+  await vi.waitFor(() => expect(runner.get(a.id)?.status).toBe('done'));
+  const b = runner.start('claim', async () => 2, '0x00000000000000000000000000000000000000bb');
+  await vi.waitFor(() => expect(runner.get(b.id)?.status).toBe('done'));
+  expect(runner.list().map((job) => job.id)).toEqual([b.id, a.id]);
+  expect(runner.list('0x00000000000000000000000000000000000000aa').map((job) => job.id)).toEqual([a.id]);
+  expect(runner.list('0x00000000000000000000000000000000000000BB').map((job) => job.id)).toEqual([b.id]);
+});

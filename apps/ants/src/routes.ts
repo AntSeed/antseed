@@ -59,7 +59,8 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get('/api/seller', (_request, reply) => respond(reply, () => cached('seller', () => seller(ctx))));
   app.post<{ Body: { positionIds: number[] } }>('/api/positions/withdraw/preview', (request, reply) => respond(reply, () => previewWithdraw(ctx, request.body?.positionIds ?? [])));
 
-  app.get('/api/jobs', async () => ({ ok: true, data: jobs.list() }));
+  // Browser sessions share one journal across wallets; show each wallet only its own actions.
+  app.get('/api/jobs', async () => ({ ok: true, data: jobs.list(context.browserSigning ? ctx.address : undefined) }));
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (request, reply) => {
     const job = jobs.get(request.params.id);
     if (!job) return reply.status(404).send({ ok: false, error: 'Unknown job' });
@@ -72,8 +73,13 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
       try {
         const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, async (label, hash) => {
           await report(label, hash);
-          if (hash) await context.rememberTransaction?.(hash);
-        }));
+          // Local position history is best-effort bookkeeping: an RPC hiccup or a
+          // full disk must not abort a multi-transaction action whose step already confirmed.
+          if (hash) {
+            try { await context.rememberTransaction?.(hash); }
+            catch (error) { console.warn(`[ants] could not record transaction ${hash}: ${describeError(error)}`); }
+          }
+        }), ctx.address);
         return { ok: true, data: job };
       } catch (error) {
         return reply.status(409).send({ ok: false, error: describeError(error) });
