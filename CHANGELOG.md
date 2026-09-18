@@ -28,6 +28,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Node/CLI/Desktop: trust-score weights rebalance from history 55 / usage 15 / power 10 / identity 20 to history 50 / usage 20 / power 10 / identity 20. Settled service history alone no longer clears the default `minTrustScore: 60` routing gate; a seller also needs recognized usage from the last epoch, staking-power share, or a verified identity.
 - Website and docs: wording only. "VPR" and "Virtual Private Router" → "AI VPN", "AntSeed" → "Antseed" in copy (URLs, package names and identifiers unchanged), "seller" → "provider" and "on-chain" → "onchain" in marketing copy. No code or layout changes.
 - Desktop and agent skills: same wording pass. The app is now "Antseed AI VPN" (window title, notifications, update hints, DMG/installer product name, help center, connected-app provider names written into third-party configs, chat system prompt). Runtime internals (IPC channels, local-storage keys, bundle id, packaged bundle/executable name, data directory, `x-vpr-session-id`, local CA name) are intentionally unchanged so existing installs, updates, conversations, and trusted certificates keep working. The macOS updater also clears stale ShipIt registrations before handing off an install.
 
