@@ -197,6 +197,7 @@ export type DiscoverVerificationLink = {
 };
 
 export type DiscoverRow = {
+  advertisedVerifierIds?: string[];
   // Identity
   rowKey: string;              // `${peerId}:${serviceId}`
   serviceId: string;

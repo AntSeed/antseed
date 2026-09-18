@@ -554,6 +554,29 @@ npm run build
 npm run dev
 ```
 
+### Buyer TEE evidence cache
+
+`src/proxy/tee-verification.ts` owns a TanStack Query Core `QueryClient` per
+buyer session. CLI routing and Electron's verification control endpoint share
+that buyer's cache; separate buyer processes do not share memory. Query Core
+stores evidence and deduplicates in-flight checks, with keys containing the
+seller ID, selected verifier, and advertised-verifier fingerprint. The renderer
+does not need a new query client for this service.
+
+Trust lifetimes remain explicit in the service: successful badge evidence lasts
+up to 24 hours from check start, but routing evidence lasts only five minutes.
+Transient outcomes are not reused, and each caller recomputes its routing
+allowance from its own policy. Query freshness is not routing authorization.
+Refreshes hide old success while checking; new failed or unavailable results
+replace it. Capability changes, discovery removal, and buyer shutdown remove
+queries and prevent late results from restoring evidence.
+
+This headless client has no automatic retries or browser-connectivity pausing.
+The service limits actual checks to eight and cached entries to 512, evicting
+settled entries rather than pending checks. Timer-based garbage collection is
+disabled; the entry bound and buyer lifecycle own cleanup instead. There is no
+disk persistence and no per-inference-response proof in this cache.
+
 ## Links
 
 - Node SDK: `@antseed/node` (`../node`)

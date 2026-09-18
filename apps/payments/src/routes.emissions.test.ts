@@ -33,6 +33,32 @@ describe('GET /api/config', () => {
     const body = res.json();
     expect(body).toHaveProperty('emissionsContractAddress');
     expect(body.emissionsContractAddress).toBe('0x' + '3'.repeat(40));
+    expect(body.legacyEmissionsContractAddress).toBe('0x' + '3'.repeat(40));
+    expect(body.usageAccountingAddress).toBeNull();
+    expect(body.usageRewardsAddress).toBeNull();
+    await app.close();
+  });
+
+  it('exposes separate legacy and recognized-usage claim contracts after activation', async () => {
+    const app = Fastify();
+    registerRoutes(app, mockCtx({
+      chainConfig: {
+        chainId: 'base-mainnet',
+        evmChainId: 8453,
+        emissionsContractAddress: '0x' + '3'.repeat(40),
+        legacyEmissionsContractAddress: '0x' + '4'.repeat(40),
+        usageAccountingAddress: '0x' + '5'.repeat(40),
+        usageRewardsAddress: '0x' + '6'.repeat(40),
+        recognizedUsage: { status: 'active', effectiveEpoch: 22 },
+      } as any,
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/config' });
+    expect(res.json()).toMatchObject({
+      legacyEmissionsContractAddress: '0x' + '4'.repeat(40),
+      usageAccountingAddress: '0x' + '5'.repeat(40),
+      usageRewardsAddress: '0x' + '6'.repeat(40),
+      recognizedUsageEffectiveEpoch: 22,
+    });
     await app.close();
   });
 

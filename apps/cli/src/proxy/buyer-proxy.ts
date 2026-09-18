@@ -102,7 +102,11 @@ import {
 } from './peer-health.js'
 import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
-import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { runVerifier, verifierSupportFingerprint, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { TEE_VERIFIER_ID } from '@antseed/node/tee-status'
+import { parseVerifierCapabilities } from '@antseed/node/verifier-capabilities'
+import { TeeVerification } from './tee-verification.js'
+import { TeeControl } from './tee-control.js'
 import { loadConfig } from '../config/loader.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
@@ -263,8 +267,6 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
 /** Min gap between background peer refreshes triggered by model_not_found responses. */
 const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
-/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
-const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 /**
  * Statuses that prove the peer is alive and serving. Any response short of a
@@ -791,7 +793,8 @@ export class BuyerProxy {
    */
   private _lastModelActivityAt = 0
   private readonly _verifier?: VerifierPolicy
-  private readonly _verifyCache = new Map<string, CachedVerdict>()
+  private readonly _teeVerification: TeeVerification
+  private readonly _teeControl: TeeControl
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _routingPreferences: ModelRoutingPreferences | null
@@ -843,6 +846,8 @@ export class BuyerProxy {
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._verifier = config.verifier
+    this._teeVerification = new TeeVerification(config.verifier)
+    this._teeControl = new TeeControl(this._teeVerification.sessionId)
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
@@ -972,6 +977,13 @@ export class BuyerProxy {
         resolve()
       })
     })
+    try {
+      const address = this._server.address()
+      await this._teeControl.publish(this._stateDir, typeof address === 'object' && address ? address.port : this._port)
+    } catch (error) {
+      await new Promise<void>((resolve) => this._server.close(() => resolve()))
+      throw error
+    }
     this._startBackgroundRefresh()
     this._startSuspendHeartbeat()
     // Trigger initial discovery immediately so the desktop can show services
@@ -998,6 +1010,7 @@ export class BuyerProxy {
         return
       }
       this._cachedPeers = peers
+      this._teeVerification.observePeers(peers)
       // Preserve the original discovery timestamp so cacheAgeMs reflects how
       // long ago the persisted data was actually written, not startup time.
       const peersUpdatedAt = (parsed as { peersUpdatedAt?: unknown }).peersUpdatedAt
@@ -1013,6 +1026,8 @@ export class BuyerProxy {
   }
 
   async stop(): Promise<void> {
+    this._teeVerification.close()
+    await this._teeControl.close()
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
@@ -1206,6 +1221,7 @@ export class BuyerProxy {
     }
 
     this._cachedPeers = merged
+    this._teeVerification.observePeers(merged)
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
@@ -1580,6 +1596,23 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
+    if (path.startsWith('/_antseed/verification')) {
+      await this._teeControl.handle(req, res, method, path,
+        () => this._teeVerification.snapshot(this._cachedPeers),
+        async (peerId) => {
+          const peer = this._cachedPeers.find((candidate) => candidate.peerId === peerId)
+          if (!peer || !parseVerifierCapabilities(peer.capabilities).supported.includes(TEE_VERIFIER_ID)) {
+            throw new Error('Seller is unknown or does not advertise TEE support')
+          }
+          if (!this._verifier) throw new Error('Verification is disabled by the buyer CLI')
+          const signal = AbortSignal.timeout(31_000)
+          const outcome = await this._teeVerification.verifyForDisplay(peer,
+            () => runVerifier({ require: false, prefer: [TEE_VERIFIER_ID] }, peer.peerId, peer.capabilities,
+              (chosen) => makeVerifierReach(this._node, peer, chosen, signal), signal))
+          if (outcome.code === 'busy') throw new Error(outcome.reason)
+        })
+      return
+    }
     const origin = req.headers.origin ?? '';
     const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
     if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
@@ -2822,15 +2855,15 @@ export class BuyerProxy {
   ): Promise<VerifyOutcome> {
     const policy = this._verifier
     if (!policy) return { ok: true, verified: false }
-    const key = `${peer.peerId}|${verifierSupportFingerprint(peer.capabilities)}`
-    return getCachedVerdict(
-      this._verifyCache,
-      key,
-      Date.now(),
-      this._peerCacheTtlMs,
-      VERIFY_CACHE_MAX_ENTRIES,
-      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal),
-    )
+    const fingerprint = verifierSupportFingerprint(peer.capabilities)
+    const outcome = await this._teeVerification.verify(peer, policy,
+      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal))
+    const current = this._cachedPeers.find((candidate) => candidate.peerId === peer.peerId)
+    if (current && verifierSupportFingerprint(current.capabilities) !== fingerprint) {
+      return { ok: !policy.require, verified: false, transient: true, reason: 'Seller capabilities changed; retry verification' }
+    }
+    if (signal.aborted) return { ok: false, verified: false, transient: true, reason: 'Request aborted' }
+    return outcome
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {

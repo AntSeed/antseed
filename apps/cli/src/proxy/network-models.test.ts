@@ -5,6 +5,22 @@ import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
 
 const NOW_MS = 1_700_000_000_000
 
+test('network model offers preserve advertised verifiers without inferring support', () => {
+  const providerPricing = { openai: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'gpt-test': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } }
+  const teePeer = makePeer({ peerId: 'a'.repeat(40), providers: ['openai'], providerPricing, capabilities: ['verifier.antseed-verifier'] })
+  const legacyPeer = makePeer({ peerId: 'b'.repeat(40), providers: ['openai'], providerPricing })
+  const peers = [
+    teePeer,
+    legacyPeer,
+  ]
+  const [model] = buildNetworkModels(peers, NOW_MS)
+  assert.ok(model)
+  assert.deepEqual(model.peers.find((peer) => peer.peerId === teePeer.peerId)?.advertisedVerifierIds, ['antseed-verifier'])
+  assert.deepEqual(model.peers.find((peer) => peer.peerId === legacyPeer.peerId)?.advertisedVerifierIds, [])
+  teePeer.capabilities = []
+  assert.deepEqual(buildNetworkModels(peers, NOW_MS)[0]?.peers[0]?.advertisedVerifierIds, [])
+})
+
 function makePeer(overrides: Omit<Partial<PeerInfo>, 'peerId'> & { peerId: string }): PeerInfo {
   return {
     lastSeen: NOW_MS,
