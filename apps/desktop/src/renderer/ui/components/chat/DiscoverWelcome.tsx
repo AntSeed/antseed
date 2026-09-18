@@ -877,7 +877,7 @@ function Card({
                       ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
                     </span>
                   )}
-                  <span>Trust = settled service history (up to 55) + last epoch usage share (up to 15) + this epoch power share (up to 10) + verified identity (up to 20); proven wash traders score 0.</span>
+                  <span>Trust = settled service history (up to 50) + last epoch usage share (up to 20) + this epoch power share (up to 10) + verified identity (up to 20); proven wash traders score 0.</span>
                 </>
               )}
             >
