@@ -28,6 +28,12 @@ model last selected by the host and includes classifier spending in the total,
 with a `routingSpentUsdc` subtotal. No per-turn history store is added.
 Token counting and ordinary seller settlement behavior are unchanged.
 
+The proposed change to refuse reserve top-ups after a failed balance RPC read
+is deliberately excluded from this routing PR. Existing warning-and-continue
+behavior remains; explicitly insufficient balances still reject a top-up.
+Hardening the RPC-failure behavior needs a separate payment-focused change with
+its own review and changelog. Reserve diagnostics are debug-only.
+
 ## Router contract
 
 For a runnable, vendor-neutral implementation, see
@@ -35,7 +41,9 @@ For a runnable, vendor-neutral implementation, see
 offer and its individual token prices to a configured classifier, validates
 one selected model, and leaves seller selection to the host. The local-chain routing
 fixture uses this real plugin with deterministic classifier responses; no
-vendor account is needed. The plugin is private and is not bundled or published.
+vendor account is needed. The plugin is privately installable and is not bundled
+or published to npm. `--router classifier` resolves the local installation, not
+a public npm package; see its README for build, linking, and configuration.
 
 An installed router plugin implements `selectRoute` and optionally declares
 `routingSettingsSchema`. The buyer loads it using the existing `buyer start
@@ -99,7 +107,7 @@ name or plugin property:
 - Explicit user model pins bypass classification. Select router mode for that
   conversation to clear its pin before routing it automatically.
 
-The example plugin checks `context.mode`, not the request's model name.
+The private classifier plugin checks `context.mode`, not the request's model name.
 
 The host calls `selectRoute` on every explicitly auto-routed request, including
 later turns. It never substitutes the conversation's last model before calling
@@ -204,7 +212,7 @@ Use `instance:<name>` for named plugin instances. Direct `--router` keys use the
 exact configured router argument. The host only passes that key's settings to
 the plugin, validates them against its schema, and keeps buyer policy separate.
 
-For the reference plugin, use `plugin:@antseed/router-classifier` for both keys
+For the private classifier plugin, use `plugin:@antseed/router-classifier` for both keys
 and replace `{ "policy": "balanced" }` with its optional
 `{ "instructions": "Choose a suitable model while considering prices." }` setting.
 Send an explicit router request without a model, for example:
@@ -294,8 +302,11 @@ just like inference. Classifier spend events use `parentRequestId` to attribute
 authorized spending to the originating conversation. `conversations.json` stores
 that cost in `spentUsdc` and its `routingSpentUsdc` subtotal; classifier usage does
 not inflate inference token totals or inference request counts. Both kinds of spend
-queue a normal conversation-store write, including when classification succeeds
-but inference fails. Old records default the routing subtotal to zero; old costs
+update in memory immediately and schedule a coalesced atomic conversation-store
+write within 250 ms, including when classification succeeds but inference fails.
+`flush()` and normal shutdown force pending writes to finish. An abrupt crash
+may lose that short window of conversation bookkeeping; payment-channel
+authorization storage is separate. Old records default the routing subtotal to zero; old costs
 are not reconstructed. The existing channel migrations 001–005 are unchanged;
 no new channel migration or SQLite reserve-recovery persistence is included.
 No access-purchase or routing-history schema is shipped. Metadata v13 encodes the
@@ -321,9 +332,15 @@ Invalid-response debt
 is not paid merely to unblock a seller; that seller can consequently refuse
 future service. No refund or automatic paid retry workflow is added.
 
-Only one routing authorization can be active for a seller at a time. Overlapping
-classifications for different conversations can fail closed; there is no paid
-retry queue. Installed plugins are trusted in-process code, not a security
+Only one routing authorization can be active per seller within a buyer. The
+routing executor queues overlapping classifications for that seller in arrival
+order, with at most 32 outstanding calls including the active call. Different
+sellers have independent queues; the existing admission rate limit still applies.
+Queue waiting counts against the request deadline. Cancelled or expired waiters
+never obtain a grant, and active calls retain their slot until SDK cleanup has
+finished. Queue overflow fails closed. This is a scheduling queue, not a paid
+retry queue, and does not serialize downstream inference. Installed plugins
+are trusted in-process code, not a security
 sandbox: host validation constrains this routing/payment API, not arbitrary
 filesystem access by installed code.
 

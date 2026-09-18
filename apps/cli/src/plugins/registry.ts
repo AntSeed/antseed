@@ -55,6 +55,10 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   },
 ]
 
+export const PRIVATE_ROUTER_PLUGINS: TrustedPlugin[] = [
+  { name: 'classifier', type: 'router', description: 'Privately installed classifier router', package: '@antseed/router-classifier' },
+]
+
 export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'antseed-verifier',
@@ -72,6 +76,6 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
 ]
 
 export function resolvePluginPackage(nameOrPackage: string): string {
-  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage)
+  const trusted = [...TRUSTED_PLUGINS, ...PRIVATE_ROUTER_PLUGINS].find((plugin) => plugin.name === nameOrPackage)
   return trusted?.package ?? nameOrPackage
 }

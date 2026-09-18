@@ -46,7 +46,7 @@ network requests or invent a fallback when a response cannot be parsed.
 Prepayment validation uses this parser only in per-call mode; token-priced
 routing retains its existing billing behavior.
 
-The reference classifier returns `{ "serviceId": "model-x" }` as the JSON string
+The private classifier plugin returns `{ "serviceId": "model-x" }` as the JSON string
 in `choices[0].message.content`. Its exported parser checks that envelope and
 returns one model-only recommendation, leaving seller selection to the host:
 
@@ -139,7 +139,7 @@ without a model. Alternatively, `model: "antseed"` follows the saved
 conversation/session mode. Concrete model requests remain fixed without the
 router override, even when `buyer.routingMode` is `router`;
 `x-antseed-routing-mode: model` explicitly bypasses classification.
-The reference classifier returns `{ "serviceId": "model-x" }` in its
+The private classifier plugin returns `{ "serviceId": "model-x" }` in its
 chat-completions message content, not a list of routes.
 
 Unit billing is checked for the requested API protocol rather than unrelated

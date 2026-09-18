@@ -1041,13 +1041,7 @@ export class BuyerPaymentManager {
     // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
     const channelsDomain = this._channelsDomain;
     const maxAmount = reserveAmount;
-    // Unconditional (not debugWarn -- gated behind isDebugEnabled()) because
-    // this is the only signal that made the FirstSignCapExceeded class of
-    // bug visible: a bad `explicit` reserveAmount here silently becomes a
-    // channel-opening ReserveAuth that gets rejected on-chain, with nothing
-    // else in this path naming which of the two sources (an explicit caller
-    // amount vs. the configured default) produced it.
-    console.warn(
+    debugWarn(
       `[BuyerPayment] reserve: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... maxAmount=${maxAmount} `
       + `explicit=${typeof reserveAmountOrPricing === 'bigint'} configDefault=${this._config.maxReserveAmountUsdc}`,
     );
@@ -1836,19 +1830,9 @@ export class BuyerPaymentManager {
       if (faultCodeOf(err) === 'buyer-deposits-insufficient') {
         throw err;
       }
-      // A failed deposit-verification read must abort the top-up, not sign
-      // blind: warning-and-continuing would let an RPC outage leave every
-      // retry re-deriving newCeiling from the same stale, unreconciled
-      // prevCeiling -- each attempt would sign another full increment on
-      // top, stacking reserve increments for as long as the read kept
-      // failing and requests kept retrying. The caller
-      // (_topUpAfterSpendAuthBestEffort) already treats topUpReserve as
-      // best-effort and just logs, so aborting here is safe -- the next
-      // natural trigger retries once the read can verify again.
-      throw buyerFault(
-        `Unable to verify buyer deposits before signing top-up: ${err instanceof Error ? err.message : err}`,
-        'chain-rpc-unavailable',
-        { cause: err },
+      debugWarn(
+        `[BuyerPayment] topUpReserve: unable to verify buyer deposits before signing top-up: ` +
+        `${err instanceof Error ? err.message : err}`,
       );
     }
 

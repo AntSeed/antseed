@@ -14,6 +14,7 @@ import classifierPlugin from '../../plugins/router-classifier/dist/index.js';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const perCall = process.argv.includes('--per-call');
 const invalidRoute = process.argv.includes('--invalid-route');
+const concurrent = process.argv.includes('--concurrent');
 const routingFee = perCall ? 5000n : 140n;
 const deployerKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const temporary = await mkdtemp(join(tmpdir(), 'antseed-routing-chain-'));
@@ -68,6 +69,7 @@ function provider(serviceId, content, inputTokens, outputTokens) {
       const requestBody = JSON.parse(new TextDecoder().decode(request.body));
       assert.equal(requestBody.model, serviceId);
       this.validateRequest?.(requestBody);
+      if (this.delayMs) await sleep(this.delayMs);
       return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' },
         body: new TextEncoder().encode(JSON.stringify({ id: request.requestId, object: 'chat.completion', model: serviceId,
           choices: [{ index: 0, message: { role: 'assistant', content: this.content }, finish_reason: 'stop' }],
@@ -209,7 +211,23 @@ try {
   assert.equal(conversation.routingSpentUsdc, String(routingFee * 4n));
   assert.equal(BigInt(conversation.spentUsdc), events.reduce((total, event) => total + BigInt(event.amountUsdc), 0n));
   assert.equal(conversation.requestCount, 5);
-  if (perCall) {
+  if (concurrent) {
+    fixtureProviders[0].delayMs = 100;
+    await Promise.all([
+      sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-a' }),
+      sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-b' }),
+    ]);
+    assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 7]);
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee * 6n));
+    await proxy._conversations.flush();
+    const concurrentConversations = JSON.parse(await readFile(join(buyerDir, 'conversations.json'), 'utf8')).conversations;
+    for (const sessionKey of ['concurrent-chat-a', 'concurrent-chat-b']) {
+      const record = concurrentConversations.find((entry) => entry.sessionKey === sessionKey);
+      assert.equal(record.routingSpentUsdc, String(routingFee));
+      assert.equal(record.requestCount, 1);
+    }
+  }
+  if (perCall && !concurrent) {
     fixtureProviders[0].failureStatus = 503;
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' }, 502);
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [5, 5]);
@@ -229,7 +247,7 @@ try {
     assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
     assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 5);
   }
-  const billableRoutingCalls = perCall ? 5 : 4;
+  const billableRoutingCalls = concurrent ? 6 : perCall ? 5 : 4;
   const settlementChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
   const channels = new ChannelsClient({ rpcUrl, contractAddress: addresses.channels, evmChainId: 31337 });
   await waitFor(async () => (await channels.getSession(routingChannel.sessionId)).deposit > 0n, 'on-chain routing reserve');

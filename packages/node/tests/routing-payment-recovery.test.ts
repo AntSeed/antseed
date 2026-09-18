@@ -147,7 +147,7 @@ describe('bounded routing payment recovery', () => {
   it.each([
     { failure: 'rpc', retry: true }, { failure: 'balance', retry: true },
     { failure: 'rpc', retry: false }, { failure: 'balance', retry: false },
-  ])('returns a paid classification despite top-up $failure failure (retry=$retry)', async ({ failure, retry }) => {
+  ])('returns a paid classification when reserve maintenance encounters $failure (retry=$retry)', async ({ failure, retry }) => {
     const state = await setup('per_call', 6000n);
     if (!retry) {
       await state.negotiator.handle402(state.responses.shift()!, state.peer, state.connection, state.request);
@@ -160,11 +160,14 @@ describe('bounded routing payment recovery', () => {
     const response = await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
     expect(response).toEqual(state.classification);
     expect(topUp).toHaveBeenCalledOnce();
-    expect(state.sendAuth.mock.calls.map(([payload]) => payload.cumulativeAmount)).toEqual(retry ? ['0', '5000'] : ['5000']);
-    expect(state.manager.getReserveCeiling(sellerPeerId)).toBe(6000n);
-    expect(state.manager.hasPendingReserveAuth(sellerPeerId)).toBe(false);
+    const expectedAmounts = retry ? ['0', '5000'] : ['5000'];
+    if (failure === 'rpc') expectedAmounts.push('5000');
+    expect(state.sendAuth.mock.calls.map(([payload]) => payload.cumulativeAmount)).toEqual(expectedAmounts);
+    expect(state.manager.getReserveCeiling(sellerPeerId)).toBe(failure === 'rpc' ? 12000n : 6000n);
+    expect(state.manager.hasPendingReserveAuth(sellerPeerId)).toBe(failure === 'rpc');
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(5000n);
     await state.negotiator.sendPostResponseAuth(state.peer, state.connection);
-    expect(state.sendAuth).toHaveBeenCalledTimes(retry ? 2 : 1);
+    expect(state.sendAuth).toHaveBeenCalledTimes(expectedAmounts.length);
     expect(topUp).toHaveBeenCalledOnce();
     state.finish();
   });

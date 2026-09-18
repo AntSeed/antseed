@@ -5,11 +5,15 @@ import type { RoutingServiceConfig } from '../config/types.js'
 type Messages = Parameters<NonNullable<RouteSelectionContext['invokeService']>>[0]
 type ResponseParser = NonNullable<Parameters<NonNullable<RouteSelectionContext['invokeService']>>[1]>
 type Operation = { atMs: number; input: string; result: Promise<SerializedHttpResponse> }
+type SellerQueue = { tail: Promise<void>; size: number }
+
+const MAX_OPERATIONS_PER_SELLER = 32
 
 export class RoutingServiceExecutor {
   private readonly operations = new Map<string, Operation>()
   private readonly requests: number[] = []
   private readonly active = new Set<AbortController>()
+  private readonly sellers = new Map<string, SellerQueue>()
 
   constructor(private readonly host: {
     node: Pick<AntseedNode, 'sendRequest'>
@@ -53,15 +57,53 @@ export class RoutingServiceExecutor {
     return result
   }
 
+  private async acquireSeller(peerId: string, signal: AbortSignal): Promise<() => void> {
+    signal.throwIfAborted()
+    const key = peerId.toLowerCase().replace(/^0x/, '')
+    const queue = this.sellers.get(key) ?? { tail: Promise.resolve(), size: 0 }
+    if (queue.size >= MAX_OPERATIONS_PER_SELLER) throw new Error('Routing service queue is full')
+    const previous = queue.tail
+    let resolve!: () => void
+    const current = new Promise<void>((done) => { resolve = done })
+    queue.tail = previous.then(() => current)
+    queue.size++
+    this.sellers.set(key, queue)
+    const release = () => {
+      resolve()
+      queue.size--
+      if (queue.size === 0) this.sellers.delete(key)
+    }
+    let onAbort: () => void = () => {}
+    try {
+      await new Promise<void>((done, reject) => {
+        onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        previous.then(done)
+      })
+      signal.throwIfAborted()
+      return release
+    } catch (error) {
+      release()
+      throw error
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
   private async execute(parentRequestId: string, context: RouteSelectionContext, input: string, config: RoutingServiceConfig, parseResponse?: ResponseParser): Promise<SerializedHttpResponse> {
     const requestId = randomUUID()
     const controller = new AbortController()
     this.active.add(controller)
     const signal = AbortSignal.any([context.signal, controller.signal])
+    const remainingMs = context.deadlineMs - Date.now()
+    const deadline = setTimeout(() => controller.abort(new Error('Routing service deadline exceeded')), Math.max(0, remainingMs))
     const startedAt = Date.now()
+    let release: (() => void) | undefined
     let statusCode: number | null = null
     let outcome = 'failed'
     try {
+      if (remainingMs <= 0) throw new Error('Routing service deadline exceeded')
+      release = await this.acquireSeller(config.peerId, signal)
       const peers = await this.host.getPeers()
       signal.throwIfAborted()
       const peer = peers.find((candidate) => candidate.peerId.toLowerCase() === config.peerId.toLowerCase().replace(/^0x/, ''))
@@ -116,6 +158,8 @@ export class RoutingServiceExecutor {
       outcome = 'succeeded'
       return response
     } finally {
+      clearTimeout(deadline)
+      release?.()
       this.active.delete(controller)
       await this.host.record({ purpose: 'routing', requestId, parentRequestId, routerKey: this.host.routerKey,
         peerId: config.peerId, serviceId: config.serviceId, startedAt, latencyMs: Date.now() - startedAt,

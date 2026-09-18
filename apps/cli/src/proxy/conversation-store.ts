@@ -136,6 +136,7 @@ export class ConversationStore {
   private readonly _file: string
   private readonly _byId = new Map<string, StoredConversation>()
   private _writeQueue: Promise<void> = Promise.resolve()
+  private _persistTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(dataDir: string) {
     this._dir = dataDir
@@ -178,8 +179,16 @@ export class ConversationStore {
     }
   }
 
-  /** Serialized atomic write; returns the queued write promise. */
-  private _persist(): Promise<void> {
+  private _persist(): void {
+    if (this._persistTimer) return
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null
+      void this._enqueueWrite()
+    }, 250)
+    this._persistTimer.unref()
+  }
+
+  private _enqueueWrite(): Promise<void> {
     this._writeQueue = this._writeQueue.then(async () => {
       const payload = JSON.stringify({ conversations: [...this._byId.values()] }, null, 2)
       await mkdir(this._dir, { recursive: true })
@@ -192,6 +201,11 @@ export class ConversationStore {
 
   /** Wait for pending writes (tests / shutdown). */
   flush(): Promise<void> {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer)
+      this._persistTimer = null
+      return this._enqueueWrite()
+    }
     return this._writeQueue
   }
 

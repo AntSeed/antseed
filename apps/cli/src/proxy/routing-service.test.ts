@@ -21,7 +21,7 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
   }
   const sent: any[] = []
   const records: Record<string, unknown>[] = []
-  const executor = new RoutingServiceExecutor({ routerKey: settings.routerKey,
+  const host: ConstructorParameters<typeof RoutingServiceExecutor>[0] = { routerKey: settings.routerKey,
     getConfig: () => config, getPeers: async () => [peer], record: async (event) => { records.push(event) },
     node: { sendRequest: async (...args: any[]) => {
       sent.push(args)
@@ -32,12 +32,152 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
       if (validateResponse && validateResponse(response) !== true) throw new Error('invalid classification')
       return response
     } },
-  })
+  }
+  const executor = new RoutingServiceExecutor(host)
   const controller = new AbortController()
   const context: RouteSelectionContext = { signal: controller.signal, deadlineMs: Date.now() + 10_000 }
   const messages = [{ role: 'user' as const, content: 'private example prompt' }]
-  return { executor, context, messages, sent, records, config, peer, controller }
+  return { executor, context, messages, sent, records, config, peer, controller, host }
 }
+
+function holdFirstCall(state: ReturnType<typeof setup>, fail = false) {
+  let entered!: () => void
+  let release!: () => void
+  let calls = 0
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const send = state.host.node.sendRequest
+  state.host.node.sendRequest = async (peer, request, options) => {
+    if (++calls === 1) {
+      entered()
+      await gate
+      if (fail) throw new Error('classifier failed')
+    }
+    return send(peer, request, options)
+  }
+  return { started, release, calls: () => calls }
+}
+
+test('different conversations queue for one seller and keep their own fixed-fee grants', async () => {
+  const state = setupPerCall()
+  const hold = holdFirstCall(state)
+  const parser = () => [{ serviceId: 'test-model' }]
+  const first = state.executor.invoke('chat-a', state.context, state.messages, parser)
+  await hold.started
+  const second = state.executor.invoke('chat-b', state.context, state.messages, parser)
+  const duplicate = state.executor.invoke('chat-b', state.context, state.messages, parser)
+  const third = state.executor.invoke('chat-c', state.context, state.messages, parser)
+  try {
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(hold.calls(), 1)
+  } finally {
+    hold.release()
+  }
+  const results = await Promise.all([first, second, duplicate, third])
+  assert.equal(results[1], results[2])
+  assert.equal(state.sent.length, 3)
+  assert.deepEqual(state.sent.map((call) => call[2].routingAuthorization.parentRequestId), ['chat-a', 'chat-b', 'chat-c'])
+  assert.ok(state.sent.every((call) => call[2].routingAuthorization.maxAdditionalAuthorizationUsdc === '5000'))
+  assert.equal(new Set(state.sent.map((call) => call[1].requestId)).size, 3)
+})
+
+test('a failed classifier releases its seller slot for the next conversation', async () => {
+  const state = setup()
+  const hold = holdFirstCall(state, true)
+  const first = assert.rejects(state.executor.invoke('chat-a', state.context, state.messages), /classifier failed/)
+  await hold.started
+  const second = state.executor.invoke('chat-b', state.context, state.messages)
+  hold.release()
+  await first
+  assert.equal((await second).statusCode, 200)
+})
+
+test('classifier calls for different sellers proceed independently', async () => {
+  const state = setup()
+  const alternative = { ...state.peer, peerId: 'b'.repeat(40) as PeerInfo['peerId'] }
+  state.host.getPeers = async () => [state.peer, alternative]
+  const hold = holdFirstCall(state)
+  const first = state.executor.invoke('chat-a', state.context, state.messages)
+  await hold.started
+  state.config.peerId = alternative.peerId
+  try {
+    assert.equal((await state.executor.invoke('chat-b', state.context, state.messages)).statusCode, 200)
+    assert.equal(state.sent[0][0].peerId, alternative.peerId)
+  } finally {
+    hold.release()
+    await first
+  }
+})
+
+for (const reason of ['cancel', 'deadline']) {
+  test(`a queued ${reason} sends nothing and cannot let later calls overtake the active grant`, async () => {
+    const state = setup()
+    const hold = holdFirstCall(state)
+    const first = state.executor.invoke('chat-a', state.context, state.messages)
+    await hold.started
+    const controller = new AbortController()
+    const context = { ...state.context, signal: controller.signal,
+      deadlineMs: reason === 'deadline' ? Date.now() + 20 : state.context.deadlineMs }
+    const rejected = assert.rejects(state.executor.invoke('chat-b', context, state.messages))
+    if (reason === 'cancel') controller.abort()
+    await rejected
+    const third = state.executor.invoke('chat-c', state.context, state.messages)
+    try {
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(hold.calls(), 1)
+    } finally {
+      hold.release()
+    }
+    await Promise.all([first, third])
+    assert.deepEqual(state.sent.map((call) => call[2].routingAuthorization.parentRequestId), ['chat-a', 'chat-c'])
+  })
+}
+
+test('aborting an active request retains its slot until SDK grant cleanup finishes', async () => {
+  const state = setup()
+  const hold = holdFirstCall(state)
+  const first = assert.rejects(state.executor.invoke('chat-a', state.context, state.messages))
+  await hold.started
+  state.controller.abort()
+  const second = state.executor.invoke('chat-b', { ...state.context, signal: new AbortController().signal }, state.messages)
+  try {
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(hold.calls(), 1)
+  } finally {
+    hold.release()
+  }
+  await first
+  assert.equal((await second).statusCode, 200)
+})
+
+test('shutdown cancels queued operations without sending them', async () => {
+  const state = setup()
+  const hold = holdFirstCall(state)
+  const first = assert.rejects(state.executor.invoke('chat-a', state.context, state.messages))
+  await hold.started
+  const second = assert.rejects(state.executor.invoke('chat-b', state.context, state.messages))
+  state.executor.cancel()
+  await second
+  assert.equal(hold.calls(), 1)
+  hold.release()
+  await first
+})
+
+test('seller queue is bounded and rejects overflow before contacting the seller', async () => {
+  const state = setup({ maxRequestsPerMinute: 100 })
+  const hold = holdFirstCall(state)
+  const first = state.executor.invoke('chat-0', state.context, state.messages)
+  await hold.started
+  const pending = Array.from({ length: 31 }, (_, index) => state.executor.invoke(`chat-${index + 1}`, state.context, state.messages))
+  try {
+    await assert.rejects(state.executor.invoke('overflow', state.context, state.messages), /queue is full/)
+    assert.equal(hold.calls(), 1)
+  } finally {
+    hold.release()
+  }
+  await Promise.all([first, ...pending])
+  assert.equal(state.sent.length, 32)
+})
 
 test('routing service uses ordinary metered SDK execution with a separate ID', async () => {
   const state = setup()

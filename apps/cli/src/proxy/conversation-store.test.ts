@@ -9,6 +9,57 @@ async function makeDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'antseed-conv-'))
 }
 
+test('spend bursts coalesce into a periodic write without postponing persistence forever', async (context) => {
+  const directory = await makeDir()
+  const store = new ConversationStore(directory)
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const internal = store as any
+  const enqueue = internal._enqueueWrite.bind(store)
+  let writes = 0
+  internal._enqueueWrite = () => { writes++; return enqueue() }
+  try {
+    const conversation = store.touch({ tool: 'test', sessionKey: 'debounced-spend' })
+    for (let index = 0; index < 20; index++) {
+      store.addSpend(conversation.id, { purpose: 'routing', amountUsdc: '5', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
+    }
+    assert.equal(store.get(conversation.id)?.spentUsdc, '100')
+    assert.equal(writes, 0)
+    context.mock.timers.tick(249)
+    store.addSpend(conversation.id, { amountUsdc: '10', inputTokens: '1', cachedInputTokens: '0', outputTokens: '2' })
+    context.mock.timers.tick(1)
+    await store.flush()
+    assert.equal(writes, 1)
+    const persisted = new ConversationStore(directory).get(conversation.id)!
+    assert.equal(persisted.spentUsdc, '110')
+    assert.equal(persisted.routingSpentUsdc, '100')
+    assert.equal(persisted.requestCount, 1)
+  } finally {
+    await store.flush()
+    context.mock.timers.reset()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('flush forces pending bookkeeping to disk and clears the delayed write', async (context) => {
+  const directory = await makeDir()
+  const store = new ConversationStore(directory)
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const conversation = store.touch({ tool: 'test', sessionKey: 'flush-pending' })
+    store.addSpend(conversation.id, { amountUsdc: '25', inputTokens: '1', cachedInputTokens: '0', outputTokens: '2' })
+    await store.flush()
+    assert.equal((store as any)._persistTimer, null)
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.spentUsdc, '25')
+    context.mock.timers.tick(250)
+    await store.flush()
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.requestCount, 1)
+  } finally {
+    await store.flush()
+    context.mock.timers.reset()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('routing-only spend persists without another request and old conversations default to zero routing spend', async () => {
   const directory = await makeDir()
   try {

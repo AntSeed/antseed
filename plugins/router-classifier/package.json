@@ -2,7 +2,7 @@
   "name": "@antseed/router-classifier",
   "version": "0.1.0",
   "private": true,
-  "description": "Vendor-neutral reference router for an AntSeed classifier service",
+  "description": "Private model router using an authorized AntSeed classifier service",
   "type": "module",
   "files": ["dist", "README.md"],
   "main": "dist/index.js",

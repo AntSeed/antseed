@@ -57,8 +57,8 @@ const selectRoute: NonNullable<Router['selectRoute']> = async (request, _peers, 
 
 const plugin: AntseedRouterPlugin = {
   name: 'classifier',
-  displayName: 'Reference Classifier Router',
-  description: 'Vendor-neutral reference integration using a buyer-authorized AntSeed classifier service',
+  displayName: 'Classifier Router',
+  description: 'Private model routing using a buyer-authorized AntSeed classifier service',
   version: '0.1.0',
   type: 'router',
   configSchema: localPlugin.configSchema,

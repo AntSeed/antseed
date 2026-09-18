@@ -3,7 +3,41 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { assertPinnedPluginVersion, selectPluginExport } from './loader.js'
+import { assertPinnedPluginVersion, loadRouterPlugin, selectPluginExport } from './loader.js'
+import { ensurePluginsUpToDate } from './drift.js'
+
+test('private classifier loads from a local installation and is never auto-updated from npm', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'antseed-private-router-'))
+  try {
+    const pluginDir = join(directory, 'node_modules', '@antseed', 'router-classifier')
+    mkdirSync(join(pluginDir, 'dist'), { recursive: true })
+    writeFileSync(join(pluginDir, 'package.json'), JSON.stringify({ name: '@antseed/router-classifier', type: 'module', private: true }))
+    writeFileSync(join(pluginDir, 'dist', 'index.js'), 'export default {name:"classifier",type:"router",createRouter:async()=>({})}')
+    const plugin = await loadRouterPlugin('classifier', { pluginsDir: directory })
+    assert.equal(plugin.name, 'classifier')
+    assert.equal(await loadRouterPlugin('@antseed/router-classifier', { pluginsDir: directory }), plugin)
+    let refreshes = 0
+    await ensurePluginsUpToDate(['@antseed/router-classifier'], { pluginsDir: directory, env: {}, log: () => {},
+      refresh: async () => { refreshes++; throw new Error('must not fetch a private plugin') } })
+    assert.equal(refreshes, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('missing private classifier reports local setup instructions, not npm installation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'antseed-missing-private-router-'))
+  try {
+    await assert.rejects(loadRouterPlugin('classifier', { pluginsDir: directory }), (error: Error) => {
+      assert.match(error.message, /Private plugin.*not installed or built/)
+      assert.match(error.message, /plugins\/router-classifier\/README.md/)
+      assert.doesNotMatch(error.message, /npm install/)
+      return true
+    })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 const TEE_PACKAGE = '@antseed/antseed-verifier'
 

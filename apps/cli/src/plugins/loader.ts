@@ -3,7 +3,7 @@ import { builtinModules } from 'node:module'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
-import { TRUSTED_PLUGINS } from './registry.js'
+import { PRIVATE_ROUTER_PLUGINS, TRUSTED_PLUGINS, resolvePluginPackage } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, PluginConfigKey } from '@antseed/node'
 
 const NODE_BUILTINS = new Set([
@@ -20,8 +20,7 @@ function isTruthyEnv(value: string | undefined): boolean {
 function resolvePackageName(nameOrPackage: string): string {
   const legacy = LEGACY_PACKAGE_MAP[nameOrPackage]
   if (legacy) return legacy
-  const trusted = TRUSTED_PLUGINS.find(p => p.name === nameOrPackage)
-  return trusted?.package ?? nameOrPackage
+  return resolvePluginPackage(nameOrPackage)
 }
 
 function pinnedVersion(pkgName: string): string | undefined {
@@ -34,10 +33,10 @@ async function loadPlugin<T>(
   nameOrPackage: string,
   kind: PluginKind,
   methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin | keyof AntseedVerifierPlugin | keyof Prover,
-  opts?: { install?: boolean }
+  opts?: { install?: boolean; pluginsDir?: string }
 ): Promise<T> {
   const pkgName = resolvePackageName(nameOrPackage)
-  const pluginsDir = getPluginsDir()
+  const pluginsDir = opts?.pluginsDir ?? getPluginsDir()
   const pluginPath = join(pluginsDir, 'node_modules', pkgName, 'dist', 'index.js')
   const resolved = path.resolve(pluginPath)
   if (!resolved.startsWith(path.resolve(pluginsDir))) {
@@ -63,6 +62,10 @@ async function loadPlugin<T>(
     mod = await import(pathToFileURL(resolved).href) as Record<string, unknown>
   } catch (err) {
     if (isModuleNotFound(err) && !existsSync(resolved)) {
+      if (PRIVATE_ROUTER_PLUGINS.some((plugin) => plugin.package === pkgName)) {
+        throw new Error(`Private plugin "${pkgName}" is not installed or built. Build it from the AntSeed source and link it into ${join(pluginsDir, 'node_modules', pkgName)}. `
+          + 'See plugins/router-classifier/README.md for setup. This plugin is not published to npm.')
+      }
       throw new Error(
         `Plugin "${pkgName}" not found. Install it first, then retry your command.\n` +
         `Run: cd ${pluginsDir} && npm install --ignore-scripts ${pkgName}`
@@ -184,8 +187,8 @@ export async function loadProviderPlugin(nameOrPackage: string): Promise<Antseed
   return loadPlugin<AntseedProviderPlugin>(nameOrPackage, 'provider', 'createProvider')
 }
 
-export async function loadRouterPlugin(nameOrPackage: string): Promise<AntseedRouterPlugin> {
-  return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter')
+export async function loadRouterPlugin(nameOrPackage: string, opts?: { pluginsDir?: string }): Promise<AntseedRouterPlugin> {
+  return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter', opts)
 }
 
 export async function loadVerifierPlugin(
