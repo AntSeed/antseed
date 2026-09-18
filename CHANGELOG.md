@@ -12,6 +12,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop: Claude Desktop 2.2553 and later relabel the connected-app model picker from Anthropic's published model catalog, so "Antseed Auto" and the curated network models showed as the Claude models whose ids they borrow ("Fable 5", "Sonnet 4.6"). The Antseed profile now turns that catalog off so the gateway's own labels are shown. Reconnect Claude Desktop and relaunch it to apply.
 - Desktop: a system proxy that fails to come up (slow cold start at launch, unstable network during a model-route change) no longer disconnects every connected app and strips the Antseed provider from their configs. Config-patched apps (OpenCode, Claude Desktop, and similar) point at the buyer proxy, not at that process, so they now keep their configs and stay connected; only the proxy-routed rows drop until reconnected. Turning the buyer off (Home power button) or restarting it from Settings no longer disconnects apps either: they stay connected and resume when the buyer returns. App configs are removed only when the user disconnects the app itself, or on quit.
 - Desktop: bundle the pinned TEE verifier and its runtime dependencies so automatic seller verification and TEE badges work without a separate npm install. Local development runs can prepare the published verifier automatically.
 - Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
