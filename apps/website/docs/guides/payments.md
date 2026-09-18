@@ -7,7 +7,7 @@ hide_title: true
 
 # Payments
 
-AntSeed uses USDC on Base Mainnet for all payments. Buyers pre-deposit USDC, providers earn per request, and everything settles on-chain automatically.
+Antseed uses USDC on Base Mainnet for all payments. Buyers pre-deposit USDC, providers earn per request, and everything settles on-chain automatically.
 
 ## For Buyers
 

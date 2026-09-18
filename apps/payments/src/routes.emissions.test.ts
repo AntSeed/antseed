@@ -34,6 +34,32 @@ describe('GET /api/config', () => {
     const body = res.json();
     expect(body).toHaveProperty('emissionsContractAddress');
     expect(body.emissionsContractAddress).toBe('0x' + '3'.repeat(40));
+    expect(body.legacyEmissionsContractAddress).toBe('0x' + '3'.repeat(40));
+    expect(body.usageAccountingAddress).toBeNull();
+    expect(body.usageRewardsAddress).toBeNull();
+    await app.close();
+  });
+
+  it('exposes separate legacy and recognized-usage claim contracts after activation', async () => {
+    const app = Fastify();
+    registerRoutes(app, mockCtx({
+      chainConfig: {
+        chainId: 'base-mainnet',
+        evmChainId: 8453,
+        emissionsContractAddress: '0x' + '3'.repeat(40),
+        legacyEmissionsContractAddress: '0x' + '4'.repeat(40),
+        usageAccountingAddress: '0x' + '5'.repeat(40),
+        usageRewardsAddress: '0x' + '6'.repeat(40),
+        recognizedUsage: { status: 'active', effectiveEpoch: 22 },
+      } as any,
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/config' });
+    expect(res.json()).toMatchObject({
+      legacyEmissionsContractAddress: '0x' + '4'.repeat(40),
+      usageAccountingAddress: '0x' + '5'.repeat(40),
+      usageRewardsAddress: '0x' + '6'.repeat(40),
+      recognizedUsageEffectiveEpoch: 22,
+    });
     await app.close();
   });
 
@@ -174,7 +200,7 @@ describe('recognized-usage contract selection', () => {
     await app.close();
   });
 
-  it.each(['recognized', 'legacy'] as const)('reads V2 rewards and V1 migration history with %s configuration', async (mode) => {
+  it.each(['recognized', 'legacy'] as const)('reads legacy V2 rewards with %s configuration', async (mode) => {
     const { EmissionsClient } = await import('@antseed/node');
     const shares = { sellerSharePct: 50, buyerSharePct: 30, reserveSharePct: 10, teamSharePct: 10, maxSellerSharePct: 100, maxBuyerSharePct: 100, initialized: true };
     const v1Reads: string[] = [];
@@ -209,8 +235,8 @@ describe('recognized-usage contract selection', () => {
     const app = Fastify(); registerRoutes(app, mockCtx({ chainConfig: selected }));
     const response = await app.inject('/api/emissions/pending?address=0x' + '8'.repeat(40) + '&epochs=3');
     expect(response.statusCode).toBe(200);
-    expect(response.json().rows[0]).toMatchObject({ epoch: 21, seller: { amount: '10', userPoints: '200' }, buyer: { amount: '20', userPoints: '200' } });
-    expect(v1Reads).toContain('buyerEpochClaimed');
+    expect(response.json().rows[0]).toMatchObject({ epoch: 21, protocol: 'legacy', seller: { amount: '10' }, buyer: { amount: '20' } });
+    expect(v1Reads).toEqual([]);
     expect((await app.inject('/api/emissions/shares')).json()).toEqual(shares);
     await app.close();
   });

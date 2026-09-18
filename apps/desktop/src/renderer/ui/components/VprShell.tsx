@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import type { BadgeTone } from '../../core/state';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
+import { useTeeBackgroundVerification } from '../hooks/useTeeVerification';
 import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCredits } from '../../core/format';
 import { shouldNotifyAppsOnboarding } from '../../modules/app/apps-onboarding';
@@ -57,6 +58,7 @@ function networkStatusClassName(networkHealth: string): string {
 }
 
 export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
+  useTeeBackgroundVerification();
   const snap = useUiSelector((state) => ({
     headlineBalanceUsdc: selectHeadlineBalanceUsdc(state),
     connectBadgeLabel: state.connectBadge.label,
@@ -93,7 +95,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
           clicks working; interactive elements overlapping it opt out with
           -webkit-app-region: no-drag. */}
       <div className={styles.dragStrip} aria-hidden="true" />
-      <nav className={styles.sidebar} aria-label="VPR navigation">
+      <nav className={styles.sidebar} aria-label="AI VPN navigation">
         <div className={styles.navGroup}>
           {mainNavEntries.map(({ view, nav }) => {
             const active = activeView === view;

@@ -8,10 +8,9 @@
 import {
   buildNetworkServiceOffers,
   compareEffectiveModelReputation,
-  computeOnChainReputationScore,
   effectiveModelReputationScore,
   modelRouteTotalPrice,
-  normalizedModelReputationScore as normalizeModelReputationScore,
+  normalizedModelReputationScore,
   rankModelRoutes,
   selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
@@ -27,6 +26,7 @@ export { effectiveModelReputationScore } from '@antseed/node'
 export type NetworkModelType = 'text' | 'image'
 
 export type NetworkModelPeerOffer = {
+  advertisedVerifierIds?: string[]
   peerId: string
   displayName?: string
   provider: string
@@ -38,7 +38,6 @@ export type NetworkModelPeerOffer = {
   categories?: string[]
   reputationScore: number | null
   effectiveReputationScore: number | null
-  onChainTrustScore: number | null
   onChainReputationScore: number | null
   inputUsdPerMillion?: number
   outputUsdPerMillion?: number
@@ -101,22 +100,10 @@ function normalizedModelAlias(serviceId: string): string {
   return value.replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
-function onChainReputationScore(peer: PeerInfo | undefined, nowMs: number): number | null {
-  if (!peer) return null
-  const score = peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs)
+/** Buyer trust score as set by the node (0-100), or `null` when unscored. */
+function onChainReputationScore(peer: PeerInfo | undefined): number | null {
+  const score = peer?.onChainReputationScore
   return typeof score === 'number' && Number.isFinite(score) ? score : null
-}
-
-function legacyPeerReputationScore(peer: PeerInfo, nowMs: number): number | null {
-  const score = peer.onChainTrustScore ?? peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs)
-  return typeof score === 'number' && Number.isFinite(score) ? score : null
-}
-
-export function normalizedModelReputationScore(peer: PeerInfo, nowMs: number = Date.now()): number | null {
-  return normalizeModelReputationScore({
-    ...peer,
-    onChainReputationScore: peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs),
-  })
 }
 
 function countReported<T>(values: Array<T | undefined>): number {
@@ -211,12 +198,11 @@ export function buildNetworkModels(
 ): NetworkModelEntry[] {
   const created = Math.floor(nowMs / 1000)
   const byModelKey = new Map<string, NetworkModelEntry>()
-  const legacyReputationByPeerId = new Map<string, number | null>()
+  // Trust score when the node scored the peer, else the seller-reported score.
   const normalizedReputationByPeerId = new Map<string, number | null>()
   const peerById = new Map<string, PeerInfo>(peers.map((peer) => [peer.peerId, peer]))
   for (const peer of peers) {
-    legacyReputationByPeerId.set(peer.peerId, legacyPeerReputationScore(peer, nowMs))
-    normalizedReputationByPeerId.set(peer.peerId, normalizedModelReputationScore(peer, nowMs))
+    normalizedReputationByPeerId.set(peer.peerId, normalizedModelReputationScore(peer))
   }
 
   const allOffers = buildNetworkServiceOffers(peers)
@@ -268,6 +254,7 @@ export function buildNetworkModels(
     if (offer.type === 'text') entry.type = 'text'
     const peer = peerById.get(offer.peerId)
     entry.peers.push({
+      advertisedVerifierIds: offer.advertisedVerifierIds,
       peerId: offer.peerId,
       ...(offer.displayName ? { displayName: offer.displayName } : {}),
       provider: offer.provider,
@@ -277,10 +264,9 @@ export function buildNetworkModels(
       type: offer.type,
       ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
       ...(offer.categories ? { categories: offer.categories } : {}),
-      reputationScore: legacyReputationByPeerId.get(offer.peerId) ?? null,
+      reputationScore: normalizedReputationByPeerId.get(offer.peerId) ?? null,
       effectiveReputationScore: normalizedReputationByPeerId.get(offer.peerId) ?? null,
-      onChainTrustScore: peer?.onChainTrustScore ?? null,
-      onChainReputationScore: onChainReputationScore(peer, nowMs),
+      onChainReputationScore: onChainReputationScore(peer),
       ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
       ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
       ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
@@ -294,10 +280,9 @@ export function buildNetworkModels(
     entry.aliases = [...new Set(entry.aliases.filter(Boolean))].sort((a, b) => a.localeCompare(b))
     const modelHasCachedInputPricing = entry.peers.some((peer) => peer.cachedInputUsdPerMillion !== undefined)
     for (const peer of entry.peers) {
-      const sourcePeer = peerById.get(peer.peerId)
       peer.effectiveReputationScore = modelHasCachedInputPricing
         ? effectiveModelReputationScore(
-            sourcePeer ? normalizedModelReputationScore(sourcePeer, nowMs) : peer.onChainReputationScore,
+            normalizedReputationByPeerId.get(peer.peerId) ?? null,
             peer.cachedInputUsdPerMillion !== undefined,
             true,
             modelRouteTotalPrice(peer) === 0,

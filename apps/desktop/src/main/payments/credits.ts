@@ -87,6 +87,10 @@ let cachedCryptoConfig: {
   usdcAddress: string;
   chainId: number;
   emissionsAddress?: string;
+  legacyEmissionsAddress?: string;
+  usageAccountingAddress?: string;
+  usageRewardsAddress?: string;
+  recognizedUsageEffectiveEpoch?: number;
   antsTokenAddress?: string;
   depositRelayAddress?: string;
 } | null = null;
@@ -120,6 +124,18 @@ export async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfi
     usdcAddress: cc.usdcContractAddress,
     chainId: cc.evmChainId,
     ...(cc.emissionsContractAddress ? { emissionsAddress: cc.emissionsContractAddress } : {}),
+    ...(cc.recognizedUsage?.status === 'active' && cc.legacyEmissionsContractAddress
+      ? { legacyEmissionsAddress: cc.legacyEmissionsContractAddress }
+      : {}),
+    ...(cc.recognizedUsage?.status === 'active' && cc.usageAccountingAddress
+      ? { usageAccountingAddress: cc.usageAccountingAddress }
+      : {}),
+    ...(cc.recognizedUsage?.status === 'active' && cc.usageRewardsAddress
+      ? { usageRewardsAddress: cc.usageRewardsAddress }
+      : {}),
+    ...(cc.recognizedUsage?.status === 'active'
+      ? { recognizedUsageEffectiveEpoch: cc.recognizedUsage.effectiveEpoch }
+      : {}),
     ...(cc.antsTokenAddress ? { antsTokenAddress: cc.antsTokenAddress } : {}),
     ...(cc.depositRelayAddress ? { depositRelayAddress: cc.depositRelayAddress } : {}),
   };

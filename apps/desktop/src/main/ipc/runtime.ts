@@ -9,6 +9,9 @@ import type { LogEvent } from '../runtime/log-parser.js';
 import type { ProcessManager, RuntimeProcessState } from '../runtime/process-manager.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { isCompatibleSharedBuyer, refreshSharedBuyerAttachment } from '../runtime/shared-buyer.js';
+import { resolveConnectDataDir } from '../runtime/process-manager.js';
+import { requestTeeSnapshot } from '../runtime/tee-verification.js';
+import type { DesktopTeeStatus } from '@antseed/node/tee-status';
 
 /** Shape every dashboard-style handler answers with. */
 export type ApiResult = {
@@ -105,6 +108,25 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
     processManager,
     requestBuyerPeerRefresh,
   } = deps;
+
+  let lastTeeError: string | undefined;
+  const teeStatus = async (peerId?: string): Promise<DesktopTeeStatus> => {
+    try {
+      const snapshot = await requestTeeSnapshot(resolveConnectDataDir(), await resolveBuyerProxyPort(), peerId);
+      lastTeeError = undefined;
+      return { snapshot };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Verification unavailable';
+      if (message !== lastTeeError) appendLog('connect', 'system', message);
+      lastTeeError = message;
+      return { snapshot: null, error: message };
+    }
+  };
+  ipcMain.handle('tee:status', () => teeStatus());
+  ipcMain.handle('tee:check', (_event, peerId: string) => {
+    if (typeof peerId !== 'string' || !/^(?:0x)?[a-f0-9]{40}$/i.test(peerId)) throw new Error('Invalid seller peer ID');
+    return teeStatus(peerId);
+  });
 
   ipcMain.handle('runtime:get-state', async () => {
     if (isMultiInstanceDevelopment() && processManager.isAttached('connect')) {

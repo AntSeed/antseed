@@ -75,7 +75,7 @@ function AllVersionsModal({onClose}: {onClose: () => void}) {
         onClick={e => e.stopPropagation()}
       >
         <div className="vprVersionsHead">
-          <span className="vprVersionsTitle">Download AntSeed VPR</span>
+          <span className="vprVersionsTitle">Download Antseed AI VPN</span>
           <button className="vprVersionsClose" onClick={onClose} aria-label="Close">
             ×
           </button>

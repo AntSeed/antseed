@@ -508,6 +508,12 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
+  getTeeStatus(): Promise<unknown> {
+    return ipcRenderer.invoke('tee:status');
+  },
+  checkSellerTee(peerId: string): Promise<unknown> {
+    return ipcRenderer.invoke('tee:check', peerId);
+  },
   getTelemetryStatus(): Promise<TelemetryStatus> {
     return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
   },
@@ -560,8 +566,6 @@ const api = {
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
-  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
-  paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetBuyerSpendHistory: () => ipcRenderer.invoke('payments:get-buyer-spend-history'),
