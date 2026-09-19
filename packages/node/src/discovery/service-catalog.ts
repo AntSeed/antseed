@@ -1,19 +1,24 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { parseVerifierCapabilities } from './verifier-capabilities.js';
+import { perCallPriceMicroUsdc, type UnitBillingModelV1 } from '@antseed/protocol/billing';
+import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from '@antseed/protocol/service-api';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses'
   | 'openai-images'
-  | 'typesafe-systemone';
+  | 'typesafe-systemone'
+  | 'antseed-routing';
 
 export type CatalogServiceCapabilities = {
+  routing?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
   inputs?: string[];
   outputs?: string[];
   reasoning?: boolean;
+  reasoningEfforts?: import('@antseed/protocol').ReasoningEffort[];
   toolUse?: boolean;
   structuredOutput?: boolean;
   supportedParameters?: string[];
@@ -28,6 +33,7 @@ export type NetworkServiceCatalogPeer = {
   reputationScore?: number;
   onChainReputationScore?: number | null;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerServiceRouting?: Record<string, { services: Record<string, import('@antseed/protocol').RoutingServiceMetadataV1> }>;
   providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
   providerServiceUnitBillingModels?: Record<string, {
     services: Record<string, Partial<Record<string, {
@@ -58,9 +64,14 @@ export type NetworkServiceCatalogPeer = {
 };
 
 /** `decision`: System One models return typed answers, not text or images. */
-export type NetworkServiceOfferType = 'text' | 'image' | 'decision';
+export type NetworkServiceOfferType = 'text' | 'image' | 'decision' | 'routing';
+
+export type CatalogServiceBilling = { kind: 'per_call'; amountMicroUsdc: string };
 
 export type NetworkServiceOffer = {
+  billing?: CatalogServiceBilling;
+  billingByProtocol?: Partial<Record<string, CatalogServiceBilling>>;
+  routing?: import('@antseed/protocol').RoutingServiceMetadataV1;
   advertisedVerifierIds?: string[];
   serviceId: string;
   provider: string;
@@ -85,6 +96,7 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-responses',
   'openai-images',
   'typesafe-systemone',
+  'antseed-routing',
 ]);
 
 export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
@@ -100,6 +112,7 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
 }
 
 export function resolveServiceProtocol(protocols: string[], provider: string): CatalogServiceProtocol | null {
+  if (protocols.includes('antseed-routing')) return 'antseed-routing';
   if (protocols.includes('openai-images')) return 'openai-images';
   const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol)) as CatalogServiceProtocol | undefined;
   return announced ?? inferServiceProtocol(provider);
@@ -176,13 +189,26 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type: NetworkServiceOfferType = protocol === 'typesafe-systemone'
+        const type: NetworkServiceOfferType = protocol === 'antseed-routing'
+          ? 'routing'
+          : protocol === 'typesafe-systemone'
           ? 'decision'
           : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
             ? 'image'
             : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
+        const unitModels = peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId];
+        const billingByProtocol: Partial<Record<string, CatalogServiceBilling>> = {};
+        for (const billingProtocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
+          const perCallAmount = perCallPriceMicroUsdc(unitModels?.[billingProtocol] as UnitBillingModelV1 | undefined);
+          if (perCallAmount !== null) {
+            billingByProtocol[billingProtocol] = { kind: 'per_call', amountMicroUsdc: perCallAmount.toString() };
+          }
+        }
+        const billing = protocol ? billingByProtocol[protocol] : undefined;
         offers.push({
+          ...(billing ? { billing } : {}),
+          ...(Object.keys(billingByProtocol).length > 0 ? { billingByProtocol } : {}),
           advertisedVerifierIds: parseVerifierCapabilities(peer.capabilities).supported,
           serviceId,
           provider,
@@ -190,6 +216,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           protocol,
           type,
           ...(capabilities ? { capabilities } : {}),
+          ...(peer.providerServiceRouting?.[provider]?.services[serviceId] ? { routing: peer.providerServiceRouting[provider]!.services[serviceId] } : {}),
           ...(categories?.length ? { categories } : {}),
           peerId: peer.peerId,
           ...(peer.displayName ? { displayName: peer.displayName } : {}),
@@ -206,6 +233,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
 }
 
 function comparableOfferPrice(offer: NetworkServiceOffer): number {
+  if (offer.billing?.kind === 'per_call') return Number.POSITIVE_INFINITY;
   if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
   if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
     return Number.POSITIVE_INFINITY;

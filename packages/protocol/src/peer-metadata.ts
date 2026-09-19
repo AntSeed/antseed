@@ -1,4 +1,5 @@
 import type { PeerId } from './peer-id.js';
+import { REASONING_EFFORTS, type ReasoningEffort } from './routing.js';
 import type { PeerOffering } from './capability.js';
 import type { ServiceUnitBillingModelsV1 } from './billing.js';
 import {
@@ -6,11 +7,13 @@ import {
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 12;
+export const METADATA_VERSION = 14;
+export const SERVICE_ROUTING_METADATA_VERSION = 14;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+export const SERVICE_ROUTING_CAPABILITY_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -36,6 +39,7 @@ export type ServiceCapabilityModality = (typeof SERVICE_CAPABILITY_MODALITIES)[n
  * optional: absent means unknown, so buyers fall back to their own defaults.
  */
 export interface ServiceCapabilities {
+  routing?: boolean;
   /** Total context window in tokens. */
   contextWindow?: number;
   /** Maximum output tokens per response. */
@@ -46,6 +50,7 @@ export interface ServiceCapabilities {
   outputs?: ServiceCapabilityModality[];
   /** Supports extended thinking / reasoning effort. */
   reasoning?: boolean;
+  reasoningEfforts?: ReasoningEffort[];
   /** Supports tool use / function calling. */
   toolUse?: boolean;
   /** Supports structured output / JSON schema responses. */
@@ -73,6 +78,16 @@ const SERVICE_CAPABILITY_MODALITY_SET = new Set<string>(SERVICE_CAPABILITY_MODAL
  */
 export function validateServiceCapabilityFields(caps: ServiceCapabilities): string[] {
   const errors: string[] = [];
+  if (caps.reasoningEfforts !== undefined) {
+    if (!Array.isArray(caps.reasoningEfforts) || caps.reasoningEfforts.length === 0
+      || caps.reasoningEfforts.length > REASONING_EFFORTS.length
+      || caps.reasoningEfforts.some((effort) => !REASONING_EFFORTS.includes(effort))
+      || new Set(caps.reasoningEfforts).size !== caps.reasoningEfforts.length) {
+      errors.push('reasoningEfforts must be a nonempty list of unique supported effort labels');
+    } else if (caps.reasoning === false && caps.reasoningEfforts.some((effort) => effort !== 'none')) {
+      errors.push('reasoningEfforts cannot enable reasoning when reasoning is false');
+    }
+  }
   for (const key of ["contextWindow", "maxOutputTokens"] as const) {
     const value = caps[key];
     if (value === undefined) continue;
@@ -98,7 +113,7 @@ export function validateServiceCapabilityFields(caps: ServiceCapabilities): stri
       seen.add(modality);
     }
   }
-  for (const key of ["reasoning", "toolUse", "structuredOutput"] as const) {
+  for (const key of ["reasoning", "toolUse", "structuredOutput", "routing"] as const) {
     const value = caps[key];
     if (value !== undefined && typeof value !== "boolean") {
       errors.push(`${key} must be a boolean`);
@@ -136,6 +151,7 @@ export interface ProviderAnnouncement {
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
   serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
   serviceCapabilities?: Record<string, ServiceCapabilities>;
+  serviceRouting?: Record<string, import('./routing.js').RoutingServiceMetadataV1>;
   maxConcurrency: number;
   currentLoad: number;
 }

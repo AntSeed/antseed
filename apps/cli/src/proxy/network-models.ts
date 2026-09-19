@@ -23,7 +23,7 @@ import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/mode
 
 export { effectiveModelReputationScore } from '@antseed/node'
 
-export type NetworkModelType = 'text' | 'image' | 'decision'
+export type NetworkModelType = 'text' | 'image' | 'decision' | 'routing'
 
 export type NetworkModelPeerOffer = {
   advertisedVerifierIds?: string[]
@@ -206,7 +206,7 @@ export function buildNetworkModels(
     normalizedReputationByPeerId.set(peer.peerId, normalizedModelReputationScore(peer))
   }
 
-  const allOffers = buildNetworkServiceOffers(peers)
+  const allOffers = buildNetworkServiceOffers(peers).filter((offer) => offer.type !== 'routing' && offer.capabilities?.routing !== true)
   const offersByPeerModel = new Map<string, NetworkServiceOffer[]>()
   for (const offer of allOffers) {
     const key = canonicalModelKey(offer.serviceId)

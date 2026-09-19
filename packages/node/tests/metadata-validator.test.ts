@@ -16,6 +16,7 @@ import {
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { createPerCallBillingModel } from '../src/types/billing.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -42,6 +43,41 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 
 
 describe('validateMetadata', () => {
+  it.each([true, false, undefined])('accepts v13 routing %s', (routing) => {
+    const metadata = validMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing } };
+    expect(validateMetadata(metadata)).toEqual([]);
+  });
+
+  it.each([10, 11, 12])('rejects routing capabilities on metadata v%s', (version) => {
+    for (const routing of [true, false]) {
+      const metadata = validMetadata({ version });
+      metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing } };
+      expect(validateMetadata(metadata)).toContainEqual({
+        field: 'providers[0].serviceCapabilities.claude-3-opus.routing',
+        message: 'Service routing capability requires metadata version 13',
+      });
+    }
+  });
+
+  it.each([null, 0, 'true'].map((routing) => ({ routing })))('rejects malformed routing $routing', ({ routing }) => {
+    const metadata = validMetadata({ version: 13 });
+    metadata.providers[0]!.serviceCapabilities = { 'claude-3-opus': { routing: routing as unknown as boolean } };
+    expect(validateMetadata(metadata)).toContainEqual({
+      field: 'providers[0].serviceCapabilities.claude-3-opus',
+      message: 'routing must be a boolean',
+    });
+  });
+
+  it('accepts advertised per-call chat pricing', () => {
+    const metadata = validMetadata();
+    metadata.providers[0]!.defaultPricing = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+    metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': ['openai-chat-completions'] };
+    metadata.providers[0]!.serviceUnitBillingModels = {
+      'claude-3-opus': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+    };
+    expect(validateMetadata(metadata)).toEqual([]);
+  });
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
     expect(errors).toEqual([]);
@@ -305,7 +341,7 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects non-image service unit billing models for now', () => {
+  it('rejects image-unit billing on a chat protocol', () => {
     const errors = validateMetadata(validMetadata({
       version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
@@ -339,7 +375,7 @@ describe('validateMetadata', () => {
       expect.arrayContaining([
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images only'),
+          message: expect.stringContaining('openai-images or per-call openai-chat-completions'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',

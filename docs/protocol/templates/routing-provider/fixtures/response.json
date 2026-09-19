@@ -1,0 +1,1 @@
+{ "version": 1, "recommendations": [{ "serviceId": "model-a", "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inference": { "reasoningEffort": "high" } }, { "serviceId": "model-b" }] }

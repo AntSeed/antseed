@@ -69,6 +69,7 @@ export interface PeerInfo {
   /** Provider/service/protocol unit billing models announced by seller. */
   providerServiceUnitBillingModels?: Record<string, ProviderServiceUnitBillingModelMatrixEntry>;
   /** Provider/service model capability hints announced by seller. */
+  providerServiceRouting?: Record<string, { services: Record<string, import("@antseed/protocol").RoutingServiceMetadataV1> }>;
   providerServiceCapabilities?: Record<string, ProviderServiceCapabilityMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;

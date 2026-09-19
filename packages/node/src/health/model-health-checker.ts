@@ -317,9 +317,7 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  // Image generations cost real money per probe; everything else has a
-  // near-free minimal request shape.
-  return protocol !== 'openai-images';
+  return protocol !== 'openai-images' && protocol !== 'antseed-routing';
 }
 
 /**
@@ -332,6 +330,7 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
   let path: string;
   let body: Record<string, unknown>;
   switch (protocol) {
+    case 'antseed-routing': throw new Error('Routing services are not probed with billable requests');
     case 'anthropic-messages':
       path = '/v1/messages';
       body = { model: service, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };

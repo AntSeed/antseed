@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "preferencesSchema": {
+    "type": "object", "additionalProperties": false,
+    "properties": { "position": { "type": "string", "enum": ["first", "last"], "default": "first" } }
+  },
+  "preferencesSchemaHash": "0x9dcc8244fa16afd90e6a8a79d0cb21065053edbbdd31fb97f383880f544ce276"
+}

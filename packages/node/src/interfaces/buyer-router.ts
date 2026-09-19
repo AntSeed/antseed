@@ -2,6 +2,8 @@ import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest } from '../types/http.js';
 
 export type RouteCandidate = {
+  inference?: import('@antseed/protocol').RoutingInference;
+  reasoningEfforts?: import('@antseed/protocol').ReasoningEffort[];
   peer: PeerInfo;
   peerId: string;
   serviceId: string;
@@ -13,6 +15,8 @@ export type RouteCandidate = {
   outputUsdPerMillion: number | null;
   minImageUsdPerImage: number | null;
 };
+
+export type RouteRecommendation = import('@antseed/protocol').RoutingRecommendation;
 
 /**
  * Interface that buyer nodes implement for peer selection.

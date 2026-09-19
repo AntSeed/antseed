@@ -1,0 +1,20 @@
+{
+  "version": 1, "service": "selector", "preferencesSchemaHash": "0x9dcc8244fa16afd90e6a8a79d0cb21065053edbbdd31fb97f383880f544ce276",
+  "request": { "path": "/v1/chat/completions", "body": { "messages": [] } },
+  "candidates": [
+    { "serviceId": "model-a", "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inputUsdPerMillion": 1, "outputUsdPerMillion": 2, "reasoningEfforts": ["none", "low", "high"] },
+    { "serviceId": "model-b", "peerId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "inputUsdPerMillion": 2, "outputUsdPerMillion": 4 }
+  ],
+  "preferences": { "position": "first" },
+  "context": {
+    "conversationRef": "opaque-router-conversation",
+    "usageObservations": [{
+      "id": "opaque-observation",
+      "offer": { "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "provider": "example-provider", "serviceId": "model-a" },
+      "inputTokens": 1000,
+      "cachedInputTokens": 600,
+      "ageMs": 15000
+    }],
+    "historyTruncated": false
+  }
+}

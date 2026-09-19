@@ -1,8 +1,9 @@
+import { validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
-import { validateUnitBillingModelV1 } from "../billing/unit.js";
+import { perCallPriceMicroUsdc, validateUnitBillingModelV1 } from "../billing/unit.js";
 
 // Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
 // snapshot bounded while allowing large aggregator catalogs.
@@ -544,10 +545,11 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
-          } else if (protocol !== "openai-images") {
+          } else if (protocol !== "openai-images"
+            && !(protocol === "openai-chat-completions" && perCallPriceMicroUsdc(model) !== null)) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing models currently support openai-images only",
+              message: "Service unit billing supports openai-images or per-call openai-chat-completions",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({
@@ -596,6 +598,19 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       }
     }
 
+    if (p.serviceRouting !== undefined) {
+      const field = `providers[${i}].serviceRouting`;
+      if (metadata.version < SERVICE_ROUTING_METADATA_VERSION || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
+        errors.push({ field, message: "Routing descriptors require an object and metadata v14" });
+      } else {
+        for (const [service, descriptor] of Object.entries(p.serviceRouting)) {
+          try {
+            validateRoutingServiceMetadata(descriptor);
+            if (!p.services.includes(service) || !p.serviceApiProtocols?.[service]?.includes('antseed-routing') || p.serviceCapabilities?.[service]?.routing !== true) throw new Error("Routing descriptor requires an advertised routing service");
+          } catch (error) { errors.push({ field: `${field}.${service}`, message: String(error) }); }
+        }
+      }
+    }
     if (p.serviceCapabilities !== undefined) {
       if (metadata.version < SERVICE_CAPABILITIES_METADATA_VERSION) {
         errors.push({
@@ -630,6 +645,15 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         }
         for (const message of validateServiceCapabilityFields(caps)) {
           errors.push({ field, message });
+        }
+        if (caps.reasoningEfforts !== undefined && metadata.version < SERVICE_ROUTING_METADATA_VERSION) {
+          errors.push({ field: `${field}.reasoningEfforts`, message: 'Reasoning efforts require metadata version 14' });
+        }
+        if (caps.routing !== undefined && metadata.version < SERVICE_ROUTING_CAPABILITY_METADATA_VERSION) {
+          errors.push({
+            field: `${field}.routing`,
+            message: `Service routing capability requires metadata version ${SERVICE_ROUTING_CAPABILITY_METADATA_VERSION}`,
+          });
         }
       }
     }

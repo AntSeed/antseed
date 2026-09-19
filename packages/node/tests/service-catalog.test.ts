@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createPerCallBillingModel } from '../src/types/billing.js';
 import {
   buildNetworkServiceOffers,
   selectLowestPricedCanonicalOffers,
@@ -10,6 +11,72 @@ function peer(overrides: Partial<NetworkServiceCatalogPeer>): NetworkServiceCata
 }
 
 describe('network service catalog', () => {
+  it.each([false, true])('keeps per-protocol billing independent of protocol/model order (reversed: %s)', (reverse) => {
+    const protocols = ['anthropic-messages', 'openai-chat-completions', 'openai-responses'];
+    const models = [
+      ['anthropic-messages', createPerCallBillingModel('5000')],
+      ['openai-chat-completions', createPerCallBillingModel('16777217')],
+      ['openai-responses', createPerCallBillingModel('0')],
+      ['openai-completions', createPerCallBillingModel('2500')],
+    ] as const;
+    const offers = buildNetworkServiceOffers([peer({
+      providerServiceApiProtocols: {
+        openai: { services: { classifier: reverse ? [...protocols].reverse() : protocols } },
+      },
+      providerServiceUnitBillingModels: {
+        openai: { services: { classifier: Object.fromEntries(reverse ? [...models].reverse() : models) } },
+      },
+      providerServiceCapabilities: {
+        openai: { services: { classifier: { routing: true }, inference: { routing: false }, unknown: { toolUse: true } } },
+      },
+    })]);
+    const classifier = offers.find((offer) => offer.serviceId === 'classifier')!;
+    expect(classifier.capabilities?.routing).toBe(true);
+    expect(classifier.billingByProtocol).toEqual({
+      'anthropic-messages': { kind: 'per_call', amountMicroUsdc: '5000' },
+      'openai-chat-completions': { kind: 'per_call', amountMicroUsdc: '16777217' },
+      'openai-responses': { kind: 'per_call', amountMicroUsdc: '0' },
+      'openai-completions': { kind: 'per_call', amountMicroUsdc: '2500' },
+    });
+    expect(classifier.billingByProtocol?.['openai-images']).toBeUndefined();
+    expect(classifier.billing).toEqual({ kind: 'per_call', amountMicroUsdc: reverse ? '0' : '5000' });
+    expect(offers.find((offer) => offer.serviceId === 'inference')?.capabilities?.routing).toBe(false);
+    expect(offers.find((offer) => offer.serviceId === 'unknown')?.capabilities?.routing).toBeUndefined();
+  });
+
+  it('keeps the alternate protocol fee when the display protocol has token billing', () => {
+    const metadata = peer({
+      providerServiceApiProtocols: {
+        openai: { services: { model: ['openai-chat-completions', 'openai-responses'] } },
+      },
+      providerServiceUnitBillingModels: {
+        openai: { services: { model: { 'openai-responses': createPerCallBillingModel('5000') } } },
+      },
+    });
+    const offer = buildNetworkServiceOffers([metadata])[0]!;
+    expect(offer.billing).toBeUndefined();
+    expect(offer.billingByProtocol?.['openai-chat-completions']).toBeUndefined();
+    expect(offer.billingByProtocol?.['openai-responses']).toEqual({ kind: 'per_call', amountMicroUsdc: '5000' });
+    metadata.providerServiceUnitBillingModels!.openai!.services.model!['openai-responses']!.components[0]!.priceUsd = 1;
+    expect(offer.billingByProtocol?.['openai-responses']?.amountMicroUsdc).toBe('5000');
+  });
+
+  it('does not invent per-call billing for legacy or image-unit-only services', () => {
+    const offers = buildNetworkServiceOffers([peer({
+      providers: ['openai'],
+      services: ['legacy'],
+    }), peer({
+      providerServiceUnitBillingModels: {
+        openai: { services: { image: { 'openai-images': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] } } } },
+      },
+    })]);
+    expect(offers).toHaveLength(2);
+    for (const offer of offers) {
+      expect(offer.billingByProtocol).toBeUndefined();
+      expect(offer.billing).toBeUndefined();
+    }
+  });
+
   it('uses legacy services when provider pricing only announces defaults', () => {
     const offers = buildNetworkServiceOffers([peer({
       providers: ['openai'],

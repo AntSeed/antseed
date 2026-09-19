@@ -19,3 +19,4 @@ export * from './connection-state.js';
 // one, matching @antseed/node's public API; use the ./peer-metadata subpath
 // for the discovery constant.
 export { METADATA_VERSION } from './signatures.js';
+export * from './routing.js';
