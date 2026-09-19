@@ -1,6 +1,6 @@
 import { Button, Card } from './ui';
 import { useState, type ReactNode } from 'react';
-import { useConfig } from '../app-context';
+import { useApp } from '../app-context';
 import { describeError } from '../format';
 import { useJobs } from '../jobs';
 
@@ -17,12 +17,14 @@ interface ConfirmProps {
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  embedded?: boolean;
+  cancelLabel?: string;
 }
 
 /** Inline confirmation panel: summarises exactly what will be sent before a signing job starts. */
-export function Confirm({ title, summary, children, confirmLabel = 'Confirm', danger, disabled, busy, error, onConfirm, onCancel }: ConfirmProps) {
+export function Confirm({ title, summary, children, confirmLabel = 'Confirm', danger, disabled, busy, error, onConfirm, onCancel, embedded, cancelLabel = 'Cancel' }: ConfirmProps) {
   return (
-    <Card className="confirm" tone={danger ? 'danger' : 'surface'} role="dialog" aria-label={title}>
+    <Card className="confirm" tone={danger ? 'danger' : 'surface'} role={embedded ? 'region' : 'dialog'} aria-label={title}>
       <div className="confirm-title">{title}</div>
       {summary && summary.length > 0 ? (
         <dl className="facts">
@@ -38,7 +40,7 @@ export function Confirm({ title, summary, children, confirmLabel = 'Confirm', da
           {busy ? 'Sending…' : confirmLabel}
         </Button>
         <Button variant="outline" onClick={onCancel} disabled={busy}>
-          Cancel
+          {cancelLabel}
         </Button>
       </div>
     </Card>
@@ -75,9 +77,11 @@ export interface ActionButtonProps {
 
 /** Hook describing why actions are blocked (read-only wallet or a job already running). */
 export function useActionBlock(): { blocked: boolean; reason: string | undefined } {
-  const { readOnly } = useConfig();
+  const { config: { readOnly }, overview, overviewError } = useApp();
   const { running } = useJobs();
   if (readOnly) return { blocked: true, reason: 'Read-only mode: no wallet is available to sign.' };
+  if (!overview || overviewError) return { blocked: true, reason: 'Wallet information is unavailable. Refresh before sending a transaction.' };
+  if (BigInt(overview.wallet.eth) === 0n) return { blocked: true, reason: 'This wallet needs ETH on the selected network for transaction fees.' };
   if (running) return { blocked: true, reason: 'Another action is still running.' };
   return { blocked: false, reason: undefined };
 }
@@ -129,7 +133,7 @@ export function ActionButton(props: ActionButtonProps) {
           summary={props.summary}
           confirmLabel={props.confirmLabel}
           danger={props.variant === 'danger'}
-          disabled={props.confirmDisabled}
+          disabled={blocked || props.confirmDisabled}
           busy={busy}
           error={error}
           onConfirm={() => {

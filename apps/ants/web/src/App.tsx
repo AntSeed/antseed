@@ -1,3 +1,4 @@
+import { WalletProvider } from './wallet';
 import { Card } from './components/ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getToken, onUnauthorized } from './api';
@@ -87,8 +88,8 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
   }, [refreshOverview]);
 
   const value = useMemo<AppValue | null>(
-    () => (config.data ? { config: config.data, overview: overview.data, theme, toggleTheme } : null),
-    [config.data, overview.data, theme, toggleTheme],
+    () => (config.data ? { config: config.data, overview: overview.data, overviewError: overview.error, theme, toggleTheme } : null),
+    [config.data, overview.data, overview.error, theme, toggleTheme],
   );
 
   if (!value) {
@@ -102,13 +103,13 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
   }
 
   return (
-    <AppContext.Provider value={value}>
+    <WalletProvider config={value.config}><AppContext.Provider value={value}>
       <JobsProvider>
         <Layout page={route.page} updatedAt={overview.updatedAt} loading={overview.loading}>
           <PageView page={route.page} />
         </Layout>
       </JobsProvider>
-    </AppContext.Provider>
+    </AppContext.Provider></WalletProvider>
   );
 }
 

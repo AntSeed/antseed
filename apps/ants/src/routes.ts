@@ -19,6 +19,9 @@ export interface RouteContext {
   views: ViewCache;
   readOnly: boolean;
   dataDir: string | null;
+  browserSigning?: import('./browser-signer.js').BrowserSigning;
+  onAuthorize?: () => Promise<void>;
+  rememberTransaction?: (hash: string) => Promise<void>;
 }
 
 async function respond(reply: FastifyReply, read: () => Promise<unknown>): Promise<void> {
@@ -35,13 +38,18 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   app.get('/api/config', async () => ({
     ok: true,
-    data: { address: ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, readOnly: context.readOnly, dataDir: context.dataDir },
+    data: { address: ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize, dataDir: context.dataDir },
+  }));
+
+  app.post('/api/wallet/authorize', (_request, reply) => respond(reply, async () => {
+    if (!context.onAuthorize) throw new Error('Open the VPR wallet authorization setup to authorize a wallet.');
+    await context.onAuthorize(); return {};
   }));
 
   app.get('/api/overview', (_request, reply) => respond(reply, () => cached('overview', () => overview(ctx))));
   app.get('/api/positions', (_request, reply) => respond(reply, () => cached('positions', () => positions(ctx))));
   app.get('/api/rewards', (_request, reply) => respond(reply, () => cached('rewards', () => rewards(ctx))));
-  app.get('/api/pools', (_request, reply) => respond(reply, () => cached('pools', () => poolsView(ctx))));
+  app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000)));
   app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));
@@ -50,7 +58,8 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get('/api/seller', (_request, reply) => respond(reply, () => cached('seller', () => seller(ctx))));
   app.post<{ Body: { positionIds: number[] } }>('/api/positions/withdraw/preview', (request, reply) => respond(reply, () => previewWithdraw(ctx, request.body?.positionIds ?? [])));
 
-  app.get('/api/jobs', async () => ({ ok: true, data: jobs.list() }));
+  // Browser sessions share one journal across wallets; show each wallet only its own actions.
+  app.get('/api/jobs', async () => ({ ok: true, data: jobs.list(context.browserSigning ? ctx.address : undefined) }));
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (request, reply) => {
     const job = jobs.get(request.params.id);
     if (!job) return reply.status(404).send({ ok: false, error: 'Unknown job' });
@@ -59,9 +68,17 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   const action = <Body>(path: string, kind: string, run: (body: Body, report: StepReporter) => Promise<unknown>) => {
     app.post(path, async (request, reply) => {
-      if (context.readOnly) return reply.status(403).send({ ok: false, error: 'The dashboard is running in read-only mode (no wallet available).' });
+      if (!ctx.signer) return reply.status(403).send({ ok: false, error: 'The dashboard is running in read-only mode (no wallet available).' });
       try {
-        const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, report));
+        const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, async (label, hash) => {
+          await report(label, hash);
+          // Local position history is best-effort bookkeeping: an RPC hiccup or a
+          // full disk must not abort a multi-transaction action whose step already confirmed.
+          if (hash) {
+            try { await context.rememberTransaction?.(hash); }
+            catch (error) { console.warn(`[ants] could not record transaction ${hash}: ${describeError(error)}`); }
+          }
+        }), ctx.address);
         return { ok: true, data: job };
       } catch (error) {
         return reply.status(409).send({ ok: false, error: describeError(error) });

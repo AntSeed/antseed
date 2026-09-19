@@ -13,20 +13,25 @@ interface Entry {
   at: number;
 }
 
+let generation = 0;
 const cache = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
-const listeners = new Set<() => void>();
+const listeners = new Set<(clear: boolean) => void>();
 
-export function invalidateAll(): void {
-  cache.clear();
-  for (const listener of listeners) listener();
+/** Clear visible account data only across identity changes; otherwise revalidate in place. */
+export function invalidateAll({ clear = false }: { clear?: boolean } = {}): void {
+  generation++;
+  inflight.clear();
+  if (clear) cache.clear();
+  else for (const entry of cache.values()) entry.at = 0;
+  for (const listener of listeners) listener(clear);
 }
 
 export function invalidatePrefix(prefix: string): void {
   for (const key of [...cache.keys()]) {
     if (key.startsWith(prefix)) cache.delete(key);
   }
-  for (const listener of listeners) listener();
+  for (const listener of listeners) listener(false);
 }
 
 export interface PageData<T> {
@@ -58,6 +63,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   const keyRef = useRef(key);
   keyRef.current = key;
   const mountedRef = useRef(true);
+  const retryCount = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -67,6 +73,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   }, []);
 
   const load = useCallback((k: string) => {
+    const startedGeneration = generation;
     setState((prev) => (prev.key === k ? { ...prev, loading: true, error: null } : { ...readCache<T>(k), loading: true }));
     let promise = inflight.get(k) as Promise<T> | undefined;
     if (!promise) {
@@ -75,7 +82,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
       inflight.set(k, started);
       started
         .then((data) => {
-          cache.set(k, { data, at: Date.now() });
+          if (startedGeneration === generation) cache.set(k, { data, at: Date.now() });
         })
         .catch(() => undefined)
         .finally(() => {
@@ -84,11 +91,11 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
     }
     promise.then(
       (data) => {
-        if (!mountedRef.current || keyRef.current !== k) return;
+        if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
         setState({ key: k, data, error: null, loading: false, updatedAt: Date.now() });
       },
       (error: unknown) => {
-        if (!mountedRef.current || keyRef.current !== k) return;
+        if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
         setState((prev) => ({ ...(prev.key === k ? prev : readCache<T>(k)), key: k, loading: false, error: describeError(error) }));
       },
     );
@@ -108,8 +115,12 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   }, [key, load, staleMs]);
 
   useEffect(() => {
-    const listener = () => {
-      if (keyRef.current !== null) load(keyRef.current);
+    const listener = (clear: boolean) => {
+      if (keyRef.current !== null) {
+        // Keep the shell mounted, but do not display the previous wallet's balances.
+        if (clear && keyRef.current !== 'config') setState(readCache<T>(keyRef.current));
+        load(keyRef.current);
+      }
     };
     listeners.add(listener);
     return () => {
@@ -120,6 +131,23 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   const refresh = useCallback(() => {
     if (keyRef.current !== null) load(keyRef.current);
   }, [load]);
+
+  useEffect(() => {
+    retryCount.current = 0;
+  }, [key]);
+
+  useEffect(() => {
+    if (!state.error) {
+      if (!state.loading) retryCount.current = 0;
+      return;
+    }
+    if (key === null || retryCount.current >= 2 || !/rate limit|network error|HTTP 5\d\d|timeout/i.test(state.error)) return;
+    const timer = window.setTimeout(() => {
+      retryCount.current += 1;
+      load(key);
+    }, 25_000 * (retryCount.current + 1));
+    return () => window.clearTimeout(timer);
+  }, [key, state.error, state.loading, load]);
 
   const view = state.key === key ? state : readCache<T>(key);
   return { data: view.data, error: view.error, loading: view.loading, updatedAt: view.updatedAt, refresh };

@@ -10,8 +10,8 @@ export type RpcTransport = (url: string, body: string) => Promise<RpcTransportRe
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const THROTTLE_COOLDOWN_MS = 20_000;
-/** Once an endpoint has throttled, its calls are paced below the budget the public gateways were measured to allow. */
-const PACED_CALLS_PER_SECOND = 12;
+/** Pace calls before an endpoint throttles to limit bursts against public gateways. */
+const PACED_CALLS_PER_SECOND = 8;
 const RATE_LIMIT_CODE = -32005;
 
 interface Endpoint {
@@ -37,7 +37,7 @@ export class RotatingJsonRpcProvider extends JsonRpcProvider {
   constructor(urls: string[], evmChainId?: number, options: { transport?: RpcTransport; now?: () => number } = {}) {
     if (urls.length === 0) throw new Error('At least one RPC endpoint is required.');
     super(urls[0], evmChainId, { staticNetwork: !!evmChainId, batchMaxCount: 1 });
-    this.endpoints = urls.map((url) => ({ url, coolingUntil: 0, bucket: null }));
+    this.endpoints = urls.map((url) => ({ url, coolingUntil: 0, bucket: new TokenBucket(PACED_CALLS_PER_SECOND, 4) }));
     this.transport = options.transport ?? fetchTransport;
     this.now = options.now ?? Date.now;
   }
@@ -73,6 +73,11 @@ export class RotatingJsonRpcProvider extends JsonRpcProvider {
         continue;
       }
       if (response.status < 200 || response.status >= 300) {
+        if (response.status >= 500) {
+          lastError = new Error(`${endpoint.url} responded with HTTP ${response.status}`);
+          this.cool(endpoint);
+          continue;
+        }
         throw new Error(`${endpoint.url} responded with HTTP ${response.status}`);
       }
       return (Array.isArray(response.body) ? response.body : [response.body]) as JsonRpcResult[];

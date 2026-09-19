@@ -1,3 +1,4 @@
+import { Interface } from 'ethers';
 import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments';
 import type { AntsContext } from './context.js';
 import type { PositionView, PositionsView, StakeRequest, MoveRequest, SplitRequest, MergeRequest, ExtendRequest, MaxLockRequest, WithdrawRequest } from '../api-types.js';
@@ -6,9 +7,6 @@ import { toJson } from './json.js';
 import { IndexerError, type IndexedPosition } from './indexer.js';
 import { assertAgentId, assertEpochs, assertPositiveIds, silentReporter, type StepReporter } from './steps.js';
 
-async function safe<T>(read: () => Promise<T>, fallback: T): Promise<T> {
-  try { return await read(); } catch { return fallback; }
-}
 
 export interface PositionDetail extends PositionView { raw: SellerPoolPosition; }
 
@@ -19,7 +17,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
   const rewardIds = positions.map((position) => position.id);
   const rewards = new Map<number, bigint>();
   if (poolRewards && rewardIds.length > 0) {
-    const amounts = await safe(() => poolRewards.previewStakerRewards(rewardIds), rewardIds.map(() => 0n));
+    const amounts = await poolRewards.previewStakerRewards(rewardIds);
     rewardIds.forEach((id, index) => rewards.set(id, amounts[index] ?? 0n));
   }
   const details: PositionDetail[] = [];
@@ -27,11 +25,11 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
     details.push(...await Promise.all(positions.slice(offset, offset + 8).map(async (position): Promise<PositionDetail> => {
       const open = !position.withdrawn && position.closedAtEpoch === 0;
       const [withdrawableEpoch, maxLocked] = await Promise.all([
-        safe(() => pools.positionWithdrawableEpoch(position.id), 0),
-        open ? safe(() => pools.isMaxLocked(position.id, Math.max(currentEpoch, position.stakeStartEpoch)), false) : Promise.resolve(false),
+        pools.positionWithdrawableEpoch(position.id),
+        open ? pools.isMaxLocked(position.id, Math.max(currentEpoch, position.stakeStartEpoch)) : Promise.resolve(false),
       ]);
       const changePending = currentEpoch < withdrawableEpoch;
-      const slashBps = open && !changePending ? await safe<number | null>(() => pools.earlyExitSlashBps(position.id), null) : null;
+      const slashBps = open && !changePending ? await pools.earlyExitSlashBps(position.id) : null;
       const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
       const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
       return {
@@ -67,13 +65,16 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
  * an indexer; never reconstructed from log scans.
  */
 export async function closedPositionIds(ctx: AntsContext): Promise<{ ids: number[]; source: PositionsView['historySource']; rows: IndexedPosition[] }> {
+  const local = [...ctx.localPositionIds].filter(([, owner]) => owner.toLowerCase() === ctx.address.toLowerCase()).map(([id]) => id);
+  const verified = local.length ? (await ctx.requirePools().positionsBatch(local)).filter(p => p.owner.toLowerCase() === ctx.address.toLowerCase() && (p.closedAtEpoch !== 0 || p.withdrawn)).map(p => p.id) : [];
+  const fallback = { ids: verified, source: verified.length ? 'local' as const : 'chain' as const, rows: [] };
   const indexer = ctx.indexer();
-  if (!indexer) return { ids: [], source: 'chain', rows: [] };
+  if (!indexer) return fallback;
   try {
     const rows = (await indexer.positions(ctx.address, true)).filter((row) => row.closedAtEpoch !== 0 || row.withdrawn);
-    return { ids: rows.map((row) => row.id), source: 'indexer', rows };
+    return { ids: [...new Set([...verified, ...rows.map((row) => row.id)])], source: 'indexer', rows };
   } catch (error) {
-    if (error instanceof IndexerError) return { ids: [], source: 'chain', rows: [] };
+    if (error instanceof IndexerError) return fallback;
     throw error;
   }
 }
@@ -154,6 +155,7 @@ export async function stake(ctx: AntsContext, request: StakeRequest, report: Ste
 }
 
 export async function move(ctx: AntsContext, request: MoveRequest, report: StepReporter = silentReporter): Promise<{ hash: string }> {
+  if ('amount' in request) throw new Error('Partial moves are not supported. Move whole positions instead.');
   const pools = ctx.requirePools();
   const signer = ctx.requireSigner();
   const ids = assertPositiveIds(request.positionIds);
@@ -163,8 +165,13 @@ export async function move(ctx: AntsContext, request: MoveRequest, report: StepR
   if (already.length > 0) throw new Error(`Position(s) ${already.map((position) => position.id).join(', ')} already stake agent ${toAgentId}.`);
   await requireNoPendingChange(ctx, list);
   await requireStakeableAgent(ctx, toAgentId);
+  const currentEpoch = (await ctx.stack()).currentEpoch;
+  for (const position of list) {
+    if (await pools.isMaxLocked(position.id, Math.max(currentEpoch + 1, position.stakeStartEpoch))) throw new Error(`Disable maximum lock on position ${position.id} before moving allocation.`);
+  }
   await report(`Moving ${ids.length} position(s) to agent ${toAgentId} (effective next epoch)`);
   const hash = ids.length === 1 ? await pools.moveStake(signer, ids[0]!, toAgentId) : await pools.moveStakes(signer, ids, toAgentId);
+  ids.forEach(id => ctx.localPositionIds.set(id, ctx.address));
   await report('Move confirmed', hash);
   return { hash };
 }
@@ -245,6 +252,9 @@ export interface WithdrawPreview {
   totalSlashed: string;
   totalReturned: string;
   earlyExit: boolean;
+  pendingRewards: string;
+  transfersRestricted: boolean;
+  simulationError: string | null;
 }
 
 export async function previewWithdraw(ctx: AntsContext, ids: number[]): Promise<WithdrawPreview> {
@@ -252,7 +262,15 @@ export async function previewWithdraw(ctx: AntsContext, ids: number[]): Promise<
   const list = await ownedOpenPositions(ctx, assertPositiveIds(ids));
   await requireNoPendingChange(ctx, list);
   const estimates = await Promise.all(list.map(async (position) => estimateEarlyExit(position, await pools.earlyExitSlashBps(position.id))));
+  const pending = await ctx.poolRewards()?.previewStakerRewards(ids) ?? [];
+  const transfersRestricted = !(await ctx.antsToken().canTransfer(ctx.address));
+  let simulationError: string | null = null;
+  try {
+    const iface = new Interface(['function withdrawStakes(uint256[] ids)']);
+    await ctx.provider().call({ from: ctx.address, to: pools.contractAddress, data: iface.encodeFunctionData('withdrawStakes', [ids]) });
+  } catch (error) { simulationError = error instanceof Error ? error.message : String(error); }
   return {
+    pendingRewards: pending.reduce((sum, amount) => sum + amount, 0n).toString(), transfersRestricted, simulationError,
     positions: estimates.map((estimate) => ({ id: estimate.id, amount: estimate.amount.toString(), slashBps: estimate.slashBps, slashedAmount: estimate.slashedAmount.toString(), returnedAmount: estimate.returnedAmount.toString() })),
     totalSlashed: estimates.reduce((sum, estimate) => sum + estimate.slashedAmount, 0n).toString(),
     totalReturned: estimates.reduce((sum, estimate) => sum + estimate.returnedAmount, 0n).toString(),
@@ -265,6 +283,7 @@ export async function withdraw(ctx: AntsContext, request: WithdrawRequest, repor
   const signer = ctx.requireSigner();
   const ids = assertPositiveIds(request.positionIds);
   const preview = await previewWithdraw(ctx, ids);
+  if (preview.simulationError) throw new Error(`Withdrawal cannot execute: ${preview.simulationError}`);
   if (preview.earlyExit) {
     if (!request.acceptSlashing) throw new Error(`Early exit burns an estimated ${formatAnts(preview.totalSlashed)} ANTS of principal. Re-run with slashing accepted to proceed.`);
     if (request.maxSlashedAmount !== undefined && BigInt(preview.totalSlashed) > BigInt(request.maxSlashedAmount)) {
@@ -275,6 +294,7 @@ export async function withdraw(ctx: AntsContext, request: WithdrawRequest, repor
     ? `Withdrawing ${ids.length} position(s), burning about ${formatAnts(preview.totalSlashed)} ANTS`
     : `Withdrawing ${ids.length} matured position(s)`);
   const hash = await pools.withdrawStakes(signer, ids);
+  ids.forEach(id => ctx.localPositionIds.set(id, ctx.address));
   await report('Withdrawal confirmed', hash);
   ctx.invalidate();
   return { hash, preview };
