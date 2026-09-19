@@ -43,6 +43,10 @@ function statusSequence(statuses: Record<string, number[]>): ProbeHandler {
 }
 
 describe('classifyProbeStatus', () => {
+  it('does not send billable health probes to routing services', () => {
+    expect(supportsHealthProbe('antseed-routing')).toBe(false);
+    expect(() => buildHealthProbeRequest('selector', 'antseed-routing')).toThrow('not probed');
+  });
   it('maps status codes to outcomes', () => {
     expect(classifyProbeStatus(200)).toBe('healthy');
     expect(classifyProbeStatus(304)).toBe('healthy');

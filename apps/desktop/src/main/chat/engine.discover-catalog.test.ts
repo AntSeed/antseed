@@ -10,6 +10,18 @@ import {
 const venicePeerId = '9'.repeat(40);
 const flashPeerId = 'f'.repeat(40);
 
+test('routing services remain outside the persisted chat catalog', () => {
+  const catalog = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: venicePeerId, providers: ['openai'],
+    providerServiceApiProtocols: { openai: { services: {
+      selector: ['antseed-routing'], legacySelector: ['openai-chat-completions'],
+      chat: ['openai-chat-completions'], decision: ['typesafe-systemone'],
+    } } },
+    providerServiceCapabilities: { openai: { services: { legacySelector: { routing: true } } } },
+  }] });
+  assert.deepEqual(catalog.map((entry) => entry.id).sort(), ['chat', 'decision']);
+});
+
 test('TEE advertisements survive live, persisted, normalization and discovery projections', async () => {
   const offer = {
     peerId: venicePeerId, provider: 'openai', serviceId: 'gpt-test', protocol: 'openai-chat-completions',

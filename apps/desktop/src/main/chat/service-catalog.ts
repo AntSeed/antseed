@@ -19,7 +19,7 @@ export type ChatServiceCatalogEntry = {
   id: string;
   label: string;
   provider: string;
-  protocol: CatalogServiceProtocol;
+  protocol: Exclude<CatalogServiceProtocol, 'antseed-routing'>;
   capabilities?: CatalogServiceCapabilities;
   count: number;
   peerId?: string;
@@ -60,7 +60,7 @@ const CATALOG_SERVICE_PROTOCOLS = new Set<string>([
   'anthropic-messages', 'openai-chat-completions', 'openai-responses', 'openai-images',
 ]);
 
-function isCatalogServiceProtocol(value: unknown): value is CatalogServiceProtocol {
+function isCatalogServiceProtocol(value: unknown): value is ChatServiceCatalogEntry['protocol'] {
   return typeof value === 'string' && CATALOG_SERVICE_PROTOCOLS.has(value);
 }
 
@@ -171,7 +171,7 @@ export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): Cha
     : [];
   const peersById = new Map(peers.map((peer) => [peer.peerId, peer]));
   return buildNetworkServiceOffers(peers).flatMap((offer) => {
-    if (!offer.protocol) return [];
+    if (!offer.protocol || offer.protocol === 'antseed-routing' || offer.capabilities?.routing === true) return [];
     const peer = peersById.get(offer.peerId);
     const effectiveReputationScore = peer ? normalizedModelReputationScore(peer as PeerInfo) : null;
     return [{

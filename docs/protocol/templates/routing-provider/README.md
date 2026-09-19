@@ -7,17 +7,18 @@ load its default export through the normal provider-plugin workflow.
 
 The response contains a ranked `recommendations` array. This minimal provider returns one
 entry; the compatibility fixtures demonstrate an exact seller followed by a different,
-model-only choice. Every entry must refer to an eligible candidate. The buyer can try
-later entries after retryable failures, without another routing call.
+model-only choice. Every entry must refer to an eligible candidate. Rank is preserved by
+the pure response parser; executing ranked fallback belongs to the buyer integration.
 
-A recommendation can include `inference: { reasoningEffort: "high" }` only when
-the selected eligible offer advertises that effort in `reasoningEfforts`. Inference
+A recommendation can include `inference: { reasoningEffort: "high" }`. An explicit
+`reasoningEfforts` list restricts accepted values; missing capability metadata allows a
+best-effort choice without guaranteeing backend support. Inference
 service capability advertisements carrying this list use the same signed metadata v14
 extension as routing descriptors.
-For model-only recommendations, at least one eligible seller must support the effort.
+For model-only recommendations, at least one eligible seller must permit the effort.
 The fixtures demonstrate an explicit effort followed by a choice without an override.
-The buyer prioritizes the router's effort over client settings and caches it with the
-existing continuation decision; `none` disables reasoning, omission does not.
+Applying these settings and retaining them across continuations belongs to the later
+buyer integration, not this protocol example.
 
 Requests may also include `context.usageObservations`: a bounded snapshot of reported
 inference input/cache counts for eligible offers in the current conversation. Missing
@@ -34,5 +35,5 @@ node docs/protocol/templates/routing-provider/check-compatibility.mjs
 ```
 
 For captured data, pass descriptor, request and response JSON file paths in that order.
-The checker never sends a paid request. See `docs/router-network-integration.md` for the
-wire contract, schema subset and migration notes.
+The checker never sends a paid request. See `docs/protocol/routing.md` for the wire
+contract, schema subset, version compatibility, and implementation scope.

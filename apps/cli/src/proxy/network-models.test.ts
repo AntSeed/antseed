@@ -5,6 +5,20 @@ import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
 
 const NOW_MS = 1_700_000_000_000
 
+test('routing offers stay out of inference catalogs with or without capability hints', () => {
+  const peer = makePeer({
+    peerId: 'a'.repeat(40), providers: ['openai'],
+    providerServiceApiProtocols: { openai: { services: {
+      selector: ['antseed-routing'], legacySelector: ['openai-chat-completions'],
+      chat: ['openai-chat-completions'], decision: ['typesafe-systemone'],
+    } } },
+    providerServiceCapabilities: { openai: { services: { legacySelector: { routing: true } } } },
+  })
+  const offers = buildNetworkModels([peer], NOW_MS).flatMap((model) => model.peers)
+  assert.deepEqual(offers.map((offer) => offer.serviceId).sort(), ['chat', 'decision'])
+  assert.equal(offers.find((offer) => offer.serviceId === 'decision')?.type, 'decision')
+})
+
 test('network model offers preserve advertised verifiers without inferring support', () => {
   const providerPricing = { openai: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'gpt-test': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } }
   const teePeer = makePeer({ peerId: 'a'.repeat(40), providers: ['openai'], providerPricing, capabilities: ['verifier.antseed-verifier'] })
