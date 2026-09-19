@@ -53,7 +53,6 @@ export function mergePools(input: MergeInput): PoolView[] {
     const weight = BigInt(pool.weight);
     rows.set(pool.agentId, {
       agentId: pool.agentId,
-      stakers: pool.stakers ?? null,
       seller,
       profile: profileFor(seller),
       hasPool: weight !== 0n || pool.openPositions > 0,

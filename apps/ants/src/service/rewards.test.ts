@@ -1,6 +1,7 @@
 import { ZeroAddress } from 'ethers';
 import { describe, expect, it, vi } from 'vitest';
 import type { AntsContext } from './context.js';
+import { IndexerError } from './indexer.js';
 import { claim, compound, restake, rewards } from './rewards.js';
 
 const address = '0x0000000000000000000000000000000000000001';
@@ -9,7 +10,7 @@ const foreign = '0x0000000000000000000000000000000000000002';
 function fixture(indexed = true) {
   const position = { id: 7, owner: address, agentId: 2, amount: 100n, weightAmount: 100n, stakeStartEpoch: 1, stakeEndEpoch: 12, closedAtEpoch: 5, withdrawn: false };
   const pools = {
-    allStakerPositionIds: async () => [],
+    allStakerPositionIds: async (): Promise<number[]> => [],
     positionsBatch: vi.fn(async (ids: number[]) => ids.map((id) => ({ ...position, id, owner: id === 9 ? foreign : address }))),
     poolConfig: async () => ({ minStakeEpochs: 1, maxStakeEpochs: 52 }),
     currentEpoch: async () => 6,
@@ -45,6 +46,12 @@ function fixture(indexed = true) {
 }
 
 describe('closed-position rewards', () => {
+  it('preserves known rewards with an incomplete-history marker when the indexer is unreachable', async () => {
+    const { ctx, pools } = fixture();
+    pools.allStakerPositionIds = async () => [7];
+    ctx.indexer = () => ({ positions: async () => { throw new IndexerError('Indexer unavailable', 'unavailable-indexer'); } }) as never;
+    expect(await rewards(ctx)).toMatchObject({ historySource: 'chain', staker: { total: '10' } });
+  });
   it('does not report zero rewards when the reward preview fails', async () => {
     const { ctx, poolRewards } = fixture();
     poolRewards.previewStakerRewards = async () => { throw new Error('RPC unavailable'); };
@@ -55,6 +62,20 @@ describe('closed-position rewards', () => {
     const { ctx } = fixture();
     ctx.lockedPoolAt = () => ({ claimable: async () => ({ locked: 246820n * 10n ** 18n, claimable: 0n, policy: '0x0000000000000000000000000000000000000000' }) }) as never;
     expect((await rewards(ctx)).locked).toMatchObject({ locked: '246820000000000000000000', claimable: '0', policy: null });
+  });
+  it.each([true, false])('keeps legacy rewards visible while resolving their payout (read succeeds: %s)', async (available) => {
+    const { ctx } = fixture();
+    ctx.stack = async () => ({ phase: 'legacy', currentEpoch: 6, legacyEmissions: foreign }) as never;
+    ctx.claimableEpochs = async () => ({ legacy: [5], recognized: [] }) as never;
+    ctx.legacyEmissionsAt = () => ({
+      pendingEmissions: async () => ({ seller: 5n, buyer: 0n }),
+      sellerUnlockPolicy: async () => { if (!available) throw new Error('RPC unavailable'); return ZeroAddress; },
+      sellerRewardsPool: async () => foreign,
+    }) as never;
+    expect(await rewards(ctx)).toMatchObject({ legacy: {
+      seller: '5',
+      sellerPayout: available ? { destination: 'locked', recipient: foreign } : { destination: 'unknown', recipient: null },
+    } });
   });
   it('claims the same closed-position rewards shown in the view', async () => {
     const { ctx, poolRewards } = fixture();
@@ -174,6 +195,45 @@ describe('explicit buyer and wallet claim scopes', () => {
     expect(f.oldBuyer).toHaveBeenCalledWith({}, address, [21]);
     expect(f.seller).not.toHaveBeenCalled();
     expect(f.poolRewards.claimStakerRewardsBatch).not.toHaveBeenCalled();
+  });
+  it.each(['buyer', 'legacy'] as const)('claims only the selected buyer source: %s', async (bucket) => {
+    const setup = claimFixture();
+    const result = await claim(setup.ctx, { buckets: [bucket], scope: 'buyer' });
+    expect(result.buckets).toEqual([bucket]);
+    expect(result.transactions).toEqual([bucket === 'buyer' ? 'buyer-current' : 'buyer-legacy']);
+    expect(setup.currentBuyer).toHaveBeenCalledTimes(bucket === 'buyer' ? 1 : 0);
+    expect(setup.oldBuyer).toHaveBeenCalledTimes(bucket === 'legacy' ? 1 : 0);
+    expect(setup.seller).not.toHaveBeenCalled();
+    expect(setup.poolRewards.claimStakerRewardsBatch).not.toHaveBeenCalled();
+  });
+  it.each(['buyer', 'legacy'] as const)('rejects unauthorized source-specific buyer claims: %s', async (bucket) => {
+    const setup = claimFixture();
+    setup.ctx.deposits = () => ({ getOperator: async () => ZeroAddress }) as never;
+    await expect(claim(setup.ctx, { buckets: [bucket], scope: 'buyer' })).rejects.toThrow('authorized wallet');
+    expect(setup.currentBuyer).not.toHaveBeenCalled();
+    expect(setup.oldBuyer).not.toHaveBeenCalled();
+    expect(setup.seller).not.toHaveBeenCalled();
+  });
+  it.each([true, false])('checks the reviewed legacy seller destination before transactions (matches: %s)', async (matches) => {
+    const setup = claimFixture();
+    const legacy = setup.ctx.legacyEmissionsAt(null)!;
+    setup.ctx.legacyEmissionsAt = () => ({ ...legacy, sellerUnlockPolicy: async () => ZeroAddress, sellerRewardsPool: async () => address }) as never;
+    const request = { buckets: ['legacy'] as const, scope: 'wallet' as const, expectedLegacySellerRecipient: matches ? address : foreign };
+    const result = claim(setup.ctx, { ...request, buckets: [...request.buckets] });
+    if (matches) {
+      await result;
+      expect(setup.seller).toHaveBeenCalledOnce();
+    } else {
+      await expect(result).rejects.toThrow('destination changed or could not be verified');
+      expect(setup.seller).not.toHaveBeenCalled();
+    }
+    expect(setup.oldBuyer).not.toHaveBeenCalled();
+    expect(setup.currentBuyer).not.toHaveBeenCalled();
+  });
+  it('blocks a legacy seller claim when its reviewed destination can no longer be read', async () => {
+    const setup = claimFixture();
+    await expect(claim(setup.ctx, { buckets: ['seller', 'legacy'], scope: 'wallet', expectedLegacySellerRecipient: foreign })).rejects.toThrow('could not be verified');
+    expect(setup.seller).not.toHaveBeenCalled();
   });
   it('rejects unauthorized buyer claims before any transaction, including legacy-only claims', async () => {
     const f = claimFixture();

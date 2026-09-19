@@ -12,14 +12,28 @@ This project uses selective package publishing. Each release entry lists the pub
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.
 - Protocol/CLI/Node: `typesafe-systemone` joins the well-known service API protocols with a one-question health probe. The buyer proxy accepts `POST /v1/systemone`, routes only to sellers advertising the protocol, and never adapts it onto chat protocols. Point `TYPESAFE_BASE_URL` at the buyer proxy to use the TypeSafe SDKs unchanged. `GET /v1/models` reports these services as `type: "decision"` (filter with `?type=decisions`), so chat clients no longer see them as text models. A chat request for a model served only on another API now returns `400 unsupported_protocol` naming the supported protocols instead of `model_not_found`. Desktop chat refuses decision-model services with a clear message.
 - `@antseed/antseed-verifier`, the capability-based buyer verifier and seller prover for TEE attestation, now lives at `packages/antseed-verifier` with its standalone repository history preserved. The package keeps its existing name, version, public API, and GPL-3.0-only license while using the monorepo build, test, and npm publishing workflow.
-- ANTS dashboard: stake eligible unclaimed buyer, seller, or position rewards directly from the staking form while wallet ANTS transfers are restricted. Explain early-exit penalties with tooltips, show seller pool names, and bound extreme APY displays above 10,000.00%.
+- ANTS dashboard: keep seller settlement history consistent while pool details load, including legacy epochs; preserve previously loaded history when a refresh is unavailable and distinguish seller volume from staking-pool statistics.
+
+- ANTS dashboard: use short, stable descriptions beneath each reward type; keep eligibility and legacy-staking guidance in action tooltips and confirmations instead.
+
+- ANTS dashboard: align reward descriptions, amounts, and claim/stake buttons across rows, with consistent button sizing and responsive full-width confirmations.
+
+- ANTS dashboard testing: extend the Anvil browser-signing suite with mixed current/legacy rewards, source-specific buyer claims, seller payout eligibility, M002 release rules, transfer restrictions, and repeat-claim safety. Add a `legacy` filter and reject filters that run no scenarios.
+
+- ANTS dashboard: split current and legacy buyer rewards into source-specific claims, rename Wallet rewards to Seller & staking rewards, and consistently label reward staking actions. Show verified legacy seller payout destinations and locked-pool withdrawal details; block dashboard legacy seller claims when the reviewed destination changes or cannot be verified.
+
+- ANTS dashboard: keep buyer Stake rewards visible with eligibility explanations, distinguish direct reward staking from claim-then-wallet-staking, and explain M002 release limits and wallet-transfer restrictions for legacy rewards without changing contract permissions.
+
+- ANTS dashboard: stake eligible unclaimed buyer, seller, or position rewards directly from the staking form while wallet ANTS transfers are restricted. Explain early-exit penalties with tooltips, show seller pool names, and replace the APY range with a single N/A if either endpoint exceeds 10,000%, keeping ranges at or below 10,000% visible.
+
 - VPR: route Claim rewards and Manage staking into the shared browser dashboard. Separate buyer and wallet reward actions, retain wallet authorization, and replace the old payments claim screen with a dashboard handoff.
 - ANTS dashboard: show the originating VPR/CLI buyer’s rewards before browser wallet connection, without querying disconnected-wallet positions. Claims still require the authorized wallet.
-- ANTS dashboard: remove standalone network/read-only header badges; load page sections independently, batch overview reads, reuse matching Antscan epoch data, skip yield reads for sellers without pools, and fill staker counts after the pool table loads.
+
+- ANTS dashboard: remove standalone network/read-only header badges; load page sections independently, batch overview reads, reuse matching Antscan epoch data, and skip yield reads for sellers without pools. Show total active ANTS without table-wide staker-count fetching.
+
 - CLI/VPR: open the localhost staking dashboard in the system browser with connected-wallet approvals and verified transaction results. Keep terminal signing local, preserve the originating buyer separately from its authorized wallet, and retain explicit buyer-wallet authorization and one Manage staking entry.
-- ANTS dashboard: compare sortable one-month and one-year APY projections for a 1,000 ANTS reference stake; update projected APY and first-epoch rewards with the staking amount and lock slider, with whole-epoch shortcuts and explicit historical-rate assumptions.
-- ANTS dashboard: compare pool-average estimated APY and APR from the last completed epoch, sort by yield or settled volume, and inspect seller activity with unavailable/stale-data labels. Model revenue breakdown remains unavailable.
-- ANTS dashboard: promote Move allocation, preview split-then-move approvals and lock/power effects, and separate withdrawal principal, penalties, outstanding rewards and transfer restrictions. Preserve recent closed-position rewards through chain-verified local history.
+- ANTS dashboard: show one sortable APY range for 1-week through 2-year locks using a 1,000 ANTS reference stake and the last completed epoch's rewards and power. Explain actual whole-epoch durations and hypothetical-compounding assumptions, and preserve estimated/unavailable labels. Keep the staking form free of amount-sensitive projections. Sort settled volume independently of yield availability, and inspect seller activity. Model revenue breakdown remains unavailable.
+- ANTS dashboard: promote whole-position Move allocation, preview lock/power effects, and separate withdrawal principal, penalties, outstanding rewards and transfer restrictions. Reject partial-move requests; retain the separate Split action. Preserve recent closed-position rewards through chain-verified local history.
 - Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
 
 ### Fixed

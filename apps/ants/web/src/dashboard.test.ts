@@ -8,6 +8,7 @@ import { SellerPage } from './pages/Seller';
 import { StakePage } from './pages/Stake';
 import { StakeForm } from './components/StakeForm';
 import { poolName, poolLabel, PoolsTable, PoolDrawer, sortPoolsByMetric } from './components/Pools';
+import { formatYieldPercent, poolApyRange } from './pool-yield';
 import type { PoolView, PoolsView, RewardsView, SellerView } from '../../src/api-types';
 
 const state = vi.hoisted(() => ({ data: {} as Record<string, unknown>, keys: [] as Array<string | null> }));
@@ -26,13 +27,130 @@ function render(child: ReturnType<typeof createElement>): string {
 }
 
 describe('staking dashboard displays', () => {
+  it.each([
+    { readOnly: false, claimable: true, total: '7000000000000000000', visible: true },
+    { readOnly: true, claimable: true, total: '7000000000000000000', visible: false },
+    { readOnly: false, claimable: false, total: '7000000000000000000', visible: false },
+    { readOnly: false, claimable: true, total: '0', visible: false },
+  ])('keeps Stake rewards visible but enables it only for eligible buyers: %j', ({ readOnly, claimable, total, visible }) => {
+    const previousData = state.data.rewards;
+    const previousConfig = context.config;
+    const previousOverview = context.overview;
+    context.config = { ...context.config, readOnly };
+    context.overview = { ...context.overview, wallet: { eth: '1000000000000000' } } as AppValue['overview'];
+    state.data.rewards = {
+      scope: 'buyer',
+      buyerUsage: { total, operator: context.config.address, claimable },
+      sellerUsage: { agentId: 0 },
+      legacy: { buyer: '5000000000000000000' },
+    };
+    try {
+      const html = render(createElement(RewardsPage));
+      expect(html).toContain('Current buyer rewards');
+      expect(html).toContain('Legacy buyer rewards');
+      const button = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).find(button => button.includes('>Stake rewards</span>'));
+      expect(button).toBeDefined();
+      expect(button!.includes('disabled=""')).toBe(!visible);
+      expect(html).not.toContain('>Restake</span>');
+    } finally { state.data.rewards = previousData; context.config = previousConfig; context.overview = previousOverview; }
+  });
+
+  it.each([
+    { canTransfer: false, wrongWallet: false, failedRead: false, walletRoute: false },
+    { canTransfer: true, wrongWallet: false, failedRead: false, walletRoute: true },
+    { canTransfer: true, wrongWallet: true, failedRead: false, walletRoute: false },
+    { canTransfer: true, wrongWallet: false, failedRead: true, walletRoute: false },
+  ])('keeps legacy buyer descriptions independent of wallet eligibility: %j', ({ canTransfer, wrongWallet, failedRead }) => {
+    const previousData = state.data.rewards;
+    const previousConfig = context.config;
+    const previousOverview = context.overview;
+    const previousError = context.overviewError;
+    context.config = { ...context.config, readOnly: false };
+    context.overview = { ...context.overview, wallet: { eth: '1000000000000000', canTransfer } } as AppValue['overview'];
+    context.overviewError = failedRead ? 'RPC unavailable' : null;
+    state.data.rewards = {
+      scope: 'buyer',
+      buyerUsage: { total: '0', operator: wrongWallet ? context.config.buyerAddress : context.config.address, claimable: true },
+      legacy: { buyer: '1991554800000000000000' },
+    };
+    try {
+      const html = render(createElement(RewardsPage));
+      const stake = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).find(button => button.includes('>Stake rewards</span>'));
+      expect(stake).toContain('disabled=""');
+      expect(html).toContain('Earned from using AI services under the previous rewards system.');
+      expect(html).toContain('1,991.5548');
+      expect(html).not.toContain('Legacy rewards have no direct staking function.');
+      expect(html).not.toContain('Claiming and staking are separate transactions.');
+    } finally {
+      state.data.rewards = previousData;
+      context.config = previousConfig;
+      context.overview = previousOverview;
+      context.overviewError = previousError;
+    }
+  });
+
+  it.each([false, true])('keeps M002 locked rewards distinct from released rewards (policy installed: %s)', (installed) => {
+    const previousData = state.data.rewards;
+    const previousConfig = context.config;
+    const previousOverview = context.overview;
+    context.config = { ...context.config, readOnly: false };
+    context.overview = { ...context.overview, wallet: { eth: '1000000000000000', canTransfer: false } } as AppValue['overview'];
+    state.data.rewards = {
+      scope: 'all', total: installed ? '100000000000000000000' : '0',
+      buyerUsage: { total: '0', operator: context.config.address, claimable: true },
+      sellerUsage: { total: '0', claimable: false, agentId: 42 },
+      staker: { total: '0', positions: [] },
+      legacy: { buyer: '0', seller: '0', buyerClaimable: true },
+      locked: { locked: '1000000000000000000000', claimable: installed ? '100000000000000000000' : '0', policy: installed ? context.config.address : null },
+    };
+    try {
+      const html = render(createElement(RewardsPage));
+      expect(html).toContain('Locked seller rewards');
+      expect(html).toContain('Past seller rewards held in the locked pool.');
+      expect(html).toContain('1,000 ANTS locked');
+      expect(html).not.toContain('This wallet cannot transfer ANTS into staking.');
+      expect(html.includes('M002 (unlock policy) is not installed.')).toBe(!installed);
+      const lockedRow = html.slice(html.indexOf('>Locked seller rewards</div>'));
+      const claimButton = lockedRow.match(/<button[^>]*>.*?<\/button>/)?.[0];
+      expect(claimButton).toBeDefined();
+      expect(claimButton!.includes('disabled=""')).toBe(!installed);
+      expect(lockedRow).not.toContain('>Restake</span>');
+    } finally { state.data.rewards = previousData; context.config = previousConfig; context.overview = previousOverview; }
+  });
+
+  it('keeps seller and existing-position rewards directly restakable when wallet transfers are restricted', () => {
+    const previousData = state.data.rewards;
+    const previousConfig = context.config;
+    const previousOverview = context.overview;
+    context.config = { ...context.config, readOnly: false };
+    context.overview = { ...context.overview, wallet: { eth: '1000000000000000', canTransfer: false } } as AppValue['overview'];
+    state.data.rewards = {
+      scope: 'all', total: '3000000000000000000',
+      buyerUsage: { total: '0', operator: context.config.address, claimable: true },
+      sellerUsage: { total: '1000000000000000000', claimable: true, agentId: 42 },
+      staker: { total: '2000000000000000000', positions: [{ id: 7, amount: '2000000000000000000', agentId: 42 }] },
+      legacy: { buyer: '0', seller: '0', buyerClaimable: true },
+      locked: { locked: '0', claimable: '0', policy: null },
+    };
+    try {
+      const html = render(createElement(RewardsPage));
+      expect(html).toContain('Staking rewards');
+      expect(html).toContain('Current seller rewards');
+      expect(html).not.toContain('>Restake</span>');
+      const buttons = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).filter(button => button.includes('>Stake rewards</span>') && !button.includes('disabled=""'));
+      expect(buttons).toHaveLength(3);
+      for (const button of buttons) expect(button).not.toContain('disabled=""');
+    } finally { state.data.rewards = previousData; context.config = previousConfig; context.overview = previousOverview; }
+  });
+
   it('loads originating buyer rewards without requesting wallet positions while disconnected', () => {
     const original = context.config.browserWallet;
     context.config.browserWallet = true;
     state.keys = [];
     try {
       const html = render(createElement(StakePage));
-      expect(state.keys).toContain('pools');
+    expect(state.keys).toContain('pools');
+    expect(state.keys).not.toContain('pool-stakers');
       expect(state.keys).not.toContain('positions:current');
       expect(state.keys).toContain('rewards');
       expect(html).toContain('Buyer rewards');
@@ -64,9 +182,9 @@ describe('staking dashboard displays', () => {
       expect(html).toContain('Buyer rewards');
       expect(html).toContain('Connect the authorized wallet');
       expect(html).toContain(context.config.buyerAddress);
-      expect(html).toContain('from legacy buyer rewards');
-      const claimButtons = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).filter(button => button.includes('>Claim buyer rewards</span>'));
-      expect(claimButtons).toHaveLength(1);
+      expect(html).toContain('Legacy buyer rewards');
+      const claimButtons = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).filter(button => button.includes('>Claim to wallet</span>'));
+      expect(claimButtons).toHaveLength(2);
       for (const button of claimButtons) expect(button).toContain('disabled=""');
       expect(state.keys).not.toContain('positions:current');
     } finally {
@@ -83,8 +201,8 @@ describe('staking dashboard displays', () => {
     try {
       const html = render(createElement(RewardsPage));
       expect(html).toContain('Authorize wallet ↗');
-      expect(html).toContain('Authorize a wallet to claim or restake');
-      const claim = html.match(/<button[^>]*>.*?Claim buyer rewards.*?<\/button>/)?.[0];
+      expect(html).toContain('Authorize a wallet to claim or stake');
+      const claim = html.match(/<button[^>]*>.*?Claim to wallet.*?<\/button>/)?.[0];
       expect(claim).toContain('disabled=""');
     } finally { state.data.rewards = previousData; context.config = previousConfig; }
   });
@@ -96,7 +214,7 @@ describe('staking dashboard displays', () => {
     expect(render(createElement(LockSlider, props))).not.toContain('unlocks');
   });
 
-  it('shows locked rewards and missing unlock policy with zero claimable balance', () => {
+  it('shows the locked balance without release-policy copy in its description', () => {
     state.data.rewards = {
       total: '0', staker: { total: '0', positions: [] }, sellerUsage: { total: '0', claimable: false },
       buyerUsage: { total: '0', claimable: false }, legacy: { seller: '0', buyer: '0', buyerClaimable: true },
@@ -104,8 +222,8 @@ describe('staking dashboard displays', () => {
     } as unknown as RewardsView;
     const html = render(createElement(RewardsPage));
     expect(html).toContain('246,820.5496');
-    expect(html).toContain('Locked pool');
-    expect(html).toContain('not installed');
+    expect(html).toContain('Locked seller rewards');
+    expect(html).toContain('Past seller rewards held in the locked pool.');
   });
 
   it('formats legacy USDC separately from ANTS and grant counts', () => {
@@ -124,7 +242,7 @@ describe('staking dashboard displays', () => {
   it('defaults the directory to stakeable pools', () => {
     const base = { weight: '0', activeStake: '0', powerShareBps: 0, yourPower: '0', volumes: [], lastEpochRewardPer1kPower: null, projectedRewardPer1kPower: null };
     const pools = [{ ...base, agentId: 1, stakeable: true, profile: { name: 'Ready seller' } }, { ...base, agentId: 2, stakeable: false, profile: { name: 'Unbound seller' } }] as unknown as PoolView[];
-    const html = render(createElement(PoolsTable, { pools, loading: false, onOpen: () => {}, onStake: () => {} }));
+    const html = render(createElement(PoolsTable, { pools, currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
     expect(html).toContain('Ready seller');
     expect(html).not.toContain('Unbound seller');
   });
@@ -132,20 +250,129 @@ describe('staking dashboard displays', () => {
 
   it('sorts APY and valid last-epoch volume in both directions, with unknown values last', () => {
     const pool = (agentId: number, apy: number | null, usdc: string, volumeStatus = 'available') => ({
-      agentId, yield: { epoch: 24, apy, status: apy === null ? 'unavailable' : 'settled', startsAt: 0, endsAt: 604800, reward: apy === null ? null : String(BigInt(apy) * 10n ** 18n), power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 },
+      agentId, yield: { epoch: 24, apy, status: apy === null ? 'unavailable' : 'settled', startsAt: 0, endsAt: 604800, reward: apy === null ? null : (BigInt(apy) * 10n ** 18n).toString(), power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 },
       volumes: [{ epoch: 24, usdc }, { epoch: 25, usdc: '999999999999999999' }], volumeStatus,
     }) as PoolView;
     const pools = [pool(1, 12, '100'), pool(2, 0, '900'), pool(3, null, '99999', 'stale')];
     const ids = (rows: PoolView[]) => rows.map(p => p.agentId);
-    expect(ids(sortPoolsByMetric(pools, 'month', 'descending'))).toEqual([1, 2, 3]);
-    expect(ids(sortPoolsByMetric(pools, 'month', 'ascending'))).toEqual([2, 1, 3]);
-    expect(ids(sortPoolsByMetric(pools, 'volume', 'descending'))).toEqual([2, 1, 3]);
-    expect(ids(sortPoolsByMetric(pools, 'volume', 'ascending'))).toEqual([1, 2, 3]);
-    const html = render(createElement(PoolsTable, { pools: [], loading: false, onOpen: () => {}, onStake: () => {} }));
+    expect(ids(sortPoolsByMetric(pools, 'apy', 'descending', 25))).toEqual([1, 2, 3]);
+    expect(ids(sortPoolsByMetric(pools, 'apy', 'ascending', 25))).toEqual([2, 1, 3]);
+    expect(ids(sortPoolsByMetric(pools, 'volume', 'descending', 25))).toEqual([2, 1, 3]);
+    expect(ids(sortPoolsByMetric(pools, 'volume', 'ascending', 25))).toEqual([1, 2, 3]);
+    const html = render(createElement(PoolsTable, { pools: [], currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
     expect(html).toContain('aria-sort="descending"');
-    expect(html).toContain('Sort by APY · 1 month, ascending');
+    expect(html).toContain('Sort by APY, ascending');
+    expect(html).toContain('Total active stake (ANTS)');
+    expect(html).not.toContain('Stakers');
+    expect(html).not.toContain('APY range:');
     expect(html).not.toContain('<select');
     expect(html).not.toContain('Estimated APY');
+  });
+
+  it('shows and sorts completed-epoch volume without yield data', () => {
+    const pool = { agentId: 1, stakeable: true, profile: null, activeStake: '3000000000000000000', volumes: [{ epoch: 24, usdc: '123000000' }, { epoch: 25, usdc: '999000000' }], volumeStatus: 'available' } as PoolView;
+    const other = { ...pool, agentId: 2, volumes: [{ epoch: 24, usdc: '456000000' }] };
+    expect(sortPoolsByMetric([pool, other], 'volume', 'descending', 25).map(entry => entry.agentId)).toEqual([2, 1]);
+    expect(sortPoolsByMetric([pool, other], 'volume', 'ascending', 25).map(entry => entry.agentId)).toEqual([1, 2]);
+    const html = render(createElement(PoolsTable, { pools: [pool], currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
+    expect(html).toContain('123');
+    expect(html).not.toContain('999');
+    expect(html).toContain('Total active stake (ANTS)');
+    expect(html).not.toContain('Stakers');
+  });
+
+  it('displays a single lock-dependent range with an unsettled-reward label in the table and drawer', () => {
+    const pool = { agentId: 1, stakeable: true, profile: null, activeStake: '3000000000000000000', weight: '0', powerShareBps: 0, lastEpochEmission: null, volumes: [], yield: { epoch: 24, startsAt: 0, endsAt: 604800, apr: 11, apy: 12.34, status: 'estimated', reward: '1000000000000000000', power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 } } as unknown as PoolView;
+    const range = poolApyRange(pool.yield);
+    const expected = `${formatYieldPercent(range.oneWeek.apy)} – ${formatYieldPercent(range.twoYears.apy)}`;
+    const html = render(createElement(PoolsTable, { pools: [pool], currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
+    expect(html).toContain(expected);
+    expect(html).not.toContain('12.34%');
+    expect(html).toContain('est.');
+    expect(html).toContain('Source epoch 24');
+    expect(html).toContain('1 week: 1 epoch(s), 7 days; 2 years: 104 epoch(s), 728 days');
+    expect(html).toContain('compounding is not automatic');
+    expect(html).not.toContain('APY range:');
+    expect(html).not.toContain('APY sorting uses the 1-week rate.');
+    expect(html).not.toContain('APY · 1 month');
+    expect(html).not.toContain('APY · 1 year');
+    const view = { currentEpoch: 25, networkVolumes: [], explorer: null } as unknown as PoolsView;
+    const drawer = render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
+    expect(drawer).toContain(expected);
+    expect(drawer).toContain('APY');
+    expect(drawer).not.toContain('APY · 1 week–2 years');
+  });
+
+  it.each([100, 200, 2000])('shows a single N/A only when an APY endpoint exceeds 10,000%% (reward: %s)', (reward) => {
+    const pool = { agentId: 1, stakeable: true, profile: null, activeStake: '3000000000000000000', weight: '0', powerShareBps: 0, lastEpochEmission: null, volumes: [], yield: { epoch: 24, startsAt: 0, endsAt: 604800, status: 'estimated', reward: (BigInt(reward) * 10n ** 18n).toString(), power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 } } as unknown as PoolView;
+    const range = poolApyRange(pool.yield);
+    const hidden = reward !== 100;
+    if (hidden) expect(range.twoYears.apy).toBeGreaterThan(10000);
+    else {
+      expect(range.oneWeek.apy).toBeGreaterThan(10);
+      expect(range.twoYears.apy).toBeLessThan(10000);
+    }
+    if (reward === 200) expect(range.oneWeek.apy).toBeLessThan(10000);
+    if (reward === 2000) expect(range.oneWeek.apy).toBeGreaterThan(10000);
+    const expected = hidden ? 'N/A' : `${formatYieldPercent(range.oneWeek.apy)} – ${formatYieldPercent(range.twoYears.apy)}`;
+    const table = render(createElement(PoolsTable, { pools: [pool], currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
+    const drawer = render(createElement(PoolDrawer, { pool, view: { currentEpoch: 25, networkVolumes: [], explorer: null } as unknown as PoolsView, onClose: () => {}, onStake: () => {} }));
+    for (const html of [table, drawer]) {
+      expect(html).toContain(hidden ? '>N/A</span>' : `>${expected}`);
+      expect(html.includes('APY is shown as N/A when either end of the range exceeds 10,000%.')).toBe(hidden);
+      expect(html).not.toContain('N/A – N/A');
+      expect(html).not.toContain(' – N/A');
+    }
+  });
+
+  it.each(['available', 'stale', 'unavailable'] as const)('preserves seller history as pool details load (history: %s)', (status) => {
+    const previous = state.data['pool:47214'];
+    delete state.data['pool:47214'];
+    const pool = {
+      agentId: 47214, stakeable: true, hasPool: true, profile: null, activeStake: '1000000000000000000',
+      weight: '103000000000000000000', powerShareBps: 384, lastEpochEmission: '155714266005655605361',
+      volumeStatus: 'available', volumes: [
+        { epoch: 23, usdc: '21419582' }, { epoch: 22, usdc: '4262829' },
+        { epoch: 21, usdc: '21427226' }, { epoch: 19, usdc: '0' }, { epoch: 15, usdc: '670601' },
+      ],
+    } as PoolView;
+    const view = { currentEpoch: 23, networkVolumes: [{ epoch: 22, usdc: '7751200000' }], explorer: null } as PoolsView;
+    const drawer = () => render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
+    const barEpochs = (html: string) => [...html.matchAll(/<span>Epoch (\d+)<\/span>/g)].map(match => Number(match[1]));
+    try {
+      const initial = drawer();
+      expect(barEpochs(initial)).toEqual([15, 19, 21, 22]);
+      state.data['pool:47214'] = { ...pool, currentEpoch: status === 'available' ? 23 : 24,
+        volumes: status === 'available' ? [...pool.volumes].reverse() : [], volumeStatus: status };
+      const refreshed = drawer();
+      expect(barEpochs(refreshed)).toEqual(barEpochs(initial));
+      expect(refreshed).toContain('21.42 USDC');
+      expect(refreshed).toContain('0 USDC');
+      expect(refreshed).toContain('Seller settled volume · completed epochs');
+      expect(refreshed).toContain('Includes legacy seller activity.');
+      expect(refreshed).toContain('<th class="num">Seller</th>');
+      expect(refreshed.includes('Showing previously loaded history.')).toBe(status !== 'available');
+      expect(refreshed).not.toContain('<p class="hint">1,000 ANTS reference stake');
+    } finally {
+      if (previous === undefined) delete state.data['pool:47214'];
+      else state.data['pool:47214'] = previous;
+    }
+  });
+
+  it('keeps missing seller history unavailable instead of fabricating zero-volume epochs', () => {
+    const previous = state.data['pool:47214'];
+    const pool = { agentId: 47214, stakeable: true, hasPool: true, profile: null, activeStake: '0', weight: '0', powerShareBps: 0, lastEpochEmission: null, volumeStatus: 'unavailable', volumes: [] } as unknown as PoolView;
+    state.data['pool:47214'] = { ...pool, currentEpoch: 23 };
+    try {
+      const view = { currentEpoch: 23, networkVolumes: [], explorer: null } as unknown as PoolsView;
+      const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
+      expect(html).toContain('Settlement volume unavailable for completed epochs.');
+      expect(html).not.toContain('volume-bar-row');
+      expect(html).not.toContain('0 USDC');
+    } finally {
+      if (previous === undefined) delete state.data['pool:47214'];
+      else state.data['pool:47214'] = previous;
+    }
   });
 
   it('uses explorer ghost-rate percentage units without multiplying again', () => {
@@ -173,6 +400,8 @@ describe('reward staking modal', () => {
     expect(html).toContain('Unclaimed buyer rewards · 5 ANTS');
     expect(html).toContain('Wallet balance · 1 ANTS (transfers restricted)');
     expect(html).toContain('Stake rewards directly without claiming to your wallet.');
+    expect(html).not.toContain('Projected APY');
+    expect(html).not.toContain('Estimated first-epoch reward');
     expect(html).not.toContain('New stakes are unavailable');
     expect(html).toMatch(/<option(?=[^>]*disabled="")(?=[^>]*value="wallet")[^>]*>/);
     expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Review reward stake/);

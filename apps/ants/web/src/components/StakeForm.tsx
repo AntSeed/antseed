@@ -9,7 +9,6 @@ import { Field, Input, Select } from './Field';
 import { LockSlider } from './LockSlider';
 import { EpochCell } from './Epoch';
 import { poolLabel } from './Pools';
-import { projectStake, presetEpochs, formatProjectionPercent, PROJECTION_ASSUMPTIONS, YIELD_DISPLAY_LIMIT, EXTREME_YIELD_NOTE } from '../stake-projection';
 import { useApp } from '../app-context';
 import { stakeSources, stakeSourceRequest } from '../stake-sources';
 
@@ -66,10 +65,6 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
   }, [agentId, pools]);
 
   const pool = pools.find((p) => p.agentId === selectedAgentId) ?? null;
-
-  const projection = source.kind === 'staker' ? null : projectStake(pool?.yield, parseUnits(amount, 18), epochs);
-  const epochDuration = overview?.epoch.epochDuration ?? 0;
-  const presets = [{ label: '1 month', days: 30 }, { label: '1 year', days: 365 }];
 
   const fillMax = () => {
     if (balance === undefined) return;
@@ -160,8 +155,6 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
           ['Pool', <span className="mono">{pool ? poolLabel(pool) : `Agent ${selectedAgentId}`}</span>],
           ['Amount', <span className="mono">{amount} ANTS</span>],
           ['Lock', <span className="mono">{epochs} {epochs === 1 ? 'epoch' : 'epochs'}</span>],
-          ['Projected APY', <span title={projection?.apy != null && projection.apy > YIELD_DISPLAY_LIMIT ? EXTREME_YIELD_NOTE : PROJECTION_ASSUMPTIONS}>{formatProjectionPercent(projection?.apy)}</span>],
-          ['Estimated first-epoch reward', projection ? `${formatAnts(projection.epochReward.toString(), 4)} ANTS` : '—'],
           ['Activates', <EpochCell epoch={activationEpoch} dateOnly />],
           ['Unlocks', <EpochCell epoch={activationEpoch === null ? null : activationEpoch + epochs} dateOnly />],
           ['Early exit slash', <span>{config ? `${formatBps(config.minEarlyExitSlashBps)} – ${formatBps(config.maxSlashBps)}` : '—'}<EarlyExitHelp /></span>],
@@ -217,22 +210,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
           disabled={noPools || !isWallet}
         />
         <div className="stake-lock-settings">
-          <div className="row">
-            {presets.map(preset => {
-              const selected = presetEpochs(preset.days, epochDuration, config?.minStakeEpochs, config?.maxStakeEpochs);
-              return <button key={preset.label} type="button" className="link-button" disabled={selected === null || noPools} aria-pressed={selected === epochs}
-                title={selected === null ? 'This lock is unavailable on the configured chain.' : `${selected} epochs (${selected * epochDuration / 86400} days)`}
-                onClick={() => { if (selected !== null) setEpochs(selected); }}>{preset.label}</button>;
-            })}
-          </div>
           <LockSlider value={epochs} min={minEpochs} max={maxEpochs} startEpoch={activationEpoch} onChange={setEpochs} disabled={!config || noPools} />
-          <div className="stake-projection" aria-live="polite">
-            <span title={PROJECTION_ASSUMPTIONS}>Projected APY <strong className="mono">{formatProjectionPercent(projection?.apy)}</strong></span>
-            <span>Estimated first-epoch reward <strong className="mono">{projection ? `${formatAnts(projection.epochReward.toString(), 4)} ANTS` : '—'}</strong></span>
-            <span className="hint">{!isPositiveDecimal(amount) ? 'Enter an amount to see your projection.' : !projection ? (source.kind === 'staker' ? 'Projection unavailable for the restaking bonus.' : 'Projection unavailable for this pool’s historical data.') : `Based on epoch ${pool!.yield!.epoch}, your amount and initial lock power. ${pool!.yield!.status === 'estimated' ? 'Source rewards are not yet settled.' : ''}`}</span>
-            <span className="hint">{projection?.apy != null && projection.apy > YIELD_DISPLAY_LIMIT ? EXTREME_YIELD_NOTE : null}</span>
-            <span className="hint" title={PROJECTION_ASSUMPTIONS}>Initial rate only; power decreases over time. Compounding is hypothetical.</span>
-          </div>
         </div>
       </div>
       {config ? <p className="hint">Longer locks increase staking power. Withdrawing early burns {formatBps(config.minEarlyExitSlashBps)}–{formatBps(config.maxSlashBps)} of principal; review the withdrawal estimate before proceeding.<EarlyExitHelp /></p> : null}

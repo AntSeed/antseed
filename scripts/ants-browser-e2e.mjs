@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Verify browser signing against a disposable --restricted --browser sandbox.
- * node scripts/ants-browser-e2e.mjs /absolute/path/to/scenario.json [vpr|name-filter]
+ * node scripts/ants-browser-e2e.mjs /absolute/path/to/scenario.json [vpr|stake-sources|legacy|name-filter]
  * All mutations are restricted to local Anvil and reverted after each scenario.
  * This drives the wallet/API protocol; extension UI is tested separately.
  */
@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { Contract, JsonRpcProvider, parseUnits, ZeroAddress } from 'ethers';
 import { createAntsServer } from '../apps/ants/dist/server.js';
 import { createServer as createPaymentsServer } from '../apps/payments/dist/server.js';
+import { runLegacyRewardScenarios } from './ants-legacy-rewards-e2e.mjs';
 const scenarioPath = process.argv[2];
 assert(scenarioPath, 'Pass scenario.json from a running --restricted --browser sandbox');
 const scenario = JSON.parse(await readFile(scenarioPath, 'utf8'));
@@ -25,6 +26,7 @@ provider.pollingInterval = 100;
 const rpc = (method, params = []) => provider.send(method, params);
 assert.equal(await rpc('eth_chainId'), '0x7a69');
 assert.match(await rpc('web3_clientVersion'), /anvil/i);
+const originalBlock = await rpc('eth_getBlockByNumber', ['latest', false]);
 const wallet = scenario.address;
 const buyer = scenario.buyerAddress;
 assert.notEqual(wallet.toLowerCase(), buyer.toLowerCase());
@@ -32,6 +34,7 @@ const token = new Contract(chain.antsTokenAddress, ['function balanceOf(address)
 let server;
 let completedActions = 0;
 let authorizationOpens = 0;
+let passedScenarios = 0;
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
 async function api(route, body, attempt = 0) {
   const response = await fetch(`${new URL(server.url).origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(120000) });
@@ -89,6 +92,7 @@ async function isolate(label, run) {
     });
     await server.listen(); await connect();
     await run();
+    passedScenarios++;
     console.log(`PASS ${label}`);
   } finally {
     await server?.close();
@@ -227,12 +231,13 @@ try {
     assert.equal((await api('rewards')).total, '0');
     assert.equal(await token.transfersEnabled(), false);
   });
-  await isolate('partial move preserves principal/lock and source rewards; split, merge, extend and maximum lock', async () => {
+  await isolate('whole-position move preserves principal/lock and source rewards; split, merge, extend and maximum lock', async () => {
     const initial = await open(), source = initial.find(p => p.agentId === scenario.agentId);
     const total = initial.reduce((n,p) => n + BigInt(p.amount), 0n);
     const powerBefore = (await api('pools')).yourTotalPower;
-    const { approvals } = await action('positions/move', { positionIds: [source.id], toAgentId: scenario.otherAgentId, amount: '40' });
-    assert.equal(approvals, 2);
+    await assert.rejects(action('positions/move', { positionIds: [source.id], toAgentId: scenario.otherAgentId, amount: '40' }), /Partial moves are not supported/);
+    const { approvals } = await action('positions/move', { positionIds: [source.id], toAgentId: scenario.otherAgentId });
+    assert.equal(approvals, 1);
     assert.equal((await api('pools')).yourTotalPower, powerBefore, 'Move power changes take effect next epoch');
     let all = (await api('positions')).positions;
     assert(all.some(p => p.id === source.id && p.closedAtEpoch));
@@ -240,15 +245,16 @@ try {
     let live = all.filter(p => !p.withdrawn && !p.closedAtEpoch);
     assert.equal(live.reduce((n,p) => n + BigInt(p.amount), 0n), total);
     let moved = live.find(p => !initial.some(i => i.id === p.id) && p.agentId === scenario.otherAgentId);
-    assert.equal(moved.amount, parseUnits('40', 18).toString()); assert.equal(moved.stakeEndEpoch, source.stakeEndEpoch);
+    assert.equal(moved.amount, source.amount); assert.equal(moved.stakeEndEpoch, source.stakeEndEpoch);
     await advance();
     await action('positions/split', { positionId: moved.id, amount: '15' }); await advance();
-    live = await open(); const parts = live.filter(p => p.agentId === scenario.otherAgentId && ['15000000000000000000','25000000000000000000'].includes(p.amount)); assert.equal(parts.length, 2);
+    const partAmounts = [parseUnits('15', 18).toString(), (BigInt(source.amount) - parseUnits('15', 18)).toString()];
+    live = await open(); const parts = live.filter(p => p.agentId === scenario.otherAgentId && partAmounts.includes(p.amount)); assert.equal(parts.length, 2);
     await action('positions/merge', { positionIds: parts.map(p => p.id) }); await advance();
-    moved = (await open()).find(p => p.amount === parseUnits('40',18).toString());
+    moved = (await open()).find(p => p.agentId === scenario.otherAgentId && p.amount === source.amount);
     await action('positions/extend', { positionId: moved.id, epochs: 2 }); await advance();
     await action('positions/max-lock', { positionId: moved.id, enable: true }); await advance();
-    await assert.rejects(action('positions/move', { positionIds: [moved.id], toAgentId: scenario.agentId, amount: '10' }), /maximum lock/);
+    await assert.rejects(action('positions/move', { positionIds: [moved.id], toAgentId: scenario.agentId }), /maximum lock/);
     await action('positions/max-lock', { positionId: moved.id, enable: false }); await advance();
     await action('positions/move', { positionIds: [moved.id], toAgentId: scenario.agentId });
     assert.equal(await token.transfersEnabled(), false);
@@ -278,5 +284,8 @@ try {
     const { approvals } = await action('positions/stake', { agentId: scenario.agentId, amount: '2', epochs: 4 });
     assert(approvals >= 1); assert.equal(before - await token.balanceOf(wallet), parseUnits('2', 18));
   });
-  console.log(`${process.argv[3] ? 'Selected' : 'All'} browser signing Anvil scenarios passed. Original chain state restored.`);
+  await runLegacyRewardScenarios({ isolate, api, action, open, provider, rpc, wallet, buyer, chain, getServer: () => server });
+  assert(passedScenarios > 0, 'No Anvil scenarios matched the requested filter');
+  assert.equal((await rpc('eth_getBlockByNumber', ['latest', false])).hash, originalBlock.hash, 'The complete suite must restore the original Anvil block');
+  console.log(`${passedScenarios} ${process.argv[3] ? 'selected' : 'total'} browser signing Anvil scenarios passed. Original chain state restored.`);
 } finally { provider.destroy(); }

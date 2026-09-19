@@ -1,4 +1,4 @@
-import { referenceProjection, formatProjectionPercent as percent, PROJECTION_ASSUMPTIONS, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../stake-projection';
+import { poolApyRange, formatYieldPercent as percent, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
 import { usePageData } from '../data';
 import { api } from '../api';
 import { Button, IconButton } from './ui';
@@ -42,15 +42,15 @@ export function sortPools(pools: PoolView[]): PoolView[] {
   });
 }
 
-type PoolSortMetric = 'month' | 'year' | 'volume';
+type PoolSortMetric = 'apy' | 'volume';
 type SortDirection = 'ascending' | 'descending';
 
 /** Sort the displayed metric, keeping unavailable values last in either direction. */
-export function sortPoolsByMetric(pools: PoolView[], metric: PoolSortMetric, direction: SortDirection): PoolView[] {
-  const value = (pool: PoolView): number | bigint | null => metric !== 'volume'
-    ? referenceProjection(pool.yield, metric === 'month' ? 30 : 365).projection?.apy ?? null
-    : pool.volumeStatus === 'available' && pool.volumes.some(v => v.epoch === pool.yield?.epoch)
-      ? BigInt(pool.volumes.find(v => v.epoch === pool.yield?.epoch)!.usdc) : null;
+export function sortPoolsByMetric(pools: PoolView[], metric: PoolSortMetric, direction: SortDirection, currentEpoch: number): PoolView[] {
+  const value = (pool: PoolView): number | bigint | null => metric === 'apy'
+    ? poolApyRange(pool.yield).oneWeek.apy
+    : pool.volumeStatus === 'available' && pool.volumes.some(volume => volume.epoch === currentEpoch - 1)
+      ? BigInt(pool.volumes.find(volume => volume.epoch === currentEpoch - 1)!.usdc) : null;
   return [...pools].sort((a, b) => {
     const av = value(a), bv = value(b);
     if (av === null) return bv === null ? 0 : 1;
@@ -68,16 +68,17 @@ function matchesFilter(pool: PoolView, needle: string): boolean {
 
 interface TableProps {
   pools: PoolView[];
+  currentEpoch: number;
   loading: boolean;
   onOpen: (pool: PoolView) => void;
   onStake: (pool: PoolView) => void;
 }
 
-export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
+export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: TableProps) {
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [stakeableOnly, setStakeableOnly] = useState(true);
-  const [sortBy, setSortBy] = useState<PoolSortMetric>('month');
+  const [sortBy, setSortBy] = useState<PoolSortMetric>('apy');
   const [sortDirection, setSortDirection] = useState<SortDirection>('descending');
   const sortHeader = (metric: PoolSortMetric, label: string) => (
     <button type="button" className="table-sort" aria-label={`Sort by ${label}, ${sortBy === metric && sortDirection === 'descending' ? 'ascending' : 'descending'}`} onClick={() => {
@@ -87,7 +88,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
     }}>{label} <span aria-hidden="true">{sortBy === metric ? sortDirection === 'descending' ? '↓' : '↑' : '↕'}</span></button>
   );
   const needle = filter.trim();
-  const filtered = useMemo(() => sortPoolsByMetric(pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), sortBy, sortDirection), [pools, needle, stakeableOnly, sortBy, sortDirection]);
+  const filtered = useMemo(() => sortPoolsByMetric(pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), sortBy, sortDirection, currentEpoch), [pools, needle, stakeableOnly, sortBy, sortDirection, currentEpoch]);
   const capped = !showAll && filtered.length > POOL_ROW_CAP;
   const visible = capped ? filtered.slice(0, POOL_ROW_CAP) : filtered;
   const columns: Array<Column<PoolView>> = [
@@ -107,21 +108,14 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
         </span>
       ),
     },
-    ...(['month', 'year'] as const).map(metric => ({
-      key: metric, label: sortHeader(metric, metric === 'month' ? 'APY · 1 month' : 'APY · 1 year'),
-      sortDirection: sortBy === metric ? sortDirection : 'none' as const,
-      align: 'right' as const, mono: true,
-      render: (p: PoolView) => {
-        const { epochs, projection } = referenceProjection(p.yield, metric === 'month' ? 30 : 365);
-        const duration = p.yield ? p.yield.endsAt - p.yield.startsAt : 0;
-        const title = !projection || epochs === null ? 'Projection unavailable: historical rewards, power or supported lock duration is missing.'
-          : `1,000 ANTS reference stake · ${epochs} epochs (${epochs * duration / 86400} days). Source epoch ${p.yield!.epoch}: ${formatUtc(p.yield!.startsAt)} – ${formatUtc(p.yield!.endsAt)}. ${PROJECTION_ASSUMPTIONS}${p.yield!.status === 'estimated' ? ' Source rewards are not yet settled.' : ''}`;
-        return <span className="yield-percent" title={projection?.apy != null && projection.apy > YIELD_DISPLAY_LIMIT ? `${EXTREME_YIELD_NOTE} ${title}` : title}>{percent(projection?.apy)}{projection && p.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}</span>;
-      },
-    })),
-    { key: 'stake', label: 'Active stake (ANTS)', align: 'right', mono: true, render: p => formatAnts(p.activeStake) },
-    { key: 'volume', label: sortHeader('volume', 'Last epoch (USDC)'), sortDirection: sortBy === 'volume' ? sortDirection : 'none', align: 'right', mono: true, render: p => { const v = p.volumes.find(v => v.epoch === p.yield?.epoch); return v && p.volumeStatus === 'available' ? formatUsdcCompact(v.usdc) : '—'; } },
-    { key: 'stakers', label: 'Stakers', align: 'right', mono: true, render: p => p.stakers == null ? '—' : formatInt(p.stakers) },
+    {
+      key: 'apy', label: sortHeader('apy', 'APY'),
+      sortDirection: sortBy === 'apy' ? sortDirection : 'none',
+      align: 'right', mono: true,
+      render: (pool: PoolView) => <PoolApy pool={pool} />,
+    },
+    { key: 'stake', label: 'Total active stake (ANTS)', align: 'right', mono: true, render: p => formatAnts(p.activeStake) },
+    { key: 'volume', label: sortHeader('volume', 'Last epoch (USDC)'), sortDirection: sortBy === 'volume' ? sortDirection : 'none', align: 'right', mono: true, render: p => { const volume = p.volumes.find(volume => volume.epoch === currentEpoch - 1); return volume && p.volumeStatus === 'available' ? formatUsdcCompact(volume.usdc) : '—'; } },
     {
       key: 'actions',
       label: '',
@@ -139,7 +133,6 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   ];
   return (
     <>
-      <p className="hint">Projected APYs use a 1,000 ANTS reference stake and the last completed epoch. Locks use the nearest supported whole epoch; hover for exact days and assumptions.</p>
       <div className="pools-toolbar">
         {pools.length > 5 ? (
           <Input label="" mono={false} width="md" placeholder="Filter by name or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
@@ -174,7 +167,7 @@ export function PoolsTable({ pools, loading, onOpen, onStake }: TableProps) {
   );
 }
 
-/** Right-hand drawer: explorer profile, 3-epoch volume against the network, pool facts, your positions. */
+/** Right-hand drawer: seller settlement history (including legacy activity), pool facts and profile. */
 export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool: PoolView; view: PoolsView; onClose: () => void; onStake: (pool: PoolView) => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -186,7 +179,10 @@ export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool
 
   const detail = usePageData(`pool:${initialPool.agentId}`, () => api.pool(initialPool.agentId));
   const pool = detail.data ?? initialPool;
-  const completedVolumes = pool.volumes.filter(v => v.epoch < view.currentEpoch);
+  const historyRefreshFailed = !!detail.error || (!!detail.data && detail.data.volumeStatus !== 'available');
+  const history = historyRefreshFailed && initialPool.volumeStatus === 'available' ? initialPool : pool;
+  const historyEpoch = history === initialPool ? view.currentEpoch : detail.data?.currentEpoch ?? view.currentEpoch;
+  const completedVolumes = history.volumes.filter(volume => volume.epoch < historyEpoch).sort((first, second) => second.epoch - first.epoch);
   const maxVolume = completedVolumes.reduce((max, v) => BigInt(v.usdc) > max ? BigInt(v.usdc) : max, 0n);
   const profile = pool.profile;
   const explorerUrl = view.explorer && pool.seller ? `${view.explorer.replace(/\/$/, '')}/account/${pool.seller}` : null;
@@ -239,22 +235,20 @@ export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool
             <Facts
               items={[
                 ['Power', `${formatAnts(pool.weight)} · ${formatBps(pool.powerShareBps)} of network`],
-                ['APY', <span title={yieldDescription(pool)}>{percent(pool.yield?.apy)}{pool.yield?.status === 'estimated' ? ' (est.)' : ''}</span>],
-                ['APR', percent(pool.yield?.apr)],
-                ['Active stake', `${formatAnts(pool.activeStake, 4)} ANTS`],
-                ['Stakers', pool.stakers == null ? '—' : formatInt(pool.stakers)],
+                ['APY', <PoolApy pool={pool} />],
+                ['Total active stake', `${formatAnts(pool.activeStake, 4)} ANTS`],
                 ['Last epoch emission', pool.lastEpochEmission !== null ? `${formatAnts(pool.lastEpochEmission, 4)} ANTS` : '—'],
               ]}
             />
           </section>
 
           <section className="drawer-section">
-            <h3 className="drawer-section-title">Settled volume · completed epochs</h3>
-            <p className="hint">{yieldDescription(pool)}</p>
-            {detail.error && <p className="hint">Seller details could not refresh. Showing previously loaded data.</p>}
-            {pool.statsUpdatedAt && <p className="small muted">Fetched {formatUtc(Math.floor(pool.statsUpdatedAt / 1000))}</p>}
-            {pool.volumeStatus !== 'available' && <p className="hint">Settlement volume {pool.volumeStatus === 'stale' ? 'is stale' : 'is unavailable'}. Usage points are not revenue.</p>}
-            <div className="volume-bars" role="img" aria-label="Settled USDC volume by completed epoch">
+            <h3 className="drawer-section-title">Seller settled volume · completed epochs</h3>
+            <p className="hint">Includes legacy seller activity.</p>
+            {historyRefreshFailed && history === initialPool && history.volumeStatus === 'available' && <p className="hint">Seller history could not refresh. Showing previously loaded history.</p>}
+            {history.statsUpdatedAt && <p className="small muted">Fetched {formatUtc(Math.floor(history.statsUpdatedAt / 1000))}</p>}
+            {history.volumeStatus !== 'available' && <p className="hint">Settlement volume {history.volumeStatus === 'stale' ? 'is stale' : 'is unavailable'}. Usage points are not revenue.</p>}
+            <div className="volume-bars" role="img" aria-label="Seller settled USDC volume by completed epoch">
               {completedVolumes.slice().reverse().map(v => <div className="volume-bar-row" key={v.epoch}><span>Epoch {v.epoch}</span><div className="volume-bar-track"><div style={{ width: `${maxVolume > 0n ? Number(BigInt(v.usdc) * 10000n / maxVolume) / 100 : 0}%` }} /></div><span>{formatUsdc(v.usdc)} USDC</span></div>)}
             </div>
             <div className="table-wrap" style={{ marginBottom: 0 }}>
@@ -262,7 +256,7 @@ export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool
                 <thead>
                   <tr>
                     <th>Epoch</th>
-                    <th className="num">Pool</th>
+                    <th className="num">Seller</th>
                     <th className="num">Network</th>
                     <th className="num">Share</th>
                   </tr>
@@ -325,7 +319,21 @@ export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool
 
 
 function yieldDescription(pool: PoolView): string {
-  const y = pool.yield;
-  if (!y || y.status === 'unavailable') return 'Last-epoch yield is unavailable.';
-  return `Pool average for epoch ${y.epoch}: ${formatUtc(y.startsAt)} – ${formatUtc(y.endsAt)}. APR ${percent(y.apr)}. APY assumes this rate repeats and compounds every epoch; compounding is not automatic. Your return depends on lock duration, staking power, activation delays and future activity.${y.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
+  const info = pool.yield;
+  if (!info || info.status === 'unavailable') return 'Last-epoch yield is unavailable.';
+  const range = poolApyRange(info);
+  const duration = info.endsAt - info.startsAt;
+  const lockLabel = (epochs: number | null) => epochs === null ? 'unavailable' : `${epochs} epoch(s), ${epochs * duration / 86400} days`;
+  return `1,000 ANTS reference stake. 1 week: ${lockLabel(range.oneWeek.epochs)}; 2 years: ${lockLabel(range.twoYears.epochs)}. Source epoch ${info.epoch}: ${formatUtc(info.startsAt)} – ${formatUtc(info.endsAt)}. Initial earning rates include the reference stake's added power and assume an unchanged pool reward budget. APY assumes the rates repeat and compound every epoch; compounding is not automatic. Power decreases as the lock runs down, activation delays are excluded, and future activity changes returns. Missing data or unsupported locks show —.${info.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
+}
+
+function PoolApy({ pool }: { pool: PoolView }) {
+  const { oneWeek, twoYears } = poolApyRange(pool.yield);
+  const available = oneWeek.apy !== null || twoYears.apy !== null;
+  const extreme = (oneWeek.apy ?? 0) > YIELD_DISPLAY_LIMIT || (twoYears.apy ?? 0) > YIELD_DISPLAY_LIMIT;
+  const low = percent(oneWeek.apy), high = percent(twoYears.apy);
+  return <span className="yield-percent" title={`${yieldDescription(pool)}${extreme ? ` ${EXTREME_YIELD_NOTE}` : ''}`}>
+    {extreme ? 'N/A' : available ? `${low} – ${high}` : '—'}
+    {available && !extreme && pool.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}
+  </span>;
 }

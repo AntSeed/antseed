@@ -5,7 +5,7 @@ export { positions, closedPositionIds, stake, move, split, merge, extend, maxLoc
 export type { WithdrawPreview } from './positions.js';
 export { rewards, claim, restake, stakeUsageRewards, compound } from './rewards.js';
 export type { ClaimResult, RestakeResult, StakeUsageResult, CompoundRequest, CompoundResult } from './rewards.js';
-export { poolsView, poolStakerCounts, singlePool } from './pools.js';
+export { poolsView, singlePool } from './pools.js';
 export { usage } from './usage.js';
 export { emissions } from './emissions.js';
 export { verification, proofStatus, submitProof } from './verification.js';

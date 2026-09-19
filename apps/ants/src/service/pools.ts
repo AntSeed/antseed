@@ -236,11 +236,8 @@ export async function poolsView(ctx: AntsContext): Promise<PoolsView> {
     try {
       const [sellerEpochs, metrics, own] = await Promise.all([indexer.sellerEpochs(VOLUME_EPOCHS), indexer.epochMetrics(), ownPools(ctx, context)]);
       const views = mergePools({ indexed, explorer: context.explorer, sellerEpochs, epochs, own });
-      if (indexed.currentEpoch !== context.stack.currentEpoch) {
-        for (const view of views) { view.volumes = []; view.volumeStatus = 'stale'; }
-      } else for (const view of views) { view.volumeStatus = view.volumes.length ? 'available' : 'unavailable'; }
+      for (const view of views) setVolumeStatus(view, indexed.currentEpoch, context.stack.currentEpoch);
       await enrichYields(ctx, context, views, indexed);
-      // Staker counts absent from the summary stay unknown. Load detail only when its drawer opens.
       const totalPower = BigInt(indexed.network.current?.totalPowerWeight ?? '0') || context.totalPowerWeight;
       const yourTotalPower = [...own.values()].reduce((sum, entry) => sum + entry.power, 0n);
       return toJson({
@@ -287,22 +284,6 @@ async function chainOnlyPools(
   });
 }
 
-/** Optional detail enrichment; never sits on the pool table's initial response path. */
-export async function poolStakerCounts(ctx: AntsContext): Promise<Record<string, number | null>> {
-  const indexer = ctx.indexer();
-  if (!indexer) return {};
-  const indexed = await indexer.pools();
-  const counts: Record<string, number | null> = {};
-  for (let offset = 0; offset < indexed.pools.length; offset += 4) {
-    await Promise.all(indexed.pools.slice(offset, offset + 4).map(async pool => {
-      if (pool.stakers != null) counts[pool.agentId] = pool.stakers;
-      else if (pool.openPositions === 0) counts[pool.agentId] = 0;
-      else counts[pool.agentId] = await indexer.pool(pool.agentId, 1).then(detail => detail.stakers).catch(() => null);
-    }));
-  }
-  return counts;
-}
-
 export async function singlePool(ctx: AntsContext, agentId: number): Promise<PoolView & { currentEpoch: number }> {
   const context = await poolContext(ctx);
   const indexer = ctx.indexer();
@@ -314,11 +295,8 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
       const merged = mergePools({ indexed: { ...indexed, pools: indexed.pools.filter((pool) => pool.agentId === agentId) }, explorer, sellerEpochs, epochs: context.epochs, own: ownHere });
       const view = merged.find((pool) => pool.agentId === agentId);
       if (view) {
-        await enrichYields(ctx, context, [view]);
-        const detail = await indexer.pool(agentId, VOLUME_EPOCHS);
-        view.stakers = detail.stakers;
-        view.volumes = detail.epochs.filter(row => row.epoch < context.stack.currentEpoch).map(row => ({ epoch: row.epoch, usdc: row.volumeUsdc })).sort((a,b) => b.epoch-a.epoch);
-        view.volumeStatus = indexed.currentEpoch === context.stack.currentEpoch ? 'available' : 'stale';
+        setVolumeStatus(view, indexed.currentEpoch, context.stack.currentEpoch);
+        await enrichYields(ctx, context, [view], indexed);
         return toJson({ ...view, currentEpoch: context.stack.currentEpoch });
       }
     } catch (error) {
@@ -328,6 +306,13 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
   const [view] = await describePools(ctx, [[agentId, null]], context);
   if (view) await enrichYields(ctx, context, [view]);
   return toJson({ ...view!, currentEpoch: context.stack.currentEpoch });
+}
+
+function setVolumeStatus(view: PoolView, indexedEpoch: number, currentEpoch: number): void {
+  if (indexedEpoch !== currentEpoch) {
+    view.volumes = [];
+    view.volumeStatus = 'stale';
+  } else view.volumeStatus = view.volumes.length ? 'available' : 'unavailable';
 }
 
 /** Read historical principal and emission inputs together; failed reads remain unknown. */

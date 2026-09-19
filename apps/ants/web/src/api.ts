@@ -125,7 +125,6 @@ export const api = {
   positions: () => get<PositionsView>('/api/positions'),
   rewards: () => get<RewardsView>('/api/rewards'),
   pools: () => get<PoolsView>('/api/pools'),
-  poolStakers: () => get<Record<string, number | null>>('/api/pools/stakers'),
   pool: (agentId: number) => get<PoolDetail>(`/api/pools/${agentId}`),
   usage: (epochs: number) => get<UsageView>(`/api/usage?epochs=${epochs}`),
   emissions: () => get<EmissionsView>('/api/emissions'),

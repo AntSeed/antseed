@@ -23,7 +23,6 @@ export function StakePage() {
   const positions = usePageData(walletReady ? 'positions:current' : null, api.positions);
   const rewards = usePageData('rewards', api.rewards, 5 * 60_000);
   const pools = usePageData('pools', api.pools, 5 * 60_000);
-  const counts = usePageData(pools.data?.source === 'indexer' ? 'pool-stakers' : null, api.poolStakers, 5 * 60_000);
   const data = overview.data;
   const buyerOperator = rewards.data?.buyerUsage.operator;
   const wrongBuyerWallet = walletReady && !!buyerOperator && buyerOperator.toLowerCase() !== config.address.toLowerCase()
@@ -35,7 +34,7 @@ export function StakePage() {
   const [stakeBusy, setStakeBusy] = useState(false);
   const stakeTrigger = useRef<HTMLElement | null>(null);
   const [openPoolId, setOpenPoolId] = useState<number | null>(null);
-  const sortedPools = useMemo(() => sortPools((pools.data?.pools ?? []).map(pool => ({ ...pool, stakers: counts.data?.[pool.agentId] ?? pool.stakers }))), [pools.data, counts.data]);
+  const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
   const openPool = openPoolId !== null ? (sortedPools.find((p) => p.agentId === openPoolId) ?? null) : null;
   const stakeInto = (pool: PoolView) => {
     stakeTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -107,7 +106,7 @@ export function StakePage() {
                 </button>
               </span>
             ) : rewards.data ? (
-              <a href={href('rewards')}>{walletReady ? 'Restake or claim →' : 'View buyer rewards →'}</a>
+              <a href={href('rewards')}>{walletReady ? 'Stake rewards or claim →' : 'View buyer rewards →'}</a>
             ) : (
               'loading from chain…'
             )
@@ -134,7 +133,7 @@ export function StakePage() {
             Pool statistics are unavailable{pools.data.sourceError ? ` (${pools.data.sourceError})` : ' (no explorer configured)'}; only pools you stake in are listed, read live from the chain.
           </div>
         ) : null}
-        <PoolsTable pools={sortedPools} loading={pools.loading && !pools.data} onOpen={(p) => setOpenPoolId(p.agentId)} onStake={stakeInto} />
+        <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={(p) => setOpenPoolId(p.agentId)} onStake={stakeInto} />
         <div className="hint">Compare projected initial yields for the same amount and lock. APY assumes compounding; actual returns vary. Click a seller for activity and volume history.</div>
       </Panel>
 

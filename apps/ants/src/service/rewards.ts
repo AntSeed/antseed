@@ -3,6 +3,7 @@ import { claimEpochRewards, pendingEpochRewards, previewPoolRewards, type Seller
 import type { AbstractSigner } from 'ethers';
 import type { AntsContext } from './context.js';
 import { closedPositionIds } from './positions.js';
+import { legacySellerPayout } from './legacy-payout.js';
 import { IndexerError } from './indexer.js';
 import type { RewardsView, ClaimRequest, RestakeRequest, StakeUsageRequest, EpochAmount, RewardBucket } from '../api-types.js';
 import { formatAnts } from './format.js';
@@ -125,6 +126,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   }
 
   const lockedInfo = walletConnected && locked ? await locked.claimable(ctx.address) : { locked: 0n, claimable: 0n, policy: ZeroAddress };
+  const sellerPayout = legacySeller > 0n ? await legacySellerPayout(ctx, stack.legacyEmissions) : undefined;
 
   const total = stakerTotal + sellerTotal + buyerTotal + legacySeller + legacyBuyer + lockedInfo.claimable;
   return toJson({
@@ -141,7 +143,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
       total: buyerTotal.toString(), epochs: buyerEpochs, operator,
       claimable: stack.phase === 'active' && sameAddress(operator, ctx.address), recipient: operator,
     },
-    legacy: { seller: legacySeller.toString(), buyer: legacyBuyer.toString(), contract: stack.legacyEmissions, buyerClaimable: sameAddress(operator, ctx.address) },
+    legacy: { seller: legacySeller.toString(), buyer: legacyBuyer.toString(), contract: stack.legacyEmissions, buyerClaimable: sameAddress(operator, ctx.address), sellerPayout },
     locked: {
       locked: lockedInfo.locked.toString(), claimable: lockedInfo.claimable.toString(),
       policy: sameAddress(lockedInfo.policy, ZeroAddress) ? null : lockedInfo.policy, pool: stack.lockedRewardsPool,
@@ -187,7 +189,13 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
     throw new Error(`Connect the authorized wallet for buyer ${ctx.buyerAddress}.`);
   }
   const requested = request.buckets.length > 0 ? request.buckets : (['staker', 'seller', 'buyer', 'legacy', 'locked'] as RewardBucket[]);
-  const buckets = request.scope === 'buyer' ? ['buyer', 'legacy'] as RewardBucket[] : request.scope === 'wallet' ? requested.filter(bucket => bucket !== 'buyer') : requested;
+  const buckets = request.scope === 'buyer' ? requested.filter(bucket => bucket === 'buyer' || bucket === 'legacy') : request.scope === 'wallet' ? requested.filter(bucket => bucket !== 'buyer') : requested;
+  if (request.expectedLegacySellerRecipient !== undefined && buckets.includes('legacy') && request.scope !== 'buyer') {
+    const payout = await legacySellerPayout(ctx, stack.legacyEmissions);
+    if (payout.destination === 'unknown' || !sameAddress(payout.recipient, request.expectedLegacySellerRecipient)) {
+      throw new Error('Legacy seller payout destination changed or could not be verified. Refresh rewards and review the claim again.');
+    }
+  }
   const token = ctx.antsToken();
   const transactions: string[] = [];
   let claimed = 0n;

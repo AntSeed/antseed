@@ -155,6 +155,7 @@ export async function stake(ctx: AntsContext, request: StakeRequest, report: Ste
 }
 
 export async function move(ctx: AntsContext, request: MoveRequest, report: StepReporter = silentReporter): Promise<{ hash: string }> {
+  if ('amount' in request) throw new Error('Partial moves are not supported. Move whole positions instead.');
   const pools = ctx.requirePools();
   const signer = ctx.requireSigner();
   const ids = assertPositiveIds(request.positionIds);
@@ -167,25 +168,6 @@ export async function move(ctx: AntsContext, request: MoveRequest, report: StepR
   const currentEpoch = (await ctx.stack()).currentEpoch;
   for (const position of list) {
     if (await pools.isMaxLocked(position.id, Math.max(currentEpoch + 1, position.stakeStartEpoch))) throw new Error(`Disable maximum lock on position ${position.id} before moving allocation.`);
-  }
-  if (request.amount !== undefined) {
-    if (list.length !== 1) throw new Error('Partial moves require one position.');
-    const amount = parseAnts(request.amount);
-    if (amount <= 0n || amount >= list[0]!.amount) throw new Error('Partial amount must be positive and less than the position amount.');
-    await report('Step 1 of 2: split the allocation. The split remains if the move is cancelled.');
-    const splitHash = await pools.splitStake(signer, ids[0]!, amount);
-    ctx.localPositionIds.set(ids[0]!, ctx.address);
-    await report('Allocation split confirmed', splitHash);
-    const receipt = await ctx.provider().getTransactionReceipt(splitHash);
-    const iface = new Interface(['event StakeSplit(uint256 indexed positionId,uint256 indexed firstPositionId,uint256 indexed secondPositionId,address staker,uint256 firstAmount,uint256 secondAmount)']);
-    const event = receipt?.logs.filter(log => log.address.toLowerCase() === pools.contractAddress.toLowerCase()).map(log => { try { return iface.parseLog(log); } catch { return null; } }).find(log => log?.name === 'StakeSplit');
-    if (!event) throw new Error('Split confirmed but its replacement could not be resolved. Refresh positions before continuing.');
-    const movingId = Number(event.args['secondPositionId']);
-    await report(`Step 2 of 2: move new position #${movingId} to the selected seller.`);
-    const hash = await pools.moveStake(signer, movingId, toAgentId);
-    ctx.localPositionIds.set(movingId, ctx.address);
-    await report('Partial allocation moved', hash);
-    return { hash };
   }
   await report(`Moving ${ids.length} position(s) to agent ${toAgentId} (effective next epoch)`);
   const hash = ids.length === 1 ? await pools.moveStake(signer, ids[0]!, toAgentId) : await pools.moveStakes(signer, ids, toAgentId);

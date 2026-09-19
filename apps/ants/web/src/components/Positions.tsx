@@ -281,19 +281,17 @@ function BulkPanel({ kind, rows, config, pools, onStarted }: BulkProps) {
 
 function MoveForm({ rows, idList, config, pools, onStarted }: { rows: PositionView[]; idList: JSX.Element; config: PoolConfigView; pools: PoolView[]; onStarted: () => void }) {
   const info = useEpochInfo();
-  const [partial, setPartial] = useState('');
   const current = new Set(rows.map((p) => p.agentId));
   const targets = pools.filter((p) => p.stakeable && !current.has(p.agentId));
   const [toAgent, setToAgent] = useState(() => String(targets[0]?.agentId ?? ''));
   const target = targets.find((p) => String(p.agentId) === toAgent) ?? null;
-  const body: MoveRequest = { positionIds: rows.map((p) => p.id), toAgentId: Number(toAgent), ...(partial ? { amount: partial } : {}) };
+  const body: MoveRequest = { positionIds: rows.map((p) => p.id), toAgentId: Number(toAgent) };
   const problem = rows.some(p => p.maxLocked) ? 'Disable maximum lock first, then wait for it to take effect.' : rows.some(p => p.changePending) ? 'A position change is pending. Wait until it takes effect.' : rows.some(p => p.state === 'matured' || !isOpen(p)) ? 'Only open positions with a remaining lock can move.' : null;
   const effective = Math.max((info?.current ?? 0) + 1, ...rows.map(p => p.stakeStartEpoch));
   return (
     <div className="form-row">
       <p className="hint">Move your allocation directly to another seller. Principal stays staked and the lock end date is preserved. Accrued rewards remain claimable on the source position.</p>
       {problem && <p className="error-text">{problem}</p>}
-      {rows.length === 1 && <Input label="Partial amount (ANTS)" hint="Leave empty to move the whole position. Partial moves require two approvals: split, then move. If you cancel the move, the split positions remain." value={partial} onChange={e => setPartial(e.target.value)} placeholder="Entire position" />}
       <Field label="To pool" hint={`Weight penalty ${formatBps(config.moveWeightPenaltyBps)} applies`} width="lg">
         <Select value={toAgent} onChange={(e) => setToAgent(e.target.value)} disabled={targets.length === 0}>
           {targets.length === 0 ? <option value="">No other pool to move to</option> : null}
@@ -312,18 +310,18 @@ function MoveForm({ rows, idList, config, pools, onStarted }: { rows: PositionVi
         title="Move positions to another pool"
         path="/api/positions/move"
         body={body}
-        validate={() => !target ? 'Choose a target pool.' : partial && (!isPositiveDecimal(partial) || (parseUnits(partial, 18) ?? 0n) >= BigInt(rows[0]!.amount)) ? 'Partial amount must be positive and less than the position.' : null}
+        validate={() => !target ? 'Choose a target pool.' : null}
         onStarted={onStarted}
         summary={[
           ['Positions', idList],
           ['To pool', <span className="mono">{target ? poolLabel(target) : '—'}</span>],
-          ['Amount', `${partial || formatAnts(rows.reduce((sum,p) => sum + BigInt(p.amount), 0n), 4)} ANTS`],
+          ['Amount', `${formatAnts(rows.reduce((sum, position) => sum + BigInt(position.amount), 0n), 4)} ANTS`],
           ['Lock end', rows.map(p => `#${p.id}: epoch ${p.stakeEndEpoch}${info ? ` (${formatUtcDate(epochStartAt(p.stakeEndEpoch, info.genesis, info.epochDuration))})` : ''}`).join('; ')],
           ['Future power reduction', formatBps(config.moveWeightPenaltyBps)],
           ['Effective', `epoch ${effective}${info ? ` (${formatUtcDate(epochStartAt(effective, info.genesis, info.epochDuration))})` : ''}`],
           ['Principal burned by moving', '0 ANTS'],
           ['Source rewards', `${formatAnts(rows.reduce((sum,p) => sum + BigInt(p.pendingReward), 0n), 4)} ANTS remain claimable separately`],
-          ['Wallet approvals', partial ? '2 — split, then move' : '1'],
+          ['Wallet approvals', '1'],
         ]}
       />
     </div>

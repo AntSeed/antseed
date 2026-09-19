@@ -1,24 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ZeroAddress } from 'ethers';
 import { multicallRead } from '@antseed/node/payments';
-import { poolsView, poolStakerCounts } from './pools.js';
+import { poolsView, singlePool } from './pools.js';
+import { poolYield } from './yield.js';
 import type { AntsContext } from './context.js';
-import type { IndexedPools } from './indexer.js';
+import type { IndexedPools, IndexedSellerEpoch } from './indexer.js';
 vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
 
-function setup(indexedEpoch = 2, historical = true) {
+function setup(indexedEpoch = 2, historical = true, currentEpoch = 2) {
   const address = '0x0000000000000000000000000000000000000001';
   const network = (epoch: number) => ({ epoch, complete: true, totalPowerWeight: '100', totalActiveStake: '10', stakerBudget: '5', totalWeightedPoolPoints: '10' });
   const indexed = {
     currentEpoch: indexedEpoch, network: { current: network(indexedEpoch), last: network(indexedEpoch - 1) },
     pools: [{ agentId: 1, seller: address, registered: true, openPositions: 1, weight: '100', activeStake: '10', powerShareBps: 10000, securityShareBps: '0', usagePoints: '10', weightedUsagePoints: '10', lastUsagePoints: '10', lastEmission: '5', lastEmissionSettled: true, lastWeight: '90', volumeUsdc: '1', lastVolumeUsdc: '1', historicalYield: historical ? { power: '90', reward: '5', settled: true } : null }],
   } as IndexedPools;
-  const indexer = { pools: vi.fn(async () => indexed), pool: vi.fn(), sellerEpochs: async () => new Map(), epochMetrics: async () => [] };
+  const indexer = { pools: vi.fn(async () => indexed), pool: vi.fn(), sellerEpochs: vi.fn(async () => new Map<string, IndexedSellerEpoch[]>()), epochMetrics: async () => [] };
   const live = vi.fn(async () => 100n);
   const ctx = {
     address: ZeroAddress,
     chain: { sellerPoolsAddress: address, sellerPoolsRewardsAddress: address, usageAccountingAddress: address },
-    stack: async () => ({ currentEpoch: 2, effectiveEpoch: 0, epochDuration: 604800, genesis: 0 }),
+    stack: async () => ({ currentEpoch, effectiveEpoch: 0, epochDuration: 604800, genesis: 0 }),
     indexer: () => indexer,
     requirePools: () => ({ provider: {}, totalPowerWeightAtEpoch: live }),
     poolRewards: () => ({ stakerEpochBudget: live }),
@@ -44,8 +45,8 @@ describe('pool loading', () => {
     expect(live).not.toHaveBeenCalled();
     expect(methods).not.toContain('poolWeightAtEpoch');
     expect(methods).not.toContain('poolEpochEmissions');
-    expect(result.pools[0]?.yield).toMatchObject({ reward: '5', power: '90', status: 'settled', epoch: 1 });
-    expect(result.pools[0]?.stakers).toBeNull();
+    expect(result.pools[0]?.yield).toEqual({ ...poolYield(5n, 100n, 1, 604800, 0, true), reward: '5', power: '90', minLockEpochs: 1, maxLockEpochs: 104 });
+    expect(result.pools[0]?.activeStake).toBe('10');
   });
   it('does not read historical contracts for directory entries with no staking pool', async () => {
     const { ctx, indexed, methods } = setup();
@@ -61,21 +62,60 @@ describe('pool loading', () => {
     expect(live).toHaveBeenCalled();
     expect(methods).toContain('poolWeightAtEpoch');
     expect(methods).toContain('poolEpochEmissions');
-    expect(result.pools[0]?.yield).toMatchObject({ reward: '7', power: '100', epoch: 1 });
+    expect(result.pools[0]?.yield).toEqual({ ...poolYield(7n, 100n, 1, 604800, 0, true), reward: '7', power: '100', minLockEpochs: 1, maxLockEpochs: 104 });
     expect(result.pools[0]?.volumeStatus).toBe('stale');
   });
   it('does not interpret missing historical fields as a zero-yield epoch', async () => {
     const { ctx, methods } = setup(2, false);
     const result = await poolsView(ctx);
     expect(methods).toContain('poolEpochEmissions');
-    expect(result.pools[0]?.yield?.reward).toBe('7');
+    expect(result.pools[0]?.yield).toEqual({ ...poolYield(7n, 100n, 1, 604800, 0, true), reward: '7', power: '100', minLockEpochs: 1, maxLockEpochs: 104 });
   });
-});
 
-it('loads optional staker counts separately and keeps failures unknown', async () => {
-  const { ctx, indexer } = setup();
-  indexer.pool.mockResolvedValueOnce({ stakers: 3 });
-  expect(await poolStakerCounts(ctx)).toEqual({ 1: 3 });
-  indexer.pool.mockRejectedValueOnce(new Error('indexer down'));
-  expect(await poolStakerCounts(ctx)).toEqual({ 1: null });
+  it('keeps legacy seller epochs and amounts unchanged when pool details load', async () => {
+    const { ctx, indexer, indexed } = setup(23, true, 23);
+    const seller = indexed.pools[0]!.seller!;
+    const volumes = ['21419582', '4262829', '21427226', '9678385', '3454778', '682288', '5029021', '1263910', '670601'];
+    indexer.sellerEpochs.mockResolvedValue(new Map([[seller, volumes.map((volumeUsdc, index) => ({
+      seller, epoch: 23 - index, agentId: index < 2 ? 1 : null, volumeUsdc, points: '0', weightedPoints: '0', requests: '1',
+    }))]]));
+    indexer.pool.mockResolvedValue({ epochs: [
+      { epoch: 24, volumeUsdc: '0' }, { epoch: 23, volumeUsdc: volumes[0] },
+      { epoch: 22, volumeUsdc: volumes[1] }, { epoch: 21, volumeUsdc: '0' },
+    ] });
+    const summary = (await poolsView(ctx)).pools[0]!;
+    const detail = await singlePool(ctx, 1);
+    expect(detail.volumes).toEqual(summary.volumes);
+    expect(detail.volumes.filter(row => row.epoch < detail.currentEpoch)).toHaveLength(8);
+    expect(detail.volumes.find(row => row.epoch === 21)?.usdc).toBe('21427226');
+    expect(detail.volumes.map(row => row.epoch)).toEqual([23, 22, 21, 20, 19, 18, 17, 16, 15]);
+    expect(detail.volumeStatus).toBe('available');
+    expect(detail.yield).toEqual(summary.yield);
+    expect(indexer.pool).not.toHaveBeenCalled();
+    expect(indexer.sellerEpochs).toHaveBeenCalledWith(9);
+  });
+
+  it('marks stale history consistently in the list and detail without relabelling older epochs', async () => {
+    const { ctx, indexed, indexer } = setup(22, true, 23);
+    const seller = indexed.pools[0]!.seller!;
+    indexer.sellerEpochs.mockResolvedValue(new Map([[seller, [{ seller, epoch: 22, agentId: 1, volumeUsdc: '42', points: '0', weightedPoints: '0', requests: '1' }]]]));
+    indexer.pool.mockResolvedValue({ epochs: [{ epoch: 22, volumeUsdc: '42' }] });
+    for (const pool of [(await poolsView(ctx)).pools[0]!, await singlePool(ctx, 1)]) {
+      expect(pool.volumes).toEqual([]);
+      expect(pool.volumeStatus).toBe('stale');
+    }
+  });
+
+  it.each([false, true])('keeps unknown seller history distinct from an explicit zero (reported: %s)', async (reported) => {
+    const { ctx, indexed, indexer } = setup(23, true, 23);
+    indexed.pools[0]!.volumeAvailable = false;
+    indexed.pools[0]!.lastVolumeAvailable = false;
+    const seller = indexed.pools[0]!.seller!;
+    if (reported) indexer.sellerEpochs.mockResolvedValue(new Map([[seller, [{ seller, epoch: 21, agentId: null, volumeUsdc: '0', points: '0', weightedPoints: '0', requests: '0' }]]]));
+    indexer.pool.mockResolvedValue({ epochs: [] });
+    for (const pool of [(await poolsView(ctx)).pools[0]!, await singlePool(ctx, 1)]) {
+      expect(pool.volumes).toEqual(reported ? [{ epoch: 21, usdc: '0' }] : []);
+      expect(pool.volumeStatus).toBe(reported ? 'available' : 'unavailable');
+    }
+  });
 });

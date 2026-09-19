@@ -65,15 +65,14 @@ decide where and for how long:
 | Column | What it tells you |
 |---|---|
 | Pool | Seller name from the explorer, or the agent id; rows marked not stakeable have no seller binding yet |
-| APY · 1 month / APY · 1 year | Projected initial annualized returns for a 1,000 ANTS reference stake at each lock duration, using the last completed epoch |
-| Active stake (ANTS) | Current active principal in ANTS |
+| APY | One APY range for a 1,000 ANTS reference stake, from a 1-week lock to a 2-year lock, using the last completed epoch |
+| Total active stake (ANTS) | Total principal active in this pool for the current epoch; stakes awaiting activation are excluded |
 | Last epoch (USDC) | Settled volume in the last completed epoch |
-| Stakers | Number of stakers reported by the indexer; not number of positions |
 
 Pool statistics, volume history, and closed positions come from the Antscan
 indexer. Live wallet state and historical yield inputs are read from the chain. If the explorer is unreachable the table lists only the
-pools you stake in and says so. Page sections load independently. Staker counts
-fill in after the pool table appears; a missing count stays **—**. While browsing
+pools you stake in and says so. Page sections load independently. The table shows
+total active ANTS rather than fetching per-pool staker counts. While browsing
 without a connected wallet, the Stake page skips account position and reward
 requests. Initial wallet synchronization leaves in-flight reads intact when the
 account has not changed. Pool summaries
@@ -88,34 +87,35 @@ more per unit of power; a longer lock gives more power per ANTS. Click a row to
 open the pool drawer with volume per epoch against the network, the seller's
 explorer profile, and pool yield details.
 
-The table uses the same completed epoch's pool rewards and pool power for both
-lock durations. For a reference stake of 1,000 ANTS:
+The table and pool drawer show one range, **1-week APY – 2-year APY**, rather than
+separate duration columns. Both endpoints use a 1,000 ANTS reference stake and
+the same completed epoch's pool rewards and power:
 
-- Initial position power = amount × lock epochs.
-- Projected epoch reward = pool rewards × position power / (historical pool power + position power).
-- Epoch return = projected epoch reward / amount.
-- APR = epoch return × (365 days / epoch duration).
+- Initial position power = reference stake × lock epochs.
+- Estimated epoch reward = pool rewards × position power / (historical pool power + position power).
+- Epoch return = estimated epoch reward / reference stake.
 - APY = (1 + epoch return) ^ (365 days / epoch duration) − 1.
 
-These are initial-rate projections in ANTS terms, holding the historical pool
-reward budget fixed. Normal position power decreases as the lock runs down;
-changes in other stakes and activity can also affect returns. Compounding is
-hypothetical, not automatic or guaranteed, and activation delay is excluded.
-Missing historical data, zero historical power, or an unsupported lock shows
-**—**. A valid epoch with no rewards shows **0%**. Hover for source epoch dates,
-actual lock duration, and whether the reward amount is settled or estimated.
+Lock durations use the nearest supported whole epoch. With weekly epochs, the
+endpoints are 1 epoch (7 days) and 104 epochs (728 days, approximately 2 years).
+An unsupported endpoint or missing historical data shows **—** rather than a
+fabricated rate. A valid epoch with no rewards shows **0.00% – 0.00%**.
 
-The month/year shortcuts use the nearest supported whole epoch: with weekly
-epochs, 1 month is 4 epochs (28 days) and 1 year is 52 epochs (364 days). In the
-staking modal, projected APY and the estimated first earning epoch's ANTS reward
-update with the amount, pool, and lock slider. At 1,000 ANTS, the shortcuts match
-the table's corresponding projections.
+Rates are displayed as percentages. These annualize the initial earning rates
+while holding the historical pool reward budget fixed. APY assumes each rate
+repeats and compounds every epoch; compounding is not automatic or guaranteed.
+If either endpoint exceeds 10,000%, the whole range shows **N/A**; ranges at or
+below 10,000% remain visible. This display limit does not change reward accounting.
+Power decreases as a normal lock runs down, activation delays are excluded, and
+future activity changes returns. Unsettled rewards are marked **est.**; hover for
+the source epoch, actual lock durations, and assumptions.
 
-The pool drawer also shows the historical pool-average yield, calculated from
-that epoch's rewards divided by active principal. This differs from a new
-position's lock-specific projection. Click either APY column or the last-epoch
-volume header to sort; click it again to reverse direction. Missing values stay
-last.
+The staking form retains amount and lock selection, activation/unlock dates, and
+early-exit disclosures without personalized reward projections. Click the APY
+column to sort by the 1-week endpoint, or the last-epoch volume header to sort by
+volume; click again to reverse
+direction. Missing values stay last. Volume remains available independently of
+whether the pool has yield data.
 
 Seller details show lifetime settlement volume, completed-epoch volume history,
 request count, unique buyers and models served when the indexer provides them.
@@ -163,25 +163,50 @@ but cannot submit a withdrawal.
 ## Rewards tab
 
 **Buyer rewards** shows rewards earned by the originating VPR/CLI account even
-before a browser wallet connects. **Claim buyer rewards** collects its eligible
-current and legacy rewards and pays the authorized deposits operator. Connect
-that wallet to claim or restake; it can differ from the buyer account. If no
+before a browser wallet connects. Separate **Current buyer rewards** and
+**Legacy buyer rewards** rows show each amount and its own **Claim to wallet**
+action. Each claim collects only that row's rewards and pays the authorized
+deposits operator. Connect that wallet to claim or stake rewards; it can differ from the buyer account. If no
 operator is configured, **Authorize wallet** opens the existing payments setup.
 Returning to the dashboard refreshes authorization without clearing the page.
-Legacy buyer rewards can be claimed but cannot be restaked.
+**Stake rewards** remains visible on the current buyer rewards row. It stakes
+eligible current buyer rewards directly; when unavailable, the button tooltip explains why.
+Each reward type has a short description of how it was earned. Eligibility
+details and legacy-staking guidance appear in action tooltips and confirmations,
+not in these descriptions.
+The direct-staking amount is separate from legacy buyer rewards. Legacy rewards
+have no direct staking function: after a successful claim to the authorized
+wallet, they can be staked from **Stake → Stake ANTS → Wallet balance** only if
+that wallet can transfer ANTS. Claiming does not bypass transfer restrictions.
 
-**Wallet rewards** separately shows the connected wallet's staking, seller,
-legacy seller, and locked-pool rewards. Its **Claim wallet rewards** and bulk
-**Restake** actions exclude buyer rewards. Restaking creates locked positions;
+**Seller & staking rewards** separately shows the connected wallet's staking,
+current seller, legacy seller, and locked-pool rewards. These are unclaimed
+rewards, not the wallet's ANTS balance. Each row has its own claim action;
+the bulk **Stake rewards** action excludes buyer rewards. Staking rewards creates locked positions;
 the confirmation lets you choose the destination pool and lock length. Rewards
 restake into their source pools first, then move to the chosen pool in the same
 job. Individual category actions remain available. Terminal reward commands
 retain their existing defaults, including all-category compounding.
 
+Claim confirmations show the amount and destination. Legacy seller eligibility
+determines whether the action is **Claim to wallet** or **Claim to locked pool**.
+If that destination cannot be verified, claiming is disabled until rewards are
+refreshed. The service rechecks the reviewed destination before submitting;
+contract policy can still change before execution. Claiming into the locked
+pool does not pay the wallet or create a staking position.
+
 Locked legacy rewards remain visible even when nothing is claimable. The
-dashboard explains when the unlock policy is missing. If indexed reward
-history fails to load, it shows an error instead of reporting a complete total
-from only open positions. Without an indexer, a warning identifies that limit.
+withdrawal tooltip explains when the M002 unlock policy is missing, and the dashboard distinguishes
+the policy-released amount from the remaining locked balance. It does not
+assume a release percentage or offer direct staking of locked rewards.
+**Withdraw available amount** previews the recipient, available amount, and
+remaining locked balance under the loaded release policy. Released
+tokens can be staked after receipt only when the recipient wallet can transfer
+ANTS. Existing-position rewards retain their direct **Stake rewards** action, even
+while wallet transfers are restricted. If the indexer is unavailable or not
+configured, rewards fall back to known on-chain and verified local positions.
+A warning explains that closed-position rewards may be missing; the displayed
+total is not presented as complete. Reward-preview failures still show an error.
 
 ## Seller tab
 
@@ -223,7 +248,7 @@ antseed ants withdraw 7 --preview                     # estimate first
 antseed ants withdraw 7 --accept-slashing             # early exit with consent
 antseed ants rewards                                  # all buckets
 antseed ants rewards claim [--staker|--seller|--buyer|--legacy|--locked]
-antseed ants rewards compound --epochs 8 --to 59096   # the Restake button
+antseed ants rewards compound --epochs 8 --to 59096   # bulk Stake rewards
 antseed ants rewards restake --epochs 8               # staker pool rewards only
 antseed ants rewards stake-usage --side seller --epochs 8
 antseed ants seller [register|claim-starter]
@@ -266,8 +291,8 @@ Each eligible position has **Move allocation**; bulk move remains available. Mov
 uses the contract's move operation, preserves principal and the remaining lock
 window, and takes effect at the displayed epoch. The preview shows the configured
 future-power reduction and source rewards that remain claimable separately.
-A partial move requires two wallet approvals: split, then move. Cancelling the
-second step leaves the split positions. Maximum lock must be disabled first; pending
+Moves transfer whole selected positions in one transaction; partial amounts are
+not supported. The separate Split action remains available. Maximum lock must be disabled first; pending
 changes must become effective before another action can run.
 
 Withdrawal has its own preview: principal returned, early-exit penalty sent to the
@@ -302,6 +327,46 @@ interact with that sandbox while the checks run. They cover separate buyer/signe
 identity, rejection, claims, reward staking, compounding, position changes, penalties
 and closed-position rewards. The new-stake scenario enables transfers only inside a
 reverted snapshot. This protocol test does not substitute for wallet-extension UI QA.
+
+The full run also includes the current/legacy reward matrix. To run only that matrix:
+
+```bash
+node scripts/ants-browser-e2e.mjs /path/to/ants-sandbox-directory/scenario.json legacy
+```
+
+| Anvil case | Checked outcome |
+| --- | --- |
+| Current-only / legacy-only buyer claim | Only the selected source is consumed; the authorized wallet receives ANTS; other rewards and positions stay unchanged |
+| Combined buyer claim | Both buyer sources are collected; seller and position rewards stay untouched |
+| Pre-migration V1 rewards claimed through V2 | Buyer payout remains source-specific; M002 includes old seller rewards in the cumulative release entitlement |
+| Unauthorized wallet / rejected approval | No claim flags, balances, or transaction nonce change |
+| Direct buyer, seller, and position reward staking | Only the selected current rewards become stake; legacy balances remain unclaimed |
+| Compounding, with and without buyer rewards | Only eligible current sources become stake; legacy balances are excluded |
+| Legacy buyer claim then wallet staking | Staking is blocked while transfers are restricted; wallet allowlisting or global enablement permits it |
+| Legacy seller locked payout | Escrow funds the locked pool, not the wallet; no position is created |
+| Legacy seller direct payout | Explicit unlock eligibility pays the wallet, but does not grant transfer permission or create a position |
+| Changed / unreadable seller payout destination | The reviewed claim is blocked before approval; balances remain visible when the eligibility RPC fails |
+| Reverting seller unlock policy | The preview and real claim both use the contract's locked-payout fallback |
+| No M002 release policy | Locked rewards remain visible; withdrawal is unavailable |
+| M002 release policy, pool transfers restricted | A release entitlement alone cannot make the pool transfer tokens |
+| M002 release with pool allowlisted | The configured 10% cumulative entitlement releases once; the remainder stays locked; recipient staking still needs wallet transfer permission |
+| Proven wash trader | The release policy permits no withdrawal and preserves the locked balance |
+| Repeat claims and withdrawals | No additional payout or approval after the selected entitlement is exhausted |
+
+The matrix seeds synthetic points into a finalized pre-cutover epoch for the
+fresh sandbox identities. It derives storage slots from the Solidity compiler's
+layout, checks them against fork getters, and verifies the seeded V1/V2 points before
+testing the real deployed claims and escrow. The M002 cases deploy the actual
+`AntseedLegacySellerClaimPolicy` locally with a controlled wash-status test
+contract; they do not test production wash-proof verification. Every scenario
+runs inside a reverted snapshot, including policy deployment and permission
+changes. No production writes are made.
+
+These fixtures require native Solidity **0.8.24** (Foundry's
+`~/.svm/0.8.24/solc-0.8.24`, `solc` on PATH, or `SOLC_BIN`). Only the needed policy
+bytecode and legacy storage layout are compiled; a full Foundry suite build is
+not required. Reward-row labels, scoped request payloads, disabled states, and
+confirmation contents are also covered by `pnpm --filter @antseed/ants test`.
 
 For browser UI QA without a real wallet extension:
 
