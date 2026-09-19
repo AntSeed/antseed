@@ -94,7 +94,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(sentAuths.length).toBe(1);
     expect(sentAuths[0].cumulativeAmount).toBe('0');
 
-    buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
+    await buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
     expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);
 
     const { payload: auth1 } = await buyerManager.signPerRequestAuth(
@@ -222,7 +222,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     // recordAndPersistTokens is now the sole writer for token fields
     const estimatedInputTokens = Math.ceil(SAMPLE_INPUT.length / 4);
     const estimatedOutputTokens = Math.ceil(SAMPLE_OUTPUT.length / 4);
-    buyerManager.recordAndPersistTokens(sellerIdentity.peerId, estimatedInputTokens, estimatedOutputTokens);
+    await buyerManager.recordAndPersistTokens(sellerIdentity.peerId, estimatedInputTokens, estimatedOutputTokens);
 
     buyerStore.close();
 

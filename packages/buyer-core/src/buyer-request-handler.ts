@@ -43,6 +43,8 @@ export interface RequestStreamCallbacks {
 }
 
 export interface RequestExecutionOptions {
+  attribution?: { purpose: 'routing'; parentRequestId: string };
+  acceptResponse?: (response: SerializedHttpResponse) => boolean;
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
@@ -95,6 +97,20 @@ export class BuyerRequestHandler {
     callbacks?: RequestStreamCallbacks,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
+    try {
+      return await this._sendRequest(peer, req, callbacks, options);
+    } finally {
+      this._deps.negotiator?.bpm?.finishRequestBilling(req.requestId);
+    }
+  }
+
+  private async _sendRequest(
+    peer: BuyerPeerView,
+    req: SerializedHttpRequest,
+    callbacks?: RequestStreamCallbacks,
+    options?: RequestExecutionOptions,
+  ): Promise<SerializedHttpResponse> {
+    options?.signal?.throwIfAborted();
     if (!req.requestId || typeof req.requestId !== "string") {
       throw buyerFault("requestId must be a non-empty string", 'invalid-request');
     }
@@ -103,6 +119,7 @@ export class BuyerRequestHandler {
     debugLog(`[BuyerRequest] ${opName} ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
 
     const conn = await this._deps.getConnection(peer);
+    options?.signal?.throwIfAborted();
     debugLog(`[BuyerRequest] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._deps.getMux(peer.peerId, conn);
     const verificationMux = this._deps.getVerificationMux(peer.peerId, conn);
@@ -136,6 +153,7 @@ export class BuyerRequestHandler {
       : false;
     if (negotiator && requestedService) {
       if (isFreeService) {
+        negotiator.trackRequestBillingContext(req, requestedService, billingRoute, options);
         negotiator.trackFreeUsageRequestService(req.requestId, requestedService);
         try {
           await negotiator.prepareFreeUsageOpen(peer, conn);
@@ -155,7 +173,7 @@ export class BuyerRequestHandler {
             `Cannot send paid openai-images request for service "${requestedService}" without service unit billing metadata`,
           );
         }
-        negotiator.trackRequestBillingContext(req, requestedService, billingRoute);
+        negotiator.trackRequestBillingContext(req, requestedService, billingRoute, options);
       }
     } else if (requestedService && isFreeService && this._deps.freeUsageManager) {
       this._deps.freeUsageManager.trackRequestService(req.requestId, requestedService);
@@ -374,25 +392,52 @@ export class BuyerRequestHandler {
     }
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
+      options?.signal?.throwIfAborted();
+      if (isFreeService) return adaptPeerResponse(response);
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') {
         return adaptPeerResponse(result.response);
       }
       startTime = Date.now();
       const retriedResponse = await executeRequest();
+      this._acceptResponse(req.requestId, retriedResponse, options);
       if (!isFreeService) {
-        negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+        await negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+        if (retriedResponse.statusCode < 400) {
+          options?.signal?.throwIfAborted();
+          await negotiator.sendPostResponseAuth(peer, conn, req.requestId);
+        }
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
       return adaptPeerResponse(retriedResponse);
     }
 
+    this._acceptResponse(req.requestId, response, options);
     if (negotiator && !isFreeService) {
-      negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
+      await negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
+      if (response.statusCode < 400) {
+        options?.signal?.throwIfAborted();
+        await negotiator.sendPostResponseAuth(peer, conn, req.requestId);
+      }
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
     return adaptPeerResponse(response);
+  }
+
+  private _acceptResponse(requestId: string, response: SerializedHttpResponse, options?: RequestExecutionOptions): void {
+    if (!options?.acceptResponse || response.statusCode < 200 || response.statusCode >= 300) return;
+    try {
+      options.signal?.throwIfAborted();
+      const valid = options.acceptResponse(structuredClone(response)) === true;
+      options.signal?.throwIfAborted();
+      if (!valid) throw new Error('Response not accepted');
+    } catch {
+      this._deps.negotiator?.bpm.rejectResponse(requestId);
+      options.signal?.throwIfAborted();
+      throw peerFault('Service returned an unacceptable response', 'peer-protocol-violation');
+    }
+    this._deps.negotiator?.bpm.acceptResponse(requestId);
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {

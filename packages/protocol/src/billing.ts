@@ -237,7 +237,8 @@ export function validateUnitBillingUsage(
     throw new Error('Positive unit billing cost recomputed to zero');
   }
 
-  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * costToleranceMultiplier));
+  const tolerance = perCallPriceMicroUsdc(model) !== null ? 1 : costToleranceMultiplier;
+  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * tolerance));
   if (sellerCost > maxAcceptable) {
     throw new Error(`Seller unit billing cost ${sellerCost} exceeds buyer estimate ${buyerEstimate}`);
   }
@@ -261,6 +262,7 @@ function parseUnitCount(value: string, unit: string): number {
 
 function normalizedUnitCount(usage: UnitBillingUsage, unit: UnitBillingUnitV1): number {
   const value = usage.units[unit] ?? 0;
+  if (unit === PER_CALL_BILLING_UNIT_V1 && value !== 0 && value !== 1) throw new Error('Per-call usage must be zero or one');
   if (!Number.isFinite(value) || value < 0) return 0;
   return value;
 }
@@ -276,6 +278,10 @@ function componentMatchesContext(component: UnitBillingComponentV1, context: Uni
 }
 
 function validateUsageWithinRequestLimits(usage: UnitBillingUsage, context: UnitBillingContext): void {
+  const calls = usage.units.successful_requests;
+  if (calls !== undefined && (!Number.isSafeInteger(calls) || calls < 0 || calls > 1)) {
+    throw new Error('Per-call usage must be zero or one');
+  }
   const outputImageLimit = context.unitLimits?.output_images;
   const outputImages = usage.units.output_images;
   if (outputImageLimit !== undefined && outputImages !== undefined && outputImages > outputImageLimit) {

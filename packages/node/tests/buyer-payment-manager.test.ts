@@ -6,11 +6,13 @@ import { randomBytes } from 'node:crypto';
 import { AbiCoder, id, keccak256, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from '../src/payments/channel-store.js';
+import { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { estimateCostFromBytes } from '../src/payments/pricing.js';
+import { createPerCallBillingModel } from '../src/types/billing.js';
 
 const enc = new TextEncoder();
 
@@ -125,14 +127,246 @@ describe('BuyerPaymentManager', () => {
     const wallet = Wallet.createRandom();
     manager.setSigner(wallet);
     mux = createMockPaymentMux();
+    // topUpReserve verifies buyer deposits before signing (a failed read now
+    // aborts the top-up rather than signing blind -- a real incident showed
+    // the old warn-and-continue behavior let a stale ceiling ratchet up
+    // indefinitely during an RPC outage). Tests never run against a real
+    // chain, so without this every topUpReserve call would hit a real
+    // ECONNREFUSED against config.rpcUrl and (correctly, now) abort --
+    // this stubs that one read so tests can assert normal, verified-success
+    // top-up behavior instead of testing an unreachable RPC.
+    vi.spyOn(DepositsClient.prototype, 'getBuyerBalance').mockResolvedValue({
+      available: 1_000_000_000_000n,
+      reserved: 0n,
+      lastActivityAt: 0n,
+    });
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     store.close();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
   // ── authorizeSpending ──────────────────────────────────────────
+
+  async function setupPerCall(reserve = manager.maxReserveAmountUsdc) {
+    const sellerPeerId = fakePeerId('per-call-router');
+    const requestId = 'per-call-operation';
+    const controller = new AbortController();
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, reserve, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
+    const entry = { signal: controller.signal, attribution: { purpose: 'routing' as const, parentRequestId: 'inference' }, context: { sellerPeerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' as const },
+      unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+    manager.trackRequestBilling(requestId, entry);
+    const response = { requestId, service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('selection'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { units: { successful_requests: 1 } } };
+    const claim = { channelId, requestId, requiredCumulativeAmount: '5000', currentAcceptedCumulative: '0', deposit: '10000000',
+      lastRequestCost: '5000', inputTokens: '100', outputTokens: '20', billingUsage: { version: 1 as const, units: { successful_requests: '1' } } };
+    return { sellerPeerId, requestId, controller, channelId, entry, response, claim };
+  }
+
+  it.each(['buyer-first', 'seller-first'])('signs one fixed fee under concurrent authorization (%s)', async (order) => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    const operations = [() => manager.signPerRequestAuth(state.sellerPeerId, state.response),
+      () => manager.handleNeedAuth(state.sellerPeerId, state.claim, mux)];
+    if (order === 'seller-first') operations.reverse();
+    await Promise.all(operations.map((operation) => operation()));
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ amountUsdc: '5000', purpose: 'routing', parentRequestId: 'inference' });
+  });
+
+  it('does not sign a per-call fee without observed success or after cancellation', async () => {
+    const state = await setupPerCall();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 0 } });
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    state.controller.abort();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/cancelled/);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+  });
+
+  it('rejects omitted evidence, duplicate units, and even a one-micro overcharge', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, billingUsage: undefined }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '10000', billingUsage: { version: 1, units: { successful_requests: '2' } } }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '5001' }, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
+    await manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+  });
+
+  it('rejects changed per-call models and snapshots the accepted billing context', async () => {
+    const state = await setupPerCall();
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, unitModel: createPerCallBillingModel('5001') })).toThrow(/already tracked/);
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, tokenPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 0 } })).toThrow(/already tracked/);
+    state.entry.unitModel.components[0]!.priceUsd = 9;
+    expect(manager.getRequestBilling(state.requestId)?.unitModel?.components[0]?.priceUsd).toBe(0.005);
+  });
+
+  it('supports two fixed-fee requests completing out of order on one channel', async () => {
+    const state = await setupPerCall();
+    manager.trackRequestBilling('second', { ...state.entry, attribution: { purpose: 'routing', parentRequestId: 'second-parent' } });
+    manager.recordObservedUnitUsage('second', { units: { successful_requests: 1 } });
+    const events: any[] = [];
+    manager.setSpendListener((event) => events.push(event));
+    await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'second' });
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await Promise.all([
+      manager.signPerRequestAuth(state.sellerPeerId, state.response),
+      manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, requestId: 'second' }, mux),
+      manager.handleNeedAuth(state.sellerPeerId, state.claim, mux),
+    ]);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(10000n);
+    expect(manager.getVerifiedCost(state.sellerPeerId)).toBe(10000n);
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(2);
+    expect(events.map((event) => event.parentRequestId)).toEqual(['second-parent', 'inference']);
+  });
+
+  it('does not hold the channel update queue while waiting for another response', async () => {
+    const state = await setupPerCall();
+    manager.trackRequestBilling('ready', state.entry);
+    const waiting = manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
+    manager.recordObservedUnitUsage('ready', { units: { successful_requests: 1 } });
+    try {
+      await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'ready' });
+      expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+    } finally {
+      manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+      await waiting;
+    }
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(10000n);
+  });
+
+  it('cancels one request without cancelling another request to the same seller', async () => {
+    const state = await setupPerCall();
+    manager.trackRequestBilling('independent', { ...state.entry, signal: undefined });
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage('independent', { units: { successful_requests: 1 } });
+    state.controller.abort();
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/cancelled/);
+    await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'independent' });
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+  });
+
+  it('never advances payment for a free request sharing a paid channel', async () => {
+    const state = await setupPerCall();
+    manager.trackRequestBilling('free', { ...state.entry, unitModel: undefined });
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, requestId: 'free', billingUsage: undefined,
+      lastRequestCost: undefined, requiredCumulativeAmount: '100000' }, mux);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+  });
+
+  it('finishes a response payment after a reserve top-up without recounting its fee or usage', async () => {
+    const state = await setupPerCall(6000n);
+    manager.trackRequestBilling('second', state.entry);
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage('second', { units: { successful_requests: 1 } });
+    const second = { ...state.response, requestId: 'second' };
+    await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+    const partial = await manager.signPerRequestAuth(state.sellerPeerId, second);
+    expect(partial.fullyAuthorized).toBe(false);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(6000n);
+    expect(manager.getVerifiedCost(state.sellerPeerId)).toBe(10000n);
+    await manager.topUpReserve(state.sellerPeerId, mux);
+    const completed = await manager.signPerRequestAuth(state.sellerPeerId, second);
+    expect(completed.fullyAuthorized).toBe(true);
+    await manager.signPerRequestAuth(state.sellerPeerId, second);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, requestId: 'second', requiredCumulativeAmount: '10000' }, mux);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(10000n);
+    expect(manager.getVerifiedCost(state.sellerPeerId)).toBe(10000n);
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(2);
+    const services = decodeMetadataServices(manager.getActiveSession(state.sellerPeerId)!.latestMetadata!);
+    expect(services[0]?.cumulativeAmount).toBe(10000n);
+    expect(services[0]?.cumulativeRequestCount).toBe(2n);
+  });
+
+  it('does not block request authorization on a reserve balance RPC', async () => {
+    const state = await setupPerCall();
+    const balance = Promise.withResolvers<{ available: bigint; reserved: bigint }>();
+    const started = Promise.withResolvers<void>();
+    vi.spyOn(manager, 'getBalance').mockImplementation(() => { started.resolve(); return balance.promise; });
+    const topUp = manager.topUpReserve(state.sellerPeerId, mux);
+    await started.promise;
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    try {
+      await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+      expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+    } finally {
+      balance.resolve({ available: 100000000n, reserved: 0n });
+      await topUp;
+    }
+    expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('5000');
+  });
+
+  it('keeps an active stream snapshot beyond the completed-request cache TTL', async () => {
+    const state = await setupPerCall();
+    manager.trackRequestBilling('streaming', state.entry, { active: true });
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 10 * 60_000);
+    expect(manager.getRequestBilling('streaming')?.context.service).toBe('classifier');
+    manager.finishRequestBilling('streaming');
+    vi.mocked(Date.now).mockReturnValue(now + 20 * 60_000);
+    expect(manager.getRequestBilling('streaming')).toBeUndefined();
+  });
+
+  it('checks the request seller and service independently of attribution', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await expect(manager.signPerRequestAuth(fakePeerId('other'), state.response)).rejects.toThrow(/does not match/);
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, service: 'other' })).rejects.toThrow(/does not match/);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
+  });
+
+  it('does not count a request until its authorization is persisted', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    const originalCommit = store.commitAuthorization.bind(store);
+    vi.spyOn(store, 'commitAuthorization').mockRejectedValueOnce(new Error('write failed')).mockImplementation(originalCommit);
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow('write failed');
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
+    await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
+    expect(manager.getActiveSession(state.sellerPeerId)?.requestCount).toBe(1);
+  });
+
+  it('does not persist payment cancelled while the signer is running', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.setSigner(identity.wallet);
+    const sign = identity.wallet.signTypedData.bind(identity.wallet);
+    vi.spyOn(identity.wallet, 'signTypedData').mockImplementation(async (...args) => {
+      state.controller.abort();
+      return sign(...args);
+    });
+    const commit = vi.spyOn(store, 'commitAuthorization');
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/cancelled/);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('retains the billing snapshot and duplicate tracking through a channel rollover', async () => {
+    const state = await setupPerCall();
+    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+    await manager.retireSession(state.sellerPeerId, CHANNEL_STATUS.SETTLED);
+    const channelId = await manager.authorizeSpending(state.sellerPeerId, mux, 1n, { inputUsdPerMillion: 9, outputUsdPerMillion: 9 });
+    await manager.handleAuthAck(state.sellerPeerId, { channelId });
+    await manager.signPerRequestAuth(state.sellerPeerId, state.response);
+    expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
+    expect(manager.getRequestBilling(state.requestId)?.tokenPricing?.inputUsdPerMillion).toBe(0);
+  });
 
   it('authorizeSpending sends SpendingAuth with channelId and reserve fields', async () => {
     const sellerPeerId = fakePeerId('seller-peer-001');
@@ -162,7 +396,6 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.metadata).not.toBe('');
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
-    // v3 zero metadata: five head words + empty services array (offset + length) = 7 words.
     expect((sent.metadata as string).length).toBe(2 + 7 * 64);
   });
 
@@ -201,7 +434,7 @@ describe('BuyerPaymentManager', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
     expect(manager.isAuthorized(sellerPeerId)).toBe(false);
 
-    manager.handleAuthAck(sellerPeerId, { channelId });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
     expect(manager.isAuthorized(sellerPeerId)).toBe(true);
   });
 
@@ -214,7 +447,7 @@ describe('BuyerPaymentManager', () => {
     const cid = await manager.authorizeSpending(peerId1, mux, 10_000n, TEST_PRICING);
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    manager.handleAuthAck(peerId1, { channelId: cid });
+    await manager.handleAuthAck(peerId1, { channelId: cid });
     expect(manager.isAuthorized(peerId1)).toBe(true);
     expect(manager.isAuthorized(peerId2)).toBe(false);
   });
@@ -865,7 +1098,6 @@ describe('BuyerPaymentManager', () => {
         attributes: { model: service },
         unitLimits: { output_images: 1 },
       },
-      requestFacts: { model: service, requestedImages: 1 },
       unitModel,
     });
     mux.sentSpendingAuths.length = 0;
@@ -975,7 +1207,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [
@@ -1036,7 +1267,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '256x256' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [
@@ -1088,7 +1318,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       tokenPricing: TEST_PRICING,
       unitModel: imageModel,
     });
@@ -1140,7 +1369,6 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      requestFacts: {},
       unitModel: {
         version: 1,
         components: [
@@ -1608,7 +1836,7 @@ describe('BuyerPaymentManager', () => {
 
     const sellerPeerId = fakePeerId('seller-extend-topup-order');
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 100_000n, TEST_PRICING);
-    manager.handleAuthAck(sellerPeerId, { channelId });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
 
     (manager as unknown as { _verifiedCost: Map<string, bigint> })._verifiedCost.set(sellerPeerId, 100_000n);
     mux.sentSpendingAuths.length = 0;
@@ -1636,6 +1864,33 @@ describe('BuyerPaymentManager', () => {
     expect(sent.reserveSalt).toBeTypeOf('string');
     expect(sent.reserveDeadline).toBeTypeOf('number');
     expect(manager.getReserveCeiling(sellerPeerId)).toBe(20_000_000n);
+  });
+
+  it('topUpReserve preserves existing warning-and-continue behavior when the balance RPC fails', async () => {
+    const sellerPeerId = fakePeerId('seller-topup-rpc-down');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    const ceilingBefore = manager.getReserveCeiling(sellerPeerId);
+    mux.sentSpendingAuths.length = 0;
+
+    vi.spyOn(DepositsClient.prototype, 'getBuyerBalance').mockRejectedValue(
+      new Error('connect ECONNREFUSED 127.0.0.1:8545'),
+    );
+
+    await manager.topUpReserve(sellerPeerId, mux);
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    expect(manager.getReserveCeiling(sellerPeerId)).toBeGreaterThan(ceilingBefore);
+  });
+
+  it('opening a reserve does not emit warnings unless debug logging is enabled', async () => {
+    vi.stubEnv('ANTSEED_DEBUG', '0');
+    vi.stubEnv('DEBUG', '');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await manager.authorizeSpending(fakePeerId('quiet-reserve'), mux, 10_000n, TEST_PRICING);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('resendReserveAuth replays the original reserve amount after top-up', async () => {
@@ -1741,8 +1996,8 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = fakePeerId('seller-record-tok');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
 
-    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
-    manager.recordAndPersistTokens(sellerPeerId, 500, 150);
+    await manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    await manager.recordAndPersistTokens(sellerPeerId, 500, 150);
 
     // In-memory totals
     const totals = manager.getResponseTokenTotals(sellerPeerId);
@@ -1758,9 +2013,9 @@ describe('BuyerPaymentManager', () => {
     expect(channel!.requestCount).toBe(2);
   });
 
-  it('recordAndPersistTokens no-ops when no active session', () => {
+  it('recordAndPersistTokens no-ops when no active session', async () => {
     const sellerPeerId = fakePeerId('seller-no-session');
-    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    await manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
     expect(manager.getResponseTokenTotals(sellerPeerId)).toBeNull();
   });
 
@@ -1773,7 +2028,7 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = fakePeerId('seller-persist');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
 
-    manager.recordAndPersistTokens(sellerPeerId, 2000, 800);
+    await manager.recordAndPersistTokens(sellerPeerId, 2000, 800);
     store.close();
 
     // Reopen store and verify persisted data
@@ -1847,7 +2102,7 @@ describe('BuyerPaymentManager', () => {
 
     await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 100_000n, TEST_PRICING);
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
-    manager.handleAuthAck(sellerPeerId, { channelId });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
 
     // Drive cumulative up to the overdraft cap (verified=0 + maxPerRequest=10_000) without
     // advancing verifiedCost — mirrors the real deadlock where NeedAuth arrived without a
@@ -1893,7 +2148,7 @@ describe('BuyerPaymentManager', () => {
 
     await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 1_000_000n, TEST_PRICING);
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
-    manager.handleAuthAck(sellerPeerId, { channelId });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
 
     // Simulate a session that has already signed cumulative=56_218 via a
     // tolerance-checked NeedAuth (so verifiedCost tracks that amount).
@@ -1938,7 +2193,7 @@ describe('BuyerPaymentManager', () => {
 
     await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 1_000_000n, TEST_PRICING);
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
-    manager.handleAuthAck(sellerPeerId, { channelId });
+    await manager.handleAuthAck(sellerPeerId, { channelId });
 
     // Legitimate progress via NeedAuth: verifiedCost tracks this.
     await manager.handleNeedAuth(sellerPeerId, {
@@ -1972,14 +2227,14 @@ describe('BuyerPaymentManager', () => {
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
     const sellerPeerId = fakePeerId('seller-record-restart');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
-    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    await manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
     store.close();
 
     store = new ChannelStore(tempDir);
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     manager.setSigner(identity.wallet);
 
-    manager.recordAndPersistTokens(sellerPeerId, 500, 150);
+    await manager.recordAndPersistTokens(sellerPeerId, 500, 150);
 
     const totals = manager.getResponseTokenTotals(sellerPeerId);
     expect(totals).toEqual({
@@ -1994,4 +2249,5 @@ describe('BuyerPaymentManager', () => {
     expect(channel!.previousConsumption).toBe('350');
     expect(channel!.requestCount).toBe(2);
   });
+
 });

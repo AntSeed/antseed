@@ -49,8 +49,8 @@ describe('BuyerRequestHandler payment mux wiring', () => {
         negotiator: {
           getOrCreatePaymentMux,
           preparePreRequestAuth: vi.fn(),
-          sendPostResponseAuth: vi.fn(),
           estimateCostFromResponse,
+          sendPostResponseAuth: vi.fn(),
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
@@ -176,13 +176,15 @@ describe('BuyerRequestHandler payment mux wiring', () => {
       {
         localPeerId: 'a'.repeat(40) as PeerId,
         negotiator: {
-          bpm: { trackRequestService },
+          bpm: { finishRequestBilling: vi.fn(), trackRequestService },
           getOrCreatePaymentMux: vi.fn().mockReturnValue({}),
           prepareFreeUsageOpen,
+          trackRequestBillingContext: vi.fn(),
           trackFreeUsageRequestService,
           preparePreRequestAuth: vi.fn(),
           sendPostResponseAuth: vi.fn(),
           estimateCostFromResponse,
+          sendPostResponseAuth: vi.fn(),
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
@@ -246,9 +248,10 @@ describe('BuyerRequestHandler payment mux wiring', () => {
       {
         localPeerId: 'a'.repeat(40) as PeerId,
         negotiator: {
-          bpm: { trackRequestService: vi.fn() },
+          bpm: { finishRequestBilling: vi.fn(), trackRequestService: vi.fn() },
           getOrCreatePaymentMux: vi.fn().mockReturnValue({}),
           prepareFreeUsageOpen,
+          trackRequestBillingContext: vi.fn(),
           trackFreeUsageRequestService: vi.fn(),
           preparePreRequestAuth: vi.fn(),
           sendPostResponseAuth: vi.fn(),
@@ -389,6 +392,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           preparePreRequestAuth: vi.fn(),
           handle402,
           estimateCostFromResponse,
+          sendPostResponseAuth: vi.fn(),
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,

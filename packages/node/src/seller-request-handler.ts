@@ -26,8 +26,7 @@ import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
-import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
-import type { ImageRequestFacts } from '@antseed/api-adapter';
+import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel, type CapturedUnitBillingContext } from './billing/unit.js';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
@@ -56,12 +55,6 @@ export interface SellerRequestHandlerDeps {
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
-}
-
-interface SellerBillingContext {
-  context: UnitBillingContext;
-  requestUsage: UnitBillingUsage;
-  requestFacts: ImageRequestFacts;
 }
 
 /** Debounce interval for metadata refresh after load changes. */
@@ -527,7 +520,7 @@ export class SellerRequestHandler {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
           if (requestBilling && unitBillingModel) {
-            const unitBilling = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response, requestBilling.requestFacts);
+            const unitBilling = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response);
             responseUsage = unitBilling.tokenUsage;
             billingUsageReport = unitBilling.billingUsage;
             unitCostUsdc = unitBilling.costUsdc;
@@ -588,7 +581,6 @@ export class SellerRequestHandler {
               unitBillingModel,
               requestBilling.context,
               responseForAuth,
-              requestBilling.requestFacts,
             );
             responseUsage = finalBilling.tokenUsage;
             billingUsageReport = finalBilling.billingUsage;
@@ -818,7 +810,7 @@ export class SellerRequestHandler {
     return providers[0] ?? null;
   }
 
-  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): SellerBillingContext | null {
+  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): CapturedUnitBillingContext | null {
     const service = this._extractRequestedService(request);
     if (!service) return null;
     return captureUnitBillingContext({
@@ -846,12 +838,15 @@ export class SellerRequestHandler {
   }
 
   private _estimateUnitRequestCostUsdc(
-    requestBilling: SellerBillingContext,
+    requestBilling: CapturedUnitBillingContext,
     model: UnitBillingModelV1,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
+    const unit = model.components.some((component) => component.unit === 'successful_requests')
+      ? 'successful_requests'
+      : 'output_images';
     const usage: UnitBillingUsage = {
       units: {
-        output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
+        [unit]: Math.floor(requestBilling.requestUsage.units[unit] ?? 0),
       },
     };
     return {
@@ -863,7 +858,7 @@ export class SellerRequestHandler {
 
   private _estimateRequestCostUsdc(
     request: SerializedHttpRequest,
-    requestBilling: SellerBillingContext,
+    requestBilling: CapturedUnitBillingContext,
     pricing: ProviderTokenPricing,
     unitModel: UnitBillingModelV1 | undefined,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {

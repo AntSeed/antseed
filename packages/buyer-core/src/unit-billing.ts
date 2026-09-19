@@ -14,11 +14,14 @@ import type {
   UnitBillingContext,
   UnitBillingMatchKeyV1,
   UnitBillingModelV1,
+  UnitBillingUnitV1,
   UnitBillingUsage,
   UnitBillingUsageReportV1,
 } from '@antseed/protocol/billing';
 import {
   evaluateUnitBilling,
+  GENERATED_IMAGE_OUTPUT_UNIT_V1,
+  PER_CALL_BILLING_UNIT_V1,
   unitUsageToBillingReport,
 } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
@@ -33,7 +36,7 @@ const ZERO_TOKEN_USAGE: TokenUsage = {
 export interface CapturedUnitBillingContext {
   context: UnitBillingContext;
   requestUsage: UnitBillingUsage;
-  requestFacts: ImageRequestFacts;
+  estimatedPromptTokens?: number;
 }
 
 export interface FinalUnitBillingResult {
@@ -51,13 +54,16 @@ export function captureUnitBillingContext(args: {
   request: SerializedHttpRequest;
 }): CapturedUnitBillingContext {
   const parsed = extractRequestBodyFields(args.request.headers, args.request.body);
-  const requestFacts = extractImageRequestFacts({
+  const imageFacts = extractImageRequestFacts({
     path: args.request.path,
     method: args.request.method,
     body: parsed ?? undefined,
   });
-  const requestUsage = factsToUnitUsage(requestFacts);
-  const attributes = factsToAttributes(requestFacts);
+  const unitLimits: NonNullable<UnitBillingContext['unitLimits']> = {
+    successful_requests: 1,
+    ...(imageFacts.requestedImages !== undefined ? { output_images: imageFacts.requestedImages } : {}),
+  };
+  const attributes = factsToAttributes(imageFacts);
   return {
     context: {
       sellerPeerId: args.sellerPeerId,
@@ -65,33 +71,37 @@ export function captureUnitBillingContext(args: {
       service: args.service,
       serviceApiProtocol: args.serviceApiProtocol,
       ...(attributes ? { attributes } : {}),
-      ...(requestFacts.requestedImages !== undefined
-        ? { unitLimits: { output_images: requestFacts.requestedImages } }
-        : {}),
+      unitLimits,
     },
-    requestUsage,
-    requestFacts,
+    requestUsage: { units: { ...unitLimits } },
+    ...(imageFacts.promptTokens !== undefined ? { estimatedPromptTokens: imageFacts.promptTokens } : {}),
   };
 }
 
 export function extractUnitResponseUsage(
   response: SerializedHttpResponse,
-  requestFacts?: ImageRequestFacts,
+  unitLimits?: UnitBillingContext['unitLimits'],
+  billableUnits: readonly UnitBillingUnitV1[] = [GENERATED_IMAGE_OUTPUT_UNIT_V1],
 ): { usage: UnitBillingUsage; tokenUsage: TokenUsage } {
   const parsed = parseJsonObject(response.body);
   const responseFacts: ProviderResponseFacts = parsed
     ? extractProviderResponseFacts(parsed)
     : { tokenUsage: ZERO_TOKEN_USAGE };
-  const billableOutputImages = capOutputImagesToRequest(
+  const outputImages = capOutputImagesToRequest(
     responseFacts.outputImages,
-    requestFacts?.requestedImages,
+    unitLimits?.output_images,
   );
+  const measuredUnits: UnitBillingUsage['units'] = {
+    successful_requests: response.statusCode >= 200 && response.statusCode < 300 ? 1 : 0,
+    ...(outputImages !== undefined ? { output_images: outputImages } : {}),
+  };
+  const units: UnitBillingUsage['units'] = {};
+  for (const unit of billableUnits) {
+    const count = measuredUnits[unit];
+    if (count !== undefined) units[unit] = count;
+  }
   return {
-    usage: {
-      units: {
-        ...(billableOutputImages !== undefined ? { output_images: billableOutputImages } : {}),
-      },
-    },
+    usage: { units },
     tokenUsage: responseFacts.tokenUsage,
   };
 }
@@ -100,23 +110,16 @@ export function computeFinalUnitBilling(
   model: UnitBillingModelV1,
   context: UnitBillingContext,
   response: SerializedHttpResponse,
-  requestFacts?: ImageRequestFacts,
 ): FinalUnitBillingResult {
-  const responseUsage = extractUnitResponseUsage(response, requestFacts);
+  const perCall = model.components.some((component) => component.unit === PER_CALL_BILLING_UNIT_V1);
+  const responseUsage = extractUnitResponseUsage(response, context.unitLimits,
+    [perCall ? PER_CALL_BILLING_UNIT_V1 : GENERATED_IMAGE_OUTPUT_UNIT_V1]);
   const costUsdc = evaluateUnitBilling(model, context, responseUsage.usage);
   return {
     usage: responseUsage.usage,
     tokenUsage: responseUsage.tokenUsage,
     costUsdc,
     billingUsage: unitUsageToBillingReport(responseUsage.usage),
-  };
-}
-
-function factsToUnitUsage(facts: ImageRequestFacts): UnitBillingUsage {
-  return {
-    units: {
-      ...(facts.requestedImages !== undefined ? { output_images: facts.requestedImages } : {}),
-    },
   };
 }
 

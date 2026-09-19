@@ -13,6 +13,8 @@ import {
   type PaymentRequiredPayload,
   type CloseChannelResultPayload,
 } from '@antseed/protocol/messages';
+import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
+import type { RequestExecutionOptions } from './buyer-request-handler.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './deposits-client.js';
@@ -138,10 +140,12 @@ export class BuyerPaymentNegotiator {
   private readonly _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private readonly _negotiationLocks = new Map<string, Promise<void>>();
+  private readonly _recoveryLocks = new Map<string, Promise<boolean>>();
   /** Peers that have sent their first request after session establishment. */
   private readonly _firstRequestSent = new Set<string>();
   /** Per-peer last response cost, raw content, and latency from the seller. */
-  private readonly _lastResponseCost = new Map<string, LastResponseCost>();
+  private readonly _pendingResponseCosts = new Map<string, Map<string, LastResponseCost>>();
+  private readonly _responseAuths = new Map<LastResponseCost, Promise<void>>();
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
   /** Every in-flight NeedAuth handler, retained until its work settles. */
@@ -266,6 +270,7 @@ export class BuyerPaymentNegotiator {
     request: SerializedHttpRequest,
     service: string,
     route: SelectedBillingRoute | null,
+    options?: RequestExecutionOptions,
   ): void {
     if (route) {
       const captured = captureUnitBillingContext({
@@ -277,10 +282,13 @@ export class BuyerPaymentNegotiator {
       });
       this._bpm.trackRequestBilling(request.requestId, {
         context: captured.context,
-        requestFacts: captured.requestFacts,
+        signal: options?.signal,
+        attribution: options?.attribution,
+        requiresResponseAcceptance: !!options?.acceptResponse,
+        estimatedPromptTokens: captured.estimatedPromptTokens,
         ...(route.unitModel ? { unitModel: route.unitModel } : {}),
         ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
-      });
+      }, { active: true });
     } else {
       this._bpm.trackRequestService(request.requestId, service);
     }
@@ -314,7 +322,7 @@ export class BuyerPaymentNegotiator {
       return;
     }
     // Skip if cost data was already consumed by post-response auth
-    if (!this._lastResponseCost.has(peer.peerId)) return;
+    if (!this._pendingResponseCosts.has(peer.peerId)) return;
     await this._sendPerRequestAuth(peer.peerId, conn);
   }
 
@@ -350,22 +358,40 @@ export class BuyerPaymentNegotiator {
    * This ensures the seller always has a valid SpendingAuth for close(),
    * even if the buyer disconnects before the next request.
    */
-  async sendPostResponseAuth(peer: BuyerPeerView, conn: BuyerConnection): Promise<void> {
-    await this.sendPostResponseAuthTo(peer.peerId, conn);
+  async sendPostResponseAuth(peer: BuyerPeerView, conn: BuyerConnection, requestId?: string): Promise<void> {
+    await this.sendPostResponseAuthTo(peer.peerId, conn, requestId);
   }
 
   /** peerId-only variant of sendPostResponseAuth. */
-  async sendPostResponseAuthTo(peerId: PeerId, conn: BuyerConnection): Promise<void> {
+  async sendPostResponseAuthTo(peerId: PeerId, conn: BuyerConnection, requestId?: string): Promise<void> {
     if (!this._lockedPeers.has(peerId)) return;
-    if (!this._lastResponseCost.has(peerId)) return;
-    await this._sendPerRequestAuth(peerId, conn);
+    if (!this._pendingResponseCosts.has(peerId)) return;
+    await this._sendPerRequestAuth(peerId, conn, requestId);
   }
 
-  private async _sendPerRequestAuth(peerId: PeerId, conn: BuyerConnection): Promise<void> {
-    const peer = { peerId };
-    const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+  private async _sendPerRequestAuth(peerId: PeerId, conn: BuyerConnection, requestId?: string): Promise<void> {
+    const pending = this._pendingResponseCosts.get(peerId);
+    const costs = requestId !== undefined ? [pending?.get(requestId)] : [...(pending?.values() ?? [])];
+    await Promise.all(costs.filter((cost): cost is LastResponseCost => !!cost).map(async (cost) => {
+      const billing = cost.requestId ? this._bpm.getRequestBilling(cost.requestId) : undefined;
+      if (billing?.signal?.aborted || billing?.rejected) {
+        if (pending?.get(cost.requestId ?? '') === cost) pending.delete(cost.requestId ?? '');
+        if (pending?.size === 0) this._pendingResponseCosts.delete(peerId);
+        return;
+      }
+      let operation = this._responseAuths.get(cost);
+      if (!operation) {
+        operation = this._sendResponseAuth(peerId, conn, cost);
+        this._responseAuths.set(cost, operation);
+      }
+      try { await operation; }
+      finally { if (this._responseAuths.get(cost) === operation) this._responseAuths.delete(cost); }
+    }));
+  }
 
-    const lastCost = this._lastResponseCost.get(peer.peerId);
+  private async _sendResponseAuth(peerId: PeerId, conn: BuyerConnection, lastCost: LastResponseCost): Promise<void> {
+    const peer = { peerId };
+    const pmux = this.getOrCreatePaymentMux(peerId, conn);
     const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
     const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
     const sellerClaimedCost = lastCost?.costUsdc;
@@ -376,18 +402,31 @@ export class BuyerPaymentNegotiator {
     const service = lastCost?.service;
     const requestId = lastCost?.requestId;
     try {
-      const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
-        peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, unitUsage, service, requestId },
-      );
-      pmux.sendSpendingAuth(payload);
+      const stats = { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, unitUsage, service, requestId };
+      let authorization = await this._bpm.signPerRequestAuth(peerId, stats);
+      pmux.sendSpendingAuth(authorization.payload);
+      if (authorization.fullyAuthorized === false) {
+        await this._bpm.topUpReserve(peerId, pmux);
+        authorization = await this._bpm.signPerRequestAuth(peerId, stats);
+        pmux.sendSpendingAuth(authorization.payload);
+        if (authorization.fullyAuthorized === false) {
+          throw buyerFault('Payment channel cannot cover the delivered response', 'buyer-budget-too-low');
+        }
+      }
+      const { payload, topUpNeeded } = authorization;
       // Release held content to free memory — no longer needed after signing
-      this._lastResponseCost.delete(peer.peerId);
+      const pending = this._pendingResponseCosts.get(peerId);
+      if (pending?.get(requestId ?? '') === lastCost) pending.delete(requestId ?? '');
+      if (pending?.size === 0) this._pendingResponseCosts.delete(peerId);
       debugLog(`[BuyerNegotiator] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
 
       if (topUpNeeded) {
         debugLog(`[BuyerNegotiator] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
-        await this._bpm.topUpReserve(peer.peerId, pmux);
+        try {
+          await this._bpm.topUpReserve(peer.peerId, pmux);
+        } catch (err) {
+          debugWarn(`[BuyerNegotiator] Reserve top-up failed after per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
+        }
       }
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
@@ -454,10 +493,10 @@ export class BuyerPaymentNegotiator {
 
     if (result.status === 'closed') {
       const finalAmount = result.finalAmount != null ? safeBigInt(result.finalAmount) : null;
-      this._bpm.retireSession(peerId, CHANNEL_STATUS.SETTLED, finalAmount ?? undefined);
+      await this._bpm.retireSession(peerId, CHANNEL_STATUS.SETTLED, finalAmount ?? undefined);
       this._lockedPeers.delete(peerId);
       this._firstRequestSent.delete(peerId);
-      this._lastResponseCost.delete(peerId);
+      this._pendingResponseCosts.delete(peerId);
       debugLog(
         `[BuyerNegotiator] Seller ${peerId.slice(0, 12)}... closed channel ` +
         `${result.channelId.slice(0, 18)}... at ${result.finalAmount ?? '?'} (tx=${result.txHash ?? '?'})`,
@@ -504,6 +543,22 @@ export class BuyerPaymentNegotiator {
       }
       : null;
     const paymentRequirements = buffered ?? bodyRequirements;
+    const requestBilling = this._bpm.getRequestBilling(req.requestId);
+    const snapshot = requestBilling?.tokenPricing;
+    if (snapshot && paymentRequirements) {
+      const offered = {
+        inputUsdPerMillion: paymentRequirements.inputUsdPerMillion ?? snapshot.inputUsdPerMillion,
+        outputUsdPerMillion: paymentRequirements.outputUsdPerMillion ?? snapshot.outputUsdPerMillion,
+        cachedInputUsdPerMillion: paymentRequirements.cachedInputUsdPerMillion ?? snapshot.cachedInputUsdPerMillion ?? snapshot.inputUsdPerMillion,
+      };
+      if (Object.values(offered).some((price) => !Number.isFinite(price) || price < 0)
+        || offered.inputUsdPerMillion > snapshot.inputUsdPerMillion
+        || offered.outputUsdPerMillion > snapshot.outputUsdPerMillion
+        || offered.cachedInputUsdPerMillion > (snapshot.cachedInputUsdPerMillion ?? snapshot.inputUsdPerMillion)) {
+        throw buyerFault('Seller changed prices above the request snapshot', 'buyer-budget-too-low');
+      }
+    }
+
 
     const requestedReserveAmount = (() => {
       if (!paymentRequirements) return null;
@@ -615,7 +670,7 @@ export class BuyerPaymentNegotiator {
       );
       // 'ghost' rather than 'settled' — buyer hasn't observed the on-chain
       // settle land. Matches the other buyer-side give-up-locally callsites.
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       this._lockedPeers.delete(peer.peerId);
       this._firstRequestSent.delete(peer.peerId);
     } else if (hasActiveSession) {
@@ -625,6 +680,7 @@ export class BuyerPaymentNegotiator {
         existingSessionBudgetRequest,
         requiredCumulativeTarget,
         requiredCumulativeTarget == null,
+        perCallPriceMicroUsdc(requestBilling?.unitModel) !== null,
       );
       if (recovered) {
         return { action: 'retry' };
@@ -632,7 +688,7 @@ export class BuyerPaymentNegotiator {
 
       if (this._bpm.getActiveSession(peer.peerId)) {
         if (await this._canRetireStaleSessionWithoutOnChainProof()) {
-          this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+          await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
         }
       }
 
@@ -703,29 +759,28 @@ export class BuyerPaymentNegotiator {
     }
   }
 
-  estimateCostFromResponse(
+  async estimateCostFromResponse(
     peer: BuyerPeerView,
     response: SerializedHttpResponse,
     service?: string,
     requestId?: string,
-  ): void {
+  ): Promise<void> {
     // Post-response cost estimation feeds the next SpendingAuth. Token pricing
     // stays on computeCostUsdc; image unit billing is an optional surcharge.
     const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
-    const requestFacts = billingEntry?.requestFacts;
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
     const unitModel = billingEntry?.unitModel;
     let unitBilling: FinalUnitBillingResult | null = null;
     if (unitModel && billingEntry) {
       try {
-        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);
+        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response);
       } catch (err) {
-        const observed = extractUnitResponseUsage(response, requestFacts);
+        const observed = extractUnitResponseUsage(response, billingEntry.context.unitLimits);
         if (requestId) {
           this._bpm.recordObservedUnitUsage(requestId, observed.usage);
         }
-        this._bpm.recordAndPersistTokens(
+        await this._bpm.recordAndPersistTokens(
           peer.peerId,
           observed.tokenUsage.inputTokens,
           observed.tokenUsage.outputTokens,
@@ -739,6 +794,7 @@ export class BuyerPaymentNegotiator {
     if (unitBilling && requestId) {
       this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
     }
+    if (perCallPriceMicroUsdc(unitModel) !== null && unitBilling?.usage.units.successful_requests !== 1) return;
     const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
     const pricing = billingEntry?.tokenPricing
       ?? this._bpm.getSessionPricing(peer.peerId, service)
@@ -750,7 +806,11 @@ export class BuyerPaymentNegotiator {
     const costUsdc = tokenCostUsdc + unitCostUsdc;
     if (costUsdc <= 0n && !pricing && !unitBilling) return;
 
-    this._lastResponseCost.set(peer.peerId, {
+    const pending = this._pendingResponseCosts.get(peer.peerId) ?? new Map<string, LastResponseCost>();
+    this._pendingResponseCosts.set(peer.peerId, pending);
+    const key = requestId ?? response.requestId;
+    if (pending.has(key)) return;
+    pending.set(key, {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
@@ -761,7 +821,7 @@ export class BuyerPaymentNegotiator {
       outputContent: response.body,
       latencyMs: 0,
       service,
-      requestId,
+      requestId: key,
     });
 
     debugLog(
@@ -769,18 +829,19 @@ export class BuyerPaymentNegotiator {
       `cost=${costUsdc} token=${tokenCostUsdc} unit=${unitCostUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
     );
 
-    this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
+    await this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
   }
 
   // parseCostHeaders removed — cost data now flows through NeedAuth on PaymentMux.
 
-  recordResponseContent(peerId: string, reqBody: Uint8Array, resBody: Uint8Array, latencyMs: number): void {
+  recordResponseContent(peerId: string, reqBody: Uint8Array, resBody: Uint8Array, latencyMs: number, requestId?: string): void {
     debugLog(
       `[BuyerNegotiator] recordResponseContent: reqBody=${reqBody.length}B resBody=${resBody.length}B latency=${latencyMs}ms`,
     );
-    const existing = this._lastResponseCost.get(peerId);
+    const pending = this._pendingResponseCosts.get(peerId);
+    const existing = requestId !== undefined ? pending?.get(requestId) : pending?.size === 1 ? pending.values().next().value : undefined;
     if (existing) {
-      this._lastResponseCost.set(peerId, {
+      Object.assign(existing, {
         ...existing,
         inputContent: reqBody,
         outputContent: resBody,
@@ -910,7 +971,7 @@ export class BuyerPaymentNegotiator {
 
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
-    this._lastResponseCost.delete(peerId);
+    this._pendingResponseCosts.delete(peerId);
   }
 
   /** Wait for in-flight NeedAuth handlers to complete (settlement safety). */
@@ -927,7 +988,7 @@ export class BuyerPaymentNegotiator {
   cleanup(): void {
     this._lockedPeers.clear();
     this._firstRequestSent.clear();
-    this._lastResponseCost.clear();
+    this._pendingResponseCosts.clear();
     this._muxes.clear();
 
     for (const [, pending] of this._pendingPaymentRequired) {
@@ -937,6 +998,7 @@ export class BuyerPaymentNegotiator {
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
     this._negotiationLocks.clear();
+    this._recoveryLocks.clear();
 
     for (const [, pending] of this._pendingCloseRequests) {
       clearTimeout(pending.timer);
@@ -1187,6 +1249,24 @@ export class BuyerPaymentNegotiator {
     minBudgetPerRequest: bigint | null = null,
     targetCumulative: bigint | null = null,
     requireFreshAck = false,
+    responseBilled = false,
+  ): Promise<boolean> {
+    const previous = this._recoveryLocks.get(peer.peerId) ?? Promise.resolve(false);
+    const pending = previous.catch(() => false).then(() => this._doRecoverExistingSession(
+      peer, conn, minBudgetPerRequest, targetCumulative, requireFreshAck, responseBilled,
+    ));
+    this._recoveryLocks.set(peer.peerId, pending);
+    try { return await pending; }
+    finally { if (this._recoveryLocks.get(peer.peerId) === pending) this._recoveryLocks.delete(peer.peerId); }
+  }
+
+  private async _doRecoverExistingSession(
+    peer: BuyerPeerView,
+    conn: BuyerConnection,
+    minBudgetPerRequest: bigint | null,
+    targetCumulative: bigint | null,
+    requireFreshAck: boolean,
+    responseBilled: boolean,
   ): Promise<boolean> {
     const session = this._bpm.getActiveSession(peer.peerId);
     if (!session) {
@@ -1194,7 +1274,7 @@ export class BuyerPaymentNegotiator {
     }
 
     if (!this._channelsClient) {
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
@@ -1214,22 +1294,22 @@ export class BuyerPaymentNegotiator {
         return true;
       }
 
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
     if (onChain.status === CHANNEL_STATUS.SETTLED) {
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.SETTLED, onChain.channel.settled);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.SETTLED, onChain.channel.settled);
       return false;
     }
 
     if (onChain.status === CHANNEL_STATUS.TIMEOUT) {
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.TIMEOUT);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.TIMEOUT);
       return false;
     }
 
     if (onChain.status !== 'active') {
-      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+      await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
@@ -1255,7 +1335,7 @@ export class BuyerPaymentNegotiator {
     if (hasPendingReserve) {
       await this._bpm.resendPendingReserveAuth(peer.peerId, pmux);
     }
-    if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
+    if (!responseBilled && !requireFreshAck && minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
       const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
       await this._bpm.extendCurrentSpendingAuth(
         peer.peerId,
@@ -1272,7 +1352,7 @@ export class BuyerPaymentNegotiator {
           `[BuyerNegotiator] extendCurrentSpendingAuth made no progress for ${peer.peerId.slice(0, 12)}... ` +
           `(cumulative=${cumulativeAfter}); retiring session`,
         );
-        this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
+        await this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
         this._lockedPeers.delete(peer.peerId);
         this._firstRequestSent.delete(peer.peerId);
         return false;
