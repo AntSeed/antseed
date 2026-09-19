@@ -371,6 +371,6 @@ export { readRouterSettings, validateRouterSettings, type RouterSettingField } f
 export { RoutingContextTracker, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
 
 export { isRoutingSelection, type RoutingSelection, type RoutingServiceTarget } from './routing/selection.js';
-export { createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest, validateRoutingUsageContext } from '@antseed/protocol';
+export { REASONING_EFFORTS, createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest, validateRoutingUsageContext } from '@antseed/protocol';
 export type { ReasoningEffort, RoutingInference, RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1, RoutingUsageContext, RoutingUsageObservation } from '@antseed/protocol';
 export { RoutingObservationHistory } from './routing/usage-observations.js';

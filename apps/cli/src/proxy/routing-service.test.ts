@@ -294,8 +294,18 @@ test('per-call routing accepts one ranked decision with exact and model-only rec
   assert.equal(state.records[0]?.outcome, 'succeeded')
 })
 
-test('unsupported reasoning choices are not accepted as successful per-call routing results', async () => {
+test('unknown reasoning capabilities allow best-effort per-call routing results', async () => {
   const state = setupPerCall()
+  await state.executor.invoke('parent', state.context, state.messages,
+    () => [{ serviceId: 'test-model', inference: { reasoningEffort: 'high' } }])
+  assert.equal(state.sent.length, 1)
+  assert.equal(state.records[0]?.outcome, 'succeeded')
+})
+
+test('explicitly unsupported reasoning choices are not accepted as successful per-call routing results', async () => {
+  const state = setupPerCall()
+  state.context.candidates![0]!.reasoningEfforts = ['low']
+  state.messages.candidates = state.context.candidates!
   await assert.rejects(state.executor.invoke('parent', state.context, state.messages,
     () => [{ serviceId: 'test-model', inference: { reasoningEffort: 'high' } }]), /invalid classification/)
 })

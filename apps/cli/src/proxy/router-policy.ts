@@ -5,7 +5,7 @@ import { findAdvertisedServiceOffer, findMissingRequiredParameters, resolvePeerR
 import { overrideRoutedModelInBody } from './request-utils.js'
 import type { ServiceApiProtocol } from './service-api-adapter.js'
 import { supportsReasoningEffort } from '@antseed/api-adapter'
-import type { ReasoningEffort } from '@antseed/node'
+import { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/node'
 
 export function validateRouterCandidate(options: {
   recommendation: RouteRecommendation & { peerId: string }
@@ -28,10 +28,11 @@ export function validateRouterCandidate(options: {
   const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
   if (!offer || offer.capabilities?.routing === true) return null
   const targetProtocol = plan.selection?.targetProtocol ?? protocol ?? offer.protocol
-  const reasoningEfforts = (offer.capabilities?.reasoningEfforts
-    ?? (offer.capabilities?.reasoning === false ? ['none' as const] : undefined))
-    ?.filter((effort) => supportsReasoningEffort(targetProtocol, effort))
-  if (recommendation.inference && !reasoningEfforts?.includes(recommendation.inference.reasoningEffort)) return null
+  const reasoningEfforts = (offer.capabilities?.reasoning === false
+    ? ['none' as const]
+    : offer.capabilities?.reasoningEfforts ?? REASONING_EFFORTS)
+    .filter((effort) => supportsReasoningEffort(targetProtocol, effort))
+  if (recommendation.inference && !reasoningEfforts.includes(recommendation.inference.reasoningEffort)) return null
   const reasoningOverride: ReasoningEffort | null | undefined = offer.capabilities?.reasoning === false
     ? null : recommendation.inference?.reasoningEffort
   if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_call') return null
@@ -55,7 +56,7 @@ export function validateRouterCandidate(options: {
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId, true)
   return {
     ...(recommendation.inference ? { inference: { ...recommendation.inference } } : {}),
-    ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
+    reasoningEfforts,
     reasoningOverride,
     peer,
     peerId: peer.peerId,

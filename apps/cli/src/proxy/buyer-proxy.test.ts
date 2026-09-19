@@ -179,14 +179,18 @@ function routerPeer(seed: string, serviceId = 'test-model'): PeerInfo {
 }
 
 for (const protocol of ['openai-chat-completions', 'openai-responses', 'anthropic-messages'] as const) {
-  for (const choice of ['high', 'none', 'omit', 'non-reasoning'] as const) {
+  for (const choice of ['high', 'none', 'omit', 'non-reasoning', 'unknown', 'reasoning-only'] as const) {
     test(`router reasoning ${choice} dispatches correctly over ${protocol}`, async () => {
       const peer = routerPeer('a')
       peer.providerServiceApiProtocols!.openai!.services['test-model'] = [protocol]
-      peer.providerServiceCapabilities = { openai: { services: { 'test-model': choice === 'non-reasoning'
-        ? { reasoning: false } : { reasoning: true, reasoningEfforts: ['low', 'high', 'none'] } } } }
+      if (choice !== 'unknown') {
+        peer.providerServiceCapabilities = { openai: { services: { 'test-model': choice === 'non-reasoning'
+          ? { reasoning: false } : choice === 'reasoning-only' ? { reasoning: true }
+            : { reasoning: true, reasoningEfforts: ['low', 'high', 'none'] } } } }
+      }
+      const requestedEffort = choice === 'unknown' || choice === 'reasoning-only' ? 'high' : choice
       const proxy = makeBuyerProxyWithPeers([peer], [peer], { ...permissiveRouter(), selectRoute: async () => [{
-        serviceId: 'test-model', ...(choice === 'high' || choice === 'none' ? { inference: { reasoningEffort: choice } } : {}),
+        serviceId: 'test-model', ...(requestedEffort === 'high' || requestedEffort === 'none' ? { inference: { reasoningEffort: requestedEffort } } : {}),
       }] })
       const forwarded: any[] = []
       ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
@@ -206,7 +210,7 @@ for (const protocol of ['openai-chat-completions', 'openai-responses', 'anthropi
         assert.equal(body.thinking, undefined)
         assert.equal(body.output_config?.effort, undefined)
       } else {
-        const effort = choice === 'omit' ? 'low' : choice
+        const effort = choice === 'omit' ? 'low' : requestedEffort
         if (protocol === 'anthropic-messages') {
           assert.equal(body.thinking.type, effort === 'none' ? 'disabled' : 'adaptive')
           assert.equal(body.output_config?.effort, effort === 'none' ? undefined : effort)
@@ -1035,7 +1039,8 @@ test('selectRoute receives eligible candidate prices without requiring forecasts
   }, undefined, { ...priceAndTrustPreferences, blockedPeerIds: [blocked.peerId] })
   await invokeProxy(proxy, makeProxyRequest({ routingMode: 'router', body: { model: 'router-test', messages: [] } }))
   assert.deepEqual(candidates, [{ peerId: allowed.peerId, serviceId: 'test-model', inputUsdPerMillion: 1,
-    cachedInputUsdPerMillion: null, outputUsdPerMillion: 2 }])
+    cachedInputUsdPerMillion: null, outputUsdPerMillion: 2,
+    reasoningEfforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] }])
 })
 
 test('router candidate snapshots preserve zero and nonzero cached-input prices', async () => {

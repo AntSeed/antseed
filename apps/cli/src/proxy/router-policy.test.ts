@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPerCallBillingModel, type PeerInfo } from '@antseed/node'
+import { areRouteRecommendationsEligible, createPerCallBillingModel, type PeerInfo, type ServiceCapabilities } from '@antseed/node'
 import { validateRouterCandidate, resolveRouterRecommendation } from './router-policy.js'
 
 function fixture() {
@@ -19,21 +19,77 @@ function fixture() {
   return { peer, options }
 }
 
-test('model-only efforts select supporting sellers and preserve the router override', () => {
+test('model-only efforts allow unknown capabilities and preserve the router override', () => {
   const { peer, options } = fixture()
   options.maxPricing = undefined
   const other = { ...peer, peerId: 'b'.repeat(40) as PeerInfo['peerId'] }
   peer.providerServiceCapabilities = { openai: { services: { model: { reasoning: true, reasoningEfforts: ['low', 'high'] } } } }
   const candidates = resolveRouterRecommendation({ ...options, peers: [other, peer], recommendation: { serviceId: 'model', inference: { reasoningEffort: 'high' } } })
-  assert.equal(candidates.length, 1)
-  assert.equal(candidates[0]!.peerId, peer.peerId)
-  assert.equal(candidates[0]!.reasoningOverride, 'high')
-  assert.deepEqual(candidates[0]!.inference, { reasoningEffort: 'high' })
-  assert.equal(validateRouterCandidate({ ...options, peers: [other], recommendation: { serviceId: 'model', peerId: other.peerId, inference: { reasoningEffort: 'high' } } }), null)
+  assert.equal(candidates.length, 2)
+  assert.deepEqual(new Set(candidates.map((candidate) => candidate.peerId)), new Set([peer.peerId, other.peerId]))
+  for (const candidate of candidates) {
+    assert.equal(candidate.reasoningOverride, 'high')
+    assert.deepEqual(candidate.inference, { reasoningEffort: 'high' })
+  }
+  assert.ok(validateRouterCandidate({ ...options, peers: [other], recommendation: { serviceId: 'model', peerId: other.peerId, inference: { reasoningEffort: 'high' } } }))
   peer.providerServiceCapabilities.openai!.services.model = { reasoning: false }
   assert.equal(validateRouterCandidate(options)!.reasoningOverride, null)
   peer.providerServiceCapabilities.openai!.services.model = {}
   assert.equal(validateRouterCandidate(options)!.reasoningOverride, undefined)
+})
+
+const capabilityCases: Array<{ capabilities?: ServiceCapabilities; allowed: boolean }> = [
+  { allowed: true },
+  { capabilities: {}, allowed: true },
+  { capabilities: { reasoning: true }, allowed: true },
+  { capabilities: { reasoningEfforts: ['low', 'high'] }, allowed: true },
+  { capabilities: { reasoningEfforts: ['low'] }, allowed: false },
+  { capabilities: { reasoning: false }, allowed: false },
+]
+
+for (const { capabilities, allowed } of capabilityCases) {
+  test(`reasoning overrides respect explicit capabilities ${JSON.stringify(capabilities)}`, () => {
+    const { peer, options } = fixture()
+    options.maxPricing = undefined
+    if (capabilities !== undefined) {
+      peer.providerServiceCapabilities = { openai: { services: { model: structuredClone(capabilities) } } }
+    }
+    options.recommendation.inference = { reasoningEffort: 'high' }
+    const candidate = validateRouterCandidate(options)
+    if (!allowed) assert.equal(candidate, null)
+    else {
+      assert.ok(candidate)
+      assert.equal(candidate.reasoningOverride, 'high')
+      assert.ok(candidate.reasoningEfforts.includes('high'))
+    }
+  })
+}
+
+for (const [protocol, unsupported] of [['openai-chat-completions', 'max'], ['openai-responses', 'max'], ['anthropic-messages', 'minimal']] as const) {
+  test(`missing capabilities do not allow unsupported ${unsupported} over ${protocol}`, () => {
+    const { peer, options } = fixture()
+    options.maxPricing = undefined
+    options.protocol = protocol
+    peer.providerServiceApiProtocols!.openai!.services.model = [protocol]
+    const candidate = validateRouterCandidate(options)
+    assert.ok(candidate)
+    assert.ok(!candidate.reasoningEfforts.includes(unsupported))
+    options.recommendation.inference = { reasoningEffort: unsupported }
+    assert.equal(validateRouterCandidate(options), null)
+    assert.equal(areRouteRecommendationsEligible([options.recommendation], [candidate]), false)
+    options.recommendation.inference = { reasoningEffort: 'unknown' as never }
+    assert.equal(validateRouterCandidate(options), null)
+  })
+}
+
+test('non-reasoning sellers allow disabling reasoning but not enabling it', () => {
+  const { peer, options } = fixture()
+  options.maxPricing = undefined
+  peer.providerServiceCapabilities = { openai: { services: { model: { reasoning: false } } } }
+  options.recommendation.inference = { reasoningEffort: 'none' }
+  assert.equal(validateRouterCandidate(options)!.reasoningOverride, null)
+  options.recommendation.inference = { reasoningEffort: 'high' }
+  assert.equal(validateRouterCandidate(options), null)
 })
 
 test('router recommendations respect the existing global buyer limits', () => {

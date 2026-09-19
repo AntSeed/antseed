@@ -22,7 +22,8 @@ export function isRouteRecommendationEligible(
 ): value is RouteRecommendation {
   return isRouteRecommendation(value) && candidates.some((candidate) => candidate.serviceId === value.serviceId
     && (value.peerId === undefined || candidate.peerId === value.peerId)
-    && (value.inference === undefined || candidate.reasoningEfforts?.includes(value.inference.reasoningEffort) === true));
+    && (value.inference === undefined || candidate.reasoningEfforts === undefined
+      || candidate.reasoningEfforts.includes(value.inference.reasoningEffort)));
 }
 
 export function areRouteRecommendationsEligible(

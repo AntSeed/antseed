@@ -8,8 +8,8 @@ const candidates = [
 ];
 
 describe('router recommendation validation', () => {
-  it('requires an eligible offer supporting the chosen effort, without allowing arbitrary overrides', () => {
-    const offers = [{ serviceId: 'model', peerId: 'one', reasoningEfforts: ['high' as const] }, { serviceId: 'model', peerId: 'two' }];
+  it('respects explicit effort restrictions without allowing arbitrary overrides', () => {
+    const offers = [{ serviceId: 'model', peerId: 'one', reasoningEfforts: ['high' as const] }, { serviceId: 'model', peerId: 'two', reasoningEfforts: [] }];
     const route = { serviceId: 'model', inference: { reasoningEffort: 'high' } };
     expect(areRouteRecommendationsEligible([route], offers)).toBe(true);
     expect(areRouteRecommendationsEligible([{ ...route, peerId: 'two' }], offers)).toBe(false);
@@ -17,6 +17,15 @@ describe('router recommendation validation', () => {
       expect(areRouteRecommendationsEligible([{ ...route, inference }], offers)).toBe(false);
     }
     expect(areRouteRecommendationsEligible([{ ...route, inference: undefined }], offers)).toBe(true);
+  });
+  it('allows valid efforts for model-only and exact offers without effort metadata', () => {
+    for (const peerId of [undefined, 'seller-a']) {
+      const route = { serviceId: 'model-x', peerId, inference: { reasoningEffort: 'high' } };
+      expect(areRouteRecommendationsEligible([route], candidates)).toBe(true);
+      for (const inference of [{ reasoningEffort: 'unknown' }, { reasoningEffort: 'high', max_tokens: 9000 }]) {
+        expect(areRouteRecommendationsEligible([{ ...route, inference }], candidates)).toBe(false);
+      }
+    }
   });
   it('accepts ordered model-only and exact recommendations across models', () => {
     expect(areRouteRecommendationsEligible([

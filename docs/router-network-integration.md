@@ -73,11 +73,16 @@ Each recommendation may include one allowlisted inference control:
 Inference sellers advertise accepted `reasoningEfforts` in their per-service
 capabilities, for example `["none", "low", "high"]`. These values are signed in
 metadata v14 and reach the router on each candidate; buyers supporting only v13 or
-earlier cannot consume such announcements. Older metadata without effort labels is
-still supported, but a bare `reasoning: true` does not promise any effort value.
+earlier cannot consume such announcements. Sellers can upgrade without adding these
+optional capabilities. Missing effort labels, including a bare `reasoning: true`, allow
+best-effort router choices; they do not guarantee backend support. The backend may reject
+or ignore the setting. The buyer does not automatically retry without reasoning.
 Valid labels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 Sellers must advertise only values their inference implementation actually accepts.
+Explicit effort lists remain restrictive, and `reasoning: false` permits only `none`.
 The buyer additionally filters labels that cannot be represented by the target protocol.
+Candidate snapshots contain the resulting buyer-permitted levels: for sellers without
+effort metadata, these are the protocol-representable levels, not advertised guarantees.
 
 - A router's explicit choice overrides client/app reasoning controls, including a
   conflicting client thinking budget. It cannot alter output limits, prices or buyer policy.
@@ -86,7 +91,7 @@ The buyer additionally filters labels that cannot be represented by the target p
   removed rather than receiving unsupported reasoning parameters.
 - Omission preserves the client's compatible settings. Numeric thinking budgets are
   not converted into effort labels. Effort choices do not enable arbitrary body overrides.
-- A model-only recommendation needs at least one eligible seller supporting that effort;
+- A model-only recommendation needs at least one eligible seller permitting that effort;
   an exact recommendation needs that exact seller/model pair. Invalid efforts are rejected
   before accepting a successful per-call routing result.
 
