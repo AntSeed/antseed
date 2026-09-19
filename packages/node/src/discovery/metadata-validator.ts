@@ -546,10 +546,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               message: `Unsupported service API protocol "${protocol}"`,
             });
           } else if (protocol !== "openai-images"
-            && !(protocol === "openai-chat-completions" && perCallPriceMicroUsdc(model) !== null)) {
+            && !((protocol === "openai-chat-completions" || protocol === "antseed-routing") && perCallPriceMicroUsdc(model) !== null)) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing supports openai-images or per-call openai-chat-completions",
+              message: "Service unit billing supports openai-images or per-call openai-chat-completions/antseed-routing",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({

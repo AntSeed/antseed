@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Wallet } from 'ethers';
 import { createRoutingServiceMetadata } from '@antseed/protocol';
+import { createPerCallBillingModel } from '@antseed/protocol/billing';
 import { signData, verifySignature } from '@antseed/protocol/signing';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { validateMetadata } from '../src/discovery/metadata-validator.js';
@@ -19,12 +20,14 @@ describe('signed routing metadata', () => {
   it('round trips signed v14 descriptors and effort capabilities together and detects tampering', () => {
     const source = metadata();
     source.providers[0]!.serviceCapabilities!.selector = { routing: true, reasoning: true, reasoningEfforts: ['high', 'none', 'low'] };
+    source.providers[0]!.serviceUnitBillingModels = { selector: { 'antseed-routing': createPerCallBillingModel('5001') } };
     const wallet = new Wallet(Wallet.createRandom().privateKey);
     const signature = signData(wallet, encodeMetadataForSigning(source));
     const decoded = decodeMetadata(encodeMetadata(source));
     expect(validateMetadata(decoded)).toEqual([]);
     expect(decoded.version).toBe(14);
     expect(decoded.providers[0]!.serviceRouting).toEqual(source.providers[0]!.serviceRouting);
+    expect(decoded.providers[0]!.serviceUnitBillingModels).toEqual(source.providers[0]!.serviceUnitBillingModels);
     expect(decoded.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts).toEqual(['high', 'low', 'none']);
     expect(verifySignature(wallet.address.slice(2), signature, encodeMetadataForSigning(decoded))).toBe(true);
     decoded.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts = ['low'];

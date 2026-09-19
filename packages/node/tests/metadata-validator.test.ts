@@ -69,14 +69,25 @@ describe('validateMetadata', () => {
     });
   });
 
-  it('accepts advertised per-call chat pricing', () => {
+  it.each(['openai-chat-completions', 'antseed-routing'] as const)('accepts advertised per-call %s pricing', (protocol) => {
     const metadata = validMetadata();
     metadata.providers[0]!.defaultPricing = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
-    metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': ['openai-chat-completions'] };
+    metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': [protocol] };
     metadata.providers[0]!.serviceUnitBillingModels = {
-      'claude-3-opus': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+      'claude-3-opus': { [protocol]: createPerCallBillingModel('5000') },
     };
     expect(validateMetadata(metadata)).toEqual([]);
+  });
+  it('rejects image-unit pricing advertised for the routing protocol', () => {
+    const metadata = validMetadata();
+    metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': ['antseed-routing'] };
+    metadata.providers[0]!.serviceUnitBillingModels = {
+      'claude-3-opus': { 'antseed-routing': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.01 }] } },
+    };
+    expect(validateMetadata(metadata)).toContainEqual({
+      field: 'providers[0].serviceUnitBillingModels.claude-3-opus.antseed-routing',
+      message: 'Service unit billing supports openai-images or per-call openai-chat-completions/antseed-routing',
+    });
   });
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
