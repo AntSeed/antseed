@@ -1330,6 +1330,37 @@ test('POST /v1/systemone routes only to peers advertising typesafe-systemone', a
   assert.deepEqual(attempts, [decision.peerId])
 })
 
+test('chat requests to a decision-only model get unsupported_protocol, not model_not_found', async () => {
+  const decision = makePeer('b', ['typesafe'])
+  decision.providerServiceApiProtocols = {
+    typesafe: { services: { 'jev-latest': ['typesafe-systemone'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([decision], [decision], permissiveRouter())
+  let forwarded = 0
+  ;(proxy as any)._node.sendRequest = async () => {
+    forwarded += 1
+    throw new Error('must not reach a peer')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/chat/completions',
+    body: { model: 'jev-latest', messages: [{ role: 'user', content: 'hi' }] },
+  }))
+
+  assert.equal(res.statusCode, 400)
+  const body = JSON.parse(res.body)
+  assert.equal(body.error.code, 'unsupported_protocol')
+  assert.deepEqual(body.error.supported_protocols, ['typesafe-systemone'])
+  assert.match(body.error.message, /call POST \/v1\/systemone/)
+  assert.equal(forwarded, 0)
+
+  const models = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models?type=decisions' }))
+  assert.equal(models.statusCode, 200)
+  assert.deepEqual(JSON.parse(models.body).data.map((model: { id: string; type: string }) => [model.id, model.type]), [['jev-latest', 'decision']])
+  const text = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models?type=text' }))
+  assert.deepEqual(JSON.parse(text.body).data, [])
+})
+
 test('model-only routing does not fail over after a buyer-attributed failure', async () => {
   const first = makePeer('a', ['openai'])
   first.reputationScore = 95

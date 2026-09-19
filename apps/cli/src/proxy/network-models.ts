@@ -23,7 +23,7 @@ import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/mode
 
 export { effectiveModelReputationScore } from '@antseed/node'
 
-export type NetworkModelType = 'text' | 'image'
+export type NetworkModelType = 'text' | 'image' | 'decision'
 
 export type NetworkModelPeerOffer = {
   advertisedVerifierIds?: string[]
@@ -183,6 +183,7 @@ export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
   if (value === '') return 'all'
   if (value === 'image' || value === 'images') return 'image'
   if (value === 'text') return 'text'
+  if (value === 'decision' || value === 'decisions') return 'decision'
   return 'invalid'
 }
 
@@ -251,7 +252,10 @@ export function buildNetworkModels(
     for (const duplicate of duplicateOffers) {
       entry.aliases.push(normalizedModelAlias(duplicate.serviceId), key)
     }
+    // Text wins over image, image over decision, so a canonically merged
+    // model stays routable for the most general client.
     if (offer.type === 'text') entry.type = 'text'
+    else if (offer.type === 'image' && entry.type === 'decision') entry.type = 'image'
     const peer = peerById.get(offer.peerId)
     entry.peers.push({
       advertisedVerifierIds: offer.advertisedVerifierIds,

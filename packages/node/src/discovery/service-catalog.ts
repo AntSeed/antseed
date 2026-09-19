@@ -57,13 +57,16 @@ export type NetworkServiceCatalogPeer = {
   defaultCachedInputUsdPerMillion?: number;
 };
 
+/** `decision`: System One models return typed answers, not text or images. */
+export type NetworkServiceOfferType = 'text' | 'image' | 'decision';
+
 export type NetworkServiceOffer = {
   advertisedVerifierIds?: string[];
   serviceId: string;
   provider: string;
   protocols: string[];
   protocol: CatalogServiceProtocol | null;
-  type: 'text' | 'image';
+  type: NetworkServiceOfferType;
   capabilities?: CatalogServiceCapabilities;
   categories?: string[];
   peerId: string;
@@ -173,9 +176,11 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
-          ? 'image'
-          : 'text';
+        const type: NetworkServiceOfferType = protocol === 'typesafe-systemone'
+          ? 'decision'
+          : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+            ? 'image'
+            : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
         offers.push({
           advertisedVerifierIds: parseVerifierCapabilities(peer.capabilities).supported,

@@ -311,6 +311,7 @@ curl -s http://localhost:8377/v1/models | jq '.data[].id'
 # Filter the list by modality, or inspect one unified model and its ranked offers
 curl -s 'http://localhost:8377/v1/models?type=text'
 curl -s 'http://localhost:8377/v1/models?type=images'
+curl -s 'http://localhost:8377/v1/models?type=decisions'
 curl -s http://localhost:8377/v1/models/<model-id>
 
 # Peers, pricing, protocols, capabilities, and reputation

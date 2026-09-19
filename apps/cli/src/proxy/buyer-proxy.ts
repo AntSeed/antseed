@@ -65,6 +65,7 @@ import {
   findMissingRequiredParameters,
   findUnannouncedRequestParameters,
   findAdvertisedServiceOffer,
+  findAdvertisedServiceProtocols,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   parseRequiredParametersHeader,
@@ -2153,7 +2154,7 @@ export class BuyerProxy {
       res.writeHead(400, responseHeaders)
       res.end(JSON.stringify({
         error: {
-          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text", "images", or "decisions".`,
           type: 'invalid_request_error',
           param: 'type',
         },
@@ -2546,6 +2547,27 @@ export class BuyerProxy {
       }
       if (candidates.length === 0) {
         const capabilityRequired = requiredParameters.length > 0
+        // The model exists on the network but only behind an API this
+        // request does not speak (e.g. a decision model asked via chat).
+        // Say so instead of claiming nobody serves it.
+        const advertisedProtocols = capabilityRequired ? [] : findAdvertisedServiceProtocols(discoveredPeers, requestedService)
+        if (advertisedProtocols.length > 0 && (!requestProtocol || !advertisedProtocols.includes(requestProtocol))) {
+          const hint = advertisedProtocols.includes('typesafe-systemone')
+            ? ` "${requestedService}" is a decision model; call POST /v1/systemone.`
+            : ''
+          log(`Request rejected: model ${requestedService} is served only via ${advertisedProtocols.join(', ')}`)
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({
+            error: {
+              type: 'unsupported_protocol',
+              code: 'unsupported_protocol',
+              message: `Model "${requestedService}" is served via ${advertisedProtocols.join(', ')}, not ${requestProtocol ?? 'this API'}.${hint}`,
+              param: 'model',
+              supported_protocols: advertisedProtocols,
+            },
+          }))
+          return
+        }
         res.writeHead(capabilityRequired ? 422 : 502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
           error: capabilityRequired
