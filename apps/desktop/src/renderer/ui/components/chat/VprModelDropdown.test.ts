@@ -21,6 +21,7 @@ function catalogEntry(kind: VprModelCatalogEntry['kind'], serviceId: string): Vp
     minImageUsdPerImage: null,
     maxImageUsdPerImage: null,
     expectedSavingsPct: null,
+    hasEligibleFreeSeller: true,
     bestPeerId: null,
   };
 }

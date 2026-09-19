@@ -23,6 +23,8 @@ export type VprCatalogFilterOptions = {
   tags?: readonly string[] | null;
   /** Family display names from `availableModelFamilies` (e.g. "Anthropic"). */
   families?: readonly string[] | null;
+  /** Only models whose best offer costs nothing (matches the Free badge). */
+  freeOnly?: boolean;
 };
 
 export type VprSelectedRouteModel = {
@@ -90,6 +92,7 @@ export function filterVprCatalog(
   return entries.filter((entry) => {
     if (options.kind && (entry.kind ?? 'text') !== options.kind) return false;
     if (kinds.size > 0 && !kinds.has(entry.kind ?? 'text')) return false;
+    if (options.freeOnly && entryMinTotalPrice(entry) !== 0) return false;
     if (tags.size > 0) {
       const entryTags = new Set(modelTagsFor(entry.serviceId).map(normalized));
       if (![...tags].every((tag) => entryTags.has(tag))) return false;

@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 /**
- * Built-in "Connected apps" catalog for the VPR Connected apps screen.
+ * Built-in "Connected apps" catalog for the AI VPN Connected apps screen.
  *
  * These are open-source tools with natively configurable API endpoints, so
  * they can ship publicly with the app and show by default — no MITM proxy or
@@ -50,7 +50,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       configPath: '~/.config/opencode/opencode.jsonc',
       providerKey: 'antseed',
       npm: '@ai-sdk/openai-compatible',
-      providerName: 'AntSeed',
+      providerName: 'Antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
       // Patch actual installations (native and, on Windows, WSL distros)
       // instead of blindly writing the one path above; fail the connect when
@@ -71,9 +71,79 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       format: 'codex',
       configPath: '~/.codex/config.toml',
       providerKey: 'antseed',
-      providerName: 'AntSeed',
+      providerName: 'Antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
       installProbe: 'codex',
+    },
+  },
+  {
+    name: 'claude-desktop',
+    displayName: 'Claude',
+    kind: 'config-patch',
+    method: 'Config patch',
+    // The gateway stamps every forwarded request with the claude-desktop
+    // source marker, so this exact slug is the whole identity. No generic
+    // 'claude' entry: it would prefix-match t3code's claude-code/claude-cli
+    // sessions and steal them in first-match-wins attribution.
+    toolSlugs: ['claude-desktop'],
+    domains: [],
+    pathPrefixes: [],
+    // 'open-tool' opens Claude after connect even when it was not running
+    // (restartAppName is both the restart target for a running Claude and
+    // the open-tool launch fallback).
+    appAction: 'open-tool',
+    restartAppName: 'Claude',
+    configPatch: {
+      format: 'claude-desktop',
+      // Claude's normal-profile config: the patch flips deploymentMode to
+      // "3p" here, which makes Claude boot against the Claude-3p profile
+      // directory below, where the Antseed gateway profile is written.
+      // Windows paths are NOT resolved here — Claude has several install
+      // layouts there (classic, MSIX, Nest), so claudeDesktopPatchTargets
+      // derives its own candidate roots on win32 and these apply elsewhere.
+      configPath: '~/Library/Application Support/Claude/claude_desktop_config.json',
+      thirdPartyDir: '~/Library/Application Support/Claude-3p',
+      // Claude talks to the desktop's local Claude gateway (Anthropic-native
+      // model catalog + forwarding to the buyer proxy), not the buyer proxy
+      // directly — see connected-apps/claude-desktop-gateway.ts.
+      baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
+    },
+  },
+  {
+    name: 'hermes',
+    displayName: 'Hermes Agent',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['hermes', 'hermes-agent'],
+    domains: [],
+    pathPrefixes: [],
+    appAction: 'open-tool',
+    toolName: 'hermes',
+    restartAppName: 'Hermes',
+    configPatch: {
+      format: 'hermes',
+      configPath: '~/.hermes/config.yaml',
+      providerKey: 'antseed',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+    },
+  },
+  {
+    name: 'droid',
+    displayName: 'Droid',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['droid'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'droid',
+      // Droid CLI and Factory Desktop share this live-reloaded user config.
+      configPath: '~/.factory/settings.json',
+      providerKey: 'antseed',
+      providerName: 'Antseed Auto',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+      originator: 'droid',
+      installProbe: 'droid',
     },
   },
   {
@@ -88,7 +158,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       format: 't3code',
       configPath: '~/.t3/userdata/settings.json',
       providerKey: 'antseed',
-      providerName: 'AntSeed',
+      providerName: 'Antseed',
       baseURL: 'http://localhost:{buyerPort}',
     },
   },
@@ -108,7 +178,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       baseURL: 'http://localhost:{buyerPort}/v1',
       // Pi's OpenAI Responses transport includes prompt_cache_key with the
       // Pi session id. The buyer proxy uses that as the conversation key so
-      // Pi chats show up in VPR Recent Chats.
+      // Pi chats show up in AI VPN Recent Chats.
       api: 'openai-responses',
       originator: 'pi',
       installProbe: 'pi',
@@ -150,7 +220,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       // WSL installs read the XDG path regardless of the Windows resolution.
       wslConfigPath: '~/.config/crush/crush.json',
       providerKey: 'antseed',
-      providerName: 'AntSeed',
+      providerName: 'Antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
       installProbe: 'crush',
     },
@@ -179,24 +249,6 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     },
   },
   {
-    name: 'hermes',
-    displayName: 'Hermes Agent',
-    kind: 'config-patch',
-    method: 'Config patch',
-    toolSlugs: ['hermes', 'hermes-agent'],
-    domains: [],
-    pathPrefixes: [],
-    appAction: 'open-tool',
-    toolName: 'hermes',
-    restartAppName: 'Hermes',
-    configPatch: {
-      format: 'hermes',
-      configPath: '~/.hermes/config.yaml',
-      providerKey: 'antseed',
-      baseURL: 'http://localhost:{buyerPort}/v1',
-    },
-  },
-  {
     name: 'zed',
     displayName: 'Zed',
     kind: 'config-patch',
@@ -212,7 +264,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
         segments: ['Zed', 'settings.json'],
       }),
       providerKey: 'antseed',
-      providerName: 'AntSeed',
+      providerName: 'Antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
     },
   },

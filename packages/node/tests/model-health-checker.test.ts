@@ -90,6 +90,18 @@ describe('buildHealthProbeRequest', () => {
     });
   });
 
+  it('builds a single-question systemone probe', () => {
+    expect(supportsHealthProbe('typesafe-systemone')).toBe(true);
+    const req = buildHealthProbeRequest('jev-latest', 'typesafe-systemone');
+    expect(req.path).toBe('/v1/systemone');
+    const body = JSON.parse(new TextDecoder().decode(req.body));
+    expect(body).toEqual({
+      model: 'jev-latest',
+      state: 'ping',
+      questions: { ok: { type: 'noul', instructions: 'Is the state the word ping?' } },
+    });
+  });
+
   it('does not fall back to a chat probe for image services', () => {
     expect(supportsHealthProbe('openai-images')).toBe(false);
     expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(
@@ -309,11 +321,11 @@ describe('ModelHealthChecker', () => {
     expect(paths.sort()).toEqual(['/v1/chat/completions', '/v1/messages']);
   });
 
-  it('skips image services without calling the provider or changing availability', async () => {
+  it.each(['openai-images', 'antseed-video-jobs-v1'] as const)('skips %s without calling the provider or changing availability', async (protocol) => {
     const handleRequest = vi.fn(async (req: SerializedHttpRequest) => jsonResponse(req.requestId, 500));
     const provider = makeProvider({
       services: ['gpt-image-1'],
-      serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+      serviceApiProtocols: { 'gpt-image-1': [protocol] },
       onRequest: handleRequest,
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 1 });
@@ -328,7 +340,7 @@ describe('ModelHealthChecker', () => {
         advertised: true,
         consecutiveFailures: 0,
         lastStatusCode: null,
-        lastDetail: 'Skipped health probe for unsupported protocol openai-images',
+        lastDetail: `Skipped health probe for unsupported protocol ${protocol}`,
       }),
     ]);
   });

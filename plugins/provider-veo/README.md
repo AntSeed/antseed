@@ -27,10 +27,11 @@ GEMINI_BASE_URL
 ANTSEED_ALLOWED_SERVICES
 ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON
 ANTSEED_SERVICE_CAPABILITIES_JSON
-ANTSEED_VIDEO_UPFRONT_BPS
 ANTSEED_MAX_CONCURRENCY
 ```
 
 The adapter submits `predictLongRunning`, polls the returned Gemini operation, and retrieves output through the authenticated Gemini Files API. It rejects external artifact origins so the Gemini API key cannot be forwarded to an attacker-controlled URL.
 
 Run `antseed seller doctor --video-live` before production use.
+
+Video bills the full quoted price at upstream acceptance, after full buyer authorization. There is no delivery payment or receipt. Accepted attempts remain payable even if generation or delivery later fails; buyers depend on seller-operated refunds. This is not escrow. The former `ANTSEED_VIDEO_UPFRONT_BPS` setting is rejected.

@@ -8,9 +8,14 @@ import { loadConfig } from '../../../config/loader.js'
 import {
   AntseedNode,
   ModelHealthChecker,
+  GasHealthMonitor,
   CONNECTION_CAPABILITY_MODEL_HEALTH_V1,
   DEFAULT_HEALTH_CHECK_INTERVAL_MS,
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_GAS_CHECK_INTERVAL_MS,
+  DEFAULT_MIN_GAS_BALANCE_WEI,
+  formatEther,
+  parseEther,
   type Provider,
   type Prover,
   type ConfigField,
@@ -306,16 +311,18 @@ export function buildSellerPluginRuntimeEnv(
   if (Object.keys(serviceUnitBillingModels).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
+  const pluginPackage = resolvePluginPackage(providerCfg.plugin)
+  const envPrefix = pluginPackage === '@antseed/provider-local-llm'
+    ? 'LOCAL_LLM'
+    : pluginPackage === '@antseed/provider-typesafe'
+      ? 'TYPESAFE'
+      : pluginPackage === '@antseed/provider-runway'
+        ? 'RUNWAY'
+        : pluginPackage === '@antseed/provider-veo'
+          ? 'GEMINI'
+          : 'OPENAI'
   if (providerCfg.baseUrl) {
-    const resolvedPackage = resolvePluginPackage(providerCfg.plugin)
-    const baseUrlKey = resolvedPackage === '@antseed/provider-local-llm'
-      ? 'LOCAL_LLM_BASE_URL'
-      : resolvedPackage === '@antseed/provider-runway'
-        ? 'RUNWAY_BASE_URL'
-        : resolvedPackage === '@antseed/provider-veo'
-          ? 'GEMINI_BASE_URL'
-          : 'OPENAI_BASE_URL'
-    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
+    runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -323,17 +330,8 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.apiKeyEnv) {
     const apiKey = process.env[providerCfg.apiKeyEnv]
     if (apiKey) {
-      const resolvedPackage = resolvePluginPackage(providerCfg.plugin)
-      const apiKeyTarget = resolvedPackage === '@antseed/provider-runway'
-        ? 'RUNWAY_API_KEY'
-        : resolvedPackage === '@antseed/provider-veo'
-          ? 'GEMINI_API_KEY'
-          : 'OPENAI_API_KEY'
-      runtimeEnv[apiKeyTarget] = apiKey
+      runtimeEnv[`${envPrefix}_API_KEY`] = apiKey
     }
-  }
-  if (providerCfg.videoPayment) {
-    runtimeEnv['ANTSEED_VIDEO_UPFRONT_BPS'] = String(providerCfg.videoPayment.upfrontBps)
   }
 
   return runtimeEnv
@@ -593,6 +591,12 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       const healthCheckCfg = effectiveSellerConfig.healthCheck
       const healthCheckEnabled = healthCheckCfg?.enabled !== false
+      const gasCheckCfg = effectiveSellerConfig.gasCheck
+      const gasCheckEnabled = paymentsEnabled && Boolean(config.payments.crypto) && gasCheckCfg?.enabled !== false
+      const gasCheckIntervalMs = gasCheckCfg?.intervalMs ?? DEFAULT_GAS_CHECK_INTERVAL_MS
+      const minGasBalanceWei = gasCheckCfg?.minBalanceEth !== undefined
+        ? parseEther(String(gasCheckCfg.minBalanceEth))
+        : DEFAULT_MIN_GAS_BALANCE_WEI
 
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
@@ -620,6 +624,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ? toUSDCBaseUnits(minSettleDeltaFlag, DEFAULT_MIN_SETTLE_DELTA_STR)
         : (config.payments.minSettleDelta ?? DEFAULT_MIN_SETTLE_DELTA_STR)
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
+      if (config.payments.serveWhileClosePending) {
+        console.log(chalk.yellow('  Warning: serveWhileClosePending is enabled. Channels whose buyer already requested close on-chain will still be served, and their withdraw timer may already have matured — work served on them can become uncollectible.'))
+      }
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       if (healthCheckEnabled) {
@@ -628,6 +635,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.log(chalk.dim(`  model health checks: every ${Math.round(intervalMs / 1000)}s, unadvertise after ${failureThreshold} consecutive failures`))
       } else {
         console.log(chalk.dim('  model health checks: disabled'))
+      }
+      if (gasCheckEnabled) {
+        console.log(chalk.dim(`  gas checks: every ${Math.round(gasCheckIntervalMs / 1000)}s, pause advertising below ${formatEther(minGasBalanceWei)} ETH`))
       }
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
         ?? effectiveSellerConfig.maxUploadBodyBytes
@@ -708,6 +718,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           paymentConfig,
           minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
           minSettleDelta,
+          ...(config.payments.serveWhileClosePending !== undefined
+            ? { serveWhileClosePending: config.payments.serveWhileClosePending }
+            : {}),
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
@@ -813,6 +826,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         })
         healthChecker.start()
       }
+
+      // Operator-facing notices surfaced via daemon.state.json (seller status
+      // command and desktop). Currently only the out-of-gas notice.
+      let gasNotice: string | null = null
 
       // Write daemon state so dashboard and connect can discover this seeder
       const startedAt = Date.now()
@@ -931,6 +948,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           earningsToday: '0',
           tokensToday: 0,
           uptime: formatUptime(),
+          notices: gasNotice ? [gasNotice] : [],
           updatedAt: now,
           proxyPort: null,
         }
@@ -968,8 +986,44 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         await writeDaemonState().catch(() => {})
       }, 1_000)
 
+      // Periodic seller-wallet gas checks: a seller whose wallet cannot fund
+      // reserve/settle/close transactions rejects every buyer that connects,
+      // so pause advertising (and say so) until the wallet is funded again.
+      let gasMonitor: GasHealthMonitor | null = null
+      if (gasCheckEnabled && node.identity) {
+        const gasWalletAddress = node.identity.wallet.address
+        try {
+          const gasStakingClient = createStakingClient(config, { rpcUrl: baseRpcUrlOverride })
+          gasMonitor = new GasHealthMonitor({
+            address: gasWalletAddress,
+            getBalance: (address) => gasStakingClient.provider.getBalance(address),
+            intervalMs: gasCheckIntervalMs,
+            minBalanceWei: minGasBalanceWei,
+            onChange: (event) => {
+              const balanceSummary = `wallet ${event.address} holds ${formatEther(event.balanceWei)} ETH (minimum ${formatEther(event.minBalanceWei)} ETH)`
+              if (event.status === 'depleted') {
+                gasNotice = `Out of gas: ${balanceSummary}. Advertising is paused; send ETH to ${event.address} to resume.`
+                console.log(chalk.yellow.bold('\nSeller out of gas — advertising paused.'))
+                console.log(chalk.yellow(`  On-chain settlement would fail and buyers would be rejected: ${balanceSummary}.`))
+                console.log(chalk.cyan(`  Send ETH to ${event.address} — advertising resumes automatically once funded.`))
+                void node.pauseAdvertising('out-of-gas').catch(() => {})
+              } else {
+                gasNotice = null
+                console.log(chalk.green(`Gas balance restored (${formatEther(event.balanceWei)} ETH) — advertising resumed.`))
+                node.resumeAdvertising()
+              }
+              scheduleDaemonStateWrite()
+            },
+          })
+          gasMonitor.start()
+        } catch (err) {
+          console.log(chalk.dim(`  gas checks unavailable: ${(err as Error).message}`))
+        }
+      }
+
       setupShutdownHandler(async () => {
         healthChecker?.stop()
+        gasMonitor?.stop()
         clearInterval(stateInterval)
         node.off('connection', scheduleDaemonStateWrite)
         node.off('session:updated', scheduleDaemonStateWrite)

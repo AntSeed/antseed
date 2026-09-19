@@ -4,6 +4,7 @@
 
 import { safeStorage } from 'electron';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, unlink, rename, copyFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,10 @@ import { bytesToHex, identityFromPrivateKeyHex } from '@antseed/node';
 
 const ENCRYPTED_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.enc');
 const PLAINTEXT_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.key');
+
+export function hasStoredIdentity(): boolean {
+  return existsSync(ENCRYPTED_IDENTITY_PATH) || existsSync(PLAINTEXT_IDENTITY_PATH);
+}
 
 let secureIdentity: Identity | null = null;
 let secureIdentityPromise: Promise<void> | null = null;

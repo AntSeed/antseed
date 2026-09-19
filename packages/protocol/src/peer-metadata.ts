@@ -137,7 +137,6 @@ export function validateServiceCapabilityFields(caps: ServiceCapabilities): stri
     if (!Array.isArray(video.aspectRatios) || video.aspectRatios.length === 0) errors.push('video.aspectRatios must not be empty');
     if (!Array.isArray(video.outputFormats) || video.outputFormats.length === 0) errors.push('video.outputFormats must not be empty');
     if (typeof video.generateAudio !== 'boolean') errors.push('video.generateAudio must be a boolean');
-    if (video.upfrontBps !== undefined && (!Number.isSafeInteger(video.upfrontBps) || video.upfrontBps < 0 || video.upfrontBps > 10_000)) errors.push('video.upfrontBps must be between 0 and 10000');
   }
   return errors;
 }

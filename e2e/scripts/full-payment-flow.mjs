@@ -290,6 +290,7 @@ async function main() {
         env: {
           DEPLOYER_PRIVATE_KEY,
         },
+        timeout: 600_000,
       }
     );
 

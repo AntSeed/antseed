@@ -17,6 +17,8 @@ export interface NodeStatus {
   capacityUsedPercent: number;
   daemonPid: number | null;
   daemonAlive: boolean;
+  /** Operator-facing warnings from the running daemon (e.g. out of gas). */
+  notices: string[];
 }
 
 /** Stale threshold: 30 seconds */
@@ -121,6 +123,9 @@ function sellerStatus(
     capacityUsedPercent: typeof state.capacityUsedPercent === 'number' ? state.capacityUsedPercent : 0,
     daemonPid: pid,
     daemonAlive: alive,
+    notices: Array.isArray(state.notices)
+      ? state.notices.filter((notice): notice is string => typeof notice === 'string')
+      : [],
   };
 }
 
@@ -149,6 +154,7 @@ function buyerStatus(
     capacityUsedPercent: 0,
     daemonPid: pid,
     daemonAlive: alive,
+    notices: [],
   };
 }
 
@@ -165,5 +171,6 @@ function idleStatus(config: AntseedConfig, pid: number | null): NodeStatus {
     capacityUsedPercent: 0,
     daemonPid: pid,
     daemonAlive: false,
+    notices: [],
   };
 }

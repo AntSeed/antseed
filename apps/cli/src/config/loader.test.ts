@@ -83,13 +83,12 @@ test('loadConfig merges partial model routing preferences with defaults', async 
 
 test('loadConfig preserves buyer video approval overrides and default caps', async () => {
   await withTempConfig(
-    JSON.stringify({ buyer: { video: { maxTotalUsdc: '2500000', maxUpfrontBps: 3000 } } }),
+    JSON.stringify({ buyer: { video: { maxTotalUsdc: '2500000' } } }),
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.deepEqual(config.buyer.video, {
         autoApprove: true,
         maxTotalUsdc: '2500000',
-        maxUpfrontBps: 3000,
         maxDurationSeconds: 10,
       });
     },
@@ -98,9 +97,24 @@ test('loadConfig preserves buyer video approval overrides and default caps', asy
 
 test('loadConfig rejects invalid buyer video approval limits', async () => {
   await withTempConfig(
-    JSON.stringify({ buyer: { video: { maxTotalUsdc: '-1', maxUpfrontBps: 10001, maxDurationSeconds: 0 } } }),
+    JSON.stringify({ buyer: { video: { maxTotalUsdc: '-1', maxDurationSeconds: 0 } } }),
     async (configPath) => {
       await assert.rejects(() => loadConfig(configPath), /buyer\.video\.maxTotalUsdc/);
+    },
+  );
+});
+
+test('loadConfig requires explicit removal of legacy video split limits', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { video: { maxUpfrontBps: 5000 } } }),
+    async (configPath) => {
+      await assert.rejects(() => loadConfig(configPath), /maxUpfrontBps is no longer supported/);
+    },
+  );
+  await withTempConfig(
+    JSON.stringify({ seller: { providers: { runway: { plugin: 'runway', services: {}, videoPayment: { upfrontBps: 5000 } } } } }),
+    async (configPath) => {
+      await assert.rejects(() => loadConfig(configPath), /videoPayment is no longer supported/);
     },
   );
 });
@@ -692,6 +706,52 @@ test('loadConfig rejects invalid seller healthCheck failureThreshold', async () 
       await assert.rejects(
         async () => loadConfig(configPath),
         /seller\.healthCheck\.failureThreshold/
+      );
+    }
+  );
+});
+
+test('loadConfig preserves seller gasCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.gasCheck, { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { intervalMs: 1_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck minBalanceEth', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { minBalanceEth: -1 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.minBalanceEth/
       );
     }
   );

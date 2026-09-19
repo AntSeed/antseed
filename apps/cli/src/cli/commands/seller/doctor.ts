@@ -113,7 +113,7 @@ async function diagnoseVideoProviders(
           ? `missing video pricing for ${pricingMissing.join(', ')}`
           : capabilitiesMissing.length > 0
             ? `missing video capabilities for ${capabilitiesMissing.join(', ')}`
-            : `${services.length} tested model preset(s), ${((provider.videoPayment?.upfrontBps ?? 5000) / 100).toFixed(0)}% upfront`;
+            : `${services.length} tested model preset(s), full price at upstream acceptance`;
     let liveStatus: 'passed' | 'failed' | 'skipped' = 'skipped';
     if (healthy && live && apiKey) {
       try {

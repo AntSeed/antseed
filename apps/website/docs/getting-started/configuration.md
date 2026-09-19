@@ -7,7 +7,7 @@ hide_title: true
 
 # Configuration
 
-AntSeed stores configuration at `~/.antseed/config.json`. This file is the normal source of truth for your node.
+Antseed stores configuration at `~/.antseed/config.json`. This file is the normal source of truth for your node.
 
 The intended workflow is:
 
@@ -109,7 +109,7 @@ antseed seller start
 
 ## Override Precedence
 
-When the same setting exists in multiple places, AntSeed resolves it in this order:
+When the same setting exists in multiple places, Antseed resolves it in this order:
 
 1. CLI flags for the current command
 2. Environment variables
@@ -316,7 +316,7 @@ See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before u
 
 ## Buyer Settings
 
-Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop VPR. The defaults are:
+Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop AI VPN. The defaults are:
 
 ```json
 {
@@ -332,7 +332,7 @@ Model-only requests use one shared Price + Trust policy in the CLI buyer proxy a
 }
 ```
 
-`minTrustScore` is a hard eligibility gate. At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
+`minTrustScore` is a hard eligibility gate on the buyer-computed [trust score](/docs/reputation#trust-score). At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
 
 Eligible offers are ranked using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and `preferFreePeers`. `maxInputUsdPerMillion` is a strong price preference in that ranking; the separate hierarchical `maxPricing` policy remains the hard price-cap mechanism:
 
@@ -445,7 +445,7 @@ Do not redirect the well-known URL; verifiers require the proof to be served dir
 
 ### GitHub proof
 
-Create a public repository and place `antseed.json` at the repository root. AntSeed fetches:
+Create a public repository and place `antseed.json` at the repository root. Antseed fetches:
 
 ```text
 https://raw.githubusercontent.com/<username>/<repository>/HEAD/antseed.json
@@ -475,6 +475,7 @@ Provider plugins authenticate with their upstream AI service. Credentials live i
 | `openai` | `OPENAI_API_KEY` | Set `providers.<name>.baseUrl` in config.json for Together/OpenRouter/etc. |
 | `claude-code` | keychain | Reads from `claude-code` secure storage |
 | `local-llm` | none | Ollama/llama.cpp |
+| `typesafe` | `TYPESAFE_API_KEY` | System One decision models (`POST /v1/systemone`). Set `providers.<name>.baseUrl` for a compatible upstream. |
 
 The separation is intentional:
 
@@ -518,7 +519,7 @@ See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/ma
 | Priority | Method | Best for |
 |---|---|---|
 | 1 | `ANTSEED_IDENTITY_HEX` env var | CLI and server deployments |
-| 2 | Desktop keychain (Electron `safeStorage`) | AntSeed Desktop app |
+| 2 | Desktop keychain (Electron `safeStorage`) | Antseed Desktop app |
 | 3 | Custom `IdentityStore` | KMS/HSM integrations |
 | 4 | `~/.antseed/identity.key` (plaintext) | Not recommended for production |
 
@@ -549,6 +550,28 @@ antseed seller start --base-rpc-url https://base-mainnet.infura.io/v3/<key>
 ```
 
 Precedence is: CLI flag, then `ANTSEED_BASE_RPC_URL`, then `payments.crypto.rpcUrl`, then built-in Base defaults.
+
+## ANTS Staking
+
+`antseed ants` and its subcommands use the same chain settings as the rest of
+the CLI. Contract addresses for the recognized-usage stack (seller registry,
+seller pools, usage accounting, usage rewards, emissions gate, wash-trading
+registry, points policy registry) come from the built-in deployment record for
+`payments.chainId` and from the on-chain `AntseedRegistry`, so nothing needs to
+be configured on Base Mainnet.
+
+Two optional settings under `payments.crypto`:
+
+| Key | Description |
+|---|---|
+| `explorerApiUrl` | Antscan base URL. `antseed ants` takes pool statistics, per-epoch volume and usage, seller profiles, and closed positions from it and reads the chain only for your wallet's live state. Defaults to `https://antscan.co`; set it to `""` to disable (for example on a local fork), which leaves only the pools you stake in listed. |
+| `<contract>Address` | Per-contract overrides for local or test deployments: `sellerRegistryAddress`, `sellerPoolsAddress`, `sellerPoolsRewardsAddress`, `usageAccountingAddress`, `usageRewardsAddress`, `emissionsGateAddress`, `positionInitAddress`, `washTradingRegistryAddress`, `pointsPolicyRegistryAddress`, `antsTokenAddress`, `legacyEmissionsContractAddress`, `legacyStakingContractAddress`. `positionInitAddress` has no on-chain pointer and must be set explicitly outside the built-in deployments. |
+
+```bash
+antseed config set payments.crypto.explorerApiUrl ""
+```
+
+See the [staking guide](/docs/guides/staking) for what the dashboard shows.
 
 ## Runtime Environment Variables
 

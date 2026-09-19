@@ -8,7 +8,7 @@ import { WORKSPACE_APPS_DIR } from '../paths.js';
 
 const { join, resolve } = path;
 
-export type RuntimeMode = 'connect' | 'system-proxy';
+export type RuntimeMode = 'connect' | 'system-proxy' | 'tunnel';
 
 export interface RuntimeProcessState {
   mode: RuntimeMode;
@@ -33,6 +33,7 @@ export interface StartOptions {
   systemProxyDefaultModel?: string;
   systemProxyServedModels?: string[];
   setSystemProxy?: boolean;
+  tunnelBuyerPort?: number;
 }
 
 export interface DaemonStateSnapshot {
@@ -315,6 +316,19 @@ type CliExecution = {
   cliCommand: string;
 };
 
+export function buildCliChildEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  isLocalDevScript: boolean,
+): NodeJS.ProcessEnv {
+  const childEnv = { ...baseEnv };
+  if (isLocalDevScript) {
+    delete childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'];
+  } else {
+    childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'] = '1';
+  }
+  return childEnv;
+}
+
 function resolveCliExecution(): CliExecution {
   const cliCommand = resolveCliCommand();
   const localCliPath = resolveLocalCliPath();
@@ -378,6 +392,11 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
         args.push('--system-proxy');
       }
       break;
+    case 'tunnel':
+      args.push('--data-dir', resolveConnectDataDir());
+      args.push('tunnel', 'start');
+      if (opts.tunnelBuyerPort) args.push('--buyer-port', String(opts.tunnelBuyerPort));
+      break;
     default:
       throw new Error(`Unsupported runtime mode: ${String(opts.mode)}`);
   }
@@ -393,6 +412,7 @@ export class ProcessManager {
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
     ['connect', { mode: 'connect', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
     ['system-proxy', { mode: 'system-proxy', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
+    ['tunnel', { mode: 'tunnel', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
   ]);
 
   constructor(
@@ -456,11 +476,10 @@ export class ProcessManager {
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
     await this.ensureRuntimeNativeModules(mode, executable, cliExecution.isLocalDevScript);
-    const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    // Desktop repairs the default router from its own app bundle. Do not let
-    // the child CLI try an npm-based plugin refresh/install on locked-down
-    // machines where npm may be unavailable or behind corporate TLS proxies.
-    childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'] = '1';
+    const childEnv = buildCliChildEnv(process.env, cliExecution.isLocalDevScript);
+    // Packaged desktop repairs trusted plugins from its own app bundle. Local
+    // development keeps plugin preparation enabled so newly added workspace
+    // plugins can be installed and exercised without a production bundle.
     for (const [key, value] of Object.entries(opts.env ?? {})) {
       if (typeof key === 'string' && key.trim().length > 0) {
         childEnv[key] = String(value);
@@ -560,8 +579,7 @@ export class ProcessManager {
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
 
-    const childEnv = { ...process.env };
-    childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'] = '1';
+    const childEnv = buildCliChildEnv(process.env, cliExecution.isLocalDevScript);
     if (executable === process.execPath) {
       childEnv['ELECTRON_RUN_AS_NODE'] = '1';
     } else {
@@ -798,6 +816,7 @@ export class ProcessManager {
     await Promise.all([
       this.stop('system-proxy'),
       this.stop('connect'),
+      this.stop('tunnel'),
     ]);
   }
 }

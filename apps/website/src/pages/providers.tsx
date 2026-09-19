@@ -1,3 +1,4 @@
+import type {JSX} from 'react';
 import Layout from '@theme/Layout';
 import styles from './providers.module.css';
 import {
@@ -24,7 +25,7 @@ import {
 const FAQ_DATA = [
   {
     q: 'Does the network see my backend, model choice, or routing logic?',
-    a: 'The network only sees what you announce: your service names, pricing, capability tags, and on-chain reputation. Your backend URL, model provider, routing strategy, system prompt, and fine-tune weights are intended to remain under your control. You are responsible for securing your own node, credentials, logs, and provider infrastructure.',
+    a: 'The network only sees what you announce: your service names, pricing, capability tags, and onchain reputation. Your backend URL, model provider, routing strategy, system prompt, and fine-tune weights are intended to remain under your control. You are responsible for securing your own node, credentials, logs, and provider infrastructure.',
   },
   {
     q: 'What provider types can I run?',
@@ -32,15 +33,15 @@ const FAQ_DATA = [
   },
   {
     q: 'Does my node need to run 24/7?',
-    a: 'No. Providers announce uptime windows in their metadata. When you go offline, the network routes around you. Your on-chain reputation persists across sessions.',
+    a: 'No. Providers announce uptime windows in their metadata. When you go offline, the network routes around you. Your onchain reputation persists across sessions.',
   },
   {
     q: 'How do payments actually reach me?',
-    a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 10 minutes), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
+    a: 'Buyers lock USDC in onchain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 10 minutes), settlement executes onchain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
   },
   {
-    q: 'Are seller ANTS incentives claimable now?',
-    a: 'Seller ANTS emissions are currently tracked but routed into a dedicated Provider Pool and locked. They are not freely claimable yet. Future claimability is expected after stronger validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.',
+    q: 'Are provider ANTS incentives claimable now?',
+    a: 'Provider ANTS emissions are currently tracked but routed into a dedicated Provider Pool and locked. They are not freely claimable yet. Future claimability is expected after stronger validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.',
   },
   {
     q: 'Can I use any model underneath?',
@@ -48,7 +49,7 @@ const FAQ_DATA = [
   },
   {
     q: 'Can I serve multiple capability types from one node?',
-    a: 'Yes. A single AntSeed node can advertise multiple services - raw inference on one model, a routing service with custom logic, and an AI Agent, all at different price tiers. Each service is announced independently to the DHT.',
+    a: 'Yes. A single Antseed node can advertise multiple services - raw inference on one model, a routing service with custom logic, and an AI Agent, all at different price tiers. Each service is announced independently to the DHT.',
   },
 ];
 
@@ -66,7 +67,7 @@ const PATHS = [
   {
     title: 'Raw Inference',
     icon: <HugeiconsIcon icon={ServerStack01Icon} size={24} strokeWidth={1.6} aria-hidden="true" />,
-    body: 'You run a model or proxy an upstream API - Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.',
+    body: 'You run a model or proxy an upstream API - Ollama, a fine-tune, a local GPU, OpenAI, Together. Point Antseed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and onchain reputation; payments depend on demand and successful settlement.',
     points: ['Any model or backend', 'Set your own price per token', 'Reputation built per delivery'],
   },
   {
@@ -95,7 +96,7 @@ const PUBLIC_FACTS = [
   'Your service names',
   'Your price per token or per request',
   'Your capability tags (TEE, domain, model family…)',
-  'Your on-chain reputation score',
+  'Your onchain reputation score',
   'Your latency percentiles',
   'Your uptime window',
 ];
@@ -113,7 +114,7 @@ const PAY_STEPS = [
   {
     step: '1',
     title: 'Buyer locks funds',
-    body: 'USDC is locked in the AntSeedEscrow smart contract on Base before the session starts. Requests flow freely while funds are escrowed.',
+    body: 'USDC is locked in the AntseedDeposits smart contract on Base before the session starts. Requests flow freely while funds are escrowed.',
   },
   {
     step: '2',
@@ -122,7 +123,7 @@ const PAY_STEPS = [
   },
   {
     step: '3',
-    title: 'Settlement executes on-chain',
+    title: 'Settlement executes onchain',
     body: 'On session end (or 10 min idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
   },
 ];
@@ -140,7 +141,7 @@ const ECONOMICS = [
 ];
 
 const REPUTATION = [
-  {label: 'Success rate', desc: 'Percentage of requests delivered and settled on-chain'},
+  {label: 'Success rate', desc: 'Percentage of requests delivered and settled onchain'},
   {label: 'Latency p50 / p99', desc: 'Measured per delivery, visible to buyers pre-route'},
   {label: 'Token accuracy', desc: 'Signed receipts verify exact token counts on both sides'},
   {label: 'Uptime', desc: 'Historical availability across announced service windows'},
@@ -194,7 +195,7 @@ export default function Providers(): JSX.Element {
   return (
     <Layout
       title="Become a Provider"
-      description="Build an AntSeed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
+      description="Build an Antseed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
     >
       <PageHero
         kicker="Providers"
@@ -207,7 +208,7 @@ export default function Providers(): JSX.Element {
         lead="Set your price. Announce to the network. Receive USDC for settled deliveries - whether you run a model, a routing service, or a specialized agent."
       >
         <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
-        <Button to="/docs/install" variant="ghost">Install AntSeed</Button>
+        <Button to="/docs/install" variant="ghost">Install Antseed</Button>
       </PageHero>
 
       {/* ── THREE WAYS TO PROVIDE ── */}
@@ -241,7 +242,7 @@ export default function Providers(): JSX.Element {
           <div className={styles.complianceBody}>
             <p className={styles.complianceTitle}>Provider compliance</p>
             <p>
-              AntSeed is designed for providers who build differentiated services -
+              Antseed is designed for providers who build differentiated services -
               such as TEE-secured inference, domain-specific skills or agents,
               fine-tuned models, or managed product experiences. Simply reselling
               raw API access or subscription credentials is <strong>not</strong> the
@@ -254,7 +255,7 @@ export default function Providers(): JSX.Element {
               and upstream API provider terms.
             </p>
             <p>
-              Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while AntSeed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
+              Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while Antseed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
             </p>
           </div>
         </Reveal>
@@ -297,7 +298,7 @@ export default function Providers(): JSX.Element {
         <Reveal>
           <SectionHeader
             title="One JSON file. Full control."
-            lead="No code to write. Point AntSeed at an OpenAI-compatible endpoint, set your prices and categories, and offer capacity to buyers."
+            lead="No code to write. Point Antseed at an OpenAI-compatible endpoint, set your prices and categories, and offer capacity to buyers."
           />
         </Reveal>
         <div className={styles.codeGrid}>
@@ -328,7 +329,7 @@ export default function Providers(): JSX.Element {
         <Reveal>
           <SectionHeader
             title="Direct settlement. No invoicing."
-            lead="Buyers lock funds before a session. You deliver. Settlement executes on-chain automatically."
+            lead="Buyers lock funds before a session. You deliver. Settlement executes onchain automatically."
           />
         </Reveal>
         <Reveal className={styles.payFlow}>
@@ -367,7 +368,7 @@ export default function Providers(): JSX.Element {
         <Reveal>
           <SectionHeader
             title="Build reputation that compounds."
-            lead="Every delivery is recorded on-chain. Your reputation belongs to your wallet. No platform can revoke it."
+            lead="Every delivery is recorded onchain. Your reputation belongs to your wallet. No platform can revoke it."
           />
         </Reveal>
         <div className={styles.repGrid}>
@@ -380,7 +381,7 @@ export default function Providers(): JSX.Element {
         </div>
         <Reveal delay={160}>
           <p className={styles.repNote}>
-            Any buyer can build their own access and routing rules on top of on-chain stats.
+            Any buyer can build their own access and routing rules on top of onchain stats.
             Providers with strong track records may command higher prices and receive more traffic,
             depending on buyer and router preferences.
           </p>
@@ -400,7 +401,7 @@ export default function Providers(): JSX.Element {
       {/* ── CLOSING CTA ── */}
       <FinalCta
         title="Ready to provide?"
-        sub="Install AntSeed, configure your provider, and offer AI capacity as an independent operator."
+        sub="Install Antseed, configure your provider, and offer AI capacity as an independent operator."
         note={
           <>
             <a href="/docs/lightpaper">Read the lightpaper</a>

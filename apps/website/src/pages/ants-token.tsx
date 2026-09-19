@@ -1,7 +1,8 @@
-import {useState, useEffect, useRef} from 'react';
+import {useState, useEffect, useRef, type JSX} from 'react';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {
   Button,
   FinalCta,
@@ -190,6 +191,7 @@ function VerifyReceipt() {
 /* ── MAIN PAGE ─────────────────────────────────────────────────── */
 export default function AntsToken(): JSX.Element {
   const download = useLatestDesktopDownload();
+  const onGetStarted = useMobileGetStarted();
   const {epoch, timeLeft} = useEpochCountdown();
 
   const totalSupply = epoch * INITIAL_EMISSION;
@@ -197,7 +199,7 @@ export default function AntsToken(): JSX.Element {
   return (
     <Layout
       title="ANTS Token"
-      description="ANTS is the native token of the AntSeed network and its trust and reputation layer."
+      description="ANTS is the native token of the Antseed network and its trust and reputation layer."
     >
       <PageHero
         accent="clay"
@@ -209,7 +211,7 @@ export default function AntsToken(): JSX.Element {
         title={
           <>
             The native token of<br />
-            <em>the AntSeed network.</em>
+            <em>the Antseed network.</em>
           </>
         }
         badge={
@@ -218,8 +220,11 @@ export default function AntsToken(): JSX.Element {
             Tokens restricted
           </span>
         }
-        lead="ANTS is the native token of AntSeed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify.">
-        <Button href={download.href} variant="clay" arrow>Download VPR</Button>
+        lead="ANTS is the native token of Antseed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify.">
+        <Button href={download.href} variant="clay" arrow onClick={onGetStarted}>
+          <span className="vprLabelDesktop">Download AI VPN</span>
+          <span className="vprLabelMobile">Get Started</span>
+        </Button>
         <Button to="/docs/lightpaper" variant="ghost">Lightpaper</Button>
       </PageHero>
 
@@ -296,7 +301,7 @@ export default function AntsToken(): JSX.Element {
               Evidence,<br />not labels.
             </h2>
             <p className={`${styles.splitLead} ${styles.verifyLead}`}>
-              A model name on an endpoint proves nothing. On AntSeed, evidence travels with every
+              A model name on an endpoint proves nothing. On Antseed, evidence travels with every
               response - and verification decides how much a seller&apos;s usage is worth.
             </p>
             <ul className={`${styles.splitPoints} ${styles.verifyPoints}`}>
@@ -328,7 +333,7 @@ export default function AntsToken(): JSX.Element {
       {/* ── CLOSING CTA ── */}
       <FinalCta
         title="Help build the network"
-        sub="Download the VPR, use the network for real AI work, run a provider, and help improve the open-source protocol."
+        sub="Download the AI VPN, use the network for real AI work, run a provider, and help improve the open-source protocol."
         note={
           <>
             <a href="/docs/lightpaper">Lightpaper</a>
@@ -336,7 +341,10 @@ export default function AntsToken(): JSX.Element {
             <a href={STATS_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
           </>
         }>
-        <Button href={download.href} variant="white" size="lg" arrow>Download VPR</Button>
+        <Button href={download.href} variant="white" size="lg" arrow onClick={onGetStarted}>
+          <span className="vprLabelDesktop">Download AI VPN</span>
+          <span className="vprLabelMobile">Get Started</span>
+        </Button>
         <Button to="/providers" variant="light" size="lg">Become a provider</Button>
       </FinalCta>
     </Layout>

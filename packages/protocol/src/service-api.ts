@@ -7,6 +7,7 @@ export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'openai-completions',
   'openai-responses',
   'openai-images',
+  'typesafe-systemone',
   'antseed-video-jobs-v1',
 ] as const;
 

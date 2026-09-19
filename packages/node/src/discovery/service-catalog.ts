@@ -1,4 +1,5 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
+import { parseVerifierCapabilities } from './verifier-capabilities.js';
 import type { VideoCapabilities } from '@antseed/protocol';
 
 export type CatalogServiceProtocol =
@@ -6,6 +7,7 @@ export type CatalogServiceProtocol =
   | 'openai-chat-completions'
   | 'openai-responses'
   | 'openai-images'
+  | 'typesafe-systemone'
   | 'antseed-video-jobs-v1';
 
 export type CatalogServiceCapabilities = {
@@ -22,11 +24,11 @@ export type CatalogServiceCapabilities = {
 
 export type NetworkServiceCatalogPeer = {
   peerId: string;
+  capabilities?: string[];
   displayName?: string;
   providers?: string[];
   services?: string[];
   reputationScore?: number;
-  onChainTrustScore?: number | null;
   onChainReputationScore?: number | null;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
   providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
@@ -58,12 +60,16 @@ export type NetworkServiceCatalogPeer = {
   defaultCachedInputUsdPerMillion?: number;
 };
 
+/** `decision`: System One models return typed answers, not text or images. */
+export type NetworkServiceOfferType = 'text' | 'image' | 'decision' | 'video';
+
 export type NetworkServiceOffer = {
+  advertisedVerifierIds?: string[];
   serviceId: string;
   provider: string;
   protocols: string[];
   protocol: CatalogServiceProtocol | null;
-  type: 'text' | 'image' | 'video';
+  type: NetworkServiceOfferType;
   capabilities?: CatalogServiceCapabilities;
   categories?: string[];
   peerId: string;
@@ -85,6 +91,7 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-chat-completions',
   'openai-responses',
   'openai-images',
+  'typesafe-systemone',
   'antseed-video-jobs-v1',
 ]);
 
@@ -96,6 +103,7 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
   if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
     return 'anthropic-messages';
   }
+  if (provider === 'typesafe') return 'typesafe-systemone';
   return null;
 }
 
@@ -201,13 +209,16 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type = protocol === 'antseed-video-jobs-v1' || capabilities?.outputs?.includes('video')
-          ? 'video'
-          : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
-            ? 'image'
-            : 'text';
+        const type: NetworkServiceOfferType = protocol === 'typesafe-systemone'
+          ? 'decision'
+          : protocol === 'antseed-video-jobs-v1' || capabilities?.outputs?.includes('video')
+            ? 'video'
+            : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+              ? 'image'
+              : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
         offers.push({
+          advertisedVerifierIds: parseVerifierCapabilities(peer.capabilities).supported,
           serviceId,
           provider,
           protocols,

@@ -56,20 +56,11 @@ export interface VideoGenerationError {
   retryable: boolean;
 }
 
-export type VideoPaymentMilestoneStatus = 'pending' | 'authorized' | 'earned';
-
-export interface VideoPaymentMilestone {
-  id: 'execution' | 'delivery';
-  trigger: 'submission_authorized' | 'artifact_received';
-  amount: string;
-  status: VideoPaymentMilestoneStatus;
-}
-
 export interface VideoPaymentSummary {
   currency: 'USDC';
   total_amount: string;
-  upfront_bps: number;
-  milestones: VideoPaymentMilestone[];
+  trigger: 'upstream_accepted';
+  status: 'pending' | 'authorized' | 'earned';
 }
 
 export interface VideoGenerationResource {
@@ -95,21 +86,8 @@ export interface VideoPaymentQuoteV1 {
   request_hash: string;
   seller_peer_id: string;
   total_amount: string;
-  upfront_amount: string;
-  delivery_amount: string;
-  upfront_bps: number;
+  payment_trigger: 'upstream_accepted';
   expires_at: number;
-  signature: string;
-}
-
-export interface VideoDeliveryReceiptV1 {
-  version: 1;
-  generation_id: string;
-  artifact_id: string;
-  sha256: string;
-  bytes: number;
-  received_at: number;
-  buyer_peer_id: string;
   signature: string;
 }
 
@@ -129,7 +107,6 @@ export interface VideoCapabilities {
   generateAudio: boolean;
   outputFormats: string[];
   maxFirstFrameBytes?: number;
-  upfrontBps?: number;
 }
 
 export interface VideoRequestValidationOptions {

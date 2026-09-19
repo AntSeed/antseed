@@ -356,6 +356,16 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       path = '/v1/chat/completions';
       body = { model: service, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
       break;
+    case 'typesafe-systemone':
+      path = '/v1/systemone';
+      // One tiny state and one yes/no question: a few input tokens, no
+      // generated text.
+      body = {
+        model: service,
+        state: 'ping',
+        questions: { ok: { type: 'noul', instructions: 'Is the state the word ping?' } },
+      };
+      break;
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
     case 'antseed-video-jobs-v1':

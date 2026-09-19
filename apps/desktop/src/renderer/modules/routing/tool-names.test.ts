@@ -4,6 +4,7 @@ import { displayToolName } from './tool-names';
 describe('displayToolName', () => {
   it('maps known tool slugs to product names', () => {
     expect(displayToolName('claude-code')).toBe('Claude Code');
+    expect(displayToolName('droid')).toBe('Droid');
     expect(displayToolName('opencode')).toBe('OpenCode');
     expect(displayToolName('pi')).toBe('pi');
   });

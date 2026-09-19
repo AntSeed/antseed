@@ -33,7 +33,6 @@ export interface StoredVideoGeneration {
   progress: number | null;
   quote: VideoPaymentQuoteV1;
   executionStatus: 'pending' | 'authorized' | 'earned';
-  deliveryStatus: 'pending' | 'authorized' | 'earned';
   error: VideoGenerationError | null;
   pollAttempt: number;
   nextPollAt: number | null;
@@ -67,7 +66,7 @@ export interface VideoJobDiagnostics {
   statusCounts: Record<string, number>;
   reconciliationRequired: Array<{ id: string; provider: string; serviceId: string; updatedAt: number; error: VideoGenerationError | null }>;
   missingUpstreamJobIds: string[];
-  pendingMilestoneAuthorizations: number;
+  pendingExecutionAuthorizations: number;
   artifactBytes: number;
 }
 
@@ -100,7 +99,7 @@ export class VideoJobStore {
           @id, @buyerPeerId, @sellerPeerId, @provider, @serviceId,
           @requestJson, @requestHash, @idempotencyKey, @paymentChannelId, @upstreamJobId,
           @status, @nativeStatus, @progress, @quoteJson, @executionStatus,
-          @deliveryStatus, @errorJson, @pollAttempt, @nextPollAt,
+          'pending', @errorJson, @pollAttempt, @nextPollAt,
           @workerLeaseUntil, @cancelRequested, @createdAt, @updatedAt,
           @completedAt, @expiresAt
         )
@@ -138,7 +137,8 @@ export class VideoJobStore {
   listRecoverable(now = Date.now(), limit = 100): StoredVideoGeneration[] {
     return (this.db.prepare(`
       SELECT * FROM video_generations
-      WHERE status IN ('submitting', 'in_progress', 'cancel_requested', 'fetching_artifact')
+      WHERE (status IN ('submitting', 'in_progress', 'cancel_requested', 'fetching_artifact')
+        OR (status = 'queued' AND upstream_job_id IS NOT NULL))
         AND (next_poll_at IS NULL OR next_poll_at <= ?)
         AND (worker_lease_until IS NULL OR worker_lease_until < ?)
       ORDER BY COALESCE(next_poll_at, 0) ASC LIMIT ?
@@ -188,7 +188,8 @@ export class VideoJobStore {
     const row = this.db.prepare(`
       SELECT COUNT(*) AS count FROM video_generations
       WHERE provider = ?
-        AND status IN ('submitting', 'in_progress', 'cancel_requested', 'fetching_artifact', 'reconciliation_required')
+        AND (status IN ('submitting', 'in_progress', 'cancel_requested', 'fetching_artifact', 'reconciliation_required')
+          OR (status = 'queued' AND upstream_job_id IS NOT NULL))
     `).get(provider) as { count: number };
     return row.count;
   }
@@ -196,6 +197,17 @@ export class VideoJobStore {
   totalArtifactBytes(): number {
     const row = this.db.prepare('SELECT COALESCE(SUM(bytes), 0) AS bytes FROM video_artifacts').get() as { bytes: number };
     return row.bytes;
+  }
+
+  pendingExecutionAmount(channelId: string): bigint {
+    const rows = this.db.prepare(`
+      SELECT auth_json FROM video_pending_milestone_auths
+      WHERE milestone_id = 'execution' AND promoted_at IS NULL
+    `).all() as Array<{ auth_json: string }>;
+    return rows.reduce((total, row) => {
+      const auth = JSON.parse(row.auth_json) as { channelId?: string; amount?: string };
+      return auth.channelId === channelId && auth.amount ? total + BigInt(auth.amount) : total;
+    }, 0n);
   }
 
   diagnostics(): VideoJobDiagnostics {
@@ -221,13 +233,13 @@ export class VideoJobStore {
       ORDER BY updated_at DESC LIMIT 20
     `).all() as Array<{ id: string }>).map((row) => row.id);
     const pending = this.db.prepare(`
-      SELECT COUNT(*) AS count FROM video_pending_milestone_auths WHERE promoted_at IS NULL
+      SELECT COUNT(*) AS count FROM video_pending_milestone_auths WHERE promoted_at IS NULL AND milestone_id = 'execution'
     `).get() as { count: number };
     return {
       statusCounts,
       reconciliationRequired,
       missingUpstreamJobIds,
-      pendingMilestoneAuthorizations: pending.count,
+      pendingExecutionAuthorizations: pending.count,
       artifactBytes: this.totalArtifactBytes(),
     };
   }
@@ -241,7 +253,7 @@ export class VideoJobStore {
         UPDATE video_generations SET
           payment_channel_id=@paymentChannelId, upstream_job_id=@upstreamJobId, status=@status, native_status=@nativeStatus,
           progress=@progress, quote_json=@quoteJson, execution_status=@executionStatus,
-          delivery_status=@deliveryStatus, error_json=@errorJson, poll_attempt=@pollAttempt,
+          error_json=@errorJson, poll_attempt=@pollAttempt,
           next_poll_at=@nextPollAt, worker_lease_until=@workerLeaseUntil,
           cancel_requested=@cancelRequested, updated_at=@updatedAt,
           completed_at=@completedAt, expires_at=@expiresAt
@@ -307,14 +319,14 @@ export class VideoJobStore {
       .map(fromArtifactRow);
   }
 
-  savePendingMilestoneAuth(generationId: string, milestoneId: 'execution' | 'delivery', auth: unknown): void {
+  savePendingExecutionAuth(generationId: string, auth: unknown): void {
     this.db.prepare(`
       INSERT INTO video_pending_milestone_auths (generation_id, milestone_id, auth_json, created_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(generation_id, milestone_id) DO UPDATE SET auth_json=excluded.auth_json, created_at=excluded.created_at
     `).run(
       generationId,
-      milestoneId,
+      'execution',
       JSON.stringify(auth, (_key, value) =>
         typeof value === 'bigint' ? value.toString() : value,
       ),
@@ -339,18 +351,18 @@ export class VideoJobStore {
     })();
   }
 
-  promoteMilestoneAuth(generationId: string, milestoneId: 'execution' | 'delivery'): void {
+  promoteExecutionAuth(generationId: string): void {
     this.db.prepare(`
       UPDATE video_pending_milestone_auths SET promoted_at = ?
       WHERE generation_id = ? AND milestone_id = ?
-    `).run(Date.now(), generationId, milestoneId);
+    `).run(Date.now(), generationId, 'execution');
   }
 
-  discardPendingMilestoneAuth(generationId: string, milestoneId: 'execution' | 'delivery'): void {
+  discardPendingExecutionAuth(generationId: string): void {
     this.db.prepare(`
       DELETE FROM video_pending_milestone_auths
       WHERE generation_id = ? AND milestone_id = ? AND promoted_at IS NULL
-    `).run(generationId, milestoneId);
+    `).run(generationId, 'execution');
   }
 
   appendEvent(generationId: string, eventType: string, payload?: unknown): void {
@@ -365,7 +377,7 @@ interface GenerationRow {
   id: string; buyer_peer_id: string; seller_peer_id: string; provider: string; service_id: string;
   request_json: string; request_hash: string; idempotency_key: string; payment_channel_id: string | null; upstream_job_id: string | null;
   status: InternalVideoStatus; native_status: string | null; progress: number | null; quote_json: string;
-  execution_status: StoredVideoGeneration['executionStatus']; delivery_status: StoredVideoGeneration['deliveryStatus'];
+  execution_status: StoredVideoGeneration['executionStatus'];
   error_json: string | null; poll_attempt: number; next_poll_at: number | null; worker_lease_until: number | null;
   cancel_requested: number; created_at: number; updated_at: number; completed_at: number | null; expires_at: number;
 }
@@ -393,7 +405,7 @@ function fromGenerationRow(row: GenerationRow): StoredVideoGeneration {
     requestHash: row.request_hash, idempotencyKey: row.idempotency_key, paymentChannelId: row.payment_channel_id, upstreamJobId: row.upstream_job_id,
     status: row.status, nativeStatus: row.native_status, progress: row.progress,
     quote: JSON.parse(row.quote_json) as VideoPaymentQuoteV1, executionStatus: row.execution_status,
-    deliveryStatus: row.delivery_status, error: row.error_json ? JSON.parse(row.error_json) as VideoGenerationError : null,
+    error: row.error_json ? JSON.parse(row.error_json) as VideoGenerationError : null,
     pollAttempt: row.poll_attempt, nextPollAt: row.next_poll_at, workerLeaseUntil: row.worker_lease_until,
     cancelRequested: row.cancel_requested === 1, createdAt: row.created_at, updatedAt: row.updated_at,
     completedAt: row.completed_at, expiresAt: row.expires_at,

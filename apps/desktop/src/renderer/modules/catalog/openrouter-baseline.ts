@@ -6,7 +6,7 @@ import { canonicalModelKey } from './model-identity.js';
  *
  * The main process fetches the OpenRouter model catalog (see
  * `main/billing/openrouter-catalog.ts`); this module caches the resulting map in the
- * renderer and stamps matching `baseline*` prices onto VPR catalog entries so
+ * renderer and stamps matching `baseline*` prices onto AI VPN catalog entries so
  * the Home "Popular" list can strike through a retail baseline. Everything
  * degrades gracefully: no match / no cache → entries pass through unchanged.
  */
@@ -28,6 +28,23 @@ export function getCachedOpenRouterPrices(): OpenRouterReferenceMap | null {
 function canonicalReferenceKey(value: string): string {
   const legacyClaudeKey = value.replace(/^claude(?=(?:opus|sonnet|haiku|fable)\d)/, 'claude-');
   return canonicalModelKey(legacyClaudeKey);
+}
+
+function retailSavingsPct(
+  entry: VprModelCatalogEntry,
+  baselineInput: number | null,
+  baselineOutput: number | null,
+): number | null {
+  if (entry.kind === 'image') return null;
+  const prices = [
+    [entry.minInputUsdPerMillion, baselineInput],
+    [entry.minOutputUsdPerMillion, baselineOutput],
+  ].filter((pair): pair is [number, number] => pair[0] !== null && pair[1] !== null);
+  if (prices.length === 0) return null;
+  const price = prices.reduce((total, pair) => total + pair[0], 0);
+  const baseline = prices.reduce((total, pair) => total + pair[1], 0);
+  if (baseline <= price || baseline <= 0) return null;
+  return Math.round((1 - price / baseline) * 100);
 }
 
 /**
@@ -91,6 +108,7 @@ export function applyOpenRouterBaselines(
       ...entry,
       baselineInputUsdPerMillion: baselineInput,
       baselineOutputUsdPerMillion: baselineOutput,
+      expectedSavingsPct: retailSavingsPct(entry, baselineInput, baselineOutput),
     };
   });
 }

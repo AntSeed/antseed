@@ -10,7 +10,6 @@ import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
   buildNetworkServiceOffers,
-  computeOnChainReputationScore,
   type NetworkServiceOffer,
   type PeerInfo,
 } from '@antseed/node';
@@ -213,8 +212,9 @@ function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output:
   return { input: bestInput, output: bestOutput };
 }
 
+/** Buyer trust score (0-100) as computed by the node; the CLI never re-scores. */
 function effectiveOnChainReputationScore(peer: PeerInfo): number | null {
-  return peer.onChainReputationScore ?? computeOnChainReputationScore(peer);
+  return peer.onChainReputationScore ?? null;
 }
 
 const BROWSE_SYBIL_WARN_THRESHOLD = 0.30;
@@ -224,11 +224,16 @@ function isPeerSybilRisky(peer: PeerInfo): boolean {
     && peer.onChainSybilRisk >= BROWSE_SYBIL_WARN_THRESHOLD;
 }
 
+/** Proven wash trader per `AntseedWashTradingRegistry`; the trust score is 0. */
+function isPeerWashFlagged(peer: PeerInfo): boolean {
+  return peer.onChainWashFlagged === true;
+}
+
 function formatReputationScore(peer: PeerInfo): string {
   const score = effectiveOnChainReputationScore(peer);
   if (score == null) return chalk.dim('—');
   const formatted = (score / 10).toFixed(1);
-  const warn = isPeerSybilRisky(peer) ? chalk.red('⚠ ') : '';
+  const warn = isPeerSybilRisky(peer) || isPeerWashFlagged(peer) ? chalk.red('⚠ ') : '';
   if (score >= 80) return warn + chalk.green(formatted);
   if (score >= 50) return warn + chalk.cyan(formatted);
   if (score > 0)   return warn + chalk.yellow(formatted);
@@ -510,6 +515,10 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
   if (!hasChainData) {
     console.log(chalk.dim('  Sessions / Volume / Last settled are dim — configure chain RPC to enable on-chain verification.'));
   }
+  const washFlagged = peers.filter(isPeerWashFlagged);
+  if (washFlagged.length > 0) {
+    console.log(`  ${chalk.red('⚠')} ${chalk.red(`${washFlagged.length} peer(s) are proven wash traders (on-chain registry) — trust 0`)}${chalk.dim(`: ${washFlagged.map((peer) => peer.peerId.slice(0, 12)).join(', ')}`)}`);
+  }
   const anySybilWarn = peers.some(isPeerSybilRisky);
   if (anySybilWarn) {
     console.log(chalk.dim(`  ${chalk.red('⚠')} peers triggered on-chain sybil heuristics. Run ${chalk.bold('antseed network peer <id>')} for the per-signal breakdown.`));
@@ -549,7 +558,6 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     input: string;
     output: string;
     videoPricing: string;
-    upfront: string;
     support: string;
     score: string;
     sessions: string;
@@ -581,9 +589,6 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
         input: formatUsdPerMillion(offer.inputUsdPerMillion ?? null),
         output: formatUsdPerMillion(offer.outputUsdPerMillion ?? null),
         videoPricing: formatVideoPricing(offer),
-        upfront: offer.capabilities?.video?.upfrontBps === undefined
-          ? '—'
-          : `${(offer.capabilities.video.upfrontBps / 100).toFixed(0)}%`,
         support: formatVideoSupport(offer),
         score: formatReputationScore(peer),
         sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
@@ -606,7 +611,6 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     chalk.bold('In $/1M'),
     chalk.bold('Out $/1M'),
     chalk.bold('Video price'),
-    chalk.bold('Upfront'),
     chalk.bold('Video support'),
     chalk.bold('Score'),
     chalk.bold('Sessions'),
@@ -635,7 +639,6 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
       r.input,
       r.output,
       r.videoPricing,
-      r.upfront === '—' ? chalk.dim('—') : r.upfront,
       r.support === '—' ? chalk.dim('—') : r.support,
       r.score,
       r.sessions === '—' ? chalk.dim('—') : r.sessions,

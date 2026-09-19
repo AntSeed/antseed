@@ -53,6 +53,8 @@ function computeCanonicalModelKey(serviceId: string): string {
   value = value.replace(/^google[-:._\s]+(?=gemma(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^aion[-:._\s]+labs[-:._\s]+(?=aion(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^(?:zai[-:._\s]+org|z[-:._\s]+ai)[-:._\s]+(?=glm(?:[-:._\s]|\d|$))/, '');
+  // "stealth-ox-alpha" is the same anonymized preview model as "ox-alpha".
+  value = value.replace(/^stealth[-:._\s]+(?=ox[-:._\s]+alpha(?:[-:._\s]|$))/, '');
   const compactVersionPunctuation = /^(?:aion|opus|sonnet|haiku|fable|deepseek|e2ee[-:._\s]*glm|gemini|gemma|glm|gpt|grok|hermes|kimi|llama|mimo|minimax|mistral|qwen|venice[-:._\s]*uncensored)(?:[-:._\s]|\d)/.test(value);
   return compactVersionPunctuation
     ? value.replace(/[^a-z0-9]+/g, '')

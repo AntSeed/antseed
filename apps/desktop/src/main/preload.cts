@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
+import type {
+  FirstModelShownSignal,
+  TelemetryStatus,
+  TelemetryStatusUpdateResult,
+  UserActionSignal,
+} from '../shared/telemetry.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -502,6 +508,24 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
+  getTeeStatus(): Promise<unknown> {
+    return ipcRenderer.invoke('tee:status');
+  },
+  checkSellerTee(peerId: string): Promise<unknown> {
+    return ipcRenderer.invoke('tee:check', peerId);
+  },
+  getTelemetryStatus(): Promise<TelemetryStatus> {
+    return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
+  },
+  setTelemetryEnabled(enabled: boolean): Promise<TelemetryStatusUpdateResult> {
+    return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<TelemetryStatusUpdateResult>;
+  },
+  telemetryRecordUserAction(payload: UserActionSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:record-user-action', payload) as Promise<{ ok: boolean }>;
+  },
+  telemetryRecordFirstModelShown(payload: FirstModelShownSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:first-model-shown', payload) as Promise<{ ok: boolean }>;
+  },
   onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
     const listener = (_: unknown, data: { step: string; label: string }) => handler(data);
     ipcRenderer.on('app:setup-step', listener);
@@ -541,9 +565,6 @@ const api = {
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
-  paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
-  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
-  paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetBuyerSpendHistory: () => ipcRenderer.invoke('payments:get-buyer-spend-history'),
@@ -604,6 +625,11 @@ const api = {
   systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
   },
+  publicTunnelGetStatus: () => ipcRenderer.invoke('public-tunnel:get-status'),
+  publicTunnelConfigure: (settings: { provider: 'cloudflare' | 'ngrok'; tunnelToken: string; publicUrl: string }) => ipcRenderer.invoke('public-tunnel:configure', settings),
+  publicTunnelStart: (settings?: { provider?: 'cloudflare' | 'ngrok' }) => ipcRenderer.invoke('public-tunnel:start', settings),
+  publicTunnelStop: () => ipcRenderer.invoke('public-tunnel:stop'),
+  publicTunnelGetApiKey: () => ipcRenderer.invoke('public-tunnel:get-api-key'),
 
   /* Floating always-on-top pill window */
   vprFloatOpen(data: unknown): Promise<{ ok: boolean }> {

@@ -45,6 +45,12 @@ export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-local-llm',
   },
   {
+    name: 'typesafe',
+    type: 'provider',
+    description: 'TypeSafe System One decision-model provider (API key)',
+    package: '@antseed/provider-typesafe',
+  },
+  {
     name: 'runway',
     type: 'provider',
     description: 'Runway Gen-4-family video generation (API key)',

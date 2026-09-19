@@ -23,7 +23,6 @@ export function buildSellerSetupProviderEntry(input: {
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
   apiKeyEnv?: string;
-  videoPayment?: { upfrontBps: number };
   services?: Record<string, SellerServiceConfig>;
 }): SellerProviderConfig {
   const hasDefaults = input.inputUsdPerMillion !== undefined || input.outputUsdPerMillion !== undefined;
@@ -32,7 +31,6 @@ export function buildSellerSetupProviderEntry(input: {
     services: input.services ?? {},
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     ...(input.apiKeyEnv ? { apiKeyEnv: input.apiKeyEnv } : {}),
-    ...(input.videoPayment ? { videoPayment: input.videoPayment } : {}),
     ...(hasDefaults
       ? {
           defaults: {
@@ -93,6 +91,8 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
       return 'sign in to Claude Code on this machine';
     case 'local-llm':
       return 'start your local LLM runtime (no API key required)';
+    case 'typesafe':
+      return 'export TYPESAFE_API_KEY=<key>';
     case 'runway':
       return 'export RUNWAY_API_KEY=<key>';
     case 'veo':
@@ -171,15 +171,6 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
           ? await rl.question(`API-key environment variable [${defaultApiKeyEnv}]: `)
           : '';
         const apiKeyEnv = videoPlugin ? apiKeyEnvInput.trim() || defaultApiKeyEnv : undefined;
-        const upfrontPercentInput = videoPlugin
-          ? await rl.question('Upfront payment percentage [50]: ')
-          : '';
-        const upfrontPercent = upfrontPercentInput.trim() ? Number(upfrontPercentInput) : 50;
-        if (videoPlugin && (!Number.isFinite(upfrontPercent) || upfrontPercent < 0 || upfrontPercent > 100)) {
-          console.error(chalk.red('\nError: upfront payment percentage must be from 0 through 100'));
-          return;
-        }
-
         const inputStr = videoPlugin ? '' : await rl.question('Default input price (USD per 1M tokens): ');
         const outputStr = videoPlugin ? '' : await rl.question('Default output price (USD per 1M tokens): ');
         const inputUsd = inputStr.trim() ? parseFloat(inputStr.trim()) : undefined;
@@ -262,7 +253,6 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
           plugin: pluginName,
           baseUrl,
           apiKeyEnv,
-          ...(videoPlugin ? { videoPayment: { upfrontBps: Math.round(upfrontPercent * 100) } } : {}),
           inputUsdPerMillion: inputUsd,
           outputUsdPerMillion: outputUsd,
           services,
@@ -301,7 +291,8 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         console.log(chalk.bold('\nNext steps:\n'));
         console.log(`  ${chalk.cyan('1.')} Set credentials: ${chalk.dim(getSellerSetupCredentialHint(pluginName))}`);
         console.log(`  ${chalk.cyan('2.')} Register on-chain: ${chalk.dim('antseed seller register')}`);
-        console.log(`  ${chalk.cyan('3.')} Stake USDC: ${chalk.dim('antseed seller stake 10')}`);
+        console.log(`  ${chalk.cyan('3.')} Stake ANTS: ${chalk.dim('antseed seller stake <ants> --epochs <n>')}`);
+        console.log(chalk.dim('     Before the upgrade, use: antseed seller legacy stake <usdc>'));
         console.log(`  ${chalk.cyan('4.')} Start selling: ${chalk.dim('antseed seller start')}`);
         console.log('');
 

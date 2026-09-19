@@ -9,7 +9,7 @@ describe('RunwayVideoAdapter', () => {
       status: 200, headers: { 'content-type': 'application/json' },
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5'], 5000);
+    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5']);
     await adapter.create({
       model: 'gen4.5', prompt: 'A cinematic sunrise', duration_seconds: 4,
       aspect_ratio: '16:9', resolution: '720p', output_format: 'mp4', seed: 12,
@@ -28,7 +28,7 @@ describe('RunwayVideoAdapter', () => {
   it('does not allow extensions to override canonical request fields', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'task-1' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5'], 5000);
+    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5']);
     const request = {
       model: 'gen4.5', prompt: 'canonical prompt', duration_seconds: 4,
       extensions: { runway: { promptText: 'overridden prompt', duration: 10, watermark: false } },
@@ -50,7 +50,7 @@ describe('RunwayVideoAdapter', () => {
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5'], 5000);
+    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5']);
     const status = await adapter.getStatus('task-1');
     expect(status).toMatchObject({ status: 'succeeded', nativeStatus: 'SUCCEEDED', progress: 100 });
     expect(status.artifacts?.[0]?.locator).toBe('https://cdn.runway.example/video.mp4');
@@ -65,7 +65,7 @@ describe('RunwayVideoAdapter', () => {
   });
 
   it('rejects insecure artifact locators and redacts provider errors', async () => {
-    const adapter = new RunwayVideoAdapter('super-secret', 'https://api.dev.runwayml.com', ['gen4.5'], 5000);
+    const adapter = new RunwayVideoAdapter('super-secret', 'https://api.dev.runwayml.com', ['gen4.5']);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       status: 'SUCCEEDED', output: ['http://cdn.runway.example/video.mp4'],
     }), { status: 200 })));
@@ -86,7 +86,7 @@ describe('RunwayVideoAdapter', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'FAILED', failureCode: 'SAFETY', failure: 'Blocked' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
-    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5'], 5000);
+    const adapter = new RunwayVideoAdapter('secret', 'https://api.dev.runwayml.com', ['gen4.5']);
     expect(await adapter.getStatus('task-1')).toMatchObject({
       status: 'failed', error: { code: 'SAFETY', message: 'Blocked', retryable: false },
     });

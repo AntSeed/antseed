@@ -1,4 +1,4 @@
-import {useMemo, useState, useEffect} from 'react';
+import {useMemo, useState, useEffect, type JSX} from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Head from '@docusaurus/Head';
@@ -153,7 +153,7 @@ export default function ConnectHub(): JSX.Element {
   return (
     <Layout
       title="Integrations"
-      description="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible. Drop-in via localhost:8377.">
+      description="Every way to use Antseed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible. Drop-in via localhost:8377.">
       <Head>
         <link
           rel="alternate"
@@ -161,8 +161,8 @@ export default function ConnectHub(): JSX.Element {
           href="/skill.md"
           title="Agent-readable integration guide"
         />
-        <meta property="og:title" content="Integrations | AntSeed" />
-        <meta property="og:description" content="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
+        <meta property="og:title" content="Integrations | Antseed" />
+        <meta property="og:description" content="Every way to use Antseed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
         <script type="application/ld+json">
           {JSON.stringify({
             '@context': 'https://schema.org',
@@ -180,13 +180,13 @@ export default function ConnectHub(): JSX.Element {
         title="One local endpoint. Every tool you already use."
         lead={
           <>
-            AntSeed runs a buyer proxy at <code>http://localhost:8377</code> that speaks{' '}
+            Antseed runs a buyer proxy at <code>http://localhost:8377</code> that speaks{' '}
             <strong>all four major LLM API protocols</strong> - Anthropic Messages,
             OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions - and
-            translates between them on the fly. Pick your tool below; AntSeed makes it fit.
+            translates between them on the fly. Pick your tool below; Antseed makes it fit.
           </>
         }>
-        <Button to="/docs/install" arrow>Install AntSeed</Button>
+        <Button to="/docs/install" arrow>Install Antseed</Button>
         <Button href="/skill.md" variant="ghost">For agents: skill.md</Button>
       </PageHero>
 
@@ -248,7 +248,7 @@ export default function ConnectHub(): JSX.Element {
           <div>
             <h3>Don't see your tool?</h3>
             <p>
-              If your tool accepts an Anthropic or OpenAI base URL, AntSeed already works with
+              If your tool accepts an Anthropic or OpenAI base URL, Antseed already works with
               it - see the <Link to="/integrations/curl">raw HTTP page</Link> for the contract. Want
               it added here? Open a PR on{' '}
               <a
@@ -275,7 +275,7 @@ export default function ConnectHub(): JSX.Element {
       </Section>
 
       <FinalCta
-        title="Point your tools at AntSeed"
+        title="Point your tools at Antseed"
         sub="Install once, set one environment variable, and keep the workflow you already have."
         note={
           <>
@@ -284,7 +284,7 @@ export default function ConnectHub(): JSX.Element {
             <a href="/skill.md">skill.md</a>
           </>
         }>
-        <Button to="/docs/install" variant="white" size="lg" arrow>Install AntSeed</Button>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Install Antseed</Button>
         <Button to="/providers" variant="light" size="lg">Become a provider</Button>
       </FinalCta>
     </Layout>

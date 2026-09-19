@@ -149,6 +149,15 @@ function parseSseEvents(sseText: string): Array<{ event: string | null; data: st
 }
 
 describe('detectRequestServiceApiProtocol', () => {
+  it.each([
+    ['/v1/systemone', 'typesafe-systemone'],
+    ['/v1/video/generations', 'antseed-video-jobs-v1'],
+  ] as const)('detects %s without mixing decision and video protocols', (path, protocol) => {
+    expect(detectRequestServiceApiProtocol(makeRequest({ path }))).toBe(protocol);
+    expect(selectTargetProtocolForRequest(protocol, [protocol])).toEqual({ targetProtocol: protocol, requiresTransform: false });
+    expect(selectTargetProtocolForRequest(protocol, ['openai-chat-completions'])).toBeNull();
+  });
+
   it('detects anthropic messages from path', () => {
     expect(detectRequestServiceApiProtocol(makeRequest())).toBe('anthropic-messages');
   });
@@ -1169,6 +1178,37 @@ describe('transformRequest responses to chat', () => {
     expect(body.user).toBe('user-123');
   });
 
+  it('preserves Responses phases and prevents commentary-only completion in chat tool workflows', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.6-sol',
+        instructions: 'Keep working until the task is complete.',
+        input: [
+          {
+            type: 'message',
+            role: 'assistant',
+            phase: 'commentary',
+            content: [{ type: 'output_text', text: 'I am checking the diff.' }],
+          },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue.' }] },
+        ],
+        tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages[0]?.role).toBe('system');
+    expect(messages[0]?.content).toContain('do not end with commentary alone');
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      name: 'commentary',
+      content: 'I am checking the diff.',
+    });
+  });
+
   it('converts Responses API flat tools to Chat Completions nested format', () => {
     const responsesTools = [{ type: 'function', name: 'search', description: 'Search the web', parameters: { type: 'object' } }];
     const request = makeResponsesRequest({
@@ -1184,6 +1224,9 @@ describe('transformRequest responses to chat', () => {
     expect(body.tools).toEqual([{
       type: 'function',
       function: { name: 'search', description: 'Search the web', parameters: { type: 'object' } },
+    }, {
+      type: 'function',
+      function: { name: 'final_answer', parameters: { properties: {}, type: 'object' } },
     }]);
     expect(body.tool_choice).toBe('auto');
   });
@@ -1502,6 +1545,7 @@ describe('transformResponse chat to responses', () => {
     expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
+    expect(output[0].phase).toBeUndefined();
 
     const content = output[0].content as Array<Record<string, unknown>>;
     expect(content[0]).toEqual({
@@ -1580,6 +1624,8 @@ describe('transformResponse chat to responses', () => {
 
     // Should have message item + function_call item
     const functionCall = output.find((item) => item.type === 'function_call');
+    const message = output.find((item) => item.type === 'message');
+    expect(message?.phase).toBe('commentary');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
     expect(functionCall!.id).toBe('fc_call_123');
@@ -2047,6 +2093,89 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(sseText).toContain('event: response.function_call_arguments.done');
     expect(sseText).toContain('"name":"write"');
     expect(sseText).toContain('hello.txt');
+  });
+
+  it('marks streamed text as commentary when accompanied by tool calls', () => {
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-commentary-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-5.6-sol","choices":[{"delta":{"content":"I am checking."},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const messageDone = events.find((event) => {
+      if (event.event !== 'response.output_item.done') return false;
+      return JSON.parse(event.data).item?.type === 'message';
+    });
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    expect(JSON.parse(messageDone!.data).item.phase).toBe('commentary');
+    expect(JSON.parse(completed!.data).response.output[0].phase).toBe('commentary');
+  });
+
+  it('tells Codex to stop when chat-only models use the explicit final-answer tool', () => {
+    const finalText = 'The test suite now covers both cases.';
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'kimi-k3',
+        instructions: 'Continue working with tools until done.',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Add tests.' }] }],
+        tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }],
+      })),
+    });
+    const transformed = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' })!;
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-interim',
+        model: 'kimi-k3',
+        choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: finalText, tool_calls: [{ id: 'call_final', type: 'function', function: { name: 'final_answer', arguments: '{}' } }] } }],
+        usage: { prompt_tokens: 20, completion_tokens: 7 },
+      })),
+    });
+    const adapted = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'kimi-k3' });
+    const body = JSON.parse(new TextDecoder().decode(adapted.body)) as Record<string, unknown>;
+
+    expect(JSON.parse(new TextDecoder().decode(transformed.request.body)).messages[0].content)
+      .toContain('include the next tool call');
+    expect(body.end_turn).toBe(true);
+  });
+
+  it('tells Codex to continue after unmarked chat text responses', () => {
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-final',
+        model: 'kimi-k3',
+    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'The test suite now covers both cases.' } }],
+        usage: { prompt_tokens: 20, completion_tokens: 9 },
+      })),
+    });
+    const adapted = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'kimi-k3' });
+    const body = JSON.parse(new TextDecoder().decode(adapted.body)) as Record<string, unknown>;
+
+    expect(body.end_turn).toBe(false);
+  });
+
+  it('converts unmarked chat text streams into explicit tool terminations', () => {
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-interim-stream',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-final-stream","model":"kimi-k3","choices":[{"delta":{"content":"The test suite now covers both cases."},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    const response = JSON.parse(completed!.data).response;
+    expect(response.end_turn).toBe(true);
+    expect(response.output[0].type).toBe('message');
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

@@ -1,18 +1,142 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { identityFromPrivateKeyHex, signUtf8 } from '../src/p2p/identity.js';
+import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import { parseRange, VideoGenerationController } from '../src/video/video-generation-controller.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
 import type { SellerPaymentManager } from '../src/payments/seller-payment-manager.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { VideoProviderAdapter } from '../src/interfaces/video-provider.js';
+import type { VideoJobStore } from '../src/video/video-job-store.js';
 
 const tempDirs: string[] = [];
+const controllers: VideoGenerationController[] = [];
 
 afterEach(async () => {
+  for (const controller of controllers.splice(0)) controller.close();
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+async function singleChargeFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-video-charge-'));
+  tempDirs.push(dir);
+  await mkdir(join(dir, 'video', 'artifacts'), { recursive: true });
+  let accepted = 0n;
+  let spent = 0n;
+  const upstream = adapter();
+  const payments = paidManager(0n);
+  payments.getAcceptedCumulative = () => accepted;
+  payments.getCumulativeSpend = () => spent;
+  payments.recordSpend = vi.fn((_channelId: string, amount: bigint) => { spent += amount; });
+  const controller = new VideoGenerationController({
+    identity: identityFromPrivateKeyHex('77'.repeat(32)), providers: [provider(upstream)], dataDir: dir,
+    sellerPaymentManager: payments,
+  });
+  controllers.push(controller);
+  const internal = controller as unknown as { store: VideoJobStore; pollDueJobs(): Promise<void> };
+  const buyer = 'a'.repeat(40);
+  const send = (path: string, method: string, body?: unknown) => controller.handleRequest(request(path, method, body), buyer);
+  const submit = (key = 'idem-1') => {
+    const req = request('/v1/video/generations', 'POST', { model: 'gen4.5', prompt: 'test', duration_seconds: 4 });
+    req.headers['idempotency-key'] = key;
+    return controller.handleRequest(req, buyer);
+  };
+  return { controller, internal, upstream, payments, submit, send, authorize: (amount: bigint) => { accepted = amount; } };
+}
+
+describe('single-charge video billing', () => {
+  it('requires full authorization and charges exactly once at acceptance', async () => {
+    const fixture = await singleChargeFixture();
+    const quote = await fixture.submit();
+    expect(quote).toMatchObject({ statusCode: 402 });
+    const quoteBody = JSON.parse(new TextDecoder().decode('body' in quote ? quote.body : new Uint8Array()));
+    expect(quoteBody).toMatchObject({ minBudgetPerRequest: '1000000', video_quote: { total_amount: '1000000', payment_trigger: 'upstream_accepted' } });
+    expect(quoteBody.video_quote).not.toHaveProperty('delivery_amount');
+    fixture.authorize(500_000n);
+    expect(await fixture.submit()).toMatchObject({ statusCode: 402 });
+    expect(fixture.upstream.create).not.toHaveBeenCalled();
+    fixture.authorize(1_000_000n);
+    expect(await fixture.submit()).toMatchObject({ statusCode: 202 });
+    expect(fixture.payments.recordSpend).toHaveBeenCalledWith('channel-1', 1_000_000n);
+    await fixture.submit();
+    expect(fixture.upstream.create).toHaveBeenCalledTimes(1);
+    expect(fixture.payments.recordSpend).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls an accepted queued job and delivers verified bytes without a second charge', async () => {
+    const fixture = await singleChargeFixture();
+    await fixture.submit();
+    fixture.authorize(1_000_000n);
+    await fixture.submit();
+    const generation = fixture.internal.store.findByIdempotencyKey('a'.repeat(40), 'idem-1')!;
+    const bytes = new TextEncoder().encode('video-content');
+    fixture.upstream.getStatus = vi.fn().mockResolvedValue({ id: 'task-1', status: 'succeeded', artifacts: [{ locator: 'private-provider-url' }] });
+    fixture.upstream.openArtifact = vi.fn().mockResolvedValue(new Response(bytes).body);
+    fixture.internal.store.updateGeneration(generation.id, { nextPollAt: 0 });
+    await fixture.internal.pollDueJobs();
+    expect(fixture.upstream.getStatus).toHaveBeenCalledWith('task-1');
+    const status = await fixture.send(`/v1/video/generations/${generation.id}`, 'GET');
+    const resource = JSON.parse(new TextDecoder().decode('body' in status ? status.body : new Uint8Array()));
+    expect(resource).toMatchObject({ status: 'succeeded', payment: { total_amount: '1000000', trigger: 'upstream_accepted', status: 'earned' } });
+    expect(resource.payment).not.toHaveProperty('milestones');
+    const artifact = resource.artifacts[0];
+    expect(await fixture.send(artifact.links.content, 'HEAD')).toMatchObject({ statusCode: 200 });
+    const download = await fixture.send(artifact.links.content, 'GET');
+    expect('chunks' in download).toBe(true);
+    if ('chunks' in download) {
+      const chunks = [];
+      for await (const chunk of download.chunks) chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from(bytes));
+    }
+    expect(await fixture.send(`/v1/video/generations/${generation.id}/artifacts/${artifact.id}/receipt`, 'POST', {})).toMatchObject({ statusCode: 404 });
+    expect(fixture.payments.recordSpend).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['failed', 'canceled'] as const)('keeps the execution charge when an accepted job is later %s', async (status) => {
+    const fixture = await singleChargeFixture();
+    await fixture.submit();
+    fixture.authorize(1_000_000n);
+    await fixture.submit();
+    const generation = fixture.internal.store.findByIdempotencyKey('a'.repeat(40), 'idem-1')!;
+    fixture.upstream.getStatus = vi.fn().mockResolvedValue({ id: 'task-1', status });
+    fixture.internal.store.updateGeneration(generation.id, { nextPollAt: 0 });
+    await fixture.internal.pollDueJobs();
+    expect(fixture.internal.store.getGeneration(generation.id)).toMatchObject({ status, executionStatus: 'earned' });
+    expect(fixture.payments.recordSpend).toHaveBeenCalledTimes(1);
+  });
+
+  it('reserves authorization for pending submissions rather than reusing it concurrently', async () => {
+    const fixture = await singleChargeFixture();
+    let complete!: (job: { id: string; status: 'queued' }) => void;
+    fixture.upstream.create = vi.fn(() => new Promise<{ id: string; status: 'queued' }>((resolve) => { complete = resolve; }));
+    await fixture.submit('one');
+    await fixture.submit('two');
+    fixture.authorize(1_000_000n);
+    const first = fixture.submit('one');
+    try {
+      expect(await fixture.submit('two')).toMatchObject({ statusCode: 402 });
+      expect(fixture.upstream.create).toHaveBeenCalledTimes(1);
+      expect(fixture.payments.recordSpend).not.toHaveBeenCalled();
+    } finally {
+      complete({ id: 'task-1', status: 'queued' });
+      await first;
+    }
+    expect(fixture.payments.recordSpend).toHaveBeenCalledTimes(1);
+  });
+
+  it('never resubmits an uncertain upstream acceptance or marks it earned', async () => {
+    const fixture = await singleChargeFixture();
+    fixture.upstream.create = vi.fn().mockRejectedValue(new Error('Connection lost'));
+    await fixture.submit();
+    fixture.authorize(1_000_000n);
+    expect(await fixture.submit()).toMatchObject({ statusCode: 502 });
+    await fixture.submit();
+    expect(fixture.upstream.create).toHaveBeenCalledTimes(1);
+    expect(fixture.payments.recordSpend).not.toHaveBeenCalled();
+    expect(fixture.internal.store.pendingExecutionAmount('channel-1')).toBe(1_000_000n);
+    expect(fixture.internal.store.findByIdempotencyKey('a'.repeat(40), 'idem-1')).toMatchObject({ status: 'reconciliation_required', executionStatus: 'authorized' });
+  });
 });
 
 function request(path: string, method: string, body?: unknown): SerializedHttpRequest {
@@ -40,7 +164,7 @@ function adapter(create = vi.fn().mockResolvedValue({ id: 'task-1', status: 'que
     provider: 'runway', supportedModels: ['gen4.5'],
     getCapabilities: () => ({
       generationModes: ['text_to_video'], minDurationSeconds: 2, maxDurationSeconds: 10,
-      resolutions: ['720p'], aspectRatios: ['16:9'], generateAudio: false, outputFormats: ['mp4'], upfrontBps: 5000,
+      resolutions: ['720p'], aspectRatios: ['16:9'], generateAudio: false, outputFormats: ['mp4'],
     }),
     create, getStatus: vi.fn(), cancel: vi.fn(), openArtifact: vi.fn(),
   };
@@ -75,7 +199,7 @@ describe('VideoGenerationController', () => {
     const second = await controller.handleRequest(request('/v1/video/generations', 'POST', body), 'a'.repeat(40));
     expect('statusCode' in second && second.statusCode).toBe(202);
     expect(create).toHaveBeenCalledTimes(1);
-    expect(payments.recordSpend).toHaveBeenCalledWith('channel-1', 500_000n);
+    expect(payments.recordSpend).toHaveBeenCalledWith('channel-1', 1_000_000n);
     controller.close();
   });
 
@@ -119,7 +243,7 @@ describe('VideoGenerationController', () => {
     const rejected = await controller.handleRequest(request('/v1/video/generations', 'POST', body), 'a'.repeat(40));
     expect('statusCode' in rejected && rejected.statusCode).toBe(502);
     expect(payments.recordSpend).not.toHaveBeenCalled();
-    expect((controller as any).store.diagnostics().pendingMilestoneAuthorizations).toBe(0);
+    expect((controller as any).store.diagnostics().pendingExecutionAuthorizations).toBe(0);
     expect((controller as any).store.findByIdempotencyKey('a'.repeat(40), 'idem-1')).toMatchObject({
       status: 'failed', executionStatus: 'pending',
     });
@@ -137,72 +261,4 @@ describe('VideoGenerationController', () => {
     expect(parseRange('bytes=1-2,4-5', 100)).toBe('invalid');
   });
 
-  it('earns delivery exactly once after a valid receipt and final authorization', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'antseed-video-controller-'));
-    tempDirs.push(dir);
-    const seller = identityFromPrivateKeyHex('55'.repeat(32));
-    const buyer = identityFromPrivateKeyHex('66'.repeat(32));
-    let spent = 500_000n;
-    let accepted = 500_000n;
-    const recordSpend = vi.fn((_channelId: string, amount: bigint) => { spent += amount; });
-    const payments = {
-      getChannelByPeer: () => ({ sessionId: 'channel-1' }),
-      getCumulativeSpend: () => spent,
-      getAcceptedCumulative: () => accepted,
-      getReserveMax: () => 5_000_000n,
-      recordSpend,
-    } as unknown as SellerPaymentManager;
-    const controller = new VideoGenerationController({
-      identity: seller, providers: [provider(adapter())], dataDir: dir, sellerPaymentManager: payments,
-    });
-    const now = Date.now();
-    (controller as any).store.createGeneration({
-      id: 'vg_delivery', buyerPeerId: buyer.peerId, sellerPeerId: seller.peerId, provider: 'runway', serviceId: 'gen4.5',
-      request: { model: 'gen4.5', prompt: 'test', duration_seconds: 4 }, requestHash: 'c'.repeat(64),
-      idempotencyKey: 'delivery-idem', paymentChannelId: 'channel-1', upstreamJobId: 'task-1', status: 'succeeded',
-      nativeStatus: 'SUCCEEDED', progress: 100,
-      quote: {
-        version: 1, quote_id: 'vq_delivery', request_hash: 'c'.repeat(64), seller_peer_id: seller.peerId,
-        total_amount: '1000000', upfront_amount: '500000', delivery_amount: '500000', upfront_bps: 5000,
-        expires_at: Math.floor((now + 300_000) / 1000), signature: 'quote-signature',
-      },
-      executionStatus: 'earned', deliveryStatus: 'pending', error: null, pollAttempt: 0, nextPollAt: null,
-      workerLeaseUntil: null, cancelRequested: false, createdAt: now - 10_000, updatedAt: now,
-      completedAt: now - 1_000, expiresAt: now + 86_400_000,
-    });
-    (controller as any).store.addArtifact({
-      id: 'va_delivery', generationId: 'vg_delivery', providerArtifactId: 'provider-video', path: join(dir, 'video.mp4'),
-      type: 'video', mime_type: 'video/mp4', bytes: 3, sha256: 'a'.repeat(64), createdAt: now,
-      expires_at: now + 86_400_000, links: { content: '/v1/video/generations/vg_delivery/artifacts/va_delivery/content' },
-    });
-    const unsigned = {
-      version: 1 as const, generation_id: 'vg_delivery', artifact_id: 'va_delivery', sha256: 'a'.repeat(64), bytes: 3,
-      received_at: Math.floor(now / 1000), buyer_peer_id: buyer.peerId,
-    };
-    const receipt = { ...unsigned, signature: await signUtf8(buyer.wallet, JSON.stringify(unsigned)) };
-    const receiptRequest = () => request('/v1/video/generations/vg_delivery/artifacts/va_delivery/receipt', 'POST', receipt);
-
-    const awaitingFinalAuth = await controller.handleRequest(receiptRequest(), buyer.peerId);
-    expect('statusCode' in awaitingFinalAuth && awaitingFinalAuth.statusCode).toBe(402);
-    expect(recordSpend).not.toHaveBeenCalled();
-    expect((controller as any).store.getGeneration('vg_delivery').deliveryStatus).toBe('pending');
-
-    accepted = 1_000_000n;
-    const delivered = await controller.handleRequest(receiptRequest(), buyer.peerId);
-    expect('statusCode' in delivered && delivered.statusCode).toBe(200);
-    expect(recordSpend).toHaveBeenCalledTimes(1);
-    expect(recordSpend).toHaveBeenCalledWith('channel-1', 500_000n);
-    expect((controller as any).store.getGeneration('vg_delivery').deliveryStatus).toBe('earned');
-
-    await controller.handleRequest(receiptRequest(), buyer.peerId);
-    expect(recordSpend).toHaveBeenCalledTimes(1);
-
-    const invalid = { ...receipt, signature: '00'.repeat(65) };
-    const invalidResponse = await controller.handleRequest(
-      request('/v1/video/generations/vg_delivery/artifacts/va_delivery/receipt', 'POST', invalid),
-      buyer.peerId,
-    );
-    expect('statusCode' in invalidResponse && invalidResponse.statusCode).toBe(422);
-    controller.close();
-  });
 });

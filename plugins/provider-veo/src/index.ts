@@ -52,14 +52,13 @@ class VeoVideoAdapter implements VideoProviderAdapter {
     private readonly apiKey: string,
     private readonly baseUrl: string,
     models: string[],
-    private readonly upfrontBps: number,
   ) {
     this.supportedModels = models;
   }
 
   getCapabilities(model: string): VideoCapabilities | undefined {
     const preset = MODEL_PRESETS[model];
-    return preset ? { ...preset, upfrontBps: this.upfrontBps } : undefined;
+    return preset ? { ...preset } : undefined;
   }
 
   validateRequest(request: VideoGenerationRequest): string[] {
@@ -187,17 +186,18 @@ const plugin: AntseedProviderPlugin = {
     { key: 'GEMINI_BASE_URL', label: 'Gemini Base URL', type: 'string', default: DEFAULT_BASE_URL },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Models', type: 'string[]', required: true },
     { key: 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON', label: 'Video Pricing JSON', type: 'string', required: true },
-    { key: 'ANTSEED_VIDEO_UPFRONT_BPS', label: 'Upfront Basis Points', type: 'number', default: 5000 },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', default: 2 },
   ],
   createProvider(config): Provider {
     const apiKey = required(config, 'GEMINI_API_KEY');
     const services = parseModels(config['ANTSEED_ALLOWED_SERVICES'], Object.keys(MODEL_PRESETS));
     for (const model of services) if (!MODEL_PRESETS[model]) throw new Error(`Veo model "${model}" is not covered by a tested Veo 3.1 preset`);
-    const upfrontBps = parseBps(config['ANTSEED_VIDEO_UPFRONT_BPS']);
+    if (config['ANTSEED_VIDEO_UPFRONT_BPS'] !== undefined) {
+      throw new Error('ANTSEED_VIDEO_UPFRONT_BPS is no longer supported; video charges the full quote at upstream acceptance');
+    }
     const maxConcurrency = parsePositiveInteger(config['ANTSEED_MAX_CONCURRENCY'], 2);
     const serviceUnitBillingModels = parseBilling(config['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'], services);
-    const adapter = new VeoVideoAdapter(apiKey, config['GEMINI_BASE_URL'] || DEFAULT_BASE_URL, services, upfrontBps);
+    const adapter = new VeoVideoAdapter(apiKey, config['GEMINI_BASE_URL'] || DEFAULT_BASE_URL, services);
     const serviceCapabilities = Object.fromEntries(services.map((model) => [model, videoServiceCapabilities(adapter.getCapabilities(model)!)]));
     return videoProvider(services, maxConcurrency, serviceUnitBillingModels, serviceCapabilities, adapter);
   },
@@ -277,12 +277,6 @@ function parseBilling(value: string | undefined, services: string[]): ServiceUni
 
 function parseModels(value: string | undefined, fallback: string[]): string[] {
   return [...new Set(value?.split(',').map((item) => item.trim()).filter(Boolean) ?? fallback)];
-}
-
-function parseBps(value: string | undefined): number {
-  const parsed = Number(value ?? '5000');
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) throw new Error('ANTSEED_VIDEO_UPFRONT_BPS must be an integer from 0 through 10000');
-  return parsed;
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {

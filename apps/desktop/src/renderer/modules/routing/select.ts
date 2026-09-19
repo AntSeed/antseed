@@ -4,6 +4,7 @@ import {
   isModelRouteCoolingDown,
   isModelRouteEligible,
   isModelRoutePeerAllowed,
+  modelRouteReputationScore,
   modelRouteTotalPrice,
   scoreModelRoute,
 } from '@antseed/node/model-routing';
@@ -55,14 +56,24 @@ export function filterRoutableVprRoutes(
   return rows.filter((row) => isPeerRoutable(row.peerId, preferences));
 }
 
-/** Whether auto-selection can use a free route from this set. */
-export function hasEligibleFreeVprRoute(
+/**
+ * Highest seller trust score among the $0 routes auto-selection may use, or
+ * null when the set has no eligible free route. Lets the default-model pick
+ * rank free offers by how proven the seller is instead of treating them as
+ * interchangeable.
+ */
+export function bestFreeVprRouteReputation(
   rows: DiscoverRow[],
   preferences: VprRoutingPreferences,
-): boolean {
-  return rows.some(
-    (row) => modelRouteTotalPrice(row) === 0 && isModelRouteEligible(row, preferences),
-  );
+): number | null {
+  let best: number | null = null;
+  for (const row of rows) {
+    const chargesCachedTokens = row.cachedInputUsdPerMillion !== null && row.cachedInputUsdPerMillion > 0;
+    if (modelRouteTotalPrice(row) !== 0 || chargesCachedTokens || !isModelRouteEligible(row, preferences)) continue;
+    const reputation = modelRouteReputationScore(row) ?? 0;
+    if (best === null || reputation > best) best = reputation;
+  }
+  return best;
 }
 
 export function chooseBestVprRoute(

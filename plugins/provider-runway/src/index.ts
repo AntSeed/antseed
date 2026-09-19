@@ -68,14 +68,13 @@ class RunwayVideoAdapter implements VideoProviderAdapter {
     private readonly apiKey: string,
     private readonly baseUrl: string,
     models: string[],
-    private readonly upfrontBps: number,
   ) {
     this.supportedModels = models;
   }
 
   getCapabilities(model: string): VideoCapabilities | undefined {
     const preset = MODEL_PRESETS[model];
-    return preset ? { ...preset, upfrontBps: this.upfrontBps } : undefined;
+    return preset ? { ...preset } : undefined;
   }
 
   validateRequest(request: VideoGenerationRequest): string[] {
@@ -173,17 +172,18 @@ const plugin: AntseedProviderPlugin = {
     { key: 'RUNWAY_BASE_URL', label: 'Runway Base URL', type: 'string', default: DEFAULT_BASE_URL },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Models', type: 'string[]', required: true },
     { key: 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON', label: 'Video Pricing JSON', type: 'string', required: true },
-    { key: 'ANTSEED_VIDEO_UPFRONT_BPS', label: 'Upfront Basis Points', type: 'number', default: 5000 },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', default: 2 },
   ],
   createProvider(config): Provider {
     const apiKey = required(config, 'RUNWAY_API_KEY');
     const services = parseModels(config['ANTSEED_ALLOWED_SERVICES'], Object.keys(MODEL_PRESETS));
     validateModels(services, MODEL_PRESETS, 'Runway');
-    const upfrontBps = parseBps(config['ANTSEED_VIDEO_UPFRONT_BPS']);
+    if (config['ANTSEED_VIDEO_UPFRONT_BPS'] !== undefined) {
+      throw new Error('ANTSEED_VIDEO_UPFRONT_BPS is no longer supported; video charges the full quote at upstream acceptance');
+    }
     const maxConcurrency = parsePositiveInteger(config['ANTSEED_MAX_CONCURRENCY'], 2);
     const serviceUnitBillingModels = parseBilling(config['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'], services);
-    const adapter = new RunwayVideoAdapter(apiKey, config['RUNWAY_BASE_URL'] || DEFAULT_BASE_URL, services, upfrontBps);
+    const adapter = new RunwayVideoAdapter(apiKey, config['RUNWAY_BASE_URL'] || DEFAULT_BASE_URL, services);
     const serviceCapabilities = Object.fromEntries(services.map((model) => [model, videoServiceCapabilities(adapter.getCapabilities(model)!)]));
     return videoProvider('runway', services, maxConcurrency, serviceUnitBillingModels, serviceCapabilities, adapter);
   },
@@ -244,12 +244,6 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
 
 function validateModels(models: string[], presets: Record<string, VideoCapabilities>, provider: string): void {
   for (const model of models) if (!presets[model]) throw new Error(`${provider} model "${model}" is not covered by a tested preset`);
-}
-
-function parseBps(value: string | undefined): number {
-  const parsed = Number(value ?? '5000');
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) throw new Error('ANTSEED_VIDEO_UPFRONT_BPS must be an integer from 0 through 10000');
-  return parsed;
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {

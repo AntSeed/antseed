@@ -202,17 +202,41 @@ test('buildSellerPluginRuntimeEnv sets LOCAL_LLM_BASE_URL for local LLM provider
   assert.equal(runtimeEnv['OPENAI_BASE_URL'], undefined);
 });
 
-test('buildSellerPluginRuntimeEnv maps video provider credentials, base URLs, pricing, and split', () => {
+test('buildSellerPluginRuntimeEnv maps base URL and API key to TYPESAFE_* for the typesafe plugin', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    decisions: {
+      plugin: 'typesafe',
+      baseUrl: 'https://api.example.test',
+      apiKeyEnv: 'TEST_DECISIONS_KEY',
+      services: {
+        'jev-latest': {},
+      },
+    },
+  };
+  process.env['TEST_DECISIONS_KEY'] = 'ts-key';
+  try {
+    const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'decisions');
+    assert.equal(runtimeEnv['TYPESAFE_BASE_URL'], 'https://api.example.test');
+    assert.equal(runtimeEnv['TYPESAFE_API_KEY'], 'ts-key');
+    assert.equal(runtimeEnv['OPENAI_BASE_URL'], undefined);
+    assert.equal(runtimeEnv['OPENAI_API_KEY'], undefined);
+  } finally {
+    delete process.env['TEST_DECISIONS_KEY'];
+  }
+});
+
+test('buildSellerPluginRuntimeEnv maps video provider credentials, base URLs, and pricing', () => {
   const config = createDefaultConfig();
   config.seller.providers = {
     runway: {
-      plugin: 'runway', apiKeyEnv: 'TEST_RUNWAY_KEY', baseUrl: 'https://runway.example', videoPayment: { upfrontBps: 3000 },
+      plugin: 'runway', apiKeyEnv: 'TEST_RUNWAY_KEY', baseUrl: 'https://runway.example',
       services: { 'gen4.5': { unitBillingModels: {
         'antseed-video-jobs-v1': { version: 1, components: [{ unit: 'output_video_seconds', priceUsd: 0.1 }] },
       } } },
     },
     veo: {
-      plugin: 'veo', apiKeyEnv: 'TEST_GEMINI_KEY', baseUrl: 'https://gemini.example', videoPayment: { upfrontBps: 7000 },
+      plugin: 'veo', apiKeyEnv: 'TEST_GEMINI_KEY', baseUrl: 'https://gemini.example',
       services: { 'veo-3.1-generate-preview': { unitBillingModels: {
         'antseed-video-jobs-v1': { version: 1, components: [{ unit: 'output_videos', priceUsd: 1 }] },
       } } },
@@ -226,12 +250,10 @@ test('buildSellerPluginRuntimeEnv maps video provider credentials, base URLs, pr
     const runway = buildSellerPluginRuntimeEnv(config.seller, 'runway');
     assert.equal(runway['RUNWAY_API_KEY'], 'runway-secret');
     assert.equal(runway['RUNWAY_BASE_URL'], 'https://runway.example');
-    assert.equal(runway['ANTSEED_VIDEO_UPFRONT_BPS'], '3000');
     assert.match(runway['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] ?? '', /output_video_seconds/);
     const veo = buildSellerPluginRuntimeEnv(config.seller, 'veo');
     assert.equal(veo['GEMINI_API_KEY'], 'gemini-secret');
     assert.equal(veo['GEMINI_BASE_URL'], 'https://gemini.example');
-    assert.equal(veo['ANTSEED_VIDEO_UPFRONT_BPS'], '7000');
   } finally {
     if (previousRunway === undefined) delete process.env['TEST_RUNWAY_KEY']; else process.env['TEST_RUNWAY_KEY'] = previousRunway;
     if (previousGemini === undefined) delete process.env['TEST_GEMINI_KEY']; else process.env['TEST_GEMINI_KEY'] = previousGemini;

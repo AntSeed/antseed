@@ -9,7 +9,7 @@ import type {
   SerializedHttpResponse,
 } from '../types/http.js';
 import type { Identity } from '../p2p/identity.js';
-import { signUtf8, verifyUtf8 } from '../p2p/identity.js';
+import { signUtf8 } from '../p2p/identity.js';
 import type { Provider } from '../interfaces/seller-provider.js';
 import type { ProviderVideoArtifact, VideoProviderAdapter } from '../interfaces/video-provider.js';
 import type { SellerPaymentManager } from '../payments/seller-payment-manager.js';
@@ -19,7 +19,6 @@ import {
   type VideoGenerationResource,
   type VideoGenerationStatus,
   type VideoPaymentQuoteV1,
-  type VideoDeliveryReceiptV1,
 } from '@antseed/protocol/video';
 import {
   VideoJobStore,
@@ -121,10 +120,6 @@ export class VideoGenerationController {
     if (contentMatch && (request.method === 'GET' || request.method === 'HEAD')) {
       return this.getArtifactContent(request, buyerPeerId, contentMatch[1]!, contentMatch[2]!);
     }
-    const receiptMatch = /^\/v1\/video\/generations\/([^/]+)\/artifacts\/([^/]+)\/receipt$/.exec(path);
-    if (receiptMatch && request.method === 'POST') {
-      return this.acceptDeliveryReceipt(request, buyerPeerId, receiptMatch[1]!, receiptMatch[2]!);
-    }
     const cancelMatch = /^\/v1\/video\/generations\/([^/]+)\/cancel$/.exec(path);
     if (cancelMatch && request.method === 'POST') return this.cancelGeneration(request, buyerPeerId, cancelMatch[1]!);
     const generationMatch = /^\/v1\/video\/generations\/([^/]+)$/.exec(path);
@@ -180,7 +175,7 @@ export class VideoGenerationController {
     let existing = this.store.findByIdempotencyKey(buyerPeerId, idempotencyKey);
     if (existing) {
       if (existing.requestHash !== requestHash) return errorResponse(request.requestId, 409, 'idempotency_conflict', 'Idempotency-Key was already used with a different request');
-      if (existing.status !== 'queued') return this.generationResponse(request.requestId, existing, existing.status === 'submitting' ? 202 : 200);
+      if (existing.upstreamJobId || existing.status !== 'queued') return this.generationResponse(request.requestId, existing, existing.status === 'submitting' ? 202 : 200);
     } else {
       if (this.store.countActiveByBuyer(buyerPeerId) >= this.maxActivePerBuyer) {
         return errorResponse(request.requestId, 429, 'buyer_video_limit', `Buyer already has ${this.maxActivePerBuyer} active video generations`, true);
@@ -196,17 +191,13 @@ export class VideoGenerationController {
       const now = Date.now();
       const id = `vg_${randomUUID().replaceAll('-', '')}`;
       const totalAmount = this.quoteAmount(selected.provider, model, videoRequest);
-      const upfrontBps = capabilities?.upfrontBps ?? 5_000;
-      const upfrontAmount = totalAmount * BigInt(upfrontBps) / 10_000n;
       const unsignedQuote = {
         version: 1 as const,
         quote_id: `vq_${randomUUID().replaceAll('-', '')}`,
         request_hash: requestHash,
         seller_peer_id: this.config.identity.peerId,
         total_amount: totalAmount.toString(),
-        upfront_amount: upfrontAmount.toString(),
-        delivery_amount: (totalAmount - upfrontAmount).toString(),
-        upfront_bps: upfrontBps,
+        payment_trigger: 'upstream_accepted' as const,
         expires_at: Math.floor((now + 5 * 60_000) / 1000),
       };
       const quote: VideoPaymentQuoteV1 = {
@@ -217,7 +208,7 @@ export class VideoGenerationController {
         id, buyerPeerId, sellerPeerId: this.config.identity.peerId, provider: selected.provider.name,
         serviceId: model, request: videoRequest, requestHash, idempotencyKey, paymentChannelId: null, upstreamJobId: null,
         status: 'queued', nativeStatus: null, progress: null, quote,
-        executionStatus: 'pending', deliveryStatus: 'pending', error: null,
+        executionStatus: 'pending', error: null,
         pollAttempt: 0, nextPollAt: null, workerLeaseUntil: null, cancelRequested: false,
         createdAt: now, updatedAt: now, completedAt: null, expiresAt: now + this.retentionMs,
       };
@@ -232,6 +223,10 @@ export class VideoGenerationController {
         }
         existing = concurrent;
       }
+    }
+
+    if (existing.quote.payment_trigger !== 'upstream_accepted') {
+      return errorResponse(request.requestId, 409, 'video_quote_unsupported', 'Split-payment quotes are no longer supported; cancel this intent and create a new generation');
     }
 
     if (existing.quote.expires_at <= Math.floor(Date.now() / 1000)) {
@@ -252,7 +247,7 @@ export class VideoGenerationController {
       executionStatus: 'authorized',
       paymentChannelId: authorization.channelId,
     }, 'execution_authorized');
-    this.store.savePendingMilestoneAuth(existing.id, 'execution', authorization);
+    this.store.savePendingExecutionAuth(existing.id, authorization);
 
     let firstFrame: Uint8Array | undefined;
     let firstFrameMimeType: string | undefined;
@@ -260,7 +255,7 @@ export class VideoGenerationController {
     if (input) {
       const asset = this.store.getInputAsset(input.asset_id, buyerPeerId);
       if (!asset) {
-        this.store.discardPendingMilestoneAuth(existing.id, 'execution');
+        this.store.discardPendingExecutionAuth(existing.id);
         this.store.updateGeneration(existing.id, {
           status: 'failed', executionStatus: 'pending', completedAt: Date.now(), workerLeaseUntil: null,
           error: { code: 'asset_expired', message: 'The first-frame asset expired before submission', retryable: false },
@@ -272,7 +267,7 @@ export class VideoGenerationController {
     }
     const latest = this.store.getGeneration(existing.id);
     if (latest?.cancelRequested) {
-      this.store.discardPendingMilestoneAuth(existing.id, 'execution');
+      this.store.discardPendingExecutionAuth(existing.id);
       this.store.updateGeneration(existing.id, {
         status: 'canceled', executionStatus: 'pending', completedAt: Date.now(), nextPollAt: null,
         workerLeaseUntil: null,
@@ -293,7 +288,7 @@ export class VideoGenerationController {
         executionStatus: 'earned', nextPollAt: acceptedAt + (upstream.retryAfterMs ?? 2_000),
         updatedAt: acceptedAt,
       }, 'upstream_accepted');
-      this.store.promoteMilestoneAuth(existing.id, 'execution');
+      this.store.promoteExecutionAuth(existing.id);
       if (authorization.channelId && authorization.amount > 0n) {
         this.config.sellerPaymentManager?.recordSpend(authorization.channelId, authorization.amount);
       }
@@ -316,7 +311,7 @@ export class VideoGenerationController {
       return this.generationResponse(request.requestId, accepted, 202);
     } catch (error) {
       const knownRejection = /_http_4\d\d$/.test(error instanceof Error ? error.name : '');
-      if (knownRejection) this.store.discardPendingMilestoneAuth(existing.id, 'execution');
+      if (knownRejection) this.store.discardPendingExecutionAuth(existing.id);
       this.store.updateGeneration(existing.id, {
         status: knownRejection ? 'failed' : 'reconciliation_required',
         executionStatus: knownRejection ? 'pending' : 'authorized',
@@ -415,7 +410,7 @@ export class VideoGenerationController {
     requestId: string,
     forceQuote: boolean,
   ): { channelId: string | null; amount: bigint } | { response: SerializedHttpResponse } {
-    const amount = BigInt(generation.quote.upfront_amount);
+    const amount = BigInt(generation.quote.total_amount);
     if (amount === 0n) return { channelId: null, amount };
     const payments = this.config.sellerPaymentManager;
     if (!payments) {
@@ -431,7 +426,8 @@ export class VideoGenerationController {
         }),
       };
     }
-    const target = payments.getCumulativeSpend(channel.sessionId) + amount;
+    const target = payments.getCumulativeSpend(channel.sessionId)
+      + this.store.pendingExecutionAmount(channel.sessionId) + amount;
     if (forceQuote || payments.getAcceptedCumulative(channel.sessionId) < target) {
       return {
         response: this.paymentRequiredResponse(requestId, generation, {
@@ -446,70 +442,6 @@ export class VideoGenerationController {
       };
     }
     return { channelId: channel.sessionId, amount };
-  }
-
-  private async acceptDeliveryReceipt(
-    request: SerializedHttpRequest,
-    buyerPeerId: string,
-    generationId: string,
-    artifactId: string,
-  ): Promise<SerializedHttpResponse> {
-    const generation = this.ownedGeneration(generationId, buyerPeerId);
-    if (!generation) return errorResponse(request.requestId, 404, 'generation_not_found', 'Generation not found');
-    const artifact = this.store.getArtifact(generationId, artifactId);
-    if (!artifact) return errorResponse(request.requestId, 404, 'artifact_not_found', 'Artifact not found');
-    const parsed = parseJson(request.body);
-    if (!parsed) return errorResponse(request.requestId, 400, 'invalid_receipt', 'Delivery receipt must be valid JSON');
-    const receipt = parsed as unknown as VideoDeliveryReceiptV1;
-    const unsignedReceipt = {
-      version: receipt.version,
-      generation_id: receipt.generation_id,
-      artifact_id: receipt.artifact_id,
-      sha256: receipt.sha256,
-      bytes: receipt.bytes,
-      received_at: receipt.received_at,
-      buyer_peer_id: receipt.buyer_peer_id,
-    };
-    const valid = receipt.version === 1
-      && receipt.generation_id === generationId
-      && receipt.artifact_id === artifactId
-      && receipt.sha256 === artifact.sha256
-      && receipt.bytes === artifact.bytes
-      && receipt.buyer_peer_id.toLowerCase() === buyerPeerId.toLowerCase()
-      && Number.isSafeInteger(receipt.received_at)
-      && receipt.received_at >= Math.floor((generation.completedAt ?? generation.createdAt) / 1000)
-      && receipt.received_at <= Math.floor(Date.now() / 1000) + 300
-      && verifyUtf8(buyerPeerId, JSON.stringify(unsignedReceipt), receipt.signature);
-    if (!valid) return errorResponse(request.requestId, 422, 'invalid_receipt', 'Delivery receipt signature or artifact details are invalid');
-    if (generation.deliveryStatus === 'earned') return this.generationResponse(request.requestId, generation);
-    const amount = BigInt(generation.quote.delivery_amount);
-    if (amount === 0n) {
-      this.store.updateGeneration(generationId, { deliveryStatus: 'earned' }, 'delivery_earned');
-      return this.generationResponse(request.requestId, this.store.getGeneration(generationId) ?? generation);
-    }
-    const payments = this.config.sellerPaymentManager;
-    const channel = payments?.getChannelByPeer(buyerPeerId) ?? null;
-    if (!payments || !channel || channel.sessionId !== generation.paymentChannelId) {
-      return errorResponse(request.requestId, 409, 'payment_channel_unavailable', 'The original video payment channel is no longer active');
-    }
-    const target = payments.getCumulativeSpend(channel.sessionId) + amount;
-    if (payments.getAcceptedCumulative(channel.sessionId) < target) {
-      this.store.appendEvent(generationId, 'delivery_authorization_requested');
-      this.store.savePendingMilestoneAuth(generationId, 'delivery', { receipt: unsignedReceipt, channelId: channel.sessionId, target: target.toString() });
-      return this.paymentRequiredResponse(request.requestId, generation, {
-        minBudgetPerRequest: amount.toString(),
-        suggestedAmount: target.toString(),
-        requiredCumulativeAmount: target.toString(),
-        currentSpent: payments.getCumulativeSpend(channel.sessionId).toString(),
-        currentAcceptedCumulative: payments.getAcceptedCumulative(channel.sessionId).toString(),
-        channelId: channel.sessionId,
-        reserveMaxAmount: payments.getReserveMax(channel.sessionId).toString(),
-      });
-    }
-    payments.recordSpend(channel.sessionId, amount);
-    this.store.promoteMilestoneAuth(generationId, 'delivery');
-    this.store.updateGeneration(generationId, { deliveryStatus: 'earned' }, 'delivery_earned');
-    return this.generationResponse(request.requestId, this.store.getGeneration(generationId) ?? generation);
   }
 
   private paymentRequiredResponse(
@@ -552,7 +484,6 @@ export class VideoGenerationController {
 
   private async pollOne(generation: StoredVideoGeneration): Promise<void> {
     if (generation.expiresAt <= Date.now()) {
-      this.store.discardPendingMilestoneAuth(generation.id, 'delivery');
       this.store.updateGeneration(generation.id, {
         status: 'expired', completedAt: Date.now(), nextPollAt: null, workerLeaseUntil: null,
         error: { code: 'generation_expired', message: 'Video generation expired before completion', retryable: false },
@@ -716,11 +647,8 @@ export class VideoGenerationController {
       model: generation.serviceId, status: publicStatus(generation.status), progress: generation.progress,
       artifacts, error: generation.error,
       payment: {
-        currency: 'USDC', total_amount: generation.quote.total_amount, upfront_bps: generation.quote.upfront_bps,
-        milestones: [
-          { id: 'execution', trigger: 'submission_authorized', amount: generation.quote.upfront_amount, status: generation.executionStatus },
-          { id: 'delivery', trigger: 'artifact_received', amount: generation.quote.delivery_amount, status: generation.deliveryStatus },
-        ],
+        currency: 'USDC', total_amount: generation.quote.total_amount,
+        trigger: 'upstream_accepted', status: generation.executionStatus,
       },
       links: { self: `/v1/video/generations/${generation.id}`, cancel: `/v1/video/generations/${generation.id}/cancel` },
     };

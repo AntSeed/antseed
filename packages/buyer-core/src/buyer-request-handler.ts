@@ -28,6 +28,7 @@ import {
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
 import { buyerFault, peerFault } from './errors.js';
+import { adaptPeerFaultErrorResponse } from './peer-error-response.js';
 import { verifyUtf8 } from '@antseed/protocol/signing';
 import type { VideoPaymentQuoteV1 } from '@antseed/protocol/video';
 
@@ -47,6 +48,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Present peer failures as coming from an explicitly pinned route. */
+  pinned?: boolean;
   /** Deliver stream chunks only through callbacks instead of reconstructing the response body. */
   collectResponseBody?: boolean;
 }
@@ -59,7 +62,6 @@ export interface BuyerRequestHandlerConfig {
   videoPolicy?: {
     autoApprove?: boolean;
     maxTotalUsdc?: string;
-    maxUpfrontBps?: number;
     maxDurationSeconds?: number;
   };
 }
@@ -132,6 +134,9 @@ export class BuyerRequestHandler {
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const requestProtocol = options?.controlPlane ? null : detectRequestServiceApiProtocol(req);
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
@@ -147,7 +152,6 @@ export class BuyerRequestHandler {
           debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
         }
       } else {
-        const requestProtocol = detectRequestServiceApiProtocol(req);
         if (
           requestProtocol === "openai-images"
           && (
@@ -184,6 +188,7 @@ export class BuyerRequestHandler {
       let streamStartedAtMs = 0;
       let streamBufferedBytes = 0;
       let streamStartResponse: SerializedHttpResponse | null = null;
+      let forwardStreamToCallbacks = false;
       const streamChunks: Uint8Array[] = [];
       let activeTimeout: ReturnType<typeof setTimeout> | null = null;
       let activeTimeoutMs = streamInitialResponseTimeoutMs;
@@ -290,14 +295,19 @@ export class BuyerRequestHandler {
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
             streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
+            forwardStreamToCallbacks = response.statusCode < 400;
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
-            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            if (forwardStreamToCallbacks) {
+              callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            }
             return;
           }
 
           callbacks?.onResponseStart?.(
-            stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            adaptPeerResponse(
+              stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            ),
             { streaming: false },
           );
           finish(response);
@@ -314,28 +324,23 @@ export class BuyerRequestHandler {
             return;
           }
 
-          callbacks?.onResponseChunk?.(chunk);
+          if (forwardStreamToCallbacks) {
+            callbacks?.onResponseChunk?.(chunk);
+          }
 
-          if (chunk.data.length > 0) {
-            if (options?.collectResponseBody === false) {
-              // Binary sinks consume chunks directly. Keeping them here would
-              // retain the complete artifact in memory before resolving.
-            } else if (callbacks?.onResponseChunk) {
-              streamBufferedBytes += chunk.data.length;
-              streamChunks.push(chunk.data);
-            } else {
-              const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
-              if (nextBufferedBytes > maxStreamBufferBytes) {
-                mux.cancelProxyRequest(req.requestId);
-                fail(buyerFault(
-                  `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
-                  'buyer-stream-limit',
-                ));
-                return;
-              }
-              streamBufferedBytes = nextBufferedBytes;
-              streamChunks.push(chunk.data);
+          if (chunk.data.length > 0 && !(options?.collectResponseBody === false && forwardStreamToCallbacks && callbacks?.onResponseChunk)) {
+            const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
+            const enforceBufferLimit = !forwardStreamToCallbacks || !callbacks?.onResponseChunk;
+            if (enforceBufferLimit && nextBufferedBytes > maxStreamBufferBytes) {
+              mux.cancelProxyRequest(req.requestId);
+              fail(buyerFault(
+                `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
+                'buyer-stream-limit',
+              ));
+              return;
             }
+            streamBufferedBytes = nextBufferedBytes;
+            streamChunks.push(chunk.data);
           }
 
           if (!chunk.done) return;
@@ -350,9 +355,7 @@ export class BuyerRequestHandler {
 
           finish({
             ...streamStartResponse,
-            body: options?.collectResponseBody === false
-              ? new Uint8Array(0)
-              : concatChunks(streamChunks),
+            body: concatChunks(streamChunks),
           });
         },
       );
@@ -360,12 +363,32 @@ export class BuyerRequestHandler {
 
     let response = await executeRequest();
 
+    // A seller demanded payment while this buyer runs no payment machinery
+    // (payments disabled or unconfigured). Forwarding the raw seller 402 would
+    // tell the user to add credits, but no amount of credits helps — the buyer
+    // cannot sign an authorization at all. Return a buyer-fault error naming
+    // the real cause. Clients that manage payment themselves (external
+    // spending auth) and control-plane calls still get the raw 402.
+    if (
+      response.statusCode === 402
+      && !negotiator
+      && !options?.controlPlane
+      && !externalSpendingAuth
+      && isPaymentRequired402(response)
+    ) {
+      debugWarn(
+        `[BuyerRequest] Seller ${peer.peerId.slice(0, 12)}... requires payment but payments are not running on this buyer — returning buyer-fault error`,
+      );
+      return buyerPaymentsInactiveResponse(response, peer.peerId);
+    }
+
     if (negotiator && !externalSpendingAuth) {
-      for (let attempt = 0; response.statusCode === 402 && attempt < 3; attempt += 1) {
+      const maxPaymentAttempts = requestProtocol === 'antseed-video-jobs-v1' ? 3 : 1;
+      for (let attempt = 0; response.statusCode === 402 && attempt < maxPaymentAttempts; attempt += 1) {
         const videoPolicyError = await validateVideoQuoteResponse(response, req, peer, this._config.videoPolicy);
         if (videoPolicyError) return videoPolicyError;
         const result = await negotiator.handle402(response, peer, conn, req);
-        if (result.action === 'return') return result.response;
+        if (result.action === 'return') return adaptPeerResponse(result.response);
         startTime = Date.now();
         response = await executeRequest();
       }
@@ -376,7 +399,7 @@ export class BuyerRequestHandler {
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
-    return response;
+    return adaptPeerResponse(response);
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {
@@ -466,17 +489,34 @@ export async function validateVideoQuoteResponse(
   peer: BuyerPeerView,
   configuredPolicy: BuyerRequestHandlerConfig['videoPolicy'],
 ): Promise<SerializedHttpResponse | null> {
-  let body: Record<string, unknown>;
-  try {
-    const value = JSON.parse(new TextDecoder().decode(response.body)) as unknown;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    body = value as Record<string, unknown>;
-  } catch {
-    return null;
+  const path = request.path.split('?')[0]?.toLowerCase() ?? '';
+  if (!path.startsWith('/v1/video/')) return null;
+  const reject = (message: string): SerializedHttpResponse => ({
+    ...response,
+    statusCode: 422,
+    headers: { ...response.headers, 'content-type': 'application/json', [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer' },
+    body: new TextEncoder().encode(JSON.stringify({ error: { code: 'video_quote_rejected', message, retryable: false } })),
+  });
+  if (request.method !== 'POST' || path !== '/v1/video/generations') {
+    return reject('Video follow-up requests do not require additional payment');
   }
-  const quoteValue = body['video_quote'];
-  if (!quoteValue || typeof quoteValue !== 'object' || Array.isArray(quoteValue)) return null;
+  if (getHeaderCaseInsensitive(request.headers, 'x-antseed-video-max-upfront-bps') !== undefined) {
+    return reject('Video split limits are no longer supported; full-price authorization is required');
+  }
+  const body = parseRequestObject(response.body);
+  const quoteValue = body?.['video_quote'];
+  if (!quoteValue || typeof quoteValue !== 'object' || Array.isArray(quoteValue)) {
+    return reject('A signed full-price video quote is required');
+  }
   const quote = quoteValue as VideoPaymentQuoteV1;
+  if (quote.version !== 1 || quote.payment_trigger !== 'upstream_accepted'
+    || typeof quote.quote_id !== 'string' || !quote.quote_id
+    || typeof quote.seller_peer_id !== 'string' || typeof quote.signature !== 'string' || typeof quote.total_amount !== 'string'
+    || typeof quote.request_hash !== 'string' || !/^[0-9a-f]{64}$/.test(quote.request_hash)
+    || !Number.isSafeInteger(quote.expires_at)
+    || 'upfront_amount' in quote || 'delivery_amount' in quote || 'upfront_bps' in quote) {
+    return reject('Invalid or unsupported video quote; full-price upstream-acceptance billing is required');
+  }
   const sellerPeerId = peer.peerId;
   const unsignedQuote = {
     version: quote.version,
@@ -484,24 +524,18 @@ export async function validateVideoQuoteResponse(
     request_hash: quote.request_hash,
     seller_peer_id: quote.seller_peer_id,
     total_amount: quote.total_amount,
-    upfront_amount: quote.upfront_amount,
-    delivery_amount: quote.delivery_amount,
-    upfront_bps: quote.upfront_bps,
+    payment_trigger: quote.payment_trigger,
     expires_at: quote.expires_at,
   };
   const parsedRequest = parseRequestObject(request.body);
   const requestHash = parsedRequest ? await sha256Canonical(parsedRequest) : '';
   const total = safeUnsignedBigInt(quote.total_amount);
-  const upfront = safeUnsignedBigInt(quote.upfront_amount);
-  const delivery = safeUnsignedBigInt(quote.delivery_amount);
   const duration = typeof parsedRequest?.['duration_seconds'] === 'number' ? parsedRequest['duration_seconds'] : Number.POSITIVE_INFINITY;
   const expectedTotal = parsedRequest ? advertisedVideoTotal(peer, request, parsedRequest) : null;
   const policyTotal = minBigInt(
     safeUnsignedBigInt(configuredPolicy?.maxTotalUsdc ?? '5000000') ?? 5_000_000n,
     safeUnsignedBigInt(getHeaderCaseInsensitive(request.headers, 'x-antseed-video-max-total-usdc') ?? '') ?? 5_000_000n,
   );
-  const headerUpfront = Number(getHeaderCaseInsensitive(request.headers, 'x-antseed-video-max-upfront-bps') ?? '5000');
-  const maxUpfrontBps = Math.min(configuredPolicy?.maxUpfrontBps ?? 5_000, Number.isInteger(headerUpfront) ? headerUpfront : 5_000);
   const maxDurationSeconds = configuredPolicy?.maxDurationSeconds ?? 10;
   let reason = '';
   if (configuredPolicy?.autoApprove === false) reason = 'Video quote requires manual approval';
@@ -509,12 +543,10 @@ export async function validateVideoQuoteResponse(
   else if (!verifyUtf8(sellerPeerId, JSON.stringify(unsignedQuote), quote.signature)) reason = 'Video quote signature is invalid';
   else if (quote.expires_at <= Math.floor(Date.now() / 1000)) reason = 'Video quote has expired';
   else if (!requestHash || quote.request_hash !== requestHash) reason = 'Video quote request hash does not match';
-  else if (total === null || upfront === null || delivery === null || upfront + delivery !== total) reason = 'Video quote amounts are invalid';
+  else if (total === null) reason = 'Video quote amount is invalid';
   else if (total > 0n && expectedTotal === null) reason = 'Seller did not advertise a matching video billing model';
   else if (expectedTotal !== null && total !== expectedTotal) reason = `Video quote total ${total} does not match advertised price ${expectedTotal}`;
-  else if (!Number.isInteger(quote.upfront_bps) || quote.upfront_bps < 0 || quote.upfront_bps > 10_000) reason = 'Video quote upfront percentage is invalid';
   else if (total > policyTotal) reason = `Video quote total ${total} exceeds buyer limit ${policyTotal}`;
-  else if (quote.upfront_bps > maxUpfrontBps) reason = `Video quote upfront ${quote.upfront_bps} bps exceeds buyer limit ${maxUpfrontBps} bps`;
   else if (!Number.isSafeInteger(duration) || duration > maxDurationSeconds) reason = `Video duration ${duration} exceeds buyer limit ${maxDurationSeconds}`;
   if (!reason) return null;
   return {
@@ -732,6 +764,47 @@ export function stripPeerControlledResponseHeaders(
   return Object.keys(headers).length === Object.keys(response.headers).length
     ? response
     : { ...response, headers };
+}
+
+/** True when a 402 body carries the seller's payment_required contract (flat or wrapped). */
+function isPaymentRequired402(response: SerializedHttpResponse): boolean {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    if (parsed.error === 'payment_required') return true;
+    return typeof parsed.error === 'object' && parsed.error !== null
+      && (parsed.error as Record<string, unknown>).type === 'payment_required';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Buyer-fault replacement for a seller 402 when payments are not running on
+ * this buyer. Carries the fault-attribution header so downstream adapters
+ * shape it per protocol, routers stop failing over, and UIs report a
+ * buyer-side problem instead of asking the user to add credits.
+ */
+function buyerPaymentsInactiveResponse(
+  response: SerializedHttpResponse,
+  peerId: PeerId,
+): SerializedHttpResponse {
+  return {
+    ...response,
+    statusCode: 503,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+      [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+    },
+    body: new TextEncoder().encode(JSON.stringify({
+      error: 'buyer_payments_inactive',
+      reason: 'payments_not_running',
+      peerId,
+      message: 'This seller requires payment, but payments are not running on this buyer, '
+        + 'so the request could not be authorized. This is not a balance problem — '
+        + 'enable payments on the buyer (check its startup logs and chain settings), or use a free peer.',
+    })),
+  };
 }
 
 function shouldExpectResponseAuth(

@@ -5,8 +5,14 @@ import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
 import { VIEW_NAMES, type ViewName } from './types';
 import { VprShell } from './components/VprShell';
+import { recordUserAction, telemetrySurfaceForView } from '../modules/telemetry/actions';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
+
+/** Hard ceiling on the setup screen: two minutes from first showing, then the
+    user gets in no matter how far discovery came. Only the plugin install may
+    hold longer — the app is unusable without the router plugin. */
+const SETUP_MAX_VISIBLE_MS = 120_000;
 
 function scheduleRoutePreload(callback: () => void): () => void {
   const win = window as unknown as {
@@ -30,10 +36,16 @@ export function AppShell() {
     appSetupComplete: state.appSetupComplete,
     chatServiceCount: state.chatServiceOptions.length,
     chatPanelExpanded: state.chatPanelExpanded,
+    // A default model backed by a trusted free route — what first-run setup
+    // is actually for. The provisional flag clears exactly when routing
+    // confirms a free-backed default (or the user picks a model).
+    freeDefaultReady: state.vprRouteSelection.model !== null && !state.vprDefaultModelProvisional,
   }), shallowEqual);
   const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
+  /** When the setup screen first showed — anchors the two-minute ceiling. */
+  const setupShownAtRef = useRef<number | null>(null);
 
   // Screens visited before the current one, most recent last. Header back
   // buttons pop this so "back" returns to where the user actually came from;
@@ -44,6 +56,7 @@ export function AppShell() {
   const handleSelectView = useCallback((view: ViewName) => {
     const current = activeViewRef.current;
     if (view === current) return;
+    recordUserAction('view_opened', telemetrySurfaceForView(view));
     const stack = viewHistoryRef.current;
     stack.push(current);
     if (stack.length > 32) stack.shift();
@@ -58,6 +71,7 @@ export function AppShell() {
     while (target === current) target = stack.pop();
     const next = target ?? fallback;
     if (next === current) return;
+    recordUserAction('view_opened', telemetrySurfaceForView(next));
     activeViewRef.current = next;
     setActiveView(next);
   }, []);
@@ -89,7 +103,14 @@ export function AppShell() {
     // into the app even if plugin setup reported a transient repair/install
     // failure. This prevents a stale "Failed to install router plugin" status
     // from covering a now-usable desktop session.
-    if (hasServices) {
+    //
+    // Setup's real goal is a model the user can chat with for free, so the
+    // screen holds until routing confirms a free-backed default — but never
+    // past SETUP_MAX_VISIBLE_MS from when it appeared: a network with no
+    // trusted free seller (or none at all) must not lock the user out. The
+    // Home "Finding free peers…" hint carries the search on from there. Only
+    // an unfinished plugin install may exceed the cap.
+    if (hasServices && snap.freeDefaultReady) {
       const timer = setTimeout(() => {
         setSetupVisible(false);
         setSetupDismissed(true);
@@ -97,13 +118,17 @@ export function AppShell() {
       return () => clearTimeout(timer);
     }
 
-    if (!snap.appSetupComplete) {
-      setSetupVisible(true);
-      return;
-    }
-
     setSetupVisible(true);
-  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasServices, setupDismissed]);
+    const shownAt = setupShownAtRef.current ?? Date.now();
+    setupShownAtRef.current = shownAt;
+    if (snap.appSetupComplete) {
+      const timer = setTimeout(() => {
+        setSetupVisible(false);
+        setSetupDismissed(true);
+      }, Math.max(0, SETUP_MAX_VISIBLE_MS - (Date.now() - shownAt)));
+      return () => clearTimeout(timer);
+    }
+  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, snap.freeDefaultReady, hasServices, setupDismissed]);
 
   const showSetup = setupVisible;
 
@@ -126,8 +151,8 @@ export function AppShell() {
 
   useEffect(() => {
     if (showSetup) return;
-    // Chat supports both window sizes: thin by default, expanded to the
-    // standard preset when the user opens the conversation-list panel.
+    // Chat supports both window sizes: wide (standard preset, conversation
+    // list showing) by default, thin when the user collapses the panel.
     if (activeView === 'chat' && snap.chatPanelExpanded) {
       void window.antseedDesktop?.applyWindowPreset?.('standard');
       return;

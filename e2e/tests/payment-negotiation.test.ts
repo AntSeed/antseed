@@ -55,7 +55,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     try { if (buyerDataDir) { await rm(buyerDataDir, { recursive: true, force: true }); buyerDataDir = null; } } catch {}
   });
 
-  it('buyer receives 402 when seller has payments configured but buyer has no payment session', async () => {
+  it('buyer receives a buyer-fault error when seller requires payment but buyer runs no payments', async () => {
     bootstrap = await createLocalBootstrap();
 
     // Seller with a fake payments config (will trigger 402 path)
@@ -104,13 +104,17 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     expect(seller).toBeDefined();
 
     // Send request — buyer has no BuyerPaymentManager, so no negotiation.
-    // The request reaches the seller, which has _sessionsClient set, so it returns 402.
+    // The seller returns 402, and the buyer converts it into a buyer-fault
+    // error: no amount of credits helps when payments are not running, so
+    // forwarding the raw "add credits" 402 would misdirect the user.
     const request = makeRequest();
     const response = await buyerNode!.sendRequest(seller!, request);
 
-    expect(response.statusCode).toBe(402);
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['x-antseed-fault-attribution']).toBe('buyer');
     const body = new TextDecoder().decode(response.body);
-    expect(body).toContain('payment_required');
+    expect(body).toContain('buyer_payments_inactive');
+    expect(body).toContain('payments are not running on this buyer');
 
     // Seller's provider was NOT called (request rejected before routing)
     expect(mockProvider.requestCount).toBe(0);

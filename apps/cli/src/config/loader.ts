@@ -129,9 +129,8 @@ function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
   if (typeof value['apiKeyEnv'] === 'string' && value['apiKeyEnv'].trim().length > 0) {
     out.apiKeyEnv = value['apiKeyEnv'].trim();
   }
-  if (isRecord(value['videoPayment'])) {
-    const upfrontBps = value['videoPayment']['upfrontBps'];
-    if (typeof upfrontBps === 'number') out.videoPayment = { upfrontBps };
+  if (value['videoPayment'] !== undefined) {
+    throw new Error('videoPayment is no longer supported; remove it to accept full-price video billing at upstream acceptance');
   }
   if (isRecord(value['pathRewrite'])) {
     const pr: Record<string, string> = {};
@@ -166,7 +165,6 @@ function mergeSellerProviders(
       plugin: cfg.plugin,
       ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
       ...(cfg.apiKeyEnv ? { apiKeyEnv: cfg.apiKeyEnv } : {}),
-      ...(cfg.videoPayment ? { videoPayment: { ...cfg.videoPayment } } : {}),
       ...(cfg.pathRewrite ? { pathRewrite: { ...cfg.pathRewrite } } : {}),
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
       services: { ...cfg.services },
@@ -313,6 +311,35 @@ function normalizeSellerHealthCheck(
   };
 }
 
+function cloneSellerGasCheck(
+  value: AntseedConfig['seller']['gasCheck'],
+): AntseedConfig['seller']['gasCheck'] {
+  if (!value) return undefined;
+  return {
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
+    ...(value.intervalMs !== undefined ? { intervalMs: value.intervalMs } : {}),
+    ...(value.minBalanceEth !== undefined ? { minBalanceEth: value.minBalanceEth } : {}),
+  };
+}
+
+function normalizeSellerGasCheck(
+  value: unknown,
+  fallback?: AntseedConfig['seller']['gasCheck'],
+): { gasCheck: NonNullable<AntseedConfig['seller']['gasCheck']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneSellerGasCheck(fallback);
+    return cloned ? { gasCheck: cloned } : {};
+  }
+  // Keep user-supplied values (even malformed) so validateConfig reports them.
+  return {
+    gasCheck: {
+      ...(value['enabled'] !== undefined ? { enabled: value['enabled'] as boolean } : {}),
+      ...(value['intervalMs'] !== undefined ? { intervalMs: toFiniteOrNaN(value['intervalMs']) } : {}),
+      ...(value['minBalanceEth'] !== undefined ? { minBalanceEth: toFiniteOrNaN(value['minBalanceEth']) } : {}),
+    },
+  };
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -327,6 +354,7 @@ function mergeSellerConfig(
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(normalizeVerifications(undefined, defaults.verifications)),
       ...(normalizeSellerHealthCheck(undefined, defaults.healthCheck)),
+      ...(normalizeSellerGasCheck(undefined, defaults.gasCheck)),
     };
   }
 
@@ -349,6 +377,7 @@ function mergeSellerConfig(
         : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
     ...(normalizeSellerHealthCheck(value['healthCheck'], defaults.healthCheck)),
+    ...(normalizeSellerGasCheck(value['gasCheck'], defaults.gasCheck)),
   };
 }
 
@@ -437,11 +466,13 @@ function normalizeBuyerVideo(
     const cloned = cloneBuyerVideo(fallback);
     return cloned ? { video: cloned } : {};
   }
+  if (value['maxUpfrontBps'] !== undefined) {
+    throw new Error('buyer.video.maxUpfrontBps is no longer supported; remove it to accept full-price video billing at upstream acceptance');
+  }
   return {
     video: {
       autoApprove: (value['autoApprove'] ?? fallback?.autoApprove) as boolean,
       maxTotalUsdc: (value['maxTotalUsdc'] ?? fallback?.maxTotalUsdc) as string,
-      maxUpfrontBps: (value['maxUpfrontBps'] ?? fallback?.maxUpfrontBps) as number,
       maxDurationSeconds: (value['maxDurationSeconds'] ?? fallback?.maxDurationSeconds) as number,
     },
   };

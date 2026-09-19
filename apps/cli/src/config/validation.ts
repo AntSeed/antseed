@@ -105,14 +105,6 @@ function validateSellerProviders(
         errors.push(`${providerPath}.baseUrl must be a valid URL`);
       }
     }
-    if (
-      providerCfg.videoPayment
-      && (!Number.isInteger(providerCfg.videoPayment.upfrontBps)
-        || providerCfg.videoPayment.upfrontBps < 0
-        || providerCfg.videoPayment.upfrontBps > 10_000)
-    ) {
-      errors.push(`${providerPath}.videoPayment.upfrontBps must be an integer from 0 through 10000`);
-    }
     for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
       const servicePath = `${providerPath}.services.${serviceId}`;
       if (serviceCfg.upstreamModel !== undefined && serviceCfg.upstreamModel.trim().length === 0) {
@@ -351,9 +343,6 @@ export function validateConfig(config: AntseedConfig): string[] {
     if (typeof config.buyer.video.maxTotalUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(config.buyer.video.maxTotalUsdc)) {
       errors.push('buyer.video.maxTotalUsdc must be unsigned USDC base units');
     }
-    if (!Number.isInteger(config.buyer.video.maxUpfrontBps) || config.buyer.video.maxUpfrontBps < 0 || config.buyer.video.maxUpfrontBps > 10_000) {
-      errors.push('buyer.video.maxUpfrontBps must be an integer from 0 through 10000');
-    }
     if (!Number.isInteger(config.buyer.video.maxDurationSeconds) || config.buyer.video.maxDurationSeconds < 1) {
       errors.push('buyer.video.maxDurationSeconds must be a positive integer');
     }
@@ -417,6 +406,25 @@ export function validateConfig(config: AntseedConfig): string[] {
       (!Number.isInteger(healthCheck.failureThreshold) || healthCheck.failureThreshold < 1)
     ) {
       errors.push('seller.healthCheck.failureThreshold must be an integer >= 1');
+    }
+  }
+
+  if (config.seller.gasCheck !== undefined) {
+    const gasCheck = config.seller.gasCheck;
+    if (gasCheck.enabled !== undefined && typeof gasCheck.enabled !== 'boolean') {
+      errors.push('seller.gasCheck.enabled must be a boolean');
+    }
+    if (
+      gasCheck.intervalMs !== undefined &&
+      (!Number.isInteger(gasCheck.intervalMs) || gasCheck.intervalMs < 10_000)
+    ) {
+      errors.push('seller.gasCheck.intervalMs must be an integer >= 10000 (10 seconds)');
+    }
+    if (
+      gasCheck.minBalanceEth !== undefined &&
+      (typeof gasCheck.minBalanceEth !== 'number' || !Number.isFinite(gasCheck.minBalanceEth) || gasCheck.minBalanceEth < 0)
+    ) {
+      errors.push('seller.gasCheck.minBalanceEth must be a finite number >= 0');
     }
   }
 

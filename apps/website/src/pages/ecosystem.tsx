@@ -1,4 +1,4 @@
-import type {CSSProperties} from 'react';
+import type {CSSProperties, JSX} from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './ecosystem.module.css';
@@ -29,13 +29,13 @@ const resources: Resource[] = [
   {
     title: 'Network Explorer',
     href: 'https://antseedstats.com/network',
-    body: 'Watch live providers, market prices, usage, and routing activity across the AntSeed network.',
+    body: 'Watch live providers, market prices, usage, and routing activity across the Antseed network.',
     cta: 'Explore network',
   },
   {
     title: 'Developer Docs',
     href: '/docs',
-    body: 'Use AntSeed as peer-to-peer AI infrastructure from apps, agents, routers, and existing tools.',
+    body: 'Use Antseed as peer-to-peer AI infrastructure from apps, agents, routers, and existing tools.',
     cta: 'Read docs',
   },
   {
@@ -48,12 +48,12 @@ const resources: Resource[] = [
 
 const projects: EcosystemProject[] = [
   {
-    name: 'Diem AntSeed',
+    name: 'Diem Antseed',
     href: 'https://diemantseed.com',
     category: 'Capacity program',
-    oneLiner: 'A DIEM provider capacity program built around AntSeed.',
+    oneLiner: 'A DIEM provider capacity program built around Antseed.',
     description:
-      'Lock DIEM to participate in provider capacity on AntSeed, with allocations and incentives governed by program rules.',
+      'Lock DIEM to participate in provider capacity on Antseed, with allocations and incentives governed by program rules.',
     glyph: 'DA',
     status: 'Live',
     color: '#e8a33d',
@@ -64,9 +64,9 @@ const projects: EcosystemProject[] = [
     name: 'AntSeedStats',
     href: 'https://antseedstats.com',
     category: 'Analytics',
-    oneLiner: 'The metrics and intelligence layer of the AntSeed ecosystem.',
+    oneLiner: 'The metrics and intelligence layer of the Antseed ecosystem.',
     description:
-      'Real-time on-chain data for active users, network revenue, sellers, buyers, models, staking, DIEM, $ANTS, channels, and transactions.',
+      'Real-time onchain data for active users, network revenue, providers, buyers, models, staking, DIEM, $ANTS, channels, and transactions.',
     glyph: '🐜',
     status: 'Live',
     color: '#84cc16',
@@ -78,9 +78,9 @@ const projects: EcosystemProject[] = [
     name: 'Antscan',
     href: 'https://antscan.co/',
     category: 'Explorer',
-    oneLiner: 'An AntSeed explorer for Base settlements, service offers, channels, and emissions.',
+    oneLiner: 'An Antseed explorer for Base settlements, service offers, channels, and emissions.',
     description:
-      'Explore daily active users, settled volume, service offers, payment channels, sellers, buyers, epochs, and ANTS emissions.',
+      'Explore daily active users, settled volume, service offers, payment channels, providers, buyers, epochs, and ANTS emissions.',
     glyph: 'AN',
     status: 'Live',
     color: '#1fd87a',
@@ -93,7 +93,7 @@ const projects: EcosystemProject[] = [
 const pillars = [
   {
     title: 'Applications',
-    body: 'Products that turn AntSeed providers into user-facing AI workflows.',
+    body: 'Products that turn Antseed providers into user-facing AI workflows.',
   },
   {
     title: 'Infrastructure',
@@ -105,7 +105,7 @@ const pillars = [
   },
   {
     title: 'Integrations',
-    body: 'Tools and frameworks that connect existing developer workflows to the local AntSeed endpoint.',
+    body: 'Tools and frameworks that connect existing developer workflows to the local Antseed endpoint.',
   },
 ];
 
@@ -134,7 +134,7 @@ function ProductPreview({project}: {project: EcosystemProject}) {
           <div><small>Total users</small><strong>1,084</strong></div>
           <div><small>Revenue</small><strong>$194.29k</strong></div>
           <div><small>Tokens</small><strong>94.44B</strong></div>
-          <div><small>Sellers</small><strong>166</strong></div>
+          <div><small>Providers</small><strong>166</strong></div>
         </div>
         <div className={styles.chartBars}><span /><span /><span /><span /><span /></div>
       </div>
@@ -157,7 +157,7 @@ function ProductPreview({project}: {project: EcosystemProject}) {
 
   return (
     <div className={`${styles.preview} ${styles.previewDiem}`}>
-      <div className={styles.diemBrand}><span>AntSeed</span><b>DIEM</b></div>
+      <div className={styles.diemBrand}><span>Antseed</span><b>DIEM</b></div>
       <div className={styles.diemPanel}>
         <small>Provider capacity</small>
         <strong>Lock DIEM</strong>
@@ -197,21 +197,21 @@ export default function Ecosystem(): JSX.Element {
   return (
     <Layout
       title="Ecosystem"
-      description="Explore projects, explorers, dashboards, and applications built on top of AntSeed.">
+      description="Explore projects, explorers, dashboards, and applications built on top of Antseed.">
       <PageHero
         kicker="Ecosystem"
-        title="Explore the AntSeed ecosystem"
+        title="Explore the Antseed ecosystem"
         lead="Connect with builders, providers, explorers, and AI-focused projects growing around peer-to-peer AI infrastructure.">
         <Button href="https://antseedstats.com/network" arrow>Explore live network</Button>
-        <Button to="/docs" variant="ghost">Build on AntSeed</Button>
+        <Button to="/docs" variant="ghost">Build on Antseed</Button>
       </PageHero>
 
       <Section width="xl">
         <div className={styles.sectionHead}>
           <SectionHeader
-            kicker="Discover AntSeed ecosystem"
+            kicker="Discover Antseed ecosystem"
             title="Live projects"
-            lead="A directory of applications, tools, and infrastructure built on or around AntSeed."
+            lead="A directory of applications, tools, and infrastructure built on or around Antseed."
           />
         </div>
         <div className={styles.grid}>
@@ -227,7 +227,7 @@ export default function Ecosystem(): JSX.Element {
             <SectionHeader
               kicker="Build, explore, connect"
               title="An AI-first market for builders"
-              lead="AntSeed gives projects a local API surface, open provider marketplace, and on-chain payments so teams can build products on top of independent AI supply."
+              lead="Antseed gives projects a local API surface, open provider marketplace, and onchain payments so teams can build products on top of independent AI supply."
             />
           </div>
           <div className={styles.resourceGrid}>
@@ -261,25 +261,25 @@ export default function Ecosystem(): JSX.Element {
           <div>
             <h3>Ecosystem amplification</h3>
             <p>
-              Building an app, explorer, provider, agent, router, or managed product on AntSeed? Share it with the community and we can add it to this directory.
+              Building an app, explorer, provider, agent, router, or managed product on Antseed? Share it with the community and we can add it to this directory.
             </p>
           </div>
           <div>
             <h3>Submission guidelines</h3>
             <p>
-              Projects should add value on top of AntSeed infrastructure. Raw API-key resale and subscription credential sharing do not belong in the ecosystem.
+              Projects should add value on top of Antseed infrastructure. Raw API-key resale and subscription credential sharing do not belong in the ecosystem.
             </p>
           </div>
         </div>
         <div className={styles.disclosure}>
           <p>
-            * Ecosystem listings are for discovery only and do not represent endorsement, sponsorship, verification, or approval by AntSeed. Review each project independently before using it.
+            * Ecosystem listings are for discovery only and do not represent endorsement, sponsorship, verification, or approval by Antseed. Review each project independently before using it.
           </p>
         </div>
       </Section>
 
       <FinalCta
-        title="Build, learn, and grow with AntSeed"
+        title="Build, learn, and grow with Antseed"
         sub="Use the docs, connect your tools, or launch a provider to help expand the peer-to-peer AI network."
         note={
           <>

@@ -6,6 +6,10 @@ export function isMultiInstanceDevelopment(): boolean {
   return process.env[MULTI_INSTANCE_ENV] === '1';
 }
 
+export function shouldRemoveSharedConfigPatches(reason: 'disconnect' | 'shutdown'): boolean {
+  return reason === 'disconnect' || !isMultiInstanceDevelopment();
+}
+
 export function desktopInstanceName(): string {
   return process.env['ANTSEED_DESKTOP_INSTANCE']?.trim() ?? '';
 }

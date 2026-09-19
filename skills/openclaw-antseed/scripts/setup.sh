@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Setup AntSeed buyer proxy for OpenClaw
+# Setup Antseed buyer proxy for OpenClaw
 #
 # Usage:
 #   ./setup.sh --service moonshotai/kimi-k2.5 [--port 5005] [--bootstrap HOST:PORT] [--service-flag]
@@ -9,6 +9,7 @@ set -euo pipefail
 # Examples:
 #   ./setup.sh --service moonshotai/kimi-k2.5
 #   ./setup.sh --service moonshotai/kimi-k2.5 --port 5005 --bootstrap 108.128.178.49:6882 --service-flag
+#   ANTSEED_BASE_URL=https://example.com/v1 ANTSEED_API_KEY=antseed_... ./setup.sh --service moonshotai/kimi-k2.5
 
 PORT=5005
 SERVICE=""
@@ -57,10 +58,13 @@ if [ -z "$SERVICE" ]; then
 fi
 
 if [ -z "$SERVICE_NAME" ]; then
-  SERVICE_NAME="$SERVICE via AntSeed"
+  SERVICE_NAME="$SERVICE via Antseed"
 fi
 
-echo "==> Installing AntSeed CLI..."
+BASE_URL="${ANTSEED_BASE_URL:-http://127.0.0.1:${PORT}/v1}"
+API_KEY="${ANTSEED_API_KEY:-antseed-p2p}"
+
+echo "==> Installing Antseed CLI..."
 if ! command -v antseed &>/dev/null; then
   npm install -g @antseed/cli
 fi
@@ -110,8 +114,9 @@ cfg = json.load(open('${OPENCLAW_CONFIG}'))
 # Set up service provider
 providers = cfg.setdefault('models', {}).setdefault('providers', {})
 providers['antseed'] = {
-    'baseUrl': 'http://127.0.0.1:${PORT}',
-    'apiKey': 'antseed-p2p',
+    'baseUrl': '${BASE_URL}',
+    'apiKey': '${API_KEY}',
+    'authHeader': True,
     'api': 'anthropic-messages',
     'models': [{
         'id': '${SERVICE}',
@@ -128,6 +133,7 @@ cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})[
 
 json.dump(cfg, open('${OPENCLAW_CONFIG}', 'w'), indent=2)
 print('  Provider configured: antseed/${SERVICE}')
+print('  Endpoint: ${BASE_URL}')
 print('  Default service set: antseed/${SERVICE}')
 "
 
@@ -136,7 +142,7 @@ if [ "$INSTALL_SERVICE" = true ]; then
   ANTSEED_BIN=$(command -v antseed)
   sudo tee /etc/systemd/system/antseed-buyer.service > /dev/null <<SERVICE
 [Unit]
-Description=AntSeed Buyer Proxy
+Description=Antseed Buyer Proxy
 After=network-online.target
 Wants=network-online.target
 
@@ -165,5 +171,5 @@ else
 fi
 
 echo ""
-echo "==> Restart the OpenClaw gateway to apply changes."
+echo "==> Apply the changes with: openclaw gateway restart"
 echo "==> Done"

@@ -1,3 +1,4 @@
+import type {JSX} from 'react';
 import Link from '@docusaurus/Link';
 import styles from './footer.module.css';
 
@@ -19,6 +20,7 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
       {label: '$ANTS Token', to: '/ants-token'},
       {label: 'vs OpenRouter', to: '/vs/openrouter'},
       {label: 'AntSeedStats ↗', href: 'https://antseedstats.com'},
+      {label: 'AIPs ↗', href: 'https://aips.antseed.com'},
     ],
   },
   {
@@ -37,7 +39,7 @@ export default function Footer(): JSX.Element {
       <div className={styles.inner}>
         <div className={styles.brandCol}>
           <div className={styles.brandRow}>
-            <img src="/logo-white.svg" alt="AntSeed" className={styles.logo} />
+            <img src="/logo-white.svg" alt="Antseed" className={styles.logo} />
           </div>
           <p className={styles.tagline}>
             The open market for AI inference.
@@ -61,7 +63,7 @@ export default function Footer(): JSX.Element {
               </svg>
             </a>
           </div>
-          <div className={styles.copyright}>&copy; 2026 AntSeed Foundation</div>
+          <div className={styles.copyright}>&copy; 2026 Antseed Foundation</div>
         </div>
 
         <div className={styles.columns}>

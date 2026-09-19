@@ -39,6 +39,9 @@ export type PeerEntry = {
   port: number;
   providers: string[];
   services: string[];
+  /** Services this peer serves for $0 per its fetched pricing matrix — empty
+      until the peer's metadata has actually been resolved. */
+  freeServices: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -144,6 +147,13 @@ export type VprModelCatalogEntry = {
   minImageUsdPerImage: number | null;
   maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
+  /**
+   * True when some seller auto-routing may actually pick (trust/allow/block
+   * gate) offers this model at $0. Distinguishes a genuinely usable free
+   * model from one that merely displays a low fallback price because none of
+   * its sellers pass the gate.
+   */
+  hasEligibleFreeSeller: boolean;
   bestPeerId: string | null;
   /**
    * Reference/retail price for the equivalent model on the OpenRouter catalog,
@@ -152,6 +162,29 @@ export type VprModelCatalogEntry = {
    */
   baselineInputUsdPerMillion?: number | null;
   baselineOutputUsdPerMillion?: number | null;
+};
+
+/**
+ * Renderer-side mirror of `TrustBreakdown` from `@antseed/node`
+ * (`packages/node/src/reputation/trust-score.ts`). The renderer only imports
+ * `@antseed/node` subpath modules, so the shape is restated here.
+ *
+ *   trust = washFlagged ? 0 : history + usage + power + identity
+ *   (weights 50 / 20 / 10 / 20)
+ */
+export type TrustBreakdown = {
+  /** Final trust score, 0-100. */
+  score: number;
+  /** Settled service history; `null` when channel stats are unavailable. */
+  history: { score: number; channelCount: number; totalVolumeUsdcMicros: number } | null;
+  /** Last epoch's share of all pools' usage points; `null` when usage accounting data is unavailable. */
+  usage: { score: number; shareBps: number; epoch: number } | null;
+  /** Current epoch's share of all pools' staking power; `null` when pool data is unavailable. */
+  power: { score: number; shareBps: number; epoch: number } | null;
+  /** Verified-identity part; `null` when no verified identity has usable history. */
+  identity: { score: number; kind: 'github' | 'domain'; claim: string } | null;
+  /** Wash-trading registry verdict; `null` when the registry is unavailable. */
+  washFlagged: boolean | null;
 };
 
 export type DiscoverVerificationLink = {
@@ -164,6 +197,7 @@ export type DiscoverVerificationLink = {
 };
 
 export type DiscoverRow = {
+  advertisedVerifierIds?: string[];
   // Identity
   rowKey: string;              // `${peerId}:${serviceId}`
   serviceId: string;
@@ -210,19 +244,24 @@ export type DiscoverRow = {
   // Peer metadata
   onChainChannelCount: number | null;
 
-  // On-chain staking (AntseedStaking)
+  // On-chain staking (AntseedStakingPools)
   agentId: number;
-  stakeUsdc: string;            // bigint as string, 6-decimal USDC
+  /** ANTS actively staked in the seller's pool this epoch (whole ANTS). */
+  poolStakeAnts: number;
 
   // On-chain agent stats (AntseedChannels.getAgentStats)
   onChainActiveChannelCount: number;
   onChainGhostCount: number;
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
-  onChainReputationScore: number | null; // displayed 0-100 score
-  onChainTrustScore: number | null;
+  /** Buyer-computed trust score, 0-100 (see `TrustBreakdown`). */
+  onChainReputationScore: number | null;
   /** Model-specific 0-100 reputation after pricing-completeness adjustments. */
   effectiveReputationScore?: number | null;
+  /** Parts that make up `onChainReputationScore`; `null`/absent when the buyer has not scored the peer. */
+  trust?: TrustBreakdown | null;
+  /** `AntseedWashTradingRegistry` verdict; `null` when the registry was unavailable. */
+  washFlagged: boolean | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
 
@@ -270,6 +309,10 @@ export type RendererUiState = {
   /** 'blocked' = internet up but DHT unreachable (firewall/VPN dropping UDP);
       'no-peers' = on the DHT but discovery sweeps keep coming back empty. */
   networkAlert: 'none' | 'no-internet' | 'blocked' | 'no-peers';
+  /** Live DHT routing-table size from the buyer's status poll — the first
+      network signal that moves during startup, so the setup screen can show
+      bootstrap progress before any peer or service is discovered. */
+  dhtNodeCount: number;
 
   // --- Overview display ---
   overviewBadge: BadgeState;
@@ -359,6 +402,8 @@ export type RendererUiState = {
   chatConversations: unknown[];
   chatConversationsLoaded: boolean;
   chatProxyPort: number;
+  /** Buyer proxy port answered the last reachability probe. */
+  chatProxyOnline: boolean;
   /** Chat opens thin (compact window, no conversation list). The header
       toggle expands the window to the standard preset and shows the panel. */
   chatPanelExpanded: boolean;
@@ -395,6 +440,10 @@ export type RendererUiState = {
   vprModelCatalog: VprModelCatalogEntry[];
   /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** True while the auto-picked default model is provisional: no trusted free
+   * route is discovered yet, so the pick keeps being re-evaluated. Surfaces a
+   * "finding free peers" hint during the first-use discovery warm-up. */
+  vprDefaultModelProvisional: boolean;
   /** Dedicated internal-chat image route, set only by “Use in chat”. */
   chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
@@ -449,7 +498,7 @@ export function createInitialUiState(): RendererUiState {
     daemonState: null,
 
     // Runtime display
-    connectBadge: { tone: 'idle', label: 'Stopped' },
+    connectBadge: { tone: 'bad', label: 'Stopped' },
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
     // Logs
@@ -457,6 +506,7 @@ export function createInitialUiState(): RendererUiState {
 
     // Network reachability alert
     networkAlert: 'none',
+    dhtNodeCount: 0,
 
     // Overview
     overviewBadge: { tone: 'idle', label: 'Idle' },
@@ -533,7 +583,10 @@ export function createInitialUiState(): RendererUiState {
     chatConversations: [],
     chatConversationsLoaded: false,
     chatProxyPort: 0,
-    chatPanelExpanded: false,
+    chatProxyOnline: false,
+    // Chat opens wide (standard preset) with the conversation list showing;
+    // the in-view toggle collapses it to the thin panel.
+    chatPanelExpanded: true,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
@@ -559,6 +612,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprDefaultModelProvisional: false,
     chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {
@@ -568,7 +622,7 @@ export function createInitialUiState(): RendererUiState {
       blockedPeerIds: [],
     },
     vprFloatOpen: false,
-    vprFloatAutoOpen: false,
+    vprFloatAutoOpen: true,
     vprFloatShowRoutedPeer: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',

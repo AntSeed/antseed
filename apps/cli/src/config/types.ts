@@ -61,10 +61,6 @@ export interface SellerProviderConfig {
    * default env var (`OPENAI_API_KEY`) is used.
    */
   apiKeyEnv?: string;
-  /** Payment split for asynchronous video jobs. Defaults to 5000 (50%). */
-  videoPayment?: {
-    upfrontBps: number;
-  };
   /**
    * Rewrite request paths before forwarding upstream. Keys are exact incoming
    * paths, values are their replacements.
@@ -123,6 +119,18 @@ export interface SellerHealthCheckCLIConfig {
 }
 
 /**
+ * Periodic seller-wallet gas balance check settings.
+ */
+export interface SellerGasCheckCLIConfig {
+  /** Enable periodic ETH balance checks while payments are enabled. Default: true. */
+  enabled?: boolean;
+  /** Milliseconds between balance checks. Default: 60000 (1 minute). */
+  intervalMs?: number;
+  /** Minimum wallet balance in ETH before advertising is paused. Default: 0.00005. */
+  minBalanceEth?: number;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -163,6 +171,12 @@ export interface SellerCLIConfig {
    * are unadvertised until they recover. Set `enabled: false` to opt out.
    */
   healthCheck?: SellerHealthCheckCLIConfig;
+  /**
+   * Periodic seller-wallet ETH balance checks (payments mode only). Enabled by
+   * default; when the wallet cannot fund on-chain settlement the seller stops
+   * advertising until it is funded again. Set `enabled: false` to opt out.
+   */
+  gasCheck?: SellerGasCheckCLIConfig;
 }
 
 /**
@@ -200,7 +214,6 @@ export interface BuyerCLIConfig {
   video?: {
     autoApprove: boolean;
     maxTotalUsdc: string;
-    maxUpfrontBps: number;
     maxDurationSeconds: number;
   };
 }
@@ -222,6 +235,8 @@ export interface PaymentsCLIConfig {
    * amount. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
   /** Optional seller-side slack for estimate-only reserve preflight checks. Unset disables estimate-only rejection. */
   reserveEstimateOverdraftUsdc?: string;
   /**
@@ -256,6 +271,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedRegistry contract address */
+    registryContractAddress?: string;
     /** Deployed AntseedFreeUsage contract address override */
     freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
@@ -266,6 +283,22 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
+    legacyEmissionsContractAddress?: string;
+    legacyStakingContractAddress?: string;
+    legacyEmissionsV1ContractAddress?: string;
+    antsTokenAddress?: string;
+    emissionsGateAddress?: string;
+    sellerPoolsAddress?: string;
+    sellerRegistryAddress?: string;
+    positionInitAddress?: string;
+    usageAccountingAddress?: string;
+    usageRewardsAddress?: string;
+    sellerPoolsRewardsAddress?: string;
+    legacyEmissionsEscrowAddress?: string;
+    washTradingRegistryAddress?: string;
+    pointsPolicyRegistryAddress?: string;
+    /** Explorer REST base for seller profiles in `antseed ants`; empty string disables the lookup. */
+    explorerApiUrl?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */

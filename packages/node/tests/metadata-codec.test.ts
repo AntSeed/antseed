@@ -314,7 +314,7 @@ describe('encodeMetadata / decodeMetadata', () => {
         serviceCapabilities: { 'veo-3.1-generate-preview': { inputs: ['text', 'image'], outputs: ['video'], video: {
           generationModes: ['text_to_video', 'image_to_video'], minDurationSeconds: 4, maxDurationSeconds: 8,
           allowedDurationsSeconds: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'],
-          generateAudio: true, outputFormats: ['mp4'], maxFirstFrameBytes: 20_000_000, upfrontBps: 5000,
+          generateAudio: true, outputFormats: ['mp4'], maxFirstFrameBytes: 20_000_000,
         } } },
         maxConcurrency: 2, currentLoad: 0,
       }],

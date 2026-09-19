@@ -1,12 +1,106 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import type { DiscoverRow, VprSelectedModel } from '../../core/state';
+import { createInitialUiState } from '../../core/state';
+import { filterTeeBrowseRows, projectTeeBrowseCatalog, teeBrowseCache } from './tee-browse';
+import { filterVprCatalog, sortVprCatalog } from './view-models';
+import { chooseBestVprRoute, isRouteEligibleForAutoSelection } from '../routing/select';
+import { writeRetainedState } from '../../ui/hooks/useRetainedState';
+import * as baselines from './openrouter-baseline';
 import {
   createVprRouteSelection,
   findCatalogEntry,
   projectRowsToVprModelCatalog,
   selectDefaultVprModel,
+  sortFreeModelsByPriority,
 } from './model-catalog.js';
+
+test('TEE browsing counts distinct sellers and intersects pricing with matching offers', () => {
+  const preferences = { ...createInitialUiState().vprRoutingPreferences, minTrustScore: 0 };
+  const rows = [
+    discoverRow({ peerId: 'standard', serviceId: 'gpt-test', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+    discoverRow({ peerId: 'tee', serviceId: 'gpt-test', advertisedVerifierIds: ['antseed-verifier'], inputUsdPerMillion: 2, outputUsdPerMillion: 4 }),
+    discoverRow({ peerId: 'tee', serviceId: 'openai/gpt-test', advertisedVerifierIds: ['antseed-verifier'], inputUsdPerMillion: 2, outputUsdPerMillion: 4 }),
+    discoverRow({ peerId: 'other', serviceId: 'another-model', advertisedVerifierIds: ['acme'] }),
+  ];
+  const catalog = projectRowsToVprModelCatalog(rows);
+  const snapshot = structuredClone({ rows, catalog, preferences });
+  const routeBefore = chooseBestVprRoute(rows, preferences);
+  const pin = createVprRouteSelection(catalog[0], 'standard');
+  const pinBefore = structuredClone(pin);
+  const filtered = projectTeeBrowseCatalog(catalog, rows, preferences, 'tee');
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].peerCount, 1);
+  assert.equal(filtered[0].minInputUsdPerMillion, 2);
+  assert.equal(filtered[0].minOutputUsdPerMillion, 4);
+  assert.equal(filtered[0].hasEligibleFreeSeller, false);
+  assert.equal(filtered[0].serviceId, catalog[0].serviceId);
+  assert.deepEqual(filterVprCatalog(filtered, { freeOnly: true }), []);
+  assert.deepEqual(filterVprCatalog(filtered, { search: 'gpt', kinds: ['text'] }), filtered);
+  assert.deepEqual(filterVprCatalog(filtered, { kinds: ['image'] }), []);
+  assert.deepEqual(sortVprCatalog(filtered, 'Price'), filtered);
+  assert.equal(filterTeeBrowseRows(rows, 'tee').length, 2);
+  assert.equal(projectTeeBrowseCatalog(catalog, rows, preferences, 'all'), catalog);
+  assert.equal(filterTeeBrowseRows(rows, 'all'), rows);
+  assert.deepEqual({ rows, catalog, preferences }, snapshot);
+  assert.deepEqual(pin, pinBefore);
+  assert.equal(chooseBestVprRoute(rows, preferences), routeBefore);
+  const withdrawn = rows.map((row) => ({ ...row, advertisedVerifierIds: [] }));
+  assert.deepEqual(projectTeeBrowseCatalog(catalog, withdrawn, preferences, 'tee'), []);
+});
+
+test('TEE browsing keeps existing trust-based pricing eligibility and fallback', () => {
+  const preferences = { ...createInitialUiState().vprRoutingPreferences, minTrustScore: 60 };
+  const rows = [
+    discoverRow({ peerId: 'low', advertisedVerifierIds: ['antseed-verifier'], effectiveReputationScore: 10, inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+    discoverRow({ peerId: 'high', advertisedVerifierIds: ['antseed-verifier'], effectiveReputationScore: 90, inputUsdPerMillion: 3, outputUsdPerMillion: 6 }),
+  ];
+  const catalog = projectRowsToVprModelCatalog(rows, (row) => isRouteEligibleForAutoSelection(row, preferences));
+  const [filtered] = projectTeeBrowseCatalog(catalog, rows, preferences, 'tee');
+  assert.equal(filtered.minInputUsdPerMillion, 3);
+  assert.equal(filtered.hasEligibleFreeSeller, false);
+  const [fallback] = projectTeeBrowseCatalog(catalog, [rows[0]], preferences, 'tee');
+  assert.equal(fallback.minInputUsdPerMillion, 0);
+  assert.equal(fallback.hasEligibleFreeSeller, false);
+});
+
+test('TEE browsing retains its session filter without storing routing preferences', () => {
+  assert.equal(teeBrowseCache.filter, 'all');
+  writeRetainedState(teeBrowseCache, 'filter', 'tee');
+  assert.equal(teeBrowseCache.filter, 'tee');
+  writeRetainedState(teeBrowseCache, 'filter', 'all');
+});
+
+test('TEE display savings use matching prices rather than the unfiltered free offer', () => {
+  const reference = vi.spyOn(baselines, 'getCachedOpenRouterPrices').mockReturnValue({ 'gpt-test': { input: 4, output: 8 } });
+  try {
+    const rows = [
+      discoverRow({ peerId: 'standard', serviceId: 'gpt-test', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+      discoverRow({ peerId: 'tee', serviceId: 'gpt-test', advertisedVerifierIds: ['antseed-verifier'], inputUsdPerMillion: 2, outputUsdPerMillion: 4 }),
+    ];
+    const catalog = projectRowsToVprModelCatalog(rows);
+    const [filtered] = projectTeeBrowseCatalog(catalog, rows, createInitialUiState().vprRoutingPreferences, 'tee');
+    assert.equal(filtered.expectedSavingsPct, 50);
+    assert.equal(filtered.baselineInputUsdPerMillion, 4);
+    assert.equal(catalog[0].expectedSavingsPct, null);
+  } finally {
+    reference.mockRestore();
+  }
+});
+
+test('TEE browsing uses image offer prices and excludes unknown advertisements', () => {
+  const rows = [
+    discoverRow({ peerId: 'standard', serviceId: 'art', protocol: 'openai-images', minImageUsdPerImage: 0, maxImageUsdPerImage: 0 }),
+    discoverRow({ peerId: 'tee', serviceId: 'art', protocol: 'openai-images', advertisedVerifierIds: ['antseed-verifier'], minImageUsdPerImage: 0.04, maxImageUsdPerImage: 0.08 }),
+    discoverRow({ peerId: 'unrelated', serviceId: 'text', advertisedVerifierIds: ['other-verifier'] }),
+  ];
+  const filtered = projectTeeBrowseCatalog(projectRowsToVprModelCatalog(rows), rows, createInitialUiState().vprRoutingPreferences, 'tee');
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].kind, 'image');
+  assert.equal(filtered[0].minImageUsdPerImage, 0.04);
+  assert.equal(filtered[0].maxImageUsdPerImage, 0.08);
+  assert.deepEqual(filterVprCatalog(filtered, { freeOnly: true }), []);
+});
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
@@ -39,13 +133,13 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     lifetimeLastSessionAt: null,
     onChainChannelCount: null,
     agentId: 1,
-    stakeUsdc: '0',
+    poolStakeAnts: 0,
     onChainActiveChannelCount: 0,
     onChainGhostCount: 0,
     onChainTotalVolumeUsdc: '0',
     onChainLastSettledAt: 0,
     onChainReputationScore: null,
-    onChainTrustScore: null,
+    washFlagged: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -124,13 +218,13 @@ test('catalog retains cached-input pricing from a non-representative unified rou
   assert.equal(entry.maxCachedInputUsdPerMillion, 0.6);
 });
 
-test('expectedSavingsPct is 50 for totals 10 and 20', () => {
+test('expectedSavingsPct stays unset until a retail baseline is applied', () => {
   const [entry] = projectRowsToVprModelCatalog([
     discoverRow({ peerId: 'p1', inputUsdPerMillion: 4, outputUsdPerMillion: 6 }),
     discoverRow({ peerId: 'p2', inputUsdPerMillion: 8, outputUsdPerMillion: 12 }),
   ]);
 
-  assert.equal(entry.expectedSavingsPct, 50);
+  assert.equal(entry.expectedSavingsPct, null);
 });
 
 test('bestPeerId picks the lowest priced peer', () => {
@@ -213,9 +307,123 @@ test('selectDefaultVprModel skips a free model without a routable free peer', ()
       outputUsdPerMillion: 0,
     }),
   ]);
-  const isFreeEntryRoutable = (entry: { serviceId: string }): boolean => entry.serviceId === 'open-free';
+  const freeRouteReputation = (entry: { serviceId: string }): number | null =>
+    (entry.serviceId === 'open-free' ? 75 : null);
 
-  assert.equal(selectDefaultVprModel(catalog, null, isFreeEntryRoutable)?.serviceId, 'open-free');
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'open-free');
+});
+
+test('catalog pricing ignores sellers auto-routing would not pick', () => {
+  // Hana-style case: an untrusted seller offers the model for $0 while the
+  // trusted sellers charge — the entry must NOT read as free, because a send
+  // would really route (and bill) through a trusted paid seller.
+  const [entry] = projectRowsToVprModelCatalog(
+    [
+      discoverRow({ peerId: 'untrusted-free', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+      discoverRow({ peerId: 'trusted-paid', inputUsdPerMillion: 0.135, outputUsdPerMillion: 0.54 }),
+    ],
+    (row) => row.peerId !== 'untrusted-free',
+  );
+
+  assert.equal(entry.minInputUsdPerMillion, 0.135);
+  assert.equal(entry.minOutputUsdPerMillion, 0.54);
+  assert.equal(entry.peerCount, 2);
+});
+
+test('catalog pricing falls back to all sellers when none pass the gate', () => {
+  const [entry] = projectRowsToVprModelCatalog(
+    [discoverRow({ peerId: 'only-untrusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 })],
+    () => false,
+  );
+
+  assert.equal(entry.minInputUsdPerMillion, 0);
+  assert.equal(entry.minOutputUsdPerMillion, 0);
+});
+
+test('selectDefaultVprModel picks the free model whose seller has the highest trust score', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    // More peers = sorted first in the catalog, but its free seller is barely trusted.
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'barely-free',
+      serviceLabel: 'Barely Free',
+      peerId: 'p1',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({ provider: 'openai', serviceId: 'barely-free', peerId: 'p2' }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'proven-free',
+      serviceLabel: 'Proven Free',
+      peerId: 'p3',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+  const freeRouteReputation = (entry: { serviceId: string }): number | null => {
+    if (entry.serviceId === 'barely-free') return 61;
+    if (entry.serviceId === 'proven-free') return 94;
+    return null;
+  };
+
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'proven-free');
+});
+
+test('selectDefaultVprModel prefers a priority-list free model over a higher-trust unknown one', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'obscure-free',
+      serviceLabel: 'Obscure Free',
+      peerId: 'p1',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'MiniMax-M3',
+      serviceLabel: 'MiniMax M3',
+      peerId: 'p2',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+  const freeRouteReputation = (entry: { serviceId: string }): number | null => {
+    if (entry.serviceId === 'obscure-free') return 99;
+    if (entry.serviceId === 'MiniMax-M3') return 70;
+    return null;
+  };
+
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'MiniMax-M3');
+});
+
+test('selectDefaultVprModel keeps a model with a free route even when a paid variant raises entry prices', () => {
+  // A second seller's paid cached-input price must not mask the model's
+  // genuinely free route — candidacy is judged per route by the callback.
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'mixed-model',
+      serviceLabel: 'Mixed Model',
+      peerId: 'free-seller',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'mixed-model',
+      peerId: 'paid-seller',
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.1,
+    }),
+  ]);
+
+  assert.equal(
+    selectDefaultVprModel(catalog, null, () => 80)?.serviceId,
+    'mixed-model',
+  );
 });
 
 test('selectDefaultVprModel falls back to the popular pick when no free model is routable', () => {
@@ -232,7 +440,7 @@ test('selectDefaultVprModel falls back to the popular pick when no free model is
     }),
   ]);
 
-  assert.equal(selectDefaultVprModel(catalog, null, () => false)?.serviceId, 'gpt-5.6');
+  assert.equal(selectDefaultVprModel(catalog, null, () => null)?.serviceId, 'gpt-5.6');
 });
 
 test('findCatalogEntry returns null when the service is absent', () => {
@@ -425,4 +633,23 @@ test('catalog merges Claude coding-only routes into their base model', () => {
   assert.equal(catalog.length, 1);
   assert.equal(catalog[0]?.label, 'Claude Opus 4.8');
   assert.equal(catalog[0]?.peerCount, 2);
+});
+
+test('sortFreeModelsByPriority leads with priority-slot models, keeps availability order past them', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a1' }),
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a2' }),
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a3' }),
+    discoverRow({ serviceId: 'random-free-model', peerId: 'b1' }),
+    discoverRow({ serviceId: 'random-free-model', peerId: 'b2' }),
+    discoverRow({ serviceId: 'deepseek-v4-flash', peerId: 'd1' }),
+  ]);
+
+  assert.deepEqual(
+    sortFreeModelsByPriority(catalog).map((entry) => entry.serviceId),
+    // deepseek (slot 1) leads despite having the fewest sellers; minimax
+    // follows in its slot; unslotted models keep the incoming availability
+    // order at the tail.
+    ['deepseek-v4-flash', 'minimax-m2.7', 'random-free-model'],
+  );
 });

@@ -7,14 +7,17 @@ import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
-  computeOnChainReputationScore,
+  adaptPeerFaultErrorResponse,
+  computeTrustScore,
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
   isModelRouteEligible,
   modelRouteTotalPrice,
+  normalizedModelReputationScore,
   peerSupportsCooperativeClose,
   rankModelRoutes,
+  sanitizePeerDisplayName,
   type AntseedNode,
   type FaultAttribution,
   type BuyerSpendEvent,
@@ -56,13 +59,13 @@ import {
 import {
   buildNetworkModels,
   effectiveModelReputationScore,
-  normalizedModelReputationScore,
   parseModelTypeFilter,
 } from './network-models.js'
 import {
   findMissingRequiredParameters,
   findUnannouncedRequestParameters,
   findAdvertisedServiceOffer,
+  findAdvertisedServiceProtocols,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   parseRequiredParametersHeader,
@@ -100,12 +103,30 @@ import {
 } from './peer-health.js'
 import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
-import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { runVerifier, verifierSupportFingerprint, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { TEE_VERIFIER_ID } from '@antseed/node/tee-status'
+import { parseVerifierCapabilities } from '@antseed/node/verifier-capabilities'
+import { TeeVerification } from './tee-verification.js'
+import { TeeControl } from './tee-control.js'
 import { loadConfig } from '../config/loader.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
 export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoutedModelAlias, ROUTED_MODEL_ALIAS } from './request-utils.js'
+
+/**
+ * Why this daemon runs no hot-wallet deposit watcher — surfaced on
+ * `/_antseed/deposits/status` so UIs can name the actual cause instead of
+ * guessing (a missing watcher used to be indistinguishable from "this chain
+ * has no deposit relay").
+ */
+export type DepositWatcherAbsenceReason = 'external-daemon' | 'payments-disabled' | 'no-deposit-relay'
+
+const WATCHER_ABSENCE_ERRORS: Record<DepositWatcherAbsenceReason, string> = {
+  'payments-disabled': 'Deposit watcher unavailable — payments are disabled on this buyer.',
+  'no-deposit-relay': 'Deposit watcher unavailable — this chain has no deposit relay.',
+  'external-daemon': 'Deposit watcher unavailable — another daemon owns the proxy port and runs the watcher.',
+}
 
 export interface BuyerProxyConfig {
   port: number
@@ -147,7 +168,13 @@ interface VideoRouteAffinity {
   expiresAt: number
 }
 
-const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+// 401/403 are included: sellers relay upstream auth failures (revoked or
+// expired key, region/WAF block) that are specific to that seller's upstream
+// account, so another peer serving the same model can usually complete the
+// request. 402 stays terminal (buyer payment flow), and 404 stays terminal
+// because model_not_found already has dedicated unadvertise handling while a
+// generic 404 would repeat identically on every peer.
+const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
@@ -258,8 +285,6 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
 /** Min gap between background peer refreshes triggered by model_not_found responses. */
 const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
-/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
-const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 /**
  * Statuses that prove the peer is alive and serving. Any response short of a
@@ -398,7 +423,7 @@ function adaptBuyerFaultErrorResponse(
   }
 }
 
-function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+export function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
   if (response.statusCode < 400) return response
 
   let parsed: Record<string, unknown>
@@ -408,19 +433,27 @@ function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): Seriali
     return response
   }
 
+  // Scrub the whole tree, not just the top level: a seller nesting the marker
+  // deeper (e.g. error.details.code) must not be able to have its failure
+  // classified as buyer-fault downstream. Iterate to avoid recursion limits
+  // without leaving deeply nested markers trusted by downstream clients.
   let changed = false
-  const scrub = (record: Record<string, unknown>): void => {
+  const pending: unknown[] = [parsed]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (value === null || typeof value !== 'object') continue
+    if (Array.isArray(value)) {
+      pending.push(...value)
+      continue
+    }
+    const record = value as Record<string, unknown>
     for (const key of ['code', 'type', 'errorCode']) {
       if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
         record[key] = 'upstream_error'
         changed = true
       }
     }
-  }
-
-  scrub(parsed)
-  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
-    scrub(parsed.error as Record<string, unknown>)
+    pending.push(...Object.values(record))
   }
 
   return changed
@@ -535,7 +568,8 @@ export function parsePersistedPeers(
       if (capabilities.length > 0) peer.capabilities = capabilities
     }
     if (lastReachedAt > 0) peer.lastReachedAt = lastReachedAt
-    if (typeof entry.displayName === 'string') peer.displayName = entry.displayName
+    const displayName = sanitizePeerDisplayName(entry.displayName)
+    if (displayName) peer.displayName = displayName
     if (typeof entry.publicAddress === 'string') peer.publicAddress = entry.publicAddress
     if (entry.providerPricing && typeof entry.providerPricing === 'object') {
       peer.providerPricing = entry.providerPricing as PeerInfo['providerPricing']
@@ -567,14 +601,8 @@ export function parsePersistedPeers(
     if (typeof entry.onChainAgentId === 'number' && Number.isFinite(entry.onChainAgentId)) {
       peer.onChainAgentId = entry.onChainAgentId
     }
-    if (typeof entry.onChainStakeUsdcMicros === 'number' && Number.isFinite(entry.onChainStakeUsdcMicros)) {
-      peer.onChainStakeUsdcMicros = entry.onChainStakeUsdcMicros
-    }
     if (typeof entry.onChainReputationScore === 'number' && Number.isFinite(entry.onChainReputationScore)) {
       peer.onChainReputationScore = entry.onChainReputationScore
-    }
-    if (typeof entry.onChainTrustScore === 'number' && Number.isFinite(entry.onChainTrustScore)) {
-      peer.onChainTrustScore = entry.onChainTrustScore
     }
     if (typeof entry.onChainSybilRisk === 'number' && Number.isFinite(entry.onChainSybilRisk)) {
       peer.onChainSybilRisk = entry.onChainSybilRisk
@@ -598,6 +626,27 @@ export function parsePersistedPeers(
     if (typeof entry.onChainStakedAtSec === 'number' && Number.isFinite(entry.onChainStakedAtSec)) {
       peer.onChainStakedAtSec = entry.onChainStakedAtSec
     }
+    if (typeof entry.onChainUsageEpoch === 'number' && Number.isFinite(entry.onChainUsageEpoch)) {
+      peer.onChainUsageEpoch = entry.onChainUsageEpoch
+    }
+    if (typeof entry.onChainUsageShareBps === 'number' && Number.isFinite(entry.onChainUsageShareBps)) {
+      peer.onChainUsageShareBps = entry.onChainUsageShareBps
+    }
+    if (typeof entry.onChainUsageLastEpochUsdcMicros === 'number' && Number.isFinite(entry.onChainUsageLastEpochUsdcMicros)) {
+      peer.onChainUsageLastEpochUsdcMicros = entry.onChainUsageLastEpochUsdcMicros
+    }
+    if (typeof entry.onChainPoolStakeAnts === 'number' && Number.isFinite(entry.onChainPoolStakeAnts)) {
+      peer.onChainPoolStakeAnts = entry.onChainPoolStakeAnts
+    }
+    if (typeof entry.onChainPoolPowerShareBps === 'number' && Number.isFinite(entry.onChainPoolPowerShareBps)) {
+      peer.onChainPoolPowerShareBps = entry.onChainPoolPowerShareBps
+    }
+    if (typeof entry.onChainWashFlagged === 'boolean') {
+      peer.onChainWashFlagged = entry.onChainWashFlagged
+    }
+    if (typeof entry.onChainWashShareBps === 'number' && Number.isFinite(entry.onChainWashShareBps)) {
+      peer.onChainWashShareBps = entry.onChainWashShareBps
+    }
     if (typeof entry.onChainStatsFetchedAt === 'number' && Number.isFinite(entry.onChainStatsFetchedAt)) {
       peer.onChainStatsFetchedAt = entry.onChainStatsFetchedAt
     }
@@ -619,9 +668,13 @@ export function parsePersistedPeers(
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
     }
-    if (peer.onChainReputationScore === undefined) {
-      const derivedScore = computeOnChainReputationScore(peer, nowMs)
-      if (derivedScore !== null) peer.onChainReputationScore = derivedScore
+    // Re-score from the persisted signals rather than trusting the stored
+    // number: identity evidence expires, so a cached score can go stale. When
+    // nothing scoreable was persisted, keep whatever score the row carried.
+    const trust = computeTrustScore(peer, nowMs)
+    if (trust) {
+      peer.trust = trust
+      peer.onChainReputationScore = trust.score
     }
     peers.push(peer)
   }
@@ -758,7 +811,8 @@ export class BuyerProxy {
    */
   private _lastModelActivityAt = 0
   private readonly _verifier?: VerifierPolicy
-  private readonly _verifyCache = new Map<string, CachedVerdict>()
+  private readonly _teeVerification: TeeVerification
+  private readonly _teeControl: TeeControl
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
   private _routingPreferences: ModelRoutingPreferences | null
@@ -794,6 +848,8 @@ export class BuyerProxy {
    * plane instead of running a second signer against the same wallet.
    */
   private _depositWatcher: DepositWatcher | null = null
+  /** Why no watcher is attached, so UIs can show the actual cause. */
+  private _depositWatcherAbsence: DepositWatcherAbsenceReason | null = null
 
   /**
    * requestId -> the conversation that issued it, so the node's per-request
@@ -809,6 +865,8 @@ export class BuyerProxy {
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._verifier = config.verifier
+    this._teeVerification = new TeeVerification(config.verifier)
+    this._teeControl = new TeeControl(this._teeVerification.sessionId)
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
@@ -901,9 +959,13 @@ export class BuyerProxy {
     }
   }
 
-  /** Attach the hot-wallet deposit watcher (owned by `buyer start`). */
-  setDepositWatcher(watcher: DepositWatcher): void {
+  /**
+   * Attach the hot-wallet deposit watcher (owned by `buyer start`), or record
+   * why none runs so the status endpoint can report the cause.
+   */
+  setDepositWatcher(watcher: DepositWatcher | null, absenceReason: DepositWatcherAbsenceReason | null = null): void {
     this._depositWatcher = watcher
+    this._depositWatcherAbsence = watcher ? null : absenceReason
   }
 
   /** Latest relayer receipt for a sweep authNonce, if one has arrived. */
@@ -934,6 +996,13 @@ export class BuyerProxy {
         resolve()
       })
     })
+    try {
+      const address = this._server.address()
+      await this._teeControl.publish(this._stateDir, typeof address === 'object' && address ? address.port : this._port)
+    } catch (error) {
+      await new Promise<void>((resolve) => this._server.close(() => resolve()))
+      throw error
+    }
     this._startBackgroundRefresh()
     this._startSuspendHeartbeat()
     // Trigger initial discovery immediately so the desktop can show services
@@ -961,6 +1030,7 @@ export class BuyerProxy {
         return
       }
       this._cachedPeers = peers
+      this._teeVerification.observePeers(peers)
       // Preserve the original discovery timestamp so cacheAgeMs reflects how
       // long ago the persisted data was actually written, not startup time.
       const peersUpdatedAt = (parsed as { peersUpdatedAt?: unknown }).peersUpdatedAt
@@ -976,6 +1046,8 @@ export class BuyerProxy {
   }
 
   async stop(): Promise<void> {
+    this._teeVerification.close()
+    await this._teeControl.close()
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
@@ -1249,6 +1321,7 @@ export class BuyerProxy {
     }
 
     this._cachedPeers = merged
+    this._teeVerification.observePeers(merged)
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
@@ -1284,19 +1357,27 @@ export class BuyerProxy {
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
         maxConcurrency: p.maxConcurrency ?? 0,
         currentLoad: p.currentLoad ?? null,
-        // On-chain stats read authoritatively by the buyer from AntseedChannels/Staking.
+        // On-chain stats read authoritatively by the buyer from AntseedChannels,
+        // the seller pools, usage accounting and the wash-trading registry.
         // Persisted so CLI/desktop surfaces can render richer UI without their
-        // own duplicate staking/channel RPC and reputation-score implementations.
+        // own duplicate RPC and trust-score implementations. The node already
+        // scored the peer; `onChainReputationScore` is the trust score and
+        // `trust` its breakdown.
         onChainAgentId: p.onChainAgentId ?? null,
-        onChainStakeUsdcMicros: p.onChainStakeUsdcMicros ?? null,
         onChainChannelCount: p.onChainChannelCount ?? null,
         onChainGhostCount: p.onChainGhostCount ?? null,
         onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStakedAtSec: p.onChainStakedAtSec ?? null,
-        // Fallback keeps pre-upgrade cache rows usable.
-        onChainReputationScore: p.onChainReputationScore ?? computeOnChainReputationScore(p) ?? null,
-        onChainTrustScore: p.onChainTrustScore ?? null,
+        onChainUsageEpoch: p.onChainUsageEpoch ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
+        onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
+        onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
+        onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
+        onChainWashFlagged: p.onChainWashFlagged ?? null,
+        onChainWashShareBps: p.onChainWashShareBps ?? null,
+        onChainReputationScore: p.onChainReputationScore ?? null,
+        trust: p.trust ?? null,
         onChainSybilRisk: p.onChainSybilRisk ?? null,
         onChainSybilFlags: p.onChainSybilFlags ?? null,
         onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
@@ -1615,6 +1696,23 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
+    if (path.startsWith('/_antseed/verification')) {
+      await this._teeControl.handle(req, res, method, path,
+        () => this._teeVerification.snapshot(this._cachedPeers),
+        async (peerId) => {
+          const peer = this._cachedPeers.find((candidate) => candidate.peerId === peerId)
+          if (!peer || !parseVerifierCapabilities(peer.capabilities).supported.includes(TEE_VERIFIER_ID)) {
+            throw new Error('Seller is unknown or does not advertise TEE support')
+          }
+          if (!this._verifier) throw new Error('Verification is disabled by the buyer CLI')
+          const signal = AbortSignal.timeout(31_000)
+          const outcome = await this._teeVerification.verifyForDisplay(peer,
+            () => runVerifier({ require: false, prefer: [TEE_VERIFIER_ID] }, peer.peerId, peer.capabilities,
+              (chosen) => makeVerifierReach(this._node, peer, chosen, signal), signal))
+          if (outcome.code === 'busy') throw new Error(outcome.reason)
+        })
+      return
+    }
     const origin = req.headers.origin ?? '';
     const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
     if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
@@ -1669,6 +1767,16 @@ export class BuyerProxy {
         providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
         providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
+        onChainReputationScore: p.onChainReputationScore ?? null,
+        trust: p.trust ?? null,
+        onChainPoolStakeAnts: p.onChainPoolStakeAnts ?? null,
+        onChainPoolPowerShareBps: p.onChainPoolPowerShareBps ?? null,
+        onChainUsageEpoch: p.onChainUsageEpoch ?? null,
+        onChainUsageShareBps: p.onChainUsageShareBps ?? null,
+        onChainUsageLastEpochUsdcMicros: p.onChainUsageLastEpochUsdcMicros ?? null,
+        onChainWashFlagged: p.onChainWashFlagged ?? null,
+        onChainWashShareBps: p.onChainWashShareBps ?? null,
+        verificationResults: p.verificationResults,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -2034,6 +2142,13 @@ export class BuyerProxy {
       res.end(JSON.stringify({
         ok: true,
         watcher: this._depositWatcher !== null,
+        // Why no watcher runs (null while one is attached) — lets UIs say
+        // "payments are disabled" vs "this chain has no deposit relay".
+        reason: this._depositWatcher ? null : this._depositWatcherAbsence,
+        // Live payments health: configured/active flags + chain-RPC
+        // reachability from the node's background monitor. Optional call —
+        // tolerate an older @antseed/node without it.
+        payments: this._node.getPaymentsStatus?.() ?? null,
         status: this._depositWatcher?.status() ?? null,
       }))
       return
@@ -2067,11 +2182,10 @@ export class BuyerProxy {
       }
       const watcher = this._depositWatcher
       if (!watcher) {
+        const reason = this._depositWatcherAbsence
+        const error = (reason && WATCHER_ABSENCE_ERRORS[reason]) ?? 'Deposit watcher unavailable.'
         res.writeHead(503, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({
-          ok: false,
-          error: 'Deposit watcher unavailable — payments are disabled or this chain has no deposit relay.',
-        }))
+        res.end(JSON.stringify({ ok: false, reason, error }))
         return
       }
       if (mode === 'active') watcher.promote()
@@ -2139,7 +2253,7 @@ export class BuyerProxy {
       res.writeHead(400, responseHeaders)
       res.end(JSON.stringify({
         error: {
-          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text", "images", or "decisions".`,
           type: 'invalid_request_error',
           param: 'type',
         },
@@ -2172,6 +2286,7 @@ export class BuyerProxy {
       normalizedPath.startsWith('/v1/responses') ||
       normalizedPath.startsWith('/v1/images/generations') ||
       normalizedPath.startsWith('/v1/images/edits') ||
+      normalizedPath.startsWith('/v1/systemone') ||
       normalizedPath.startsWith('/v1/models')
     if (!isKnownApiPath) {
       res.writeHead(404, { 'content-type': 'application/json' })
@@ -2229,31 +2344,6 @@ export class BuyerProxy {
       path,
       headers,
       body: new Uint8Array(body),
-    }
-    if (method === 'POST' && /^\/v1\/video\/generations\/[^/]+\/artifacts\/[^/]+\/receipt$/i.test(normalizedPath)) {
-      const receiptBody = parseRequestBodyObject(serializedReq.body, serializedReq.headers)
-      const generationId = typeof receiptBody?.['generation_id'] === 'string' ? receiptBody['generation_id'] : ''
-      const artifactId = typeof receiptBody?.['artifact_id'] === 'string' ? receiptBody['artifact_id'] : ''
-      const sha256 = typeof receiptBody?.['sha256'] === 'string' ? receiptBody['sha256'] : ''
-      const bytes = typeof receiptBody?.['bytes'] === 'number' ? receiptBody['bytes'] : NaN
-      const receivedAt = typeof receiptBody?.['received_at'] === 'number' ? receiptBody['received_at'] : Math.floor(Date.now() / 1000)
-      if (!generationId || !artifactId || !/^[0-9a-f]{64}$/i.test(sha256) || !Number.isSafeInteger(bytes) || bytes < 0) {
-        res.writeHead(400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: { code: 'invalid_receipt', message: 'generation_id, artifact_id, sha256, and bytes are required' } }))
-        return
-      }
-      const signed = await this._node.signVideoDeliveryReceipt({
-        version: 1,
-        generation_id: generationId,
-        artifact_id: artifactId,
-        sha256: sha256.toLowerCase(),
-        bytes,
-        received_at: receivedAt,
-      })
-      serializedReq = {
-        ...serializedReq,
-        body: new TextEncoder().encode(JSON.stringify(signed)),
-      }
     }
     const requiredParameters = parseRequiredParametersHeader(
       serializedReq.headers[REQUIRED_PARAMETERS_HEADER],
@@ -2319,7 +2409,7 @@ export class BuyerProxy {
         error: {
           type: 'no_default_route',
           code: 'no_default_route',
-          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in VPR, but no route is set. `
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in the AI VPN, but no route is set. `
             + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
           param: 'model',
         },
@@ -2525,7 +2615,7 @@ export class BuyerProxy {
             peerId: peer.peerId,
             serviceId: plan.serviceId,
             request: requestForPolicy,
-            reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
+            reputation: normalizedModelReputationScore(peer) ?? -1,
             hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
             inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
             outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
@@ -2573,6 +2663,27 @@ export class BuyerProxy {
       }
       if (candidates.length === 0) {
         const capabilityRequired = requiredParameters.length > 0
+        // The model exists on the network but only behind an API this
+        // request does not speak (e.g. a decision model asked via chat).
+        // Say so instead of claiming nobody serves it.
+        const advertisedProtocols = capabilityRequired ? [] : findAdvertisedServiceProtocols(discoveredPeers, requestedService)
+        if (advertisedProtocols.length > 0 && (!requestProtocol || !advertisedProtocols.includes(requestProtocol))) {
+          const hint = advertisedProtocols.includes('typesafe-systemone')
+            ? ` "${requestedService}" is a decision model; call POST /v1/systemone.`
+            : ''
+          log(`Request rejected: model ${requestedService} is served only via ${advertisedProtocols.join(', ')}`)
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({
+            error: {
+              type: 'unsupported_protocol',
+              code: 'unsupported_protocol',
+              message: `Model "${requestedService}" is served via ${advertisedProtocols.join(', ')}, not ${requestProtocol ?? 'this API'}.${hint}`,
+              param: 'model',
+              supported_protocols: advertisedProtocols,
+            },
+          }))
+          return
+        }
         res.writeHead(capabilityRequired ? 422 : 502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
           error: capabilityRequired
@@ -2623,6 +2734,7 @@ export class BuyerProxy {
             explicitProvider,
             router,
             RETRYABLE_STATUS_CODES,
+            false,
             clientAbortController.signal,
           )
           if (result.done) {
@@ -2858,6 +2970,7 @@ export class BuyerProxy {
       explicitProvider,
       router,
       RETRYABLE_STATUS_CODES,
+      true,
       clientAbortController.signal,
     )
     if (result.done && trackedConversationId && pinnedServiceId) {
@@ -2881,15 +2994,15 @@ export class BuyerProxy {
   ): Promise<VerifyOutcome> {
     const policy = this._verifier
     if (!policy) return { ok: true, verified: false }
-    const key = `${peer.peerId}|${verifierSupportFingerprint(peer.capabilities)}`
-    return getCachedVerdict(
-      this._verifyCache,
-      key,
-      Date.now(),
-      this._peerCacheTtlMs,
-      VERIFY_CACHE_MAX_ENTRIES,
-      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal),
-    )
+    const fingerprint = verifierSupportFingerprint(peer.capabilities)
+    const outcome = await this._teeVerification.verify(peer, policy,
+      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal))
+    const current = this._cachedPeers.find((candidate) => candidate.peerId === peer.peerId)
+    if (current && verifierSupportFingerprint(current.capabilities) !== fingerprint) {
+      return { ok: !policy.require, verified: false, transient: true, reason: 'Seller capabilities changed; retry verification' }
+    }
+    if (signal.aborted) return { ok: false, verified: false, transient: true, reason: 'Request aborted' }
+    return outcome
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {
@@ -2971,6 +3084,7 @@ export class BuyerProxy {
     explicitProvider: string | null,
     router: Router | null,
     retryableStatusCodes: Set<number>,
+    pinned: boolean,
     requestSignal: AbortSignal,
   ): Promise<
     | { done: true }
@@ -3081,7 +3195,10 @@ export class BuyerProxy {
     this._markModelActivity()
 
     // Forward through P2P
-      const wantsStreaming = clientWantsStreaming || binaryArtifactStream
+    const wantsStreaming = clientWantsStreaming || binaryArtifactStream
+    const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, peerResponseProtocol, { pinned })
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -3121,18 +3238,16 @@ export class BuyerProxy {
               }
             }
           },
-        }, {
-          signal: requestSignal,
-          collectResponseBody: !binaryArtifactStream,
-        })
+        }, { signal: requestSignal, pinned, collectResponseBody: !binaryArtifactStream })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
+        responseForClient = adaptPeerResponse(responseForClient)
         if (
           !streamed
           && adaptResponse
           && responseForClient.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
         ) {
-          responseForClient = adaptResponse(response)
+          responseForClient = adaptResponse(responseForClient)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
         responseForClient = this._withFriendlyUploadLimitError(responseForClient, requestForPeer.body.length, requestedService)
@@ -3208,12 +3323,16 @@ export class BuyerProxy {
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
-        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
+        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
+          signal: requestSignal,
+          pinned,
+        })
         if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
         let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        response = adaptPeerResponse(response)
         if (
           adaptResponse
           && response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
@@ -3358,7 +3477,19 @@ export class BuyerProxy {
         }
       }
 
-      return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }
+      const peerResponse = adaptPeerResponse({
+        requestId: requestForPeer.requestId,
+        statusCode: 502,
+        headers: { 'content-type': 'text/plain' },
+        body: Buffer.from(message),
+      })
+      return {
+        done: false,
+        statusCode: peerResponse.statusCode,
+        responseBody: Buffer.from(peerResponse.body),
+        responseHeaders: peerResponse.headers,
+        errorMessage: message,
+      }
     }
   }
 }

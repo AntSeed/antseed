@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildNetworkServiceOffers } from './service-catalog.js';
 
 describe('buildNetworkServiceOffers', () => {
+  it('projects peer-level verifier advertisements to every service offer', () => {
+    const offers = buildNetworkServiceOffers([{
+      peerId: 'tee-seller', providers: ['openai'], services: ['model-a', 'model-b'],
+      capabilities: ['verifier.antseed-verifier', 'verifier-default.antseed-verifier'],
+    }, { peerId: 'legacy', providers: ['openai'], services: ['model-a'] }]);
+    expect(offers.filter((offer) => offer.peerId === 'tee-seller').map((offer) => offer.advertisedVerifierIds))
+      .toEqual([['antseed-verifier'], ['antseed-verifier']]);
+    expect(offers.find((offer) => offer.peerId === 'legacy')?.advertisedVerifierIds).toEqual([]);
+  });
+
   it('projects provider-specific services, pricing, protocols, and image billing', () => {
     const offers = buildNetworkServiceOffers([{
       peerId: 'a'.repeat(40),
@@ -60,6 +70,21 @@ describe('buildNetworkServiceOffers', () => {
     });
   });
 
+  it('types typesafe-systemone services as decision offers', () => {
+    expect(buildNetworkServiceOffers([{
+      peerId: 'c'.repeat(40),
+      providers: ['typesafe'],
+      providerServiceApiProtocols: {
+        typesafe: { services: { 'jev-latest': ['typesafe-systemone'] } },
+      },
+    }])).toMatchObject([{
+      serviceId: 'jev-latest',
+      provider: 'typesafe',
+      protocol: 'typesafe-systemone',
+      type: 'decision',
+    }]);
+  });
+
   it('supports legacy peer-wide service lists', () => {
     expect(buildNetworkServiceOffers([{
       peerId: 'b'.repeat(40),
@@ -82,7 +107,7 @@ describe('buildNetworkServiceOffers', () => {
       providerServiceCapabilities: {
         veo: { services: { 'veo-3.1-generate-preview': { outputs: ['video'], video: {
           generationModes: ['text_to_video'], minDurationSeconds: 4, maxDurationSeconds: 8,
-          resolutions: ['720p'], aspectRatios: ['16:9'], generateAudio: true, outputFormats: ['mp4'], upfrontBps: 5000,
+          resolutions: ['720p'], aspectRatios: ['16:9'], generateAudio: true, outputFormats: ['mp4'],
         } } } },
       },
       providerServiceUnitBillingModels: { veo: { services: { 'veo-3.1-generate-preview': {

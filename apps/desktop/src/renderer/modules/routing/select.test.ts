@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
+import { bestFreeVprRouteReputation, chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
 import { projectRowsToVprModelCatalog } from '../catalog/model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -43,14 +43,14 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     lifetimeLastSessionAt: null,
     onChainChannelCount: null,
     agentId: 1,
-    stakeUsdc: '0',
+    poolStakeAnts: 0,
     onChainActiveChannelCount: 0,
     onChainGhostCount: 0,
     onChainTotalVolumeUsdc: '0',
     onChainLastSettledAt: 0,
     effectiveReputationScore: 75,
     onChainReputationScore: null,
-    onChainTrustScore: null,
+    washFlagged: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -108,7 +108,7 @@ test('unknown reputation cannot bypass a positive minimum with cheap pricing', (
     peerId: 'unknown',
     effectiveReputationScore: null,
     onChainReputationScore: null,
-    onChainTrustScore: null,
+    washFlagged: null,
     inputUsdPerMillion: 0,
     outputUsdPerMillion: 0,
   });
@@ -117,15 +117,15 @@ test('unknown reputation cannot bypass a positive minimum with cheap pricing', (
   assert.equal(chooseBestVprRoute([unknown], { ...preferences, minTrustScore: 60 }), null);
 });
 
-test('legacy raw trust is normalized before applying the minimum score', () => {
-  const legacy = discoverRow({
+test('a trust breakdown alone does not stand in for the displayed score', () => {
+  const unscored = discoverRow({
     effectiveReputationScore: null,
     onChainReputationScore: null,
-    onChainTrustScore: 100,
+    trust: { score: 100, history: { score: 50, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 }, usage: { score: 20, shareBps: 10_000, epoch: 11 }, power: { score: 10, shareBps: 10_000, epoch: 11 }, identity: { score: 20, kind: 'github', claim: 'portfolio' }, washFlagged: false },
   });
 
-  assert.equal(isRouteEligibleForAutoSelection(legacy, { ...preferences, minTrustScore: 60 }), false);
-  assert.ok(scoreVprRoute(legacy, preferences).score < 120);
+  assert.equal(isRouteEligibleForAutoSelection(unscored, { ...preferences, minTrustScore: 60 }), false);
+  assert.ok(scoreVprRoute(unscored, preferences).score < 120);
 });
 
 test('tie breaker uses lower price', () => {
@@ -157,7 +157,7 @@ test('missing price and trust values are handled without mutating rows', () => {
     outputUsdPerMillion: null,
     effectiveReputationScore: null,
     onChainReputationScore: null,
-    onChainTrustScore: null,
+    washFlagged: null,
   });
   const other = discoverRow({ peerId: 'other' });
   const rows = [row, other];
@@ -346,7 +346,7 @@ test('scoreVprRoute explains why a cooling-down peer was deprioritized', () => {
   assert.ok(scored.score < 0);
 });
 
-test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility gate', () => {
+test('bestFreeVprRouteReputation requires a $0 route that passes the eligibility gate', () => {
   const freeRated = discoverRow({ peerId: 'free-rated', inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
   const freeUnrated = discoverRow({
     peerId: 'free-unrated',
@@ -356,8 +356,25 @@ test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility ga
   });
   const paid = discoverRow({ peerId: 'paid' });
 
-  assert.equal(hasEligibleFreeVprRoute([freeRated, paid], preferences), true);
+  assert.equal(bestFreeVprRouteReputation([freeRated, paid], preferences), 75);
   // A free seller with no reputation fails the trust gate; a paid seller never counts.
-  assert.equal(hasEligibleFreeVprRoute([freeUnrated, paid], preferences), false);
-  assert.equal(hasEligibleFreeVprRoute([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), false);
+  assert.equal(bestFreeVprRouteReputation([freeUnrated, paid], preferences), null);
+  assert.equal(bestFreeVprRouteReputation([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), null);
+});
+
+test('bestFreeVprRouteReputation returns the highest trust score among eligible free routes', () => {
+  const lowRep = discoverRow({
+    peerId: 'free-low',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: 63,
+  });
+  const highRep = discoverRow({
+    peerId: 'free-high',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: 92,
+  });
+
+  assert.equal(bestFreeVprRouteReputation([lowRep, highRep], preferences), 92);
 });

@@ -33,7 +33,6 @@ interface VideoCreateOptions {
   download?: string;
   json?: boolean;
   maxTotalUsdc?: string;
-  maxUpfrontPercent?: string;
   timeout?: string;
 }
 
@@ -41,6 +40,7 @@ export function registerVideoCommands(program: Command): void {
   const video = program.command('video').description('Create and manage durable video generations');
 
   video.command('create')
+    .description('Authorize the full quote before submission; accepted attempts remain payable even if generation or delivery fails')
     .requiredOption('--model <model>', 'Runway or Veo model ID')
     .requiredOption('--prompt <prompt>', 'video prompt')
     .option('--image <path>', 'first-frame image')
@@ -59,7 +59,6 @@ export function registerVideoCommands(program: Command): void {
     .option('--download <path>', 'wait and download the primary artifact')
     .option('--json', 'emit machine-readable JSON')
     .option('--max-total-usdc <base-units>', 'maximum total price in USDC base units')
-    .option('--max-upfront-percent <percent>', 'maximum upfront percentage')
     .option('--timeout <seconds>', 'maximum wait time', '1800')
     .action(async (options: VideoCreateOptions) => {
       const context = await commandContext(video, options.json === true);
@@ -110,7 +109,7 @@ export function registerVideoCommands(program: Command): void {
       if (options.wait || options.download) generation = await waitForGeneration(context, generation.id, waitTimeoutMs);
       if (options.download) {
         if (generation.status !== 'succeeded' || !generation.artifacts[0]) throw new Error(`Generation ended with status ${generation.status}`);
-        await downloadArtifact(context, generation, generation.artifacts[0], resolve(options.download));
+        await downloadArtifact(context, generation.artifacts[0], resolve(options.download));
       }
       print(context, generation);
     });
@@ -156,7 +155,7 @@ export function registerVideoCommands(program: Command): void {
         ? generation.artifacts.find((candidate) => candidate.id === options.artifact)
         : generation.artifacts[0];
       if (!artifact) throw new Error('Generation has no matching artifact');
-      await downloadArtifact(context, generation, artifact, resolve(outputPath));
+      await downloadArtifact(context, artifact, resolve(outputPath));
       print(context, { generation_id: generation.id, artifact_id: artifact.id, path: resolve(outputPath), sha256: artifact.sha256, bytes: artifact.bytes });
     });
 }
@@ -174,11 +173,6 @@ function videoHeaders(options: VideoCreateOptions): Record<string, string> {
   if (options.maxTotalUsdc) {
     if (!/^(0|[1-9]\d*)$/.test(options.maxTotalUsdc)) throw new Error('--max-total-usdc must be USDC base units');
     headers['x-antseed-video-max-total-usdc'] = options.maxTotalUsdc;
-  }
-  if (options.maxUpfrontPercent) {
-    const percent = Number(options.maxUpfrontPercent);
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error('--max-upfront-percent must be from 0 through 100');
-    headers['x-antseed-video-max-upfront-bps'] = String(Math.round(percent * 100));
   }
   return headers;
 }
@@ -208,7 +202,6 @@ function getGeneration(baseUrl: string, generationId: string): Promise<VideoGene
 
 export async function downloadArtifact(
   context: VideoCommandContext,
-  generation: VideoGenerationResource,
   artifact: VideoArtifactManifest,
   outputPath: string,
 ): Promise<void> {
@@ -219,7 +212,6 @@ export async function downloadArtifact(
     if (completed.size !== artifact.bytes || await hashFile(outputPath) !== artifact.sha256) {
       throw new Error(`Output already exists and does not match the artifact: ${outputPath}`);
     }
-    await submitReceipt(context, generation, artifact, artifact.sha256, artifact.bytes);
     return;
   }
   const head = await fetch(new URL(artifact.links.content, context.baseUrl), { method: 'HEAD' });
@@ -257,27 +249,6 @@ export async function downloadArtifact(
   const sha256 = await hashFile(partialPath);
   if (sha256 !== artifact.sha256) throw new Error(`Artifact SHA-256 mismatch: expected ${artifact.sha256}, received ${sha256}`);
   await rename(partialPath, outputPath);
-  await submitReceipt(context, generation, artifact, sha256, file.size);
-}
-
-async function submitReceipt(
-  context: VideoCommandContext,
-  generation: VideoGenerationResource,
-  artifact: VideoArtifactManifest,
-  sha256: string,
-  bytes: number,
-): Promise<void> {
-  await requestJson(context.baseUrl, `/v1/video/generations/${encodeURIComponent(generation.id)}/artifacts/${encodeURIComponent(artifact.id)}/receipt`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      generation_id: generation.id,
-      artifact_id: artifact.id,
-      sha256,
-      bytes,
-      received_at: Math.floor(Date.now() / 1000),
-    }),
-  });
 }
 
 function parseTimeoutMs(value: string | undefined): number {

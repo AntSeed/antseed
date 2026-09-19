@@ -45,7 +45,6 @@ export function createDefaultConfig(): AntseedConfig {
       video: {
         autoApprove: true,
         maxTotalUsdc: '5000000',
-        maxUpfrontBps: 5000,
         maxDurationSeconds: 10,
       },
     },

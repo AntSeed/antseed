@@ -15,9 +15,10 @@ import {
   type StartOptions,
 } from './runtime/process-manager.js';
 import { registerPiChatHandlers } from './chat/engine.js';
+import { setClaudeDesktopGatewayModelSource } from './connected-apps/claude-desktop-gateway.js';
 import { emitChatEvent } from './chat/event-bus.js';
 import { createTelegramBridge } from './telegram/bridge.js';
-import { ensureSecureIdentity, secureIdentityEnv } from './identity.js';
+import { ensureSecureIdentity, getSecureIdentity, hasStoredIdentity, secureIdentityEnv } from './identity.js';
 import type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
 import { parseRuntimeActivityFromLog } from './runtime/log-parser.js';
 import {
@@ -72,6 +73,7 @@ import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
 import { registerTelegramIpc } from './ipc/telegram.js';
+import { registerPublicTunnelIpc } from './ipc/public-tunnel.js';
 import {
   effectiveLaunchTarget,
 } from './connected-apps/profile-targets.js';
@@ -86,6 +88,10 @@ import {
   DEFAULT_SYSTEM_PROXY_PORT,
 } from './system-proxy/profiles.js';
 import { resolveBuyerProxyPort } from './runtime/active-config.js';
+import { createTelemetryService } from './telemetry/telemetry.js';
+import { setTelemetryService } from './telemetry/runtime.js';
+import { firstChatDepositSnapshot } from './telemetry/events.js';
+import { refreshCreditsInfo } from './payments/credits.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
@@ -100,6 +106,29 @@ export type { InstalledPlugin } from './runtime/plugins.js';
 
 let isQuitting = false;
 let isInstallingUpdate = false;
+
+let telemetryReady = Promise.resolve<Awaited<ReturnType<typeof createTelemetryService>> | null>(null);
+
+function initializeTelemetry(hadExistingIdentity: boolean): Promise<Awaited<ReturnType<typeof createTelemetryService>> | null> {
+  return createTelemetryService({
+    userDataDir: app.getPath('userData'),
+    isDev,
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    getDistinctId: () => getSecureIdentity()?.wallet.address ?? null,
+    hadExistingIdentity,
+  }).then(async (service) => {
+    setTelemetryService(service);
+    await service.recordAppStarted();
+    return service;
+  }).catch(() => null);
+}
+
+async function recordTelemetryCleanShutdown(): Promise<void> {
+  const telemetry = await telemetryReady;
+  await telemetry?.recordCleanShutdown();
+}
 
 // The `antseed-attachment://` scheme must be registered as privileged
 // *before* `app.whenReady()` fires. The actual request handler is wired
@@ -267,6 +296,7 @@ registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
 registerSystemProxyIpc({ processManager });
+const publicTunnelRuntime = registerPublicTunnelIpc({ processManager });
 registerRuntimeIpc({
   processManager,
   logBuffer,
@@ -339,7 +369,43 @@ const piChatEngine = registerPiChatHandlers({
   appendSystemLog: (line) => {
     appendLog("connect", "system", line);
   },
+  recordFirstChatStarted: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordFirstChatStarted(input, async () => {
+      const credits = await refreshCreditsInfo();
+      return firstChatDepositSnapshot(credits.balanceUsdc);
+    });
+  },
+  recordFirstModelShown: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordFirstModelShown(input);
+  },
+  recordModelSelected: async (input, selectionKey) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordModelSelected(input, selectionKey);
+  },
+  recordChatRequestStarted: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordChatRequestStarted(input);
+  },
+  recordChatRequestFinished: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordChatRequestFinished(input);
+  },
+  recordDiscoveryFailed: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordDiscoveryFailed(input);
+  },
 });
+
+// The Claude Desktop gateway advertises the same curated picker rows the
+// in-app dropdown (and Telegram bridge) offer, behind Claude's model ids.
+setClaudeDesktopGatewayModelSource(() => (
+  (piChatEngine.getModelPicker()?.models ?? []).map((model) => ({
+    label: model.label,
+    model: model.serviceId,
+  }))
+));
 
 // ── Telegram bridge ──
 const telegramBridge = createTelegramBridge({
@@ -371,6 +437,10 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH);
   }
+  const hadExistingIdentity = hasStoredIdentity();
+  await ensureSecureIdentity();
+  telemetryReady = initializeTelemetry(hadExistingIdentity);
+  await telemetryReady;
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
   // Ensure config.json exists before anything else (first launch).
@@ -398,6 +468,14 @@ app.whenReady().then(async () => {
   };
 
   showMainWindow();
+
+  void publicTunnelRuntime.restoreAtLaunch().then((result) => {
+    if (result && !result.ok) {
+      appendLog('tunnel', 'system', `Public tunnel auto-start failed: ${result.error ?? 'Unknown error'}`);
+    }
+  }).catch((err) => {
+    appendLog('tunnel', 'system', `Public tunnel auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   // Fail open before anything else. Whatever the OS proxy is set to right now
   // was left behind by the previous run — and if that run ended in a crash,
@@ -463,11 +541,6 @@ app.whenReady().then(async () => {
     });
   }
 
-  // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
-  void ensureSecureIdentity().catch(() => {
-    // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
-  });
-
   // Resume the Telegram bridge if a bot was connected in a previous session.
   // Needs app-ready because the token store decrypts via safeStorage.
   void telegramBridge.start().catch((err) => {
@@ -481,6 +554,8 @@ app.whenReady().then(async () => {
     setAppSetupNeeded: (v) => { setAppSetupStatus({ needed: v }); },
     getAppSetupComplete: () => getAppSetupStatus().complete,
     setAppSetupComplete: (v) => { setAppSetupStatus({ complete: v }); },
+    onAppSetupStarted: () => { void telemetryReady.then((telemetry) => telemetry?.recordSetupStarted()); },
+    onAppSetupCompleted: () => { void telemetryReady.then((telemetry) => telemetry?.recordSetupCompleted()); },
     getMainWindow,
     appendLog,
   }).catch(() => {
@@ -716,6 +791,18 @@ app.whenReady().then(async () => {
   // spawn a detached watchdog before quitting that waits for the app to
   // exit and starts ShipIt itself if launchd didn't.
   const SHIPIT_LABEL = 'com.antseed.desktop.ShipIt';
+  const clearStaleMacUpdateJob = (): void => {
+    if (process.platform !== 'darwin') return;
+    const uid = process.getuid?.();
+    if (uid === undefined) return;
+    try {
+      execFileSync('launchctl', ['bootout', `gui/${uid}/${SHIPIT_LABEL}`], {
+        stdio: 'ignore',
+      });
+    } catch {
+      // No job registered — the common case.
+    }
+  };
   const spawnMacUpdateWatchdog = (): void => {
     if (process.platform !== 'darwin') return;
     const contentsDir = path.resolve(path.dirname(process.execPath), '..');
@@ -730,7 +817,7 @@ app.whenReady().then(async () => {
       // padding the user-visible gap before the relaunch.
       'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
       // The install gap has no UI at all — reassure via a system notification.
-      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "AntSeed VPR"\' >/dev/null 2>&1 || true',
+      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "Antseed AI VPN"\' >/dev/null 2>&1 || true',
       'j=0; while [ "$j" -lt 3 ]; do',
       '  sleep 2',
       '  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
@@ -757,8 +844,9 @@ app.whenReady().then(async () => {
     sendUpdateStatus({ status: 'installing', version: updateVersion });
 
     try {
+      clearStaleMacUpdateJob();
       spawnMacUpdateWatchdog();
-      await stopDesktopServices();
+      await Promise.allSettled([stopDesktopServices(), recordTelemetryCleanShutdown()]);
       isQuitting = true;
       autoUpdater.quitAndInstall(false, true);
       return { ok: true };
@@ -796,7 +884,10 @@ app.on('before-quit', (event) => {
   // downstream of anything that can block.
   restoreOsSystemProxySync();
 
-  void stopDesktopServices().finally(() => {
+  // Briefly flush the final close event and clear the local crash marker before
+  // exit, otherwise delivery is lost or the next launch reports a false crash.
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => {
     app.exit(0);
   });
 });
@@ -805,12 +896,14 @@ app.on('before-quit', (event) => {
 // stop signal before before-quit fires.
 process.on('SIGINT', () => {
   restoreOsSystemProxySync();
-  void stopDesktopServices().finally(() => process.exit(0));
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
   restoreOsSystemProxySync();
-  void stopDesktopServices().finally(() => process.exit(0));
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal
