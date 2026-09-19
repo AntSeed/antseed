@@ -1,0 +1,10 @@
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "{\"serviceId\":\"model-x\"}"
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import type { RouteSelectionContext, SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node';
 import plugin, { parseClassificationResponse } from './index.js';
 
@@ -7,6 +8,13 @@ const candidates: NonNullable<RouteSelectionContext['candidates']> = [
   { peerId: 'b'.repeat(40), serviceId: 'small-model', inputUsdPerMillion: 3, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.5 },
   { peerId: 'c'.repeat(40), serviceId: 'large-model', inputUsdPerMillion: 5, outputUsdPerMillion: 6, cachedInputUsdPerMillion: null },
 ];
+
+it('accepts the documented provider compatibility fixtures', async () => {
+  const fixtures = JSON.parse(await readFile(new URL('../fixtures/candidates.json', import.meta.url), 'utf8'));
+  const body = await readFile(new URL('../fixtures/response.json', import.meta.url));
+  expect(parseClassificationResponse({ requestId: 'fixture', statusCode: 200, headers: {}, body }, fixtures))
+    .toEqual([{ serviceId: 'model-x' }]);
+});
 
 function recommendation(index: number) {
   return { serviceId: candidates[index]!.serviceId };
@@ -29,7 +37,7 @@ function request(model = 'unused-client-model'): SerializedHttpRequest {
 
 function context(overrides: Partial<RouteSelectionContext> = {}): RouteSelectionContext {
   return {
-    mode: 'router', candidates: structuredClone(candidates), signal: new AbortController().signal, deadlineMs: Date.now() + 10_000,
+    candidates: structuredClone(candidates), signal: new AbortController().signal, deadlineMs: Date.now() + 10_000,
     invokeService: vi.fn(async (_messages, parseResponse) => {
       const result = response();
       expect(parseResponse?.(result)).toEqual([recommendation(0)]);
@@ -82,8 +90,8 @@ describe('generic classifier reference router', () => {
   it('does not silently convert a prior exact-seller selection into automatic seller selection', async () => {
     const selectionContext = context({ routing: { trigger: 'continuation', shouldRoute: false,
       previousRoute: { serviceId: 'small-model', peerId: candidates[0]!.peerId } } });
-    expect(await select(selectionContext)).toEqual([recommendation(0)]);
-    expect(selectionContext.invokeService).toHaveBeenCalledOnce();
+    expect(await select(selectionContext)).toEqual([{ serviceId: 'small-model', peerId: candidates[0]!.peerId }]);
+    expect(selectionContext.invokeService).not.toHaveBeenCalled();
   });
 
   it('reconsiders a new turn even when the old route remains eligible', async () => {
@@ -93,12 +101,19 @@ describe('generic classifier reference router', () => {
     expect(selectionContext.invokeService).toHaveBeenCalledOnce();
   });
 
-  it('bypasses classification for an explicit model and preserves local-router hooks', async () => {
-    const selectionContext = context();
-    expect(await select({ ...selectionContext, mode: 'model' }, request('small-model'))).toBeNull();
-    expect(selectionContext.invokeService).not.toHaveBeenCalled();
+  it('preserves local-router hooks and requires host context', async () => {
     const router = await plugin.createRouter({});
     expect(typeof (router as unknown as Record<string, unknown>).allowsPeerForPolicy).toBe('function');
+    await expect(router.selectRoute!(request(), [], null, null)).rejects.toThrow('host context');
+  });
+
+  it('supports an exact eligible peer and versions its request contract', async () => {
+    const exact = { serviceId: 'small-model', peerId: candidates[0]!.peerId };
+    expect(parseClassificationResponse(response(exact), candidates)).toEqual([exact]);
+    const selectionContext = context();
+    await select(selectionContext);
+    const messages = vi.mocked(selectionContext.invokeService!).mock.calls[0]![0];
+    expect(JSON.parse(messages[1]!.content).version).toBe(1);
   });
 
   it('does not spend on classification when there are no eligible offers', async () => {
@@ -127,7 +142,7 @@ describe('generic classifier reference router', () => {
   it.each([
     null, {}, [], { serviceId: null }, { serviceId: 42 }, { serviceId: '' },
     { serviceId: 'unadvertised-model' },
-    { serviceId: 'small-model', peerId: candidates[0]!.peerId },
+    { serviceId: 'small-model', peerId: 'not-an-eligible-peer' },
     { serviceId: 'small-model', routes: [] },
     { routes: [recommendation(0)] },
   ])('rejects invalid recommendations before fixed-fee authorization: %j', (content) => {

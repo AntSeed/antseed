@@ -18,6 +18,7 @@ function setup(statuses = [200]) {
     headers: { 'content-type': 'application/json', 'x-antseed-provider': 'openai' },
     body: new TextEncoder().encode(JSON.stringify({ model: 'classifier', messages: [] })) };
   const negotiator = {
+    bpm: { acceptResponse: vi.fn(), rejectResponse: vi.fn(), finishRequestBilling: vi.fn() },
     getOrCreatePaymentMux: vi.fn(() => ({})), trackRequestBillingContext: vi.fn(),
     handle402: vi.fn(async () => ({ action: 'retry' })),
     estimateCostFromResponse: vi.fn(() => { events.push('observe'); }),
@@ -37,11 +38,9 @@ function setup(statuses = [200]) {
     getConnection: getConnection as any, getMux: () => mux as any,
     getVerificationMux: () => ({} as any), registerPaymentMux: vi.fn(),
   });
-  const options: RequestExecutionOptions = { signal: controller.signal, routingAuthorization: {
-    parentRequestId: 'inference', maxAdditionalAuthorizationUsdc: '5000',
-    billing: { kind: 'per_call', amountMicroUsdc: '5000' },
-    validateResponse: () => { events.push('validate'); return true; },
-  } };
+  const options: RequestExecutionOptions = { signal: controller.signal, attribution: { purpose: 'routing', parentRequestId: 'inference' },
+    acceptResponse: () => { events.push('validate'); return true; },
+  };
   return { handler, peer, request, options, events, negotiator, mux, controller, getConnection };
 }
 
@@ -52,46 +51,39 @@ describe('per-call classification acceptance before payment', () => {
     expect(state.events).toEqual(['validate', 'observe', 'authorize']);
   });
 
-  it.each([[200], [402, 200]])('never observes or authorizes an invalid classification: %j', async (...statuses) => {
+  it.each([[200], [402, 200]])('never observes or authorizes an unacceptable response: %j', async (...statuses) => {
     const state = setup(statuses);
-    state.options.routingAuthorization!.validateResponse = () => false;
-    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('invalid classification');
+    state.options.acceptResponse = () => false;
+    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('unacceptable response');
     expect(state.events).toEqual([]);
     expect(state.negotiator.estimateCostFromResponse).not.toHaveBeenCalled();
     expect(state.negotiator.sendPostResponseAuth).not.toHaveBeenCalled();
   });
 
-  it('requires a validator before opening a connection', async () => {
-    const state = setup();
-    delete state.options.routingAuthorization!.validateResponse;
-    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('requires response validation');
-    expect(state.getConnection).not.toHaveBeenCalled();
-  });
-
   it('redacts parser errors and never authorizes payment after a parser throws', async () => {
     const state = setup();
-    state.options.routingAuthorization!.validateResponse = () => { throw new Error('private classifier payload'); };
-    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('Routing service returned an invalid classification');
+    state.options.acceptResponse = () => { throw new Error('private classifier payload'); };
+    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('Service returned an unacceptable response');
     expect(state.events).toEqual([]);
   });
 
   it('requires synchronous explicit acceptance instead of accepting a promise', async () => {
     const state = setup();
-    state.options.routingAuthorization!.validateResponse = (async () => true) as any;
-    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('invalid classification');
+    state.options.acceptResponse = (async () => true) as any;
+    await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow('unacceptable response');
     expect(state.events).toEqual([]);
   });
 
   it('does not authorize payment when cancellation happens during validation', async () => {
     const state = setup();
-    state.options.routingAuthorization!.validateResponse = () => { state.controller.abort(); return true; };
+    state.options.acceptResponse = () => { state.controller.abort(); return true; };
     await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toThrow();
     expect(state.events).toEqual([]);
   });
 
   it('does not let the parser mutate the response used for metering', async () => {
     const state = setup();
-    state.options.routingAuthorization!.validateResponse = (response) => { response.statusCode = 500; response.body.fill(0); return true; };
+    state.options.acceptResponse = (response) => { response.statusCode = 500; response.body.fill(0); return true; };
     const response = await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
     expect(response.statusCode).toBe(200);
     expect(new TextDecoder().decode(response.body)).toBe('{"model":"eligible"}');
@@ -108,8 +100,7 @@ describe('per-call classification acceptance before payment', () => {
     const state = setup();
     delete state.peer.providerServiceUnitBillingModels;
     state.peer.providerPricing!.openai!.defaults = { inputUsdPerMillion: 1, outputUsdPerMillion: 2 };
-    delete state.options.routingAuthorization!.billing;
-    delete state.options.routingAuthorization!.validateResponse;
+    delete state.options.acceptResponse;
     await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
     expect(state.events).toEqual(['observe', 'authorize']);
   });

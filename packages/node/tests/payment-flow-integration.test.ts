@@ -145,7 +145,7 @@ describe('Full Payment Flow Integration', () => {
     expect(result).toBe('reserved');
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
 
-    buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
+    await buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
     expect(buyer.isAuthorized(sellerPeerId)).toBe(true);
 
     return { sessionId };
@@ -359,10 +359,10 @@ describe('Full Payment Flow Integration', () => {
     const sellerPeerId = sellerIdentity.peerId;
     const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
 
-    buyer.handleAuthAck(sellerPeerId, { channelId: '0x' + 'ff'.repeat(32) });
+    await buyer.handleAuthAck(sellerPeerId, { channelId: '0x' + 'ff'.repeat(32) });
     expect(buyer.isAuthorized(sellerPeerId)).toBe(false);
 
-    buyer.handleAuthAck(sellerPeerId, { channelId: sessionId });
+    await buyer.handleAuthAck(sellerPeerId, { channelId: sessionId });
     expect(buyer.isAuthorized(sellerPeerId)).toBe(true);
   });
 
@@ -398,7 +398,7 @@ describe('Full Payment Flow Integration', () => {
     buyer.setSigner(buyerIdentity.wallet);
 
     await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
-    buyer.handleAuthAck(sellerPeerId, { channelId: buyerMux.sentSpendingAuths[0]!.channelId });
+    await buyer.handleAuthAck(sellerPeerId, { channelId: buyerMux.sentSpendingAuths[0]!.channelId });
 
     const { payload: auth } = await buyer.signPerRequestAuth(
       sellerPeerId,
@@ -464,7 +464,7 @@ describe('Settlement edge cases', () => {
     const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
     await seller.handleSpendingAuth(buyerPeerId, initialAuth, sellerMux);
-    buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
+    await buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
 
     const { payload: auth1 } = await buyer.signPerRequestAuth(
       sellerPeerId,

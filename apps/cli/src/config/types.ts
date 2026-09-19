@@ -2,7 +2,8 @@ import type {
   ServiceApiProtocol,
   ServiceCapabilities,
   UnitBillingModelV1,
-  RoutingMode,
+  RoutingSelection,
+  RoutingServiceTarget,
 } from '@antseed/node';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
@@ -21,10 +22,6 @@ export interface TokenPricingUsdPerMillion {
  */
 export interface HierarchicalPricingConfig {
   defaults: TokenPricingUsdPerMillion;
-  providers?: Record<string, {
-    defaults?: TokenPricingUsdPerMillion;
-    services?: Record<string, TokenPricingUsdPerMillion>;
-  }>;
 }
 
 /**
@@ -188,8 +185,7 @@ export interface SellerCLIConfig {
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
-  routingMode?: RoutingMode;
-  routingService?: RoutingServiceConfig;
+  selection?: RoutingSelection;
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */
@@ -204,8 +200,6 @@ export interface BuyerCLIConfig {
   metadataFetchTimeoutMs: number;
   /** Timeout in ms while waiting for a non-streaming response or initial stream response. */
   requestTimeoutMs: number;
-  routerTimeoutMs?: number;
-  routerFailureFallback?: 'none' | 'default';
   /** Maximum total duration in ms for a streaming response. Default: 30 minutes. */
   maxStreamDurationMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
@@ -221,21 +215,7 @@ export interface BuyerCLIConfig {
   verification?: BuyerVerificationConfig;
 }
 
-export interface RoutingServiceConfig {
-  billing?: { kind: 'token' } | { kind: 'per_call'; maxAmountMicroUsdc: string };
-  routerKey: string;
-  peerId: string;
-  provider: string;
-  serviceId: string;
-  allowPromptSharing: boolean;
-  maxInputUsdPerMillion?: number;
-  maxOutputUsdPerMillion?: number;
-  maxCachedInputUsdPerMillion?: number;
-  maxAdditionalAuthorizationUsdc: string;
-  maxRequestsPerMinute: number;
-  maxInputBytes: number;
-  maxOutputTokens: number;
-}
+export type RoutingServiceConfig = RoutingServiceTarget;
 
 /**
  * Payment configuration within the Antseed config.

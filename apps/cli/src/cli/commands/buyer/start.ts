@@ -463,13 +463,11 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         routingPreferences: effectiveBuyerConfig.routingPreferences,
         maxPricing: effectiveBuyerConfig.maxPricing,
         minPeerReputation: effectiveBuyerConfig.minPeerReputation,
-        routerTimeoutMs: Math.min(effectiveBuyerConfig.routerTimeoutMs ?? 10_000, effectiveBuyerConfig.requestTimeoutMs),
-        routerFailureFallback: effectiveBuyerConfig.routerFailureFallback,
+        requestTimeoutMs: effectiveBuyerConfig.requestTimeoutMs,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
-        routingMode: effectiveBuyerConfig.routingMode,
+        selection: effectiveBuyerConfig.selection,
         routingSettingsSchema,
         routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
-        routingService: effectiveBuyerConfig.routingService,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })
       let ownsProxyListener = false

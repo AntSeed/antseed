@@ -7,7 +7,6 @@ export type ModelRoutingPreferences = {
   minTrustScore: number;
   allowedPeerIds: string[];
   blockedPeerIds: string[];
-  routerEnabled?: boolean;
 };
 
 export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {

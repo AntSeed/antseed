@@ -1,462 +1,218 @@
-# Network model routing and classifier billing
+# Router integration and network classification
 
-## Scope
+## One selection, one interface
 
-This change combines generic router integration and classifier billing in one
-network-only PR.
+`buyer.selection` is one of:
 
-Included:
-
-- Optional model-and-peer selection in buyer router plugins, alongside the
-  existing `selectPeer` interface.
-- Plugin-owned settings, explicit activation, eligible candidates, host-enforced
-  deadlines, cancellation, and fail-closed fallback.
-- Plugin-controlled model selection with latest-user-text reuse hints,
-  concurrent-first-request coordination, and explicit user pins.
-- Host-mediated classifier requests with token or fixed-per-call prices,
-  separate authorization budgets and accounting, and validation before
-  per-call payment.
-- Discovery, existing payment-flow, schema-compatibility, and local-chain tests.
-
-Not included: desktop/VPR changes, plugin bundling or catalog endorsement,
-Vendor-specific endpoints or authentication, access/day passes, daily spending
-controls, savings dashboards, reference prices, forecast history, universal
-cost/quality controls, and durable exactly-once classification across restarts.
-
-The existing conversation store distinguishes a real user pin from the
-model last selected by the host and includes classifier spending in the total,
-with a `routingSpentUsdc` subtotal. No per-turn history store is added.
-Token counting and ordinary seller settlement behavior are unchanged.
-
-The proposed change to refuse reserve top-ups after a failed balance RPC read
-is deliberately excluded from this routing PR. Existing warning-and-continue
-behavior remains; explicitly insufficient balances still reject a top-up.
-Hardening the RPC-failure behavior needs a separate payment-focused change with
-its own review and changelog. Reserve diagnostics are debug-only.
-
-## Router contract
-
-For a runnable, vendor-neutral implementation, see
-`plugins/router-classifier/README.md`. It sends each eligible model/seller
-offer and its individual token prices to a configured classifier, validates
-one selected model, and leaves seller selection to the host. The local-chain routing
-fixture uses this real plugin with deterministic classifier responses; no
-vendor account is needed. The plugin is privately installable and is not bundled
-or published to npm. `--router classifier` resolves the local installation, not
-a public npm package; see its README for build, linking, and configuration.
-
-An installed router plugin implements `selectRoute` and optionally declares
-`routingSettingsSchema`. The buyer loads it using the existing `buyer start
---router <plugin>` or `--instance <instance>` flow. Nothing special is registered
-for a particular vendor. A paid classifier is a normal advertised provider
-service using `/v1/chat/completions`, not a custom routing-server endpoint. It
-must advertise `serviceCapabilities[serviceId].routing: true`; the buyer rejects
-a configured classifier without that capability. Seller service configuration
-sets `service.capabilities.routing: true`. Service names never establish whether
-a service is a classifier. Routing-capable services are excluded from inference
-model listings and eligible inference candidates.
-
-`selectRoute(request, peers, conversation, preferences, defaultRoute, context)`
-returns ordered `{ serviceId, peerId? }` recommendations. The host reconstructs requests, peers, and prices from its own
-discovery data. A prediction, token estimate, quality score, or cost forecast
-is never required.
-
-- `{ serviceId }`: AntSeed chooses an eligible seller using the same ranking as
-  an ordinary model request, including buyer preferences and conversation affinity.
-  Retryable failures may fall back to another eligible seller of that model.
-- `{ serviceId, peerId }`: choose that exact offer. Its seller and prices matter;
-  there is no implicit automatic-seller fallback.
-- `[ { serviceId, peerId }, { serviceId } ]`: try the exact offer first, then
-  explicitly allow automatic same-model seller fallback.
-
-Buyer price, trust, capability, and payment restrictions apply in every mode.
-Before dispatch, unusable recommendations can be skipped; once dispatch starts,
-fallback cannot change the selected model. A malformed seller ID is rejected,
-not interpreted as an omitted seller ID.
-
-The context supplies `mode: 'router'`, namespaced settings, an eligible candidate snapshot,
-`signal`, `deadlineMs`, and `invokeService(messages, parseResponse)`. Its trigger
-identifies new sessions, changed latest user text, continuations, and unavailable
-routes. `shouldRoute` suggests whether to reconsider the decision; it does not
-control whether `selectRoute` runs or require a paid classifier call.
-
-Candidate prices include input, output, and cached-input rates. An unknown
-cached-input rate is `null`, not a fabricated zero or a token forecast.
-Fixed-per-call services are not eligible as token-priced inference candidates;
-their fee requires the separate classifier authorization described below.
-
-- `null`: decline; continue through ordinary fixed-model routing.
-- `[]`: claimed request with no route; fail closed.
-- Throw or timeout: fail closed unless the buyer explicitly configured a default
-  fallback. That fallback still passes host policy checks.
-- Late results after cancellation cannot cause inference dispatch.
-
-The buyer must explicitly set `buyer.routingPreferences.routerEnabled: true`.
-Routing selection uses a separate `'model' | 'router'` mode, not a special model
-name or plugin property:
-
-- `x-antseed-routing-mode: router` requests classification regardless of
-  `body.model`; the model may be omitted.
-- `x-antseed-routing-mode: model` bypasses classification.
-- Without a per-request router override, normal concrete model requests remain
-  fixed, even when the session mode is `router`. Unknown model names do not
-  activate classification.
-- The existing `model: "antseed"` alias opts into the conversation/session
-  selection. `buyer.routingMode: "router"` initializes the session mode;
-  persisted session overrides take precedence over that initial configuration.
-- Explicit user model pins bypass classification. Select router mode for that
-  conversation to clear its pin before routing it automatically.
-
-The private classifier plugin checks `context.mode`, not the request's model name.
-
-The host calls `selectRoute` on every explicitly auto-routed request, including
-later turns. It never substitutes the conversation's last model before calling
-the plugin. A plugin can reconsider each user turn and keep the same model or
-choose another eligible model. Explicit user pins and concrete models without
-a router override still bypass classification.
-
-The user selection is a fixed model **or** explicit router mode. Its chosen
-inference model is history, not a new user pin. The backend endpoints persist
-selection independently from the fallback model:
-
-- `POST /_antseed/route` with `{ "routingMode": "router" }` persists session
-  router mode and clears the session peer pin. It preserves `defaultRoutedModel`
-  as an optional failure fallback, used only when `routerFailureFallback` is
-  `"default"`. The optional `model` field can set or clear that fallback.
-  GET and POST responses expose `{ "ok": true, "model": ..., "routingMode": ... }`.
-- `POST /_antseed/conversations/update` with
-  `{ "id": "<conversation-id>", "routingMode": "router" }` clears `pinnedModel`
-  and persists an explicit chat router selection. A fixed `pinnedModel` sets
-  mode to `model`; combining a fixed pin with router mode is rejected. The
-  response exposes `conversation.routingMode`. Changing the selection clears
-  cached routing decisions.
-
-This is a backend contract, not a desktop selector redesign.
-
-For tool continuations and repeated requests with unchanged history, the context
-suggests reuse and includes the still-eligible original recommendations in
-`previousRoutes` (and the first in legacy `previousRoute`). These preserve
-model-only versus exact-seller intent separately from the actual dispatched
-seller. A plugin should return the list without calling `invokeService` when
-reuse is appropriate:
-
-```ts
-if (context.routing?.shouldRoute === false && context.routing.previousRoutes?.length) {
-  return context.routing.previousRoutes;
-}
+```json
+{ "kind": "model", "model": "model-x" }
 ```
 
-The host validates reused recommendations against current price, trust, and
-capability constraints just like new recommendations. No remaining eligible route
-triggers reconsideration; no valid recommendation means no inference dispatch.
-Each accepted new per-call classification can incur a fee, even when it chooses
-the same model. Merely calling the local `selectRoute` hook does not incur a fee.
-
-Reuse compares only the latest user text within a conversation. A changed text
-suggests reconsideration; identical text suggests reuse, including identical text
-appended as a new user turn. Tool-result-only user messages are skipped. Earlier
-history, system instructions, tool definitions, settings, and legacy turn/revision/
-refresh headers do not invalidate reuse. This intentionally simpler heuristic
-does not detect compaction or distinguish repeated identical human turns.
-Missing conversation identity or no observable user text provides no reuse hint.
-Only a hash of the latest text is retained in the bounded in-memory tracker;
-no prompt content is persisted by it. Reused routes still pass current host policy.
-Plugins remain responsible for classifier invocation; the hint does not guarantee
-one paid call per human turn.
-
-The host coordinates only the routing-decision phase for automatic requests
-with the same conversation identity. After validating and recording a decision,
-it releases waiting requests before downstream inference starts; a slow answer
-does not keep the routing lock. Each waiter observes its own history against
-the updated routing context, so an unchanged continuation can reuse the decision
-while a new turn can request a new classification. Fixed-model and explicit
-seller requests bypass this coordination. Waiting is bounded and cancellable;
-failed routing releases the lock without recording a reusable decision.
-
-## Configuration example
-
-This is a fragment to merge into a normal buyer configuration, not a complete
-configuration file. Replace the plugin key and classifier identity with the
-installed plugin and an actual advertised seller. The settings vocabulary
-belongs to that plugin, not to AntSeed.
+```json
+{ "kind": "router" }
+```
 
 ```json
 {
-  "buyer": {
-    "routingMode": "router",
-    "routerTimeoutMs": 10000,
-    "routerFailureFallback": "none",
-    "routingPreferences": {
-      "routerEnabled": true,
-      "routerSettings": {
-        "plugin:example-router": { "policy": "balanced" }
-      }
-    },
-    "routingService": {
-      "routerKey": "plugin:example-router",
-      "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "provider": "openai",
-      "serviceId": "classifier",
-      "allowPromptSharing": true,
-      "billing": { "kind": "per_call", "maxAmountMicroUsdc": "5000" },
-      "maxAdditionalAuthorizationUsdc": "5000",
-      "maxRequestsPerMinute": 10,
-      "maxInputBytes": 8192,
-      "maxOutputTokens": 128
-    }
+  "kind": "router",
+  "service": {
+    "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "provider": "openai",
+    "serviceId": "model-selector"
   }
 }
 ```
 
-Use `instance:<name>` for named plugin instances. Direct `--router` keys use the
-exact configured router argument. The host only passes that key's settings to
-the plugin, validates them against its schema, and keeps buyer policy separate.
+A fixed selection supplies the target for the existing `antseed` model alias.
+`model: null` clears it. A router selection without a service uses the installed
+router's `selectRoute` implementation. A router selection with a service uses the
+CLI's bundled `@antseed/router-classifier` adapter. Replace the example peer ID
+with the peer offering your routing service.
 
-For the private classifier plugin, use `plugin:@antseed/router-classifier` for both keys
-and replace `{ "policy": "balanced" }` with its optional
-`{ "instructions": "Choose a suitable model while considering prices." }` setting.
-Send an explicit router request without a model, for example:
+Local rules and network classification implement the same `Router.selectRoute`
+interface. The host supplies the request, conversation, buyer preferences, eligible
+candidates, settings, and cancellation/deadline context. A recommendation is
+`{ serviceId, peerId? }`: omit `peerId` to let AntSeed choose a seller, or include it
+to choose an exact offer. Returned prices, requests, or peer objects are not
+trusted; the host reconstructs dispatch and checks current policy.
 
-```sh
-curl http://127.0.0.1:8377/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -H 'x-antseed-routing-mode: router' \
-  -d '{"messages":[{"role":"user","content":"Explain this code."}],"max_tokens":128}'
-```
+A remote provider needs a compatible AntSeed service, not a vendor-specific buyer
+plugin. Adapt a proprietary upstream API on the seller side. Installed plugin
+code is trusted local code: this interface is not a JavaScript sandbox.
 
-Use your configured buyer proxy port. Clients using `model: "antseed"` instead
-follow the saved conversation/session selection without a per-request override.
-The classifier's chat-completions content remains the simple JSON object
-`{ "serviceId": "model-x" }`; the plugin converts it to host recommendations.
-
-`configSchema` describes startup configuration; `routingSettingsSchema` describes
-per-selection preferences. Both share the `ConfigField` metadata definition.
-`RouterSettingField` narrows it to string, number, and boolean fields with
-string-backed defaults, without startup-only required fields or secrets. Routing
-validation enforces declared choices and numeric bounds; it does not fill in
-defaults. Plugins remain responsible for their own missing-setting defaults.
-
-For token billing, set `billing.kind` to `token` and provide all three rate caps:
-`maxInputUsdPerMillion`, `maxOutputUsdPerMillion`, and
-`maxCachedInputUsdPerMillion`. `maxAdditionalAuthorizationUsdc` bounds additional
-signed spending for one classifier operation, not the channel's reserved
-collateral and not a daily spending allowance.
-
-Inference `buyer.maxPricing.providers` overrides are retained and validated
-alongside global defaults. Host policy resolves caps in this order:
-`providers[provider].services[serviceId]` > `providers[provider].defaults` >
-`defaults`. Classifier authorization still uses the separate `routingService`
-limits, not these inference caps.
-
-## Payment and operational boundaries
-
-### CLI configuration
-
-Optional routing fields can be initialized through either `config set buyer.<key>`
-or `config buyer set <key>`. For example:
+## Buyer configuration
 
 ```sh
-antseed config buyer set routingPreferences.routerSettings '{"plugin:example-router":{"policy":"balanced"}}'
-antseed config buyer set routerTimeoutMs 10000
-antseed config buyer set routerFailureFallback none
-antseed config buyer set routingPreferences.routerEnabled true
-antseed config buyer set routingMode router
+antseed config buyer set selection '{"kind":"router","service":{"peerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"openai","serviceId":"model-selector"}}'
+antseed buyer start
 ```
 
-Set `routingService` as one complete JSON object using the configuration example
-above. Partial service configurations fail validation and are not saved. Once
-configured, individual fields can be updated, for example:
+Send `model: "antseed"` or omit the model to use the selected router. Concrete
+model requests and explicit model/peer pins continue to bypass classification.
+The existing per-request `x-antseed-routing-mode: router` override explicitly asks
+for classification even when the body contains a model; `model` explicitly opts
+out for that request. This header is stripped before dispatch. It is not another
+saved configuration setting. User-pinned conversations remain pinned.
+
+Optional selection instructions use the existing plugin-settings namespace:
 
 ```sh
-antseed config buyer set routingService.billing.maxAmountMicroUsdc 6000
-antseed config buyer set routingService.maxAdditionalAuthorizationUsdc 6000
-antseed config buyer set routingPreferences.routerEnabled false
+antseed config buyer set routingPreferences.routerSettings '{"plugin:classifier":{"instructions":"Prefer the cheapest suitable model"}}'
 ```
 
-The first two commands apply to the per-call example. Payment amounts remain
-integer strings in the configuration; booleans remain booleans. Router-owned
-settings remain strings and should be supplied as a complete namespaced JSON
-object, including when package names contain dots. Invalid edits leave the
-previous configuration intact. These commands do not install a plugin or start
-a buyer; they configure the existing `buyer start --router` flow.
+Selecting a network service authorizes sending the request body and eligible
+candidate list to that service and paying for its classification under the buyer's
+existing policy. Client authorization headers are not included in the classifier
+payload. Funding and a valid advertised offer are still required for paid calls.
 
-### Billing semantics
+There is no `routingMode`, `routerEnabled`, `routerTimeoutMs`,
+`routerFailureFallback`, or separate `routingService` configuration. There are no
+new classifier-specific rate, input-byte, output-token, or price-ceiling settings.
+Provider/service-specific buyer price exceptions are deferred; this integration
+uses `buyer.maxPricing.defaults` and the existing trust/allow/block rules.
 
-The buyer opts into sharing classifier input with the configured seller. Input,
-output-token, request-rate, and authorization limits are checked by the host.
-The classifier peer is kept separate from inference peers to prevent ordinary
-inference requests from using its scoped payment authority.
+## Runtime selection and persistence
 
-Fixed-per-call payment requires a complete HTTP 2xx response, a successful
-plugin parser, and only eligible recommendations. Exact recommendations must
-match a model/seller pair; model-only recommendations must have an eligible
-seller in the host's snapshot. Invalid
-output, HTTP errors, timeout, cancellation, and route reuse authorize no new
-fixed fee. Token-priced services charge verified usage; they do not promise a
-free classification when a plugin rejects the content. See
-`router-per-call-billing.md` for the parser contract and failure cases.
+`POST /_antseed/route` accepts `{ "selection": ... }`; GET returns the current
+selection. The legacy `{ "model": "model-x" }` request and response `model` remain
+available for existing desktop clients. `defaultRoutedModel` in state is a derived
+compatibility field, never a hidden router fallback.
 
-Routing diagnostics use the normal CLI logger, without a dedicated JSONL file.
-Cumulative authorizations and service totals remain in the payment channel store,
-just like inference. Classifier spend events use `parentRequestId` to attribute
-authorized spending to the originating conversation. `conversations.json` stores
-that cost in `spentUsdc` and its `routingSpentUsdc` subtotal; classifier usage does
-not inflate inference token totals or inference request counts. Both kinds of spend
-update in memory immediately and schedule a coalesced atomic conversation-store
-write within 250 ms, including when classification succeeds but inference fails.
-`flush()` and normal shutdown force pending writes to finish. An abrupt crash
-may lose that short window of conversation bookkeeping; payment-channel
-authorization storage is separate. Old records default the routing subtotal to zero; old costs
-are not reconstructed. The existing channel migrations 001–005 are unchanged;
-no new channel migration or SQLite reserve-recovery persistence is included.
-No access-purchase or routing-history schema is shipped. Metadata v13 encodes the
-explicit service routing capability; announcements without that field remain
-v12. The v10–v12 wire baselines and existing image-unit encoding stay unchanged.
-Encoding rejects downgrades that would omit routing capabilities or unit fees.
+`POST /_antseed/conversations/update` accepts `{ "id": "...", "selection": ... }`.
+Use `selection: null` to clear a conversation override. Legacy `pinnedModel` updates
+remain supported; do not combine them with `selection`. Choosing a router clears
+the conflicting model pin, not messages or accounting. Global selection changes
+invalidate non-user-pinned routing context and cancel pending classification.
 
-SDK streaming requests explicitly reject `routingAuthorization`; classifier
-calls use complete buffered responses. Normal inference streaming remains
-supported, including inference selected by the router. Reserve recovery can
-replay existing authorization without advancing spending. Optional reserve
-top-up failures do not discard an already paid, accepted classification.
-Seller preflight includes `successful_requests` when estimating fixed-fee
-budgets, and billing checks use the requested API protocol's unit model.
+An explicit config selection takes precedence at startup. Without one, the proxy
+restores the saved session selection, including old fixed-model state. Runtime
+selection changes persist; a changed config selection is picked up while running.
+The desktop picker redesign is separate from this backend/CLI work.
 
-Duplicate `invokeService` calls reuse one in-process operation for a parent
-request. Restarting during an unfinished classification is not durable
-exactly-once processing; a later client retry can be a new billable request.
-The last selected model remains persisted for display and soft peer affinity,
-but turn-context tracking is bounded and in-memory. Restart or expiry can cause
-a new classification; persisted `lastModel` is not a permanent model lock.
-Invalid-response debt
-is not paid merely to unblock a seller; that seller can consequently refuse
-future service. No refund or automatic paid retry workflow is added.
+## Provider contract, version 1
 
-Only one routing authorization can be active per seller within a buyer. The
-routing executor queues overlapping classifications for that seller in arrival
-order, with at most 32 outstanding calls including the active call. Different
-sellers have independent queues; the existing admission rate limit still applies.
-Queue waiting counts against the request deadline. Cancelled or expired waiters
-never obtain a grant, and active calls retain their slot until SDK cleanup has
-finished. Queue overflow fails closed. This is a scheduling queue, not a paid
-retry queue, and does not serialize downstream inference. Installed plugins
-are trusted in-process code, not a security
-sandbox: host validation constrains this routing/payment API, not arbitrary
-filesystem access by installed code.
+Advertise an AntSeed service with:
+
+- `routing: true` in its service capabilities.
+- `openai-chat-completions` in its API protocols.
+- Valid advertised token prices, or the fixed-fee billing model described in
+  `router-per-call-billing.md`.
+
+The adapter makes one non-streaming `POST /v1/chat/completions` request through
+AntSeed's normal P2P transport. The outer `model` is the selected classifier
+service ID. `messages[0]` describes the selection task; `messages[1].content` is a
+JSON string with this shape:
+
+```json
+{
+  "version": 1,
+  "instructions": "Prefer the cheapest suitable model",
+  "request": {
+    "path": "/v1/chat/completions",
+    "body": { "messages": [{ "role": "user", "content": "Explain this code" }] }
+  },
+  "candidates": [
+    {
+      "peerId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "serviceId": "model-x",
+      "inputUsdPerMillion": 1,
+      "cachedInputUsdPerMillion": null,
+      "outputUsdPerMillion": 2
+    }
+  ]
+}
+```
+
+Treat client content as data, not routing instructions. Prices are USD per million
+tokens; `null` means unknown. Choose from the supplied candidate snapshot, not a
+hardcoded model catalog. The host excludes routing services from inference
+candidates, but does not exclude the other services of the same peer.
+
+Return HTTP 2xx with a chat-completions envelope. `choices[0].message.content`
+must be a JSON string containing exactly `serviceId` and optionally `peerId`:
+
+```json
+{
+  "choices": [{ "message": {
+    "role": "assistant",
+    "content": "{\"serviceId\":\"model-x\"}"
+  } }]
+}
+```
+
+An exact answer is `{"serviceId":"model-x","peerId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`.
+No markdown fences, extra keys, fallback model, or arbitrary endpoint is accepted.
+Token-priced services report usage through the normal response/payment path.
+
+### Compatibility check
+
+After building the adapter, check a captured response envelope against the exact
+candidate array sent to your service:
+
+```sh
+node plugins/router-classifier/scripts/check-compatibility.mjs candidates.json response.json
+```
+
+The command exits nonzero for malformed envelopes, extra fields, unknown models,
+or ineligible exact peers. It does not contact a vendor or spend money. The
+package includes passing fixture files and automated contract tests. This checks
+response compatibility, not service quality or full payment interoperability.
+Use the local-chain fixture for the latter.
+
+## Payment, lifecycle, and failures
+
+The adapter calls host `context.invokeService`, never recursively routes its own
+classifier request. The host directly calls the selected peer using the ordinary
+request handler and payment manager. Classification and inference are separate
+request IDs with a parent link. The runtime handles authorization automatically;
+authorization is distinct from eventual on-chain settlement.
+
+- Token classification uses existing token-price ceilings, advertised price
+  snapshots, payment exposure limits, reserves, and the request deadline.
+  **The existing `maxPerRequestUsdc` is an unverified-exposure window, not a hard
+  total cost cap.** No new total-operation cap is claimed or hidden in code.
+- Per-call classification authorizes exactly the advertised fee only after a
+  valid eligible answer. The fee must fit the existing `maxPerRequestUsdc` policy.
+- A classifier fee is independent of downstream inference success. A token-priced
+  invalid answer may still consume and charge tokens; fixed-fee invalid answers
+  are not accepted for payment.
+- One invocation per parent routing operation is memoized, including failures.
+  Repeating it shares the result; changing the payload or target is rejected.
+  Ambiguous transport failures do not start another paid classification.
+- Normal payment recovery may replay authorization for the same request, rather
+  than create another classification. A new client request can be a new paid
+  operation. This is **not durable exactly-once execution across restarts**.
+- Classification and inference use ordinary parallel seller requests, including
+  multiple classifications and an open inference stream on the same peer. Billing
+  snapshots and pending response costs are request-specific. Only shared channel
+  payment updates are serialized; response and acknowledgement waits are not.
+  Request cancellation does not block or cancel another chat's work.
+- Eligible continuations can reuse the previous selection without another paid
+  call. New turns or invalidated context can require a new classification.
+- Router errors, declines, empty results, timeout, or invalid answers fail closed.
+  There is no implicit fallback to a saved model. Model-only recommendations still
+  allow ordinary same-model seller failover; exact-peer recommendations do not.
+
+The removed classifier byte/output/RPM knobs have no new hidden replacements.
+The shared transport and seller still impose their own limits, but the buyer does
+not promise a generic per-operation output-token or payload-budget guarantee.
+If a stricter shared operation budget is desired, that is a separate design task.
+
+Diagnostics use the existing CLI logger, without recording prompts. Conversation
+spend includes classification with a `routingSpentUsdc` subtotal; routing does not
+inflate inference request counts or token totals.
 
 ## Verification
 
-Run builds before tests so dependent packages use current declarations:
-
 ```sh
-pnpm run build:tier0
-pnpm --filter @antseed/ant-agent build
-pnpm --filter @antseed/router-local build
-pnpm --filter @antseed/router-classifier build
 pnpm --filter @antseed/router-classifier test
-pnpm --filter @antseed/cli test
-pnpm --filter @antseed/node test
-pnpm --filter @antseed/buyer-core test
-pnpm --filter @antseed/e2e run flow:local-chain-routing
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-route
+node e2e/scripts/local-chain-routing-flow.mjs
+node e2e/scripts/local-chain-routing-flow.mjs --per-call --invalid-route
+node e2e/scripts/local-chain-routing-flow.mjs --per-call --concurrent
+node e2e/scripts/local-chain-routing-flow.mjs --per-call --concurrent --same-peer
 ```
 
-The chain fixtures use isolated local Anvil development wallets, not production
-funds. They cover inference reuse, valid/invalid classifications, cancellation
-and catch-up refusal, and actual settlement. Unit tests additionally cover
-policy enforcement, schema validation, deadlines, discovery compatibility,
-response isolation, authorization races, and migration from the v5 schema.
-
-Use the repository's pinned Node 24 runtime. When changing Node versions in an
-existing worktree, rebuild native SQLite bindings for the new runtime before
-running the tests.
-
-Before release: review the diff against current `origin/main`, run the suite on
-that integrated tree, and perform the normal package-version/release process.
-This PR does not activate a production router or validate a private vendor's
-seller. A later desktop or access-billing PR must be reviewed separately.
-
-The dated runs below describe earlier revisions, not validation of the finalized
-explicit-mode and routing-capability changes. Re-run the checks above after
-integration before treating those changes as verified.
-
-### Initial-selection baseline validation — September 16, 2026
-
-Validated after merging `origin/main` at `f2ee484a9`, using Node 24.21.0:
-
-| Check | Result |
-| --- | --- |
-| Dependency-tier builds and CLI build | Passed |
-| SDK tests | 1,156 passed |
-| CLI tests | 599 passed |
-| Buyer-core tests | 11 passed |
-| Browser SDK tests | 26 passed |
-| Workspace typechecks | Passed |
-| Unchanged desktop main and renderer typechecks | Passed |
-| Local-chain token classifier | Passed; 140 micro-USDC settled |
-| Local-chain fixed-fee classifier, malformed-response rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
-| Local-chain fixed-fee classifier, unadvertised-route rejection | Passed; 10,000 micro-USDC settled for two accepted classifications |
-
-The final diff against the integrated main contains no desktop, Payments UI, or vendor-plugin
-files. No package publication, push, PR creation, or production deployment is
-part of this local validation.
-
-### Per-turn restoration validation — September 16, 2026
-
-The baseline above predates the restoration of plugin-controlled per-turn
-routing. Revalidated the restored behavior locally with Node 24.21.0:
-
-- SDK and CLI builds, workspace typechecks, and diff whitespace checks passed.
-- SDK: 1,174 tests passed, including 18 structural routing-context tests.
-- CLI: 607 tests passed, including direct/alias model switching, tool reuse,
-  user pins, eligibility changes, restart behavior, and initial-request races.
-- Local-chain token classifier: four classifications settled 560 micro-USDC.
-- Both local-chain fixed-fee cases (malformed output and unadvertised model):
-  five accepted classifications settled 25,000 micro-USDC. Tool reuse, HTTP
-  failure, invalid output, and blocked retry added no fixed fee.
-
-These use a fixture router and isolated Anvil wallets, not a live vendor's
-classifier or production funds. The restored host calls the plugin on every
-auto-routed request; the fixture plugin honors the host's reuse hints. This
-does not prove arbitrary plugins deduplicate paid calls or persist turn state.
-
-### Earlier storage parity and reuse validation — September 17, 2026
-
-This historical run predates the removal of the reserve-recovery migration and
-the simplification of the example to one model-only recommendation. Its test
-counts and exact-seller fixture results do not describe the simplified example.
-
-The latest-user-text heuristic now replaces the structural-history behavior
-described in the earlier validation record. Verified with Node 24.21.0:
-
-- Core, CLI, and reference classifier-plugin builds passed; workspace typechecks
-  and diff whitespace checks passed.
-- SDK: 1,190 tests passed, including 24 routing-context tests and existing image,
-  per-call, response-acceptance, and payment-race coverage.
-- CLI: 648 tests passed, including actual spend-event subscription, parent-chat
-  attribution, inference-only counters, persistence, and legacy-record defaults.
-- Reference classifier plugin: 26 tests passed.
-- Isolated local-chain token scenario: four classifications settled 560 micro-USDC.
-- Fixed-fee exact-seller/malformed-output and model-only/ineligible-output scenarios:
-  five accepted classifications each settled 25,000 micro-USDC, with no new fixed
-  fees for tool reuse, HTTP failure, rejected output, or blocked retries.
-- All three chain scenarios also checked persisted conversation totals and routing
-  subtotals against emitted authorized-spend deltas, without a routing JSONL file.
-
-CLI tests ran with the conflicting inherited `FORCE_COLOR` and `NO_COLOR`
-environment variables unset, so Node warnings did not pollute child-process stderr.
-
-### Simplified example and unchanged channel schema — September 17, 2026
-
-- Removed the new reserve-recovery migration and its SQLite read/write changes;
-  channel migrations remain at versions 001–005. Existing development databases
-  with additional columns remain readable without deleting their data.
-- The reference plugin now accepts only one `{ "serviceId": "..." }` selection;
-  the host chooses the seller. The shared API still supports richer plugins.
-- Node, CLI, and example-plugin builds passed; the example typecheck passed.
-- Storage, migration, settings, and buyer-payment regressions: 173 tests passed.
-  Example-plugin tests: 22 passed.
-- All three model-only local-chain scenarios passed: token billing settled
-  560 micro-USDC; each fixed-fee scenario settled 25,000 micro-USDC, rejecting
-  malformed or ineligible classifications without additional fixed fees.
+Build the affected packages first. The fixture requires Foundry, initialized
+contract dependencies, and local native modules. It starts isolated Anvil, creates
+throwaway wallets, and uses local test funds only. It tests automatic payment,
+reuse, failures, concurrency, accounting, and settlement.

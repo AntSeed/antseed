@@ -93,6 +93,9 @@ importers:
       '@antseed/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
+      '@antseed/router-classifier':
+        specifier: workspace:*
+        version: link:../../plugins/router-classifier
       '@peculiar/x509':
         specifier: ^2.0.0
         version: 2.0.0

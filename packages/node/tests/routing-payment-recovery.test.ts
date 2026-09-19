@@ -18,7 +18,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types
 const encoder = new TextEncoder();
 const sellerPeerId = toPeerId('b'.repeat(40));
 
-describe('bounded routing payment recovery', () => {
+describe('request billing recovery', () => {
   let directory: string;
   let store: ChannelStore;
 
@@ -49,11 +49,6 @@ describe('bounded routing payment recovery', () => {
     const pricing = kind === 'per_call'
       ? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
       : { inputUsdPerMillion: 1, outputUsdPerMillion: 2 };
-    const finish = manager.beginRoutingRequest({
-      sellerPeerId, requestId: 'classification', parentRequestId: 'inference', service: 'classifier',
-      maxAdditionalAuthorizationUsdc: 5000n, signal: new AbortController().signal, maxPricing: pricing,
-      ...(kind === 'per_call' ? { perCallAmountUsdc: 5000n } : {}),
-    });
     const connection = { state: ConnectionState.Open, send: vi.fn(), on: vi.fn(), off: vi.fn() };
     const paymentMux = new PaymentMux(connection);
     const channelId = await manager.authorizeSpending(sellerPeerId, paymentMux, 1n, pricing);
@@ -75,6 +70,7 @@ describe('bounded routing payment recovery', () => {
     const peer: PeerInfo = {
       peerId: sellerPeerId, lastSeen: Date.now(), providers: ['openai'],
       providerPricing: { openai: { defaults: pricing, services: {} } },
+      providerServiceApiProtocols: { openai: { services: { classifier: ['openai-chat-completions'] } } },
       ...(kind === 'per_call' ? { providerServiceUnitBillingModels: { openai: { services: {
         classifier: { 'openai-chat-completions': createPerCallBillingModel('5000') },
       } } } } : {}),
@@ -102,15 +98,40 @@ describe('bounded routing payment recovery', () => {
       getConnection: async () => connection, getMux: () => proxyMux as any,
       getVerificationMux: () => ({} as any), registerPaymentMux: vi.fn(),
     });
-    const options = { routingAuthorization: {
-      parentRequestId: 'inference', maxAdditionalAuthorizationUsdc: '5000',
-      ...(kind === 'per_call' ? { billing: { kind: 'per_call' as const, amountMicroUsdc: '5000' }, validateResponse: () => true } : {}),
-    } };
+    const options = { attribution: { purpose: 'routing' as const, parentRequestId: 'inference' },
+      ...(kind === 'per_call' ? { acceptResponse: () => true } : {}),
+    };
     return { manager, negotiator, connection, handler, peer, request, options, classification, paymentRequired,
-      sendAuth, dispatchedAmounts, responses, finish };
+      sendAuth, dispatchedAmounts, responses };
   }
 
-  it.each(['per_call', 'tokens'] as const)('recovers a base 402 without prepaying a scoped %s request', async (kind) => {
+  it('keeps normal inference accounting separate from classification on the same seller', async () => {
+    const state = await setup('tokens');
+    const events: any[] = [];
+    state.manager.setSpendListener((event) => events.push(event));
+    state.manager.trackRequestService('ordinary', 'inference-model');
+    await state.manager.signPerRequestAuth(sellerPeerId, {
+      requestId: 'ordinary', service: 'inference-model', inputBytes: encoder.encode('input'), outputBytes: encoder.encode('output'),
+      reportedInputTokens: 10_000n, reportedOutputTokens: 1_000n,
+    });
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(12_000n);
+    expect(events[0].purpose).not.toBe('routing');
+    expect(events[0].parentRequestId).toBeUndefined();
+    await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(12_140n);
+    expect(events.find((event) => event.requestId === 'classification')).toMatchObject({ purpose: 'routing', parentRequestId: 'inference' });
+    await state.manager.signPerRequestAuth(sellerPeerId, {
+      requestId: 'classification', service: 'classifier', inputBytes: new Uint8Array(), outputBytes: new Uint8Array(),
+    });
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(12_140n);
+    await state.manager.signPerRequestAuth(sellerPeerId, {
+      requestId: 'later', service: 'inference-model', inputBytes: encoder.encode('input'), outputBytes: encoder.encode('output'),
+      reportedInputTokens: 100n, reportedOutputTokens: 20n,
+    });
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(12_280n);
+  });
+
+  it.each(['per_call', 'tokens'] as const)('recovers a base 402 without prepaying a %s request', async (kind) => {
     const state = await setup(kind);
     const extend = vi.spyOn(state.manager, 'extendCurrentSpendingAuth');
     const response = await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
@@ -120,18 +141,11 @@ describe('bounded routing payment recovery', () => {
     expect(state.sendAuth.mock.calls.map(([payload]) => payload.cumulativeAmount))
       .toEqual(['0', kind === 'per_call' ? '5000' : '140']);
     expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(kind === 'per_call' ? 5000n : 140n);
-    state.finish();
   });
 
-  it.each(['per_call', 'tokens'] as const)('replays the previously paid %s authorization without consuming the next grant', async (kind) => {
+  it.each(['per_call', 'tokens'] as const)('replays the previously paid %s authorization without charging the next request', async (kind) => {
     const state = await setup(kind);
     await state.handler.sendRequest(state.peer, state.request, undefined, state.options);
-    state.finish();
-    const finish = state.manager.beginRoutingRequest({
-      sellerPeerId, requestId: 'classification-2', parentRequestId: 'inference', service: 'classifier',
-      maxAdditionalAuthorizationUsdc: 5000n, signal: new AbortController().signal,
-      ...(kind === 'per_call' ? { perCallAmountUsdc: 5000n } : {}),
-    });
     state.responses.push({ ...state.paymentRequired, requestId: 'classification-2' },
       { ...state.classification, requestId: 'classification-2' });
     const response = await state.handler.sendRequest(state.peer,
@@ -141,7 +155,6 @@ describe('bounded routing payment recovery', () => {
     expect(state.dispatchedAmounts).toEqual([0n, 0n, cost, cost]);
     expect(state.sendAuth.mock.calls[2]![0]).toEqual(state.sendAuth.mock.calls[1]![0]);
     expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(cost * 2n);
-    finish();
   });
 
   it.each([
@@ -169,7 +182,6 @@ describe('bounded routing payment recovery', () => {
     await state.negotiator.sendPostResponseAuth(state.peer, state.connection);
     expect(state.sendAuth).toHaveBeenCalledTimes(expectedAmounts.length);
     expect(topUp).toHaveBeenCalledOnce();
-    state.finish();
   });
 
   it.each(['sign', 'send'])('still rejects when post-response auth %s fails', async (failure) => {
@@ -183,6 +195,5 @@ describe('bounded routing payment recovery', () => {
     });
     await expect(state.handler.sendRequest(state.peer, state.request, undefined, state.options)).rejects.toBe(error);
     expect(topUp).not.toHaveBeenCalled();
-    state.finish();
   });
 });

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { PRIVATE_ROUTER_PLUGINS, TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
+import { BUNDLED_ROUTER_PLUGINS, TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
 
-test('the private classifier alias resolves without entering the npm auto-install catalog', () => {
+test('the bundled classifier alias resolves without entering the npm auto-install catalog', () => {
   assert.equal(resolvePluginPackage('classifier'), '@antseed/router-classifier')
   assert.equal(resolvePluginPackage('@antseed/router-classifier'), '@antseed/router-classifier')
-  assert.equal(PRIVATE_ROUTER_PLUGINS[0]?.name, 'classifier')
+  assert.equal(BUNDLED_ROUTER_PLUGINS[0]?.name, 'classifier')
   assert.equal(TRUSTED_PLUGINS.some((plugin) => plugin.package === '@antseed/router-classifier'), false)
 })
 

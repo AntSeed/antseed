@@ -1,132 +1,66 @@
-# Private classifier router
+# Generic network router
 
-A privately installed router that chooses a model through an authorized AntSeed
-classifier service. It is a usable plugin, not a demo or mock. It remains
-`private: true`: not published to npm, bundled, or automatically installed.
+`@antseed/router-classifier` is the generic network-routing adapter bundled with
+the CLI. A provider exposes a compatible AntSeed routing service; buyers do not
+need a vendor-specific plugin. The package is publishable with the CLI dependency
+set, not part of the separate plugin auto-install/update catalog.
 
-## How it works
+## Select a service
 
-1. Explicit router mode asks this plugin to choose a model. The plugin checks
-   `context.mode === 'router'`, not the request's model name. A per-request
-   `x-antseed-routing-mode: router` header works with any model or no model.
-2. The plugin sends the request body, optional selection instructions, and the
-   host's eligible model/seller offers to `context.invokeService`.
-3. The classifier returns one model. The plugin checks that it is eligible and
-   returns `[{ serviceId }]`; AntSeed chooses the seller.
-4. When the host suggests reuse and the previous model is still eligible, the
-   plugin returns it without another classifier call.
+```sh
+antseed config buyer set selection '{"kind":"router","service":{"peerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"openai","serviceId":"model-selector"}}'
+antseed buyer start
+```
 
-The classifier uses the chat-completions response envelope. Its
-`choices[0].message.content` must be a JSON string containing only:
+Replace the example peer ID. Use `model: "antseed"` or omit the model in requests.
+Explicit model/peer pins still bypass classification. Selecting a remote service
+means sharing the request body with it and allowing normal metered payment.
+
+The host supplies eligible offers, instructions, conversation reuse hints, and
+cancellation/deadline context. The adapter sends a version-1 selection payload
+using host `invokeService`, which reuses AntSeed transport and payment machinery.
+It returns the same `RouteRecommendation[]` as a local router. If the previous
+selection remains eligible for a continuation, no classifier call is needed.
+
+The service must advertise `routing: true` and `openai-chat-completions`. Its
+response uses the normal chat-completions envelope. `choices[0].message.content`
+is a JSON string containing exactly one of:
 
 ```json
 { "serviceId": "model-x" }
 ```
 
-This plugin selects a model and delegates seller ranking and same-model failover
-to AntSeed. Exact-seller choices and fallback lists are available in the shared
-router interface but are not part of this plugin's classifier response contract.
-
-The same parser is passed to `invokeService` for fixed-fee acceptance and used
-to read the result. Invalid or unavailable models are rejected before a fixed
-fee is authorized. Token-priced calls retain their normal usage billing even
-if the classification is unusable. Reusing a model adds no classifier fee.
-
-## Install privately
-
-From the repository root with the pinned Node 24 runtime, build the workspace
-dependencies and CLI:
-
-```sh
-pnpm install
-pnpm run build:tier0
-pnpm run build:tier1
-pnpm --filter @antseed/router-local build
-pnpm --filter @antseed/router-classifier build
-pnpm run build:tier3
-pnpm --filter @antseed/cli build
-mkdir -p "$HOME/.antseed/plugins/node_modules/@antseed"
-ln -s "$PWD/plugins/router-classifier" "$HOME/.antseed/plugins/node_modules/@antseed/router-classifier"
+```json
+{ "serviceId": "model-x", "peerId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
 ```
 
-The link command deliberately does not replace an existing installation.
-Keep the source checkout and its installed dependencies available. This is a
-local installation; do not use `npm install @antseed/router-classifier`.
+A model-only answer delegates seller selection to AntSeed. An exact answer must
+match an eligible pair and does not silently fall back to another seller. The
+host validates the recommendation independently and never falls back to a saved
+model when classification fails.
 
-After configuring an authorized classifier seller, start the buyer:
+## Provider compatibility
 
-```sh
-node apps/cli/dist/cli/index.js buyer start --router @antseed/router-classifier
-```
-
-The shorthand `--router classifier` loads the same private installation. If
-using that shorthand, use `plugin:classifier` for the configuration keys below
-instead of `plugin:@antseed/router-classifier`. Keys match the router argument.
-The CLI does not install or update this plugin from npm. A missing build or
-installation produces local setup instructions.
-
-## Configure
-
-Use the buyer setup in `docs/router-network-integration.md`, with
-`@antseed/router-classifier` as the plugin and `plugin:@antseed/router-classifier`
-as its settings and routing-service key. Point the routing service at an actual
-advertised classifier seller, explicitly approve prompt sharing and spending
-limits, and enable `buyer.routingPreferences.routerEnabled`. The classifier
-provider must advertise `serviceCapabilities[serviceId].routing: true` (seller
-configuration: `service.capabilities.routing: true`). The host rejects absent
-routing capability and excludes routing-capable services from inference
-listings and candidates; names do not classify services.
-
-Use `x-antseed-routing-mode: router` for a per-request selection, or configure
-`buyer.routingMode: "router"` and send the existing `model: "antseed"` alias to
-follow session selection. Normal concrete model requests stay fixed without
-the router header, even in a router-mode session; `x-antseed-routing-mode: model`
-explicitly bypasses classification. For a pinned conversation, select
-`routingMode: "router"` through `POST /_antseed/conversations/update` to clear
-its `pinnedModel`. `POST /_antseed/route` persists session mode and clears the
-session peer pin while retaining an optional failure fallback model. See
-`docs/router-per-call-billing.md` for fixed-fee configuration.
-
-The optional `instructions` setting describes your selection preference.
-The classifier service must implement the response contract above. Services
-with a different native response format need an adapter; the plugin contains
-no vendor-specific credentials or endpoints. The existing local router supplies
-ordinary peer-selection hooks.
-
-Client HTTP headers are not shared, but the request body may contain sensitive
-conversation, tool, or image data. Only enable sharing with a classifier seller
-you trust. Classifier and inference sellers must be separate under the current
-host's payment isolation.
-
-## Concurrent calls and failures
-
-Within a buyer, calls to the same classifier seller are queued in arrival order.
-The host permits at most 32 outstanding calls per seller, including the active
-call; rate limits may impose a lower bound. Different classifier sellers can
-operate independently. The request's existing deadline includes queue time.
-Cancelled or expired waiters are removed without contacting the classifier or
-authorizing a fee. Active calls retain their slot until SDK cleanup finishes.
-
-Queue overflow, an unavailable seller, invalid output, and exhausted spending
-limits fail closed unless an explicit buyer fallback is configured. Queuing
-does not retry a paid call or widen its spending grant. The queue covers only
-classification, not downstream inference. A successful classification can still
-be charged if the later inference request fails.
-
-## Verify
-
-After building the workspace dependencies with the pinned Node 24 runtime:
+Build the package, then validate a response envelope against its candidate array:
 
 ```sh
 pnpm --filter @antseed/router-classifier build
-pnpm --filter @antseed/router-classifier test
-pnpm --filter @antseed/e2e run flow:local-chain-routing
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --concurrent
-pnpm --filter @antseed/e2e run flow:local-chain-routing --per-call --invalid-route
+node plugins/router-classifier/scripts/check-compatibility.mjs \
+  plugins/router-classifier/fixtures/candidates.json \
+  plugins/router-classifier/fixtures/response.json
 ```
 
-The chain fixtures require Foundry and built CLI packages. They use this plugin
-with deterministic classifier responses and isolated test wallets to verify
-integration and billing, not classification quality. No production funds or
-external classifier account are needed.
+Replace the files with your service's actual candidates and response. This is an
+offline response-contract check; it does not send paid requests. The exported
+`parseClassificationResponse(response, candidates)` is also reusable in tests.
+
+See `docs/router-network-integration.md` for the versioned request contract,
+configuration, consent, payment limits, and retry semantics, and
+`docs/router-per-call-billing.md` for fixed-fee acceptance. Token billing can
+charge consumed tokens even if selection is invalid; per-call billing requires
+an accepted selection first. Neither path makes downstream inference free.
+
+Classification uses ordinary SDK seller requests and normal payment handling.
+Multiple chats can classify concurrently, even while that same seller is streaming
+inference. The host validates a fixed-fee response before payment; request IDs keep
+each response's billing and parent-conversation attribution separate.

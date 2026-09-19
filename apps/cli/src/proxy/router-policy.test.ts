@@ -19,18 +19,15 @@ function fixture() {
   return { peer, options }
 }
 
-test('buyer limits resolve service then provider then global defaults', () => {
+test('router recommendations respect the existing global buyer limits', () => {
   const { options } = fixture()
   assert.equal(validateRouterCandidate(options), null)
-  options.maxPricing!.providers = { openai: { defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 } } }
+  options.maxPricing!.defaults = { inputUsdPerMillion: 20, outputUsdPerMillion: 20 }
   assert.ok(validateRouterCandidate(options))
-  options.maxPricing!.providers.openai!.services = { model: { inputUsdPerMillion: 2, outputUsdPerMillion: 2 } }
-  assert.equal(validateRouterCandidate(options), null)
-  options.maxPricing!.providers.openai!.services.model = { inputUsdPerMillion: 15, outputUsdPerMillion: 15 }
-  assert.ok(validateRouterCandidate(options))
-  options.maxPricing!.providers.openai!.services.model.cachedInputUsdPerMillion = 1
+  options.maxPricing!.defaults.cachedInputUsdPerMillion = 1
   assert.equal(validateRouterCandidate(options), null)
 })
+
 
 test('routing-capable services are excluded from inference regardless of their name', () => {
   const { peer, options } = fixture()

@@ -86,7 +86,6 @@ function mergeHierarchicalPricing(
   }
   return {
     defaults: mergeTokenPricing(defaults.defaults, value['defaults']),
-    ...(value['providers'] !== undefined ? { providers: value['providers'] as HierarchicalPricingConfig['providers'] } : {}),
   };
 }
 
@@ -426,7 +425,6 @@ function mergeBuyerRoutingPreferences(
     allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
     ...(value['routerSettings'] !== undefined ? { routerSettings: readRouterSettings(value['routerSettings']) } : {}),
-    routerEnabled: value['routerEnabled'] === undefined ? fallback.routerEnabled ?? false : value['routerEnabled'] as boolean,
   };
 }
 
@@ -492,10 +490,7 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
-    routerTimeoutMs: value['routerTimeoutMs'] === undefined ? 10_000 : toFiniteOrNaN(value['routerTimeoutMs']),
-    routingMode: (value['routingMode'] ?? 'model') as BuyerCLIConfig['routingMode'],
-    routerFailureFallback: (value['routerFailureFallback'] ?? 'none') as 'none' | 'default',
-    ...(value['routingService'] !== undefined ? { routingService: value['routingService'] as BuyerCLIConfig['routingService'] } : {}),
+    ...(value['selection'] !== undefined ? { selection: value['selection'] as BuyerCLIConfig['selection'] } : {}),
     requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
       ? value['requestTimeoutMs']
       : defaults.requestTimeoutMs,

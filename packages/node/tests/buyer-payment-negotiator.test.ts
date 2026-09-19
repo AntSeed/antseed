@@ -733,6 +733,58 @@ describe('BuyerPaymentNegotiator', () => {
   });
 
   describe('cost tracking', () => {
+    it('keeps overlapping response costs separate when signing finishes out of order', async () => {
+      (negotiator as any)._lockedPeers.add(peer.peerId);
+      const firstSigned = Promise.withResolvers<void>();
+      const firstStarted = Promise.withResolvers<void>();
+      const original = await bpm.signPerRequestAuth(peer.peerId, { inputBytes: new Uint8Array(), outputBytes: new Uint8Array() });
+      const sign = vi.mocked(bpm.signPerRequestAuth);
+      sign.mockClear();
+      sign.mockImplementation(async (_peerId, response) => {
+        if (response.requestId === 'first') {
+          firstStarted.resolve();
+          await firstSigned.promise;
+        }
+        return original;
+      });
+      const response = { statusCode: 200, headers: {}, body: enc.encode('{"usage":{"prompt_tokens":100,"completion_tokens":20}}') };
+      negotiator.estimateCostFromResponse(peer, { ...response, requestId: 'first' }, 'classifier', 'first');
+      const first = negotiator.sendPostResponseAuth(peer, conn, 'first');
+      await firstStarted.promise;
+      negotiator.estimateCostFromResponse(peer, { ...response, requestId: 'second' }, 'model', 'second');
+      try {
+        await negotiator.sendPostResponseAuth(peer, conn, 'second');
+        expect((negotiator as any)._pendingResponseCosts.get(peer.peerId).has('first')).toBe(true);
+        expect((negotiator as any)._pendingResponseCosts.get(peer.peerId).has('second')).toBe(false);
+      } finally {
+        firstSigned.resolve();
+        await first;
+      }
+      expect(sign.mock.calls.map(([, stats]) => stats.requestId)).toEqual(['first', 'second']);
+      expect((negotiator as any)._pendingResponseCosts.has(peer.peerId)).toBe(false);
+    });
+
+    it('shares a pending signature for duplicate flushes of the same response', async () => {
+      (negotiator as any)._lockedPeers.add(peer.peerId);
+      const response = { requestId: 'one', statusCode: 200, headers: {}, body: enc.encode('{"usage":{"prompt_tokens":100,"completion_tokens":20}}') };
+      negotiator.estimateCostFromResponse(peer, response, 'classifier', response.requestId);
+      await Promise.all([
+        negotiator.sendPostResponseAuth(peer, conn, response.requestId),
+        negotiator.sendPostResponseAuth(peer, conn, response.requestId),
+      ]);
+      expect(bpm.signPerRequestAuth).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a negotiated price increase above the request snapshot before authorizing', async () => {
+      vi.mocked(bpm.getRequestBilling).mockReturnValue({
+        context: { sellerPeerId: peer.peerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' },
+        tokenPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      });
+      const response = { ...make402Response(), body: enc.encode(JSON.stringify({ error: 'payment_required', minBudgetPerRequest: '1', inputUsdPerMillion: 2 })) };
+      await expect(negotiator.handle402(response, peer, conn, makeRequest())).rejects.toThrow(/changed prices/);
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+    });
+
     it('estimateCostFromResponse stores estimated cost', () => {
       const response: SerializedHttpResponse = {
         requestId: 'req-1',
@@ -824,7 +876,7 @@ describe('BuyerPaymentNegotiator', () => {
         { units: { output_images: 1 } },
       );
       expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(peer.peerId, 100, 200);
-      expect((negotiator as any)._lastResponseCost.has(peer.peerId)).toBe(false);
+      expect((negotiator as any)._pendingResponseCosts.has(peer.peerId)).toBe(false);
     });
 
     // parseCostHeaders tests removed — cost data now flows through NeedAuth

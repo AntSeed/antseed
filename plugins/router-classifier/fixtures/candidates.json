@@ -1,0 +1,9 @@
+[
+  {
+    "peerId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "serviceId": "model-x",
+    "inputUsdPerMillion": 1,
+    "cachedInputUsdPerMillion": null,
+    "outputUsdPerMillion": 2
+  }
+]

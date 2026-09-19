@@ -15,7 +15,9 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const perCall = process.argv.includes('--per-call');
 const invalidRoute = process.argv.includes('--invalid-route');
 const concurrent = process.argv.includes('--concurrent');
+const samePeer = process.argv.includes('--same-peer');
 const routingFee = perCall ? 5000n : 140n;
+const channelTotal = (routingCalls, inferenceCalls) => routingFee * BigInt(routingCalls) + (samePeer ? 260n * BigInt(inferenceCalls) : 0n);
 const deployerKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const temporary = await mkdtemp(join(tmpdir(), 'antseed-routing-chain-'));
 const reservation = createServer();
@@ -50,12 +52,18 @@ async function waitFor(check, label, timeout = 30_000) {
 
 function provider(serviceId, content, inputTokens, outputTokens) {
   return {
-    name: 'openai', services: [serviceId], maxConcurrency: 1, calls: 0, content,
+    name: 'openai', services: [serviceId], maxConcurrency: 4, calls: 0, content,
     pricing: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } },
     serviceApiProtocols: { [serviceId]: ['openai-chat-completions'] },
-    getCapacity() { return { current: 0, max: 1 }; },
+    getCapacity() { return { current: 0, max: 4 }; },
     async handleRequest(request) {
       this.calls++;
+      const pause = this.pauseNext;
+      this.pauseNext = undefined;
+      if (pause) {
+        pause.started.resolve();
+        await pause.release.promise;
+      }
       if (this.failureStatus) {
         const statusCode = this.failureStatus;
         this.failureStatus = undefined;
@@ -74,6 +82,18 @@ function provider(serviceId, content, inputTokens, outputTokens) {
         body: new TextEncoder().encode(JSON.stringify({ id: request.requestId, object: 'chat.completion', model: serviceId,
           choices: [{ index: 0, message: { role: 'assistant', content: this.content }, finish_reason: 'stop' }],
           ...(this.omitUsage ? {} : { usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }) })) };
+    },
+    async handleRequestStream(request, callbacks) {
+      if (!JSON.parse(new TextDecoder().decode(request.body)).stream) return this.handleRequest(request);
+      const response = await this.handleRequest(request);
+      const body = JSON.parse(new TextDecoder().decode(response.body));
+      const data = new TextEncoder().encode(`data: ${JSON.stringify({ ...body, choices: [{ index: 0, delta: { content: this.content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      const start = { ...response, headers: { 'content-type': 'text/event-stream', 'x-antseed-streaming': '1' }, body: new Uint8Array() };
+      callbacks.onResponseStart(start);
+      callbacks.onResponseChunk({ requestId: request.requestId, data, done: false });
+      if (this.streamRelease) await this.streamRelease.promise;
+      callbacks.onResponseChunk({ requestId: request.requestId, data: new Uint8Array(), done: true });
+      return { ...start, body: data };
     },
   };
 }
@@ -119,7 +139,23 @@ try {
   }
   const peers = [];
   const sellerIdentities = [];
-  for (const [index, fixture] of fixtureProviders.entries()) {
+  const sellerProviders = samePeer ? [{
+    ...fixtureProviders[0], services: ['route-classifier', 'fixture-model'], maxConcurrency: 2,
+    pricing: { defaults: fixtureProviders[0].pricing.defaults, services: {
+      'route-classifier': fixtureProviders[0].pricing.defaults, 'fixture-model': fixtureProviders[1].pricing.defaults,
+    } },
+    serviceApiProtocols: { 'route-classifier': ['openai-chat-completions'], 'fixture-model': ['openai-chat-completions'] },
+    getCapacity() { return { current: 0, max: 2 }; },
+    handleRequest(request) {
+      const model = JSON.parse(new TextDecoder().decode(request.body)).model;
+      return fixtureProviders[model === 'route-classifier' ? 0 : 1].handleRequest(request);
+    },
+    handleRequestStream(request, callbacks) {
+      const model = JSON.parse(new TextDecoder().decode(request.body)).model;
+      return fixtureProviders[model === 'route-classifier' ? 0 : 1].handleRequestStream(request, callbacks);
+    },
+  }] : fixtureProviders;
+  for (const [index, fixture] of sellerProviders.entries()) {
     const dataDir = join(temporary, `seller-${index}`);
     const identity = await loadOrCreateIdentity(dataDir);
     sellerIdentities.push(identity);
@@ -133,13 +169,13 @@ try {
     node.registerProvider(fixture);
     nodes.push(node);
     await node.start();
-    const serviceId = fixture.services[0];
-    peers.push({ peerId: node.peerId, lastSeen: Date.now(), providers: ['openai'], services: [serviceId],
+    peers.push({ peerId: node.peerId, lastSeen: Date.now(), providers: ['openai'], services: fixture.services,
       evmAddress: identity.wallet.address, publicAddress: `127.0.0.1:${node.signalingPort}`, reputationScore: 100,
-      providerPricing: { openai: { defaults: fixture.pricing.defaults, services: { [serviceId]: fixture.pricing.defaults } } },
+      providerPricing: { openai: { defaults: fixture.pricing.defaults, services: fixture.pricing.services
+        ?? Object.fromEntries(fixture.services.map((serviceId) => [serviceId, fixture.pricing.defaults])) } },
       ...(fixture.serviceUnitBillingModels ? { providerServiceUnitBillingModels: { openai: { services: fixture.serviceUnitBillingModels } } } : {}),
       ...(fixture.serviceCapabilities ? { providerServiceCapabilities: { openai: { services: fixture.serviceCapabilities } } } : {}),
-      providerServiceApiProtocols: { openai: { services: { [serviceId]: ['openai-chat-completions'] } } } });
+      providerServiceApiProtocols: { openai: { services: fixture.serviceApiProtocols } } });
   }
   const buyer = new AntseedNode({ role: 'buyer', dataDir: buyerDir, dhtPort: 0, bootstrapNodes: [], noOfficialBootstrap: true,
     allowPrivateIPs: true, payments: commonPayments });
@@ -147,7 +183,8 @@ try {
   fixtureProviders[0].content = JSON.stringify({ serviceId: 'fixture-model' });
   fixtureProviders[0].validateRequest = ({ messages }) => {
     const payload = JSON.parse(messages[1].content);
-    assert.deepEqual(payload.candidates, [{ peerId: peers[1].peerId, serviceId: 'fixture-model',
+    assert.equal(payload.version, 1);
+    assert.deepEqual(payload.candidates, [{ peerId: peers[samePeer ? 0 : 1].peerId, serviceId: 'fixture-model',
       inputUsdPerMillion: 1, cachedInputUsdPerMillion: null, outputUsdPerMillion: 2 }]);
     assert.ok(payload.request.body.model === undefined || payload.request.body.model === 'fixture-model');
     assert.equal(payload.request.path, '/v1/chat/completions');
@@ -157,14 +194,11 @@ try {
   const events = [];
   buyer.on('payment:spend', (event) => events.push(event));
   proxy = new BuyerProxy({ node: buyer, port: 0, dataDir: buyerDir, routerKey: 'plugin:@antseed/router-classifier',
-    routingMode: 'router', routingSettingsSchema: classifierPlugin.routingSettingsSchema,
-    routerTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
-      allowedPeerIds: [], blockedPeerIds: [], routerEnabled: true },
+    selection: { kind: 'router', service: { peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier' } },
+    requestTimeoutMs: 60_000, routingPreferences: { preferFreePeers: false, maxInputUsdPerMillion: 100, minTrustScore: 0,
+      allowedPeerIds: [], blockedPeerIds: [] },
     maxPricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
-    routingService: { routerKey: 'plugin:@antseed/router-classifier', peerId: peers[0].peerId, provider: 'openai', serviceId: 'route-classifier',
-      ...(perCall ? { billing: { kind: 'per_call', maxAmountMicroUsdc: '5000' } } : {}),
-      allowPromptSharing: true, maxInputUsdPerMillion: 1, maxOutputUsdPerMillion: 2, maxCachedInputUsdPerMillion: 1,
-      maxAdditionalAuthorizationUsdc: perCall ? '20000' : '1000', maxRequestsPerMinute: 10, maxInputBytes: 8192, maxOutputTokens: 128 } });
+  });
   proxy._getPeers = async () => peers;
   await proxy.start();
   console.log('[routing-flow] requesting router selection and downstream inference through the buyer proxy');
@@ -184,21 +218,21 @@ try {
   const routeEvent = events.find((event) => event.purpose === 'routing' && event.amountUsdc === String(routingFee));
   assert.notEqual(routeEvent.requestId, routeEvent.parentRequestId);
   const routingChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
-  assert.equal(routingChannel.authMax, String(routingFee));
+  assert.equal(routingChannel.authMax, String(channelTotal(1, 1)));
   const toolContinuation = [...initial, { role: 'assistant', content: 'working' }, { role: 'tool', tool_call_id: 'one', content: 'result' }];
   await sendInference(toolContinuation);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [1, 2]);
-  assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee));
+  assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(1, 2)));
   await sendInference([...toolContinuation, { role: 'assistant', content: 'fixture answer' }, { role: 'user', content: 'fixture continuation' }], {}, 200, 'fixture-model');
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [2, 3]);
-  assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee * 2n));
+  assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(2, 3)));
   const rewritten = [{ role: 'system', content: 'compacted summary' }, { role: 'user', content: 'fixture next task' }];
   await sendInference(rewritten);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [3, 4]);
   rewritten[1].content = 'fixture final task';
   await sendInference(rewritten);
   assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [4, 5]);
-  await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === String(routingFee * 4n), 'four routing authorizations');
+  await waitFor(() => buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax === String(channelTotal(4, 5)), 'four routing authorizations');
   const operations = events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n);
   assert.equal(operations.length, 4);
   assert.equal(new Set(operations.map((record) => record.requestId)).size, 4);
@@ -212,13 +246,21 @@ try {
   assert.equal(BigInt(conversation.spentUsdc), events.reduce((total, event) => total + BigInt(event.amountUsdc), 0n));
   assert.equal(conversation.requestCount, 5);
   if (concurrent) {
-    fixtureProviders[0].delayMs = 100;
-    await Promise.all([
-      sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-a' }),
-      sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-b' }),
-    ]);
+    const pause = { started: Promise.withResolvers(), release: Promise.withResolvers() };
+    fixtureProviders[0].pauseNext = pause;
+    const held = sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-a' });
+    let secondFinished = false;
+    let second;
+    try {
+      await pause.started.promise;
+      second = sendInference(rewritten, { 'x-vpr-session-id': 'concurrent-chat-b' }).then(() => { secondFinished = true; });
+      await waitFor(() => secondFinished, 'second classification finishing while the first remains open', 10_000);
+    } finally {
+      pause.release.resolve();
+      await Promise.all([held, second]);
+    }
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 7]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(routingFee * 6n));
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(6, 7)));
     await proxy._conversations.flush();
     const concurrentConversations = JSON.parse(await readFile(join(buyerDir, 'conversations.json'), 'utf8')).conversations;
     for (const sessionKey of ['concurrent-chat-a', 'concurrent-chat-b']) {
@@ -226,38 +268,61 @@ try {
       assert.equal(record.routingSpentUsdc, String(routingFee));
       assert.equal(record.requestCount, 1);
     }
+    if (samePeer) {
+      const started = Promise.withResolvers();
+      fixtureProviders[1].streamRelease = Promise.withResolvers();
+      let streamFinished = false;
+      const streaming = buyer.sendRequestStream(peers[0], {
+        requestId: 'held-inference-stream', method: 'POST', path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'openai' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'fixture-model', messages: initial, stream: true })),
+      }, { onResponseStart() {}, onResponseChunk() { started.resolve(); } }).then(() => { streamFinished = true; });
+      let routed;
+      try {
+        await Promise.race([started.promise, streaming.then(() => { throw new Error('Inference stream closed before delivering a chunk'); })]);
+        let routingFinished = false;
+        routed = sendInference(rewritten, { 'x-vpr-session-id': 'during-stream' }).then(() => { routingFinished = true; });
+        await waitFor(() => routingFinished, 'classification finishing while same-peer inference stream remains open', 10_000);
+        assert.equal(streamFinished, false);
+      } finally {
+        fixtureProviders[1].streamRelease.resolve();
+        await Promise.all([streaming, routed]);
+      }
+      assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [7, 9]);
+      assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(7, 9)));
+    }
   }
   if (perCall && !concurrent) {
     fixtureProviders[0].failureStatus = 503;
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' }, 502);
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [5, 5]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '20000');
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(4, 5)));
     assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 4);
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-failure' });
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(5, 6)));
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [6, 6]);
     const invalidContent = JSON.stringify({ serviceId: 'unadvertised-model' });
     fixtureProviders[0].invalidClassification = invalidRoute
       ? JSON.stringify({ choices: [{ message: { content: invalidContent } }] }) : 'not-json';
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [7, 6]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(5, 6)));
     await sendInference(rewritten, { 'x-vpr-session-id': 'routing-invalid' }, 502);
     assert.deepEqual(fixtureProviders.map((fixture) => fixture.calls), [7, 6]);
-    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, '25000');
+    assert.equal(buyer.buyerPaymentManager.getActiveSession(peers[0].peerId).authMax, String(channelTotal(5, 6)));
     assert.equal(events.filter((event) => event.purpose === 'routing' && BigInt(event.amountUsdc) > 0n).length, 5);
   }
-  const billableRoutingCalls = concurrent ? 6 : perCall ? 5 : 4;
+  const billableRoutingCalls = concurrent ? (samePeer ? 7 : 6) : perCall ? 5 : 4;
   const settlementChannel = buyer.buyerPaymentManager.getActiveSession(peers[0].peerId);
   const channels = new ChannelsClient({ rpcUrl, contractAddress: addresses.channels, evmChainId: 31337 });
   await waitFor(async () => (await channels.getSession(routingChannel.sessionId)).deposit > 0n, 'on-chain routing reserve');
   await channels.settle(sellerIdentities[0].wallet, routingChannel.sessionId, BigInt(settlementChannel.authMax),
     settlementChannel.latestMetadata, settlementChannel.latestSpendingAuthSig);
   const settled = await channels.getSession(routingChannel.sessionId);
-  assert.equal(settled.settled, routingFee * BigInt(billableRoutingCalls));
+  assert.equal(settled.settled, channelTotal(billableRoutingCalls, fixtureProviders[1].calls));
   console.log(JSON.stringify({ selectionKind: 'model-only',
     billingKind: perCall ? 'per_call' : 'token', billableRoutingCalls,
-    routingTokens: perCall ? null : { input: 100, output: 20 }, routingSettledMicroUsdc: settled.settled.toString(),
+    samePeer, routingTokens: perCall ? null : { input: 100, output: 20 }, channelSettledMicroUsdc: settled.settled.toString(),
     routingRequestId: routeEvent.requestId, inferenceRequestId: routeEvent.parentRequestId,
     providerCalls: fixtureProviders.map((fixture) => fixture.calls) }, null, 2));
   channels.destroy?.();

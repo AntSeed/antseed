@@ -1,4 +1,3 @@
-import { perCallPriceMicroUsdc, validateUnitBillingModelV1, isFreeUnitBillingModel } from '@antseed/protocol/billing';
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1383,40 +1382,7 @@ export class AntseedNode extends EventEmitter {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
-    if (!options?.routingAuthorization) return this._buyerHandler.sendRequest(peer, req, undefined, options);
-    const authorization = options.routingAuthorization;
-    if (!/^\d+$/.test(authorization.maxAdditionalAuthorizationUsdc)
-      || options.controlPlane || req.path !== '/v1/chat/completions' || req.method !== 'POST') {
-      throw buyerFault('Invalid metered routing request', 'invalid-request');
-    }
-    const body = JSON.parse(new TextDecoder().decode(req.body)) as { model?: unknown; stream?: unknown };
-    if (typeof body.model !== 'string' || body.stream === true) throw buyerFault('Invalid metered routing model or stream', 'invalid-request');
-    const amount = BigInt(authorization.maxAdditionalAuthorizationUsdc);
-    const provider = req.headers['x-antseed-provider'];
-    const providerPricing = provider ? peer.providerPricing?.[provider] : undefined;
-    const maxPricing = providerPricing ? { ...providerPricing.defaults, ...providerPricing.services?.[body.model] } : undefined;
-    if (!maxPricing) throw buyerFault('Metered routing requires an advertised price snapshot', 'invalid-request');
-    const unitModel = provider ? peer.providerServiceUnitBillingModels?.[provider]?.services[body.model]?.['openai-chat-completions'] : undefined;
-    let perCallAmountUsdc: bigint | undefined;
-    if (authorization.billing) {
-      const advertisedAmount = perCallPriceMicroUsdc(unitModel);
-      if (authorization.billing.kind !== 'per_call' || typeof authorization.validateResponse !== 'function'
-        || !/^(0|[1-9]\d*)$/.test(authorization.billing.amountMicroUsdc)
-        || advertisedAmount === null || advertisedAmount !== BigInt(authorization.billing.amountMicroUsdc)
-        || amount !== advertisedAmount || maxPricing.inputUsdPerMillion !== 0 || maxPricing.outputUsdPerMillion !== 0
-        || (maxPricing.cachedInputUsdPerMillion ?? 0) !== 0) throw buyerFault('Invalid per-call routing authorization or advertised price', 'invalid-request');
-      perCallAmountUsdc = advertisedAmount;
-    } else if (unitModel && (validateUnitBillingModelV1(unitModel).length > 0 || !isFreeUnitBillingModel(unitModel))) {
-      throw buyerFault('Unit-priced routing requires explicit per-call authorization', 'invalid-request');
-    }
-    if (amount > 0n && !this._buyerPaymentManager) throw buyerFault('Paid routing requires buyer payments', 'buyer-session-state');
-    const signal = options.signal ?? new AbortController().signal;
-    const finish = this._buyerPaymentManager?.beginRoutingRequest({
-      sellerPeerId: peer.peerId, requestId: req.requestId, parentRequestId: authorization.parentRequestId,
-      service: body.model, maxAdditionalAuthorizationUsdc: amount, signal, maxPricing, perCallAmountUsdc,
-    });
-    try { return await this._buyerHandler.sendRequest(structuredClone(peer), req, undefined, options); }
-    finally { finish?.(); }
+    return this._buyerHandler.sendRequest(peer, req, undefined, options);
   }
 
   async sendRequestStream(
@@ -1426,9 +1392,6 @@ export class AntseedNode extends EventEmitter {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
-    if (options?.routingAuthorization) {
-      throw buyerFault('Streaming requests do not support routing authorization', 'invalid-request');
-    }
     return this._buyerHandler.sendRequest(peer, req, callbacks, options);
   }
 

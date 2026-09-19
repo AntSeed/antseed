@@ -20,28 +20,20 @@ test('loads namespaced router settings without converting plugin vocabulary', as
   });
 });
 
-test('loads explicit routing mode and scoped buyer price limits', async () => {
-  const providers = { openai: {
-    defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
-    services: { model: { inputUsdPerMillion: 10, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 1 } },
-  } };
-  await withTempConfig(JSON.stringify({ buyer: { routingMode: 'router', maxPricing: { providers } } }), async (path) => {
+test('loads a single selection and keeps only existing global buyer price limits', async () => {
+  const selection = { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier' } };
+  await withTempConfig(JSON.stringify({ buyer: { selection, maxPricing: { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 }, providers: { ignored: {} } } } }), async (path) => {
     const config = await loadConfig(path);
-    assert.equal(config.buyer.routingMode, 'router');
-    assert.deepEqual(config.buyer.maxPricing.providers, providers);
+    assert.deepEqual(config.buyer.selection, selection);
+    assert.deepEqual(config.buyer.maxPricing, { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 } });
   });
 });
 
-test('rejects malformed explicit routing mode and scoped buyer price limits', async () => {
-  for (const buyer of [
-    { routingMode: 'classifier-name' },
-    { maxPricing: { providers: [] } },
-    { maxPricing: { providers: { openai: null } } },
-    { maxPricing: { providers: { openai: { defaults: { inputUsdPerMillion: -1, outputUsdPerMillion: 1 } } } } },
-    { maxPricing: { providers: { openai: { services: { model: { inputUsdPerMillion: 1 } } } } } },
-  ]) {
-    await withTempConfig(JSON.stringify({ buyer }), async (path) => {
-      await assert.rejects(loadConfig(path), /buyer\.(routingMode|maxPricing)/);
+test('rejects malformed or conflicting selections', async () => {
+  for (const selection of [null, [], { kind: 'other' }, { kind: 'model' }, { kind: 'router', model: 'fallback' },
+    { kind: 'router', service: { peerId: 'invalid', provider: 'openai', serviceId: 'classifier' } }]) {
+    await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
+      await assert.rejects(loadConfig(path), /buyer.selection/);
     });
   }
 });
@@ -67,37 +59,10 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
   assert.equal(shouldDeriveDisplayName('custom seller'), false);
 });
 
-test('routing service consent and limits survive config loading', async () => {
-  const routingService = {
-    routerKey: 'instance:fixture', peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier',
-    allowPromptSharing: true, maxInputUsdPerMillion: 1, maxOutputUsdPerMillion: 2, maxCachedInputUsdPerMillion: 1,
-    maxAdditionalAuthorizationUsdc: '1000', maxRequestsPerMinute: 2, maxInputBytes: 4096, maxOutputTokens: 32,
-  };
-  await withTempConfig(JSON.stringify({ buyer: { routingService } }), async (path) => {
-    assert.deepEqual((await loadConfig(path)).buyer.routingService, routingService);
-  });
-  for (const invalid of [null, { ...routingService, allowPromptSharing: false },
-    { ...routingService, maxAdditionalAuthorizationUsdc: 1000 }, { ...routingService, maxRequestsPerMinute: 0 },
-    { ...routingService, peerId: 'invalid' }, { ...routingService, maxOutputUsdPerMillion: -1 }]) {
-    await withTempConfig(JSON.stringify({ buyer: { routingService: invalid } }), async (path) => {
-      await assert.rejects(loadConfig(path), /routingService/);
-    });
-  }
-});
-
-test('per-call routing config round-trips without requiring token price ceilings', async () => {
-  const routingService = {
-    routerKey: 'instance:fixture', peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier',
-    allowPromptSharing: true, billing: { kind: 'per_call', maxAmountMicroUsdc: '5000' },
-    maxAdditionalAuthorizationUsdc: '10000', maxRequestsPerMinute: 2, maxInputBytes: 4096, maxOutputTokens: 32,
-  };
-  await withTempConfig(JSON.stringify({ buyer: { routingService } }), async (path) => {
-    assert.deepEqual((await loadConfig(path)).buyer.routingService, routingService);
-  });
-  for (const billing of [null, { kind: 'unknown' }, { kind: 'token' },
-    ...['-1', '01', '0.005', '4294967296', 5000].map((maxAmountMicroUsdc) => ({ kind: 'per_call', maxAmountMicroUsdc }))]) {
-    await withTempConfig(JSON.stringify({ buyer: { routingService: { ...routingService, billing } } }), async (path) => {
-      await assert.rejects(loadConfig(path), /routingService/);
+test('fixed model and local router selections round-trip without classifier settings', async () => {
+  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }]) {
+    await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
+      assert.deepEqual((await loadConfig(path)).buyer.selection, selection);
     });
   }
 });
@@ -144,7 +109,6 @@ test('loadConfig merges partial model routing preferences with defaults', async 
         minTrustScore: 60,
         allowedPeerIds: ['0x' + 'a'.repeat(40)],
         blockedPeerIds: [],
-        routerEnabled: false,
       });
     },
   );

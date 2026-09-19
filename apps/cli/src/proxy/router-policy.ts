@@ -35,8 +35,7 @@ export function validateRouterCandidate(options: {
   if ((options.minPeerReputation ?? 0) > (reputation ?? 0)) return null
   if (preferences && !isModelRouteEligible({ peerId: peer.peerId, reputationScore: reputation }, preferences)) return null
   if (maxPricing) {
-    const providerLimits = maxPricing.providers?.[plan.provider]
-    const limits = providerLimits?.services?.[plan.serviceId] ?? providerLimits?.defaults ?? maxPricing.defaults
+    const limits = maxPricing.defaults
     const input = offer.inputUsdPerMillion
     const output = offer.outputUsdPerMillion
     const cached = offer.cachedInputUsdPerMillion ?? input
