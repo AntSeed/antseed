@@ -1,13 +1,13 @@
-import { poolApyRange, formatYieldPercent as percent, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
+import { poolApyRange, poolApyEstimates, formatYieldPercent as percent, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
 import { usePageData } from '../data';
 import { api } from '../api';
-import { Button, IconButton } from './ui';
-import { useEffect, useMemo, useState } from 'react';
+import { Button } from './ui';
+import { Modal } from '@antseed/ui';
+import { useMemo, useState } from 'react';
+import { PoolActivity, SellerModels } from './PoolActivity';
 import type { PoolView, PoolsView } from '../../../src/api-types';
-import { cmpBig, formatAnts, formatBps, formatInt, formatUsdc, formatUsdcCompact, formatUtc, shortAddress, toBigInt } from '../format';
+import { cmpBig, formatAnts, formatBps, formatInt, formatUsdcCompact, formatUtc, shortAddress } from '../format';
 import { AddressLink } from './AddressLink';
-import { EpochCell } from './Epoch';
-import { CloseIcon } from './icons';
 import { Input } from './Field';
 import { Facts } from './Panel';
 import { Pill } from './Pill';
@@ -98,7 +98,7 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
       render: (p) => (
         <span className="cell-stack">
           <span>
-            {poolName(p)}
+            <button type="button" className="pool-details-trigger" aria-label={`View ${poolName(p)} overview`} aria-haspopup="dialog" onClick={event => { event.stopPropagation(); onOpen(p); }}>{poolName(p)}</button>
             {!p.stakeable ? <span className="dim small"> · not stakeable yet</span> : null}
           </span>
           <span className="cell-sub mono">
@@ -167,156 +167,70 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
   );
 }
 
-/** Right-hand drawer: seller settlement history (including legacy activity), pool facts and profile. */
-export function PoolDrawer({ pool: initialPool, view, onClose, onStake }: { pool: PoolView; view: PoolsView; onClose: () => void; onStake: (pool: PoolView) => void }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
+export function PoolDrawer({ pool: initialPool, view, onClose }: { pool: PoolView; view: PoolsView; onClose: () => void }) {
   const detail = usePageData(`pool:${initialPool.agentId}`, () => api.pool(initialPool.agentId));
   const pool = detail.data ?? initialPool;
   const historyRefreshFailed = !!detail.error || (!!detail.data && detail.data.volumeStatus !== 'available');
   const history = historyRefreshFailed && initialPool.volumeStatus === 'available' ? initialPool : pool;
   const historyEpoch = history === initialPool ? view.currentEpoch : detail.data?.currentEpoch ?? view.currentEpoch;
-  const completedVolumes = history.volumes.filter(volume => volume.epoch < historyEpoch).sort((first, second) => second.epoch - first.epoch);
-  const maxVolume = completedVolumes.reduce((max, v) => BigInt(v.usdc) > max ? BigInt(v.usdc) : max, 0n);
   const profile = pool.profile;
   const explorerUrl = view.explorer && pool.seller ? `${view.explorer.replace(/\/$/, '')}/account/${pool.seller}` : null;
-  const networkByEpoch = new Map(view.networkVolumes.map((v) => [v.epoch, v.usdc]));
+  const latest = history.volumes.find(volume => volume.epoch === historyEpoch - 1);
 
   return (
-    <>
-      <div className="drawer-backdrop" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Pool ${poolName(pool)}`}>
-        <header className="drawer-header">
-          <div className="drawer-titles">
-            <h2 className="drawer-title">{poolName(pool)}</h2>
-            <div className="muted small">
-              agent <span className="mono">{pool.agentId}</span>
-              {pool.seller ? (
-                <>
-                  {' · '}
-                  <AddressLink value={pool.seller} copy />
-                </>
-              ) : (
-                ' · no seller bound'
-              )}
-              {explorerUrl ? (
-                <>
-                  {' · '}
-                  <a href={explorerUrl} target="_blank" rel="noreferrer">
-                    explorer
-                  </a>
-                </>
-              ) : null}
-            </div>
-          </div>
-          <IconButton label="Close" className="drawer-close" onClick={onClose}>
-            <CloseIcon />
-          </IconButton>
-        </header>
-        <div className="drawer-body">
-          <div className="row">
-            {pool.stakeable ? <Pill tone="accent">stakeable</Pill> : <Pill tone="muted">not stakeable</Pill>}
-            {pool.hasPool ? null : <Pill tone="muted">no pool yet</Pill>}
-            {pool.stakeable ? (
-              <Button variant="primary" size="sm" onClick={() => onStake(pool)}>
-                Stake into this pool
-              </Button>
-            ) : null}
-          </div>
-
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Pool</h3>
-            <Facts
-              items={[
-                ['Power', `${formatAnts(pool.weight)} · ${formatBps(pool.powerShareBps)} of network`],
-                ['APY', <PoolApy pool={pool} />],
-                ['Total active stake', `${formatAnts(pool.activeStake, 4)} ANTS`],
-                ['Last epoch emission', pool.lastEpochEmission !== null ? `${formatAnts(pool.lastEpochEmission, 4)} ANTS` : '—'],
-              ]}
-            />
-          </section>
-
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Seller settled volume · completed epochs</h3>
-            <p className="hint">Includes legacy seller activity.</p>
-            {historyRefreshFailed && history === initialPool && history.volumeStatus === 'available' && <p className="hint">Seller history could not refresh. Showing previously loaded history.</p>}
-            {history.statsUpdatedAt && <p className="small muted">Fetched {formatUtc(Math.floor(history.statsUpdatedAt / 1000))}</p>}
-            {history.volumeStatus !== 'available' && <p className="hint">Settlement volume {history.volumeStatus === 'stale' ? 'is stale' : 'is unavailable'}. Usage points are not revenue.</p>}
-            <div className="volume-bars" role="img" aria-label="Seller settled USDC volume by completed epoch">
-              {completedVolumes.slice().reverse().map(v => <div className="volume-bar-row" key={v.epoch}><span>Epoch {v.epoch}</span><div className="volume-bar-track"><div style={{ width: `${maxVolume > 0n ? Number(BigInt(v.usdc) * 10000n / maxVolume) / 100 : 0}%` }} /></div><span>{formatUsdc(v.usdc)} USDC</span></div>)}
-            </div>
-            <div className="table-wrap" style={{ marginBottom: 0 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Epoch</th>
-                    <th className="num">Seller</th>
-                    <th className="num">Network</th>
-                    <th className="num">Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {completedVolumes.length === 0 ? (
-                    <tr>
-                      <td className="empty" colSpan={4}>
-                        Settlement volume unavailable for completed epochs.
-                      </td>
-                    </tr>
-                  ) : null}
-                  {completedVolumes.map((v, i) => {
-                    const net = networkByEpoch.get(v.epoch) ?? null;
-                    const share = net && toBigInt(net) ? Number((BigInt(v.usdc) * 10_000n) / BigInt(net)) : null;
-                    return (
-                      <tr key={v.epoch}>
-                        <td>
-                          <EpochCell epoch={v.epoch} />
-
-                        </td>
-                        <td className="num">{formatUsdc(v.usdc)}</td>
-                        <td className="num">{net !== null ? formatUsdc(net) : '—'}</td>
-                        <td className="num">{share !== null ? formatBps(share) : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Seller profile · lifetime activity</h3>
-            {profile?.stale && <p className="hint">Seller activity is stale; the indexer could not refresh.</p>}
-            {profile?.fetchedAt && <p className="small muted">Fetched {formatUtc(Math.floor(profile.fetchedAt / 1000))}</p>}
-            {profile ? (
-              <Facts
-                items={[
-                  ['Name', profile.name ?? <span className="muted">—</span>],
-                  ['Providers', profile.providers.length > 0 ? profile.providers.join(', ') : <span className="muted">—</span>],
-                  ['Models served', profile.modelsServed !== null ? formatInt(profile.modelsServed) : '—'],
-                  ['Unique buyers', profile.uniqueBuyers !== null ? formatInt(profile.uniqueBuyers) : '—'],
-                  ['Requests', profile.requestCount !== null ? formatInt(profile.requestCount) : '—'],
-                  ['Lifetime volume', profile.lifetimeVolumeUsdc !== null ? `${formatUsdc(profile.lifetimeVolumeUsdc)} USDC` : '—'],
-                  ['Ghost rate', profile.ghostRate !== null && Number.isFinite(profile.ghostRate) && profile.ghostRate >= 0 && profile.ghostRate <= 100 ? `${profile.ghostRate.toFixed(1)}%` : 'Unavailable'],
-                  ['Last settled', profile.lastSettledAt !== null ? formatUtc(profile.lastSettledAt) : '—'],
-                ]}
-              />
-            ) : (
-              <span className="muted small">The explorer has no record for this seller.</span>
-            )}
-          </section>
-
-        </div>
-      </aside>
-    </>
+    <Modal isOpen onClose={onClose} size="lg" overlayClassName="ants-stake-overlay ants-pool-overlay" className="pool-overview" title={poolName(pool)} eyebrow="PROVIDER OVERVIEW" subtitle={<>
+      Agent <span className="mono">{pool.agentId}</span> · {pool.seller ? <AddressLink value={pool.seller} copy /> : 'No seller bound'}
+      {explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer">View on Antscan ↗</a></> : null}
+    </>}>
+      <div className="pool-overview-status"><Pill tone={pool.stakeable ? 'accent' : 'muted'}>{pool.hasPool ? 'Staking pool' : 'No pool yet'}</Pill><span>Provider activity &amp; pool analytics</span></div>
+      <div className="pool-metrics">
+        <div><span className="tile-label">Total active stake</span><strong>{formatAnts(pool.activeStake)} <small>ANTS</small></strong></div>
+        <div><span className="tile-label">Last epoch volume</span><strong>{latest && history.volumeStatus === 'available' ? formatUsdcCompact(latest.usdc) : '—'} <small>USDC</small></strong></div>
+        <div><span className="tile-label">Pool power share</span><strong>{formatBps(pool.powerShareBps)}</strong><span className="small muted">Share of staking power, not volume</span></div>
+      </div>
+      <section className="pool-apy-section" aria-label="Estimated APY by lock">
+        <div className="pool-section-heading"><h3>Estimated APY by lock</h3></div>
+        <PoolApyEstimates pool={pool} />
+      </section>
+      <section className="pool-section">
+        <div className="pool-section-heading"><h3>Seller settled volume · completed epochs</h3><span className="small muted">Includes legacy seller activity.</span></div>
+        {historyRefreshFailed && history === initialPool && history.volumeStatus === 'available' && <p className="hint">Seller history could not refresh. Showing previously loaded history.</p>}
+        {history.volumeStatus !== 'available' && <p className="hint">Settlement volume {history.volumeStatus === 'stale' ? 'is stale' : 'is unavailable'}. Usage points are not revenue.</p>}
+        <PoolActivity volumes={history.volumes} networkVolumes={view.networkVolumes} currentEpoch={historyEpoch} />
+        {history.statsUpdatedAt && <p className="small muted">History fetched {formatUtc(Math.floor(history.statsUpdatedAt / 1000))}</p>}
+      </section>
+      <section className="pool-section">
+        <div className="pool-section-heading"><h3>Seller profile · lifetime activity</h3><span className="small muted">Antscan indexed totals</span></div>
+        {profile?.stale && <p className="hint">Seller activity is stale; the indexer could not refresh.</p>}
+        {profile ? <div className="pool-lifetime">
+          <div><span className="tile-label">Settled volume</span><strong>{profile.lifetimeVolumeUsdc != null ? `${formatUsdcCompact(profile.lifetimeVolumeUsdc)} USDC` : '—'}</strong></div>
+          <div><span className="tile-label">Requests</span><strong>{profile.requestCount != null ? formatInt(profile.requestCount) : '—'}</strong></div>
+          <div><span className="tile-label">Unique buyers</span><strong>{profile.uniqueBuyers != null ? formatInt(profile.uniqueBuyers) : '—'}</strong></div>
+          <div><span className="tile-label">Models served</span><strong>{profile.modelsServed != null ? formatInt(profile.modelsServed) : '—'}</strong></div>
+        </div> : <p className="hint">The explorer has no record for this seller.</p>}
+        <Facts items={[
+          ['Providers', profile?.providers.length ? profile.providers.join(', ') : '—'],
+          ['Last epoch emission', pool.lastEpochEmission != null ? `${formatAnts(pool.lastEpochEmission, 4)} ANTS` : '—'],
+          ['Ghost rate', profile?.ghostRate != null && Number.isFinite(profile.ghostRate) && profile.ghostRate >= 0 && profile.ghostRate <= 100 ? `${profile.ghostRate.toFixed(1)}%` : 'Unavailable'],
+          ['Last settled', profile?.lastSettledAt != null ? formatUtc(profile.lastSettledAt) : '—'],
+        ]} />
+        {profile?.fetchedAt && <p className="small muted">Profile fetched {formatUtc(Math.floor(profile.fetchedAt / 1000))}</p>}
+      </section>
+      <SellerModels address={pool.seller} />
+    </Modal>
   );
 }
 
+function PoolApyEstimates({ pool }: { pool: PoolView }) {
+  return <dl className="pool-apy-estimates">
+    {poolApyEstimates(pool.yield).map(period => <div key={period.label} title={period.status === 'unsupported'
+      ? `${period.label} is not supported by this pool's whole-epoch lock limits.`
+      : period.apy === null ? 'APY is unavailable because reward or epoch data is missing.'
+        : `10,000 ANTS reference stake. ${period.epochs} epoch(s), ${period.actualDays} days. Annualized initial earning rate with hypothetical compounding; not the return over this lock. APY above 10,000% is shown as N/A. Source epoch ${pool.yield!.epoch}.${pool.yield?.status === 'estimated' ? ' Rewards are not yet settled.' : ''}`}>
+      <dt>{period.label}</dt><dd>{period.status === 'unsupported' ? <span className="pool-apy-unavailable">Unsupported</span> : <>{percent(period.apy)}{period.apy !== null && period.apy <= YIELD_DISPLAY_LIMIT && pool.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}</>}</dd>
+    </div>)}
+  </dl>;
+}
 
 function yieldDescription(pool: PoolView): string {
   const info = pool.yield;
@@ -324,7 +238,7 @@ function yieldDescription(pool: PoolView): string {
   const range = poolApyRange(info);
   const duration = info.endsAt - info.startsAt;
   const lockLabel = (epochs: number | null) => epochs === null ? 'unavailable' : `${epochs} epoch(s), ${epochs * duration / 86400} days`;
-  return `1,000 ANTS reference stake. 1 week: ${lockLabel(range.oneWeek.epochs)}; 2 years: ${lockLabel(range.twoYears.epochs)}. Source epoch ${info.epoch}: ${formatUtc(info.startsAt)} – ${formatUtc(info.endsAt)}. Initial earning rates include the reference stake's added power and assume an unchanged pool reward budget. APY assumes the rates repeat and compound every epoch; compounding is not automatic. Power decreases as the lock runs down, activation delays are excluded, and future activity changes returns. Missing data or unsupported locks show —.${info.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
+  return `10,000 ANTS reference stake. 1 week: ${lockLabel(range.oneWeek.epochs)}; 2 years: ${lockLabel(range.twoYears.epochs)}. Source epoch ${info.epoch}: ${formatUtc(info.startsAt)} – ${formatUtc(info.endsAt)}. Initial earning rates include the reference stake's added power and assume an unchanged pool reward budget. APY assumes the rates repeat and compound every epoch; compounding is not automatic. Power decreases as the lock runs down, activation delays are excluded, and future activity changes returns. Missing data or unsupported locks show —.${info.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
 }
 
 function PoolApy({ pool }: { pool: PoolView }) {

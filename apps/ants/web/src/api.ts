@@ -8,6 +8,7 @@ import type {
   ProofStatusView,
   RewardsView,
   SellerView,
+  SellerModelsView,
   UsageView,
   VerificationView,
 } from '../../src/api-types';
@@ -125,6 +126,20 @@ export const api = {
   positions: () => get<PositionsView>('/api/positions'),
   rewards: () => get<RewardsView>('/api/rewards'),
   pools: () => get<PoolsView>('/api/pools'),
+  sellerModels: async (address: string) => {
+    try {
+      const data = await get<SellerModelsView>(`/api/sellers/${encodeURIComponent(address)}/models`);
+      if (!data || !('period' in data) || !('totals' in data)) {
+        throw new ApiError('The running dashboard server still uses sampled model data. Restart the updated desktop or dashboard process to load last-epoch totals.', 502);
+      }
+      return data;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new ApiError('The running dashboard server does not have the model-data endpoint (HTTP 404). Restart the updated desktop or dashboard process, then reopen staking.', 404);
+      }
+      throw error;
+    }
+  },
   pool: (agentId: number) => get<PoolDetail>(`/api/pools/${agentId}`),
   usage: (epochs: number) => get<UsageView>(`/api/usage?epochs=${epochs}`),
   emissions: () => get<EmissionsView>('/api/emissions'),

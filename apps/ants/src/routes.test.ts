@@ -13,10 +13,10 @@ vi.mock('./service/index.js', async (original) => ({
 }));
 
 const apps: ReturnType<typeof Fastify>[] = [];
-function setup(readOnly = false) {
+function setup(readOnly = false, chainOverrides: Partial<AntsContext['chain']> = {}) {
   const app = Fastify();
   apps.push(app);
-  const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337 } } as unknown as AntsContext;
+  const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337, ...chainOverrides } } as unknown as AntsContext;
   registerRoutes(app, { ctx, jobs: new JobRunner(), views: new ViewCache(), readOnly, dataDir: null });
   return app;
 }
@@ -24,9 +24,28 @@ function setup(readOnly = false) {
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
   vi.resetAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('dashboard API', () => {
+  it.each(['https://antscan.co', ''])('uses the configured explorer for models: %s', async explorerApiUrl => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const app = setup(true, { explorerApiUrl });
+    await app.inject('/api/sellers/0x0000000000000000000000000000000000000001/models');
+    if (explorerApiUrl === '') expect(fetchImpl).not.toHaveBeenCalled();
+    else {
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      for (const [url] of vi.mocked(fetch).mock.calls) expect(String(url).startsWith(`${explorerApiUrl}/api/`)).toBe(true);
+    }
+  });
+  it('allows read-only model information and rejects invalid seller addresses', async () => {
+    const app = setup(true);
+    const response = await app.inject('/api/sellers/0x0000000000000000000000000000000000000001/models');
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.catalogStatus).toBe('unavailable');
+    expect((await app.inject('/api/sellers/not-an-address/models')).statusCode).toBe(400);
+  });
   it('allows withdrawal estimates in read-only mode but blocks signing', async () => {
     const app = setup(true);
     const estimate = { burned: '500000000000000000', returned: '500000000000000000' };

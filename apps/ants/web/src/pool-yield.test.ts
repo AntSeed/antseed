@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PoolYield } from '../../src/api-types';
-import { formatYieldPercent, poolApyRange } from './pool-yield';
+import { formatYieldPercent, poolApyRange, poolApyEstimates } from './pool-yield';
 
 const unit = 10n ** 18n;
 const history: PoolYield = {
@@ -9,12 +9,36 @@ const history: PoolYield = {
 };
 
 describe('pool APY lock range', () => {
-  it('calculates one-week and two-year initial rates with the reference stake added to pool power', () => {
+  it('shows four requested lock durations without inventing a one-day weekly lock', () => {
+    const periods = poolApyEstimates(history);
+    expect(periods.map(period => period.label)).toEqual(['1 day', '1 month', '1 year', '2 years']);
+    expect(periods.map(period => period.epochs)).toEqual([null, 4, 52, 104]);
+    expect(periods.map(period => period.actualDays)).toEqual([null, 28, 364, 728]);
+    expect(periods[0]).toMatchObject({ status: 'unsupported', apy: null });
+    expect(periods[1]!.apy).toBeCloseTo(((1 + 100 * 4 / 50000) ** (365 / 7) - 1) * 100);
+    expect(periods[2]!.apy).toBeCloseTo(((1 + 100 * 52 / 530000) ** (365 / 7) - 1) * 100);
+    expect(periods[3]!.apy).toEqual(poolApyRange(history).twoYears.apy);
+  });
+
+  it('supports a one-day estimate when epochs and pool limits actually allow it', () => {
+    const periods = poolApyEstimates({ ...history, endsAt: 86400, maxLockEpochs: 730 });
+    expect(periods.map(period => period.epochs)).toEqual([1, 30, 365, 730]);
+    expect(periods[0]!.apy).toBeCloseTo(((1 + 100 / 20000) ** 365 - 1) * 100);
+    expect(periods.every(period => period.status === 'supported')).toBe(true);
+  });
+
+  it('distinguishes missing APY inputs from unsupported lock durations', () => {
+    expect(poolApyEstimates(undefined).every(period => period.status === 'unavailable' && period.apy === null)).toBe(true);
+    expect(poolApyEstimates({ ...history, maxLockEpochs: 52 })[3]).toMatchObject({ status: 'unsupported', apy: null });
+    expect(poolApyEstimates({ ...history, reward: null })[1]).toMatchObject({ status: 'supported', epochs: 4, apy: null });
+    expect(poolApyEstimates({ ...history, reward: '0' })[1]!.apy).toBe(0);
+  });
+  it('calculates one-week and two-year initial rates with 10,000 ANTS added to pool power', () => {
     const range = poolApyRange(history);
     expect(range.oneWeek.epochs).toBe(1);
     expect(range.twoYears.epochs).toBe(104);
-    expect(range.oneWeek.apy).toBeCloseTo(((1 + 100 / 11000) ** (365 / 7) - 1) * 100);
-    expect(range.twoYears.apy).toBeCloseTo(((1 + 100 * 104 / 114000) ** (365 / 7) - 1) * 100);
+    expect(range.oneWeek.apy).toBeCloseTo(((1 + 100 / 20000) ** (365 / 7) - 1) * 100);
+    expect(range.twoYears.apy).toBeCloseTo(((1 + 100 * 104 / 1050000) ** (365 / 7) - 1) * 100);
     expect(range.twoYears.apy!).toBeGreaterThan(range.oneWeek.apy!);
   });
 
@@ -25,7 +49,7 @@ describe('pool APY lock range', () => {
     const daily = poolApyRange({ ...history, endsAt: 86400, maxLockEpochs: 730 });
     expect(daily.oneWeek.epochs).toBe(7);
     expect(daily.twoYears.epochs).toBe(730);
-    expect(daily.oneWeek.apy).toBeCloseTo(((1 + 100 * 7 / 17000) ** 365 - 1) * 100);
+    expect(daily.oneWeek.apy).toBeCloseTo(((1 + 100 * 7 / 80000) ** 365 - 1) * 100);
   });
 
   it('keeps zero rewards, estimates and missing history distinct', () => {

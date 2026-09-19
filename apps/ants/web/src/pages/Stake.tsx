@@ -34,6 +34,13 @@ export function StakePage() {
   const [stakeBusy, setStakeBusy] = useState(false);
   const stakeTrigger = useRef<HTMLElement | null>(null);
   const [openPoolId, setOpenPoolId] = useState<number | null>(null);
+  const poolTrigger = useRef<HTMLElement | null>(null);
+  const closePool = () => {
+    setOpenPoolId(null);
+    requestAnimationFrame(() => {
+      if (poolTrigger.current?.isConnected) poolTrigger.current.focus({ preventScroll: true });
+    });
+  };
   const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
   const openPool = openPoolId !== null ? (sortedPools.find((p) => p.agentId === openPoolId) ?? null) : null;
   const stakeInto = (pool: PoolView) => {
@@ -133,7 +140,7 @@ export function StakePage() {
             Pool statistics are unavailable{pools.data.sourceError ? ` (${pools.data.sourceError})` : ' (no explorer configured)'}; only pools you stake in are listed, read live from the chain.
           </div>
         ) : null}
-        <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={(p) => setOpenPoolId(p.agentId)} onStake={stakeInto} />
+        <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={(pool) => { poolTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setOpenPoolId(pool.agentId); }} onStake={stakeInto} />
         <div className="hint">Compare projected initial yields for the same amount and lock. APY assumes compounding; actual returns vary. Click a seller for activity and volume history.</div>
       </Panel>
 
@@ -161,7 +168,7 @@ export function StakePage() {
         </Modal>
       ) : null}
 
-      {openPool && pools.data ? <PoolDrawer pool={openPool} view={pools.data} onClose={() => setOpenPoolId(null)} onStake={stakeInto} /> : null}
+      {openPool && pools.data ? <PoolDrawer pool={openPool} view={pools.data} onClose={closePool} /> : null}
     </>
   );
 }

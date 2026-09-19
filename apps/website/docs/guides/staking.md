@@ -65,7 +65,7 @@ decide where and for how long:
 | Column | What it tells you |
 |---|---|
 | Pool | Seller name from the explorer, or the agent id; rows marked not stakeable have no seller binding yet |
-| APY | One APY range for a 1,000 ANTS reference stake, from a 1-week lock to a 2-year lock, using the last completed epoch |
+| APY | One APY range for a 10,000 ANTS reference stake, from a 1-week lock to a 2-year lock, using the last completed epoch |
 | Total active stake (ANTS) | Total principal active in this pool for the current epoch; stakes awaiting activation are excluded |
 | Last epoch (USDC) | Settled volume in the last completed epoch |
 
@@ -84,11 +84,11 @@ mismatched historical inputs are read from contracts in batches.
 Staker rewards for a pool scale with the pool's usage points, and your share of
 them with your power in the pool. A pool with high volume and little power pays
 more per unit of power; a longer lock gives more power per ANTS. Click a row to
-open the pool drawer with volume per epoch against the network, the seller's
+open the provider-overview popup with volume per epoch against the network, the seller's
 explorer profile, and pool yield details.
 
-The table and pool drawer show one range, **1-week APY – 2-year APY**, rather than
-separate duration columns. Both endpoints use a 1,000 ANTS reference stake and
+The table shows one range, **1-week APY – 2-year APY**, rather than
+separate duration columns. Both endpoints use a 10,000 ANTS reference stake and
 the same completed epoch's pool rewards and power:
 
 - Initial position power = reference stake × lock epochs.
@@ -110,6 +110,14 @@ Power decreases as a normal lock runs down, activation delays are excluded, and
 future activity changes returns. Unsettled rewards are marked **est.**; hover for
 the source epoch, actual lock durations, and assumptions.
 
+The provider popup lists separate second-row APY tiles for **1 day, 1 month,
+1 year, and 2 years** of locking, using the same 10,000 ANTS reference stake and
+historical-rate calculation. These are not returns over those periods. With
+weekly epochs, a one-day lock is **Unsupported**; the other labels resolve to
+4 epochs (28 days), 52 epochs (364 days), and 104 epochs (728 days). Hover a
+supported estimate for its actual duration and source epoch. Missing rate data
+shows **—**, and each rate above 10,000% is independently shown as **N/A**.
+
 The staking form retains amount and lock selection, activation/unlock dates, and
 early-exit disclosures without personalized reward projections. Click the APY
 column to sort by the 1-week endpoint, or the last-epoch volume header to sort by
@@ -117,10 +125,39 @@ volume; click again to reverse
 direction. Missing values stay last. Volume remains available independently of
 whether the pool has yield data.
 
-Seller details show lifetime settlement volume, completed-epoch volume history,
-request count, unique buyers and models served when the indexer provides them.
-Unavailable/stale data is labeled. Model revenue breakdown is unavailable in this
-release: request counts and usage points are not treated as USDC revenue.
+Click a seller to open an informational provider-overview popup rather than a
+sidebar. It has no staking action; use the pool table's **Stake** button instead.
+Summary tiles show active stake, APY estimates by lock duration, last-epoch
+volume, and staking power share. One chart overlays completed-epoch seller
+volume on the left USDC axis and the seller's percentage of total network
+volume on a fixed 0–100% right axis, sharing the epoch X-axis. Missing
+observations leave gaps; missing or zero network totals do not become 0% share.
+Each chart point includes its exact value in its tooltip and accessible label.
+
+Lifetime activity includes settled volume, request count, unique buyers, and
+models served when Antscan provides them. **Models & usage** loads separately
+when opening the popup. Observed usage comes first; the final section shows
+advertised models as a single list of tags, with each model name shown once
+across categories and provider offerings. Advertisements are not a guarantee
+of current availability.
+
+Observed per-model requests, input/output tokens, and settled USDC come from
+`GET /api/sellers/:address/model-usage?from=<seconds>&to=<seconds>` for the
+**last completed epoch**, using boundaries from Antscan's `/api/emissions`.
+The seller and period are filtered before aggregating all indexed matching
+records, without a network-wide sample limit. The popup shows the epoch label,
+with models sorted by settled USDC volume. The API period uses an inclusive
+start and exclusive end. These are settlement-time totals, not request-time or lifetime
+totals; free usage is excluded, and the API does not certify indexer completeness.
+The overview separately shows settled, model-attributed, and unattributed USDC;
+unattributed volume has no matching model breakdown in the indexed totals.
+Unavailable data is labeled and never replaced with the old sample. Usage and
+catalog failures are independent and do not block pool statistics.
+
+Model data uses the same `payments.crypto.explorerApiUrl` as pool statistics
+(`https://antscan.co` by default on Base mainnet). The configured Antscan server
+must include the model-usage endpoint; an older server returns an explicit
+missing-endpoint message.
 
 ### Staking
 

@@ -807,6 +807,66 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   }
 }
 
+.ants-pool-overlay {
+  .as-modal__scroll-lock { width: min(1120px, 100%); }
+  .as-modal__title { font-size: 24px; letter-spacing: -.035em; }
+  .as-modal__body { padding: 0 28px 28px; }
+  .as-modal__header { padding: 24px 28px; }
+  .as-modal__subtitle { overflow-wrap: anywhere; }
+}
+.pool-details-trigger { appearance: none; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.pool-details-trigger:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pool-details-trigger:focus-visible { outline: 2px solid var(--pc-ink); outline-offset: 4px; border-radius: 2px; }
+.pool-overview-status { display: flex; align-items: center; gap: 12px; color: var(--pc-sub); font-size: 12px; margin-bottom: 20px; }
+.pool-metrics, .pool-lifetime, .pool-apy-estimates { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--pc-line); border: 1px solid var(--pc-line); border-radius: 12px; overflow: hidden; }
+.pool-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pool-metrics > div, .pool-lifetime > div, .pool-apy-estimates > div { display: flex; flex-direction: column; gap: 10px; background: var(--pc-bg); padding: 20px 18px; min-width: 0; }
+.pool-metrics strong { font-size: 23px; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pool-metrics strong small { font-size: 11px; color: var(--pc-sub); letter-spacing: 0; }
+.pool-apy-section { margin-top: 24px; }
+.pool-apy-section h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.pool-apy-estimates { margin: 0; }
+.pool-apy-estimates dt { font-size: 12px; color: var(--pc-sub); }
+.pool-apy-estimates dd { margin: 0; font-size: 23px; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pool-apy-unavailable { font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--pc-sub); }
+.pool-lifetime { margin-bottom: 18px; }
+.pool-lifetime strong { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pool-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--pc-line); }
+.pool-section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.pool-section h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.pool-chart { --chart-color: var(--pc-ok); border: 1px solid var(--pc-line); border-radius: 12px; padding: 16px 10px 10px; min-width: 0; }
+.pool-chart--share { --chart-color: #568beb; }
+.pool-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.pool-chart-plot { min-width: 0; }
+.pool-chart h4 { display: flex; align-items: center; gap: 8px; margin: 0 10px 10px; font-size: 12px; font-weight: 500; }
+.pool-chart-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chart-color); }
+.pool-chart svg { width: 100%; display: block; overflow: visible; }
+.pool-chart text { fill: var(--pc-sub); font-size: 12px; font-family: var(--font-mono); }
+.pool-chart text.pool-chart-axis-volume { fill: var(--pc-ok); }
+.pool-chart text.pool-chart-axis-share { fill: #568beb; }
+.pool-chart-grid { stroke: var(--pc-line); stroke-dasharray: 3 5; }
+.pool-chart-line { fill: none; stroke: var(--chart-color); stroke-width: 2.5; stroke-linejoin: round; }
+.pool-chart--share .pool-chart-line { stroke-dasharray: 6 5; }
+.pool-chart circle { fill: var(--pc-bg); stroke: var(--chart-color); stroke-width: 2; }
+.pool-chart circle:focus { outline: 2px solid var(--chart-color); outline-offset: 4px; }
+.pool-chart-empty { min-height: 170px; display: grid; place-items: center; padding: 20px; font-size: 12px; color: var(--pc-sub); text-align: center; }
+.pool-subheading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; font-size: 13px; font-weight: 600; margin: 24px 0 10px; }
+.pool-model-table td:first-child { min-width: 150px; max-width: 280px; overflow-wrap: anywhere; }
+.pool-catalog { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--pc-line); }
+.pool-catalog .pool-subheading { margin-top: 0; }
+.pool-model-tags { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 20px 0; padding: 0; }
+.pool-model-tags li { min-width: 0; max-width: 100%; }
+.pool-model-tags .pill { padding: 7px 11px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .ants-pool-overlay { padding: 12px; }
+  .ants-pool-overlay .as-modal__header { padding: 20px; }
+  .ants-pool-overlay .as-modal__body { padding: 0 20px 20px; }
+  .pool-metrics, .pool-lifetime, .pool-apy-estimates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pool-metrics > div:last-child { grid-column: 1 / -1; }
+  .pool-apy-estimates dd { font-size: 20px; }
+  .pool-metrics strong { font-size: 20px; }
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;

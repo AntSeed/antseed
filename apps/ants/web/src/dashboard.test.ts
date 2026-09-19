@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { AppContext, type AppValue } from './app-context';
@@ -8,10 +8,14 @@ import { SellerPage } from './pages/Seller';
 import { StakePage } from './pages/Stake';
 import { StakeForm } from './components/StakeForm';
 import { poolName, poolLabel, PoolsTable, PoolDrawer, sortPoolsByMetric } from './components/Pools';
-import { formatYieldPercent, poolApyRange } from './pool-yield';
+import { formatYieldPercent, poolApyRange, poolApyEstimates } from './pool-yield';
 import type { PoolView, PoolsView, RewardsView, SellerView } from '../../src/api-types';
 
 const state = vi.hoisted(() => ({ data: {} as Record<string, unknown>, keys: [] as Array<string | null> }));
+vi.mock('@antseed/ui', async original => ({
+  ...await original<typeof import('@antseed/ui')>(),
+  Modal: ({ children, title, subtitle, isOpen }: { children: ReactNode; title: ReactNode; subtitle?: ReactNode; isOpen: boolean }) => isOpen ? createElement('section', { role: 'dialog' }, createElement('h2', null, title), subtitle, children) : null,
+}));
 vi.mock('./data', () => ({ usePageData: (key: string | null) => { state.keys.push(key); return { data: key ? state.data[key] ?? null : null, error: null, loading: false, refresh: () => {} }; } }));
 vi.mock('./wallet', () => ({ BuyerWalletAction: () => createElement('button', null, 'Connect wallet') }));
 vi.mock('./jobs', () => ({ useJobs: () => ({ running: false, start: () => {} }) }));
@@ -27,6 +31,17 @@ function render(child: ReturnType<typeof createElement>): string {
 }
 
 describe('staking dashboard displays', () => {
+  it('keeps the provider popup informational and reads models only for its seller', () => {
+    const pool = { agentId: 42, seller: context.config.address, profile: null, stakeable: true, hasPool: true, activeStake: '0', weight: '0', powerShareBps: 0, lastEpochEmission: null, volumes: [] } as unknown as PoolView;
+    const view = { currentEpoch: 23, networkVolumes: [], explorer: null } as unknown as PoolsView;
+    const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {} }));
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('Models &amp; usage');
+    expect(html).not.toContain('Stake into this pool');
+    expect(html).not.toContain('drawer-backdrop');
+    expect(state.keys).toContain(`seller-models:${context.config.address}`);
+    expect((html.match(/<button[^>]*>.*?<\/button>/g) ?? []).some(button => /Stake/.test(button))).toBe(false);
+  });
   it.each([
     { readOnly: false, claimable: true, total: '7000000000000000000', visible: true },
     { readOnly: true, claimable: true, total: '7000000000000000000', visible: false },
@@ -297,13 +312,17 @@ describe('staking dashboard displays', () => {
     expect(html).not.toContain('APY · 1 month');
     expect(html).not.toContain('APY · 1 year');
     const view = { currentEpoch: 25, networkVolumes: [], explorer: null } as unknown as PoolsView;
-    const drawer = render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
-    expect(drawer).toContain(expected);
-    expect(drawer).toContain('APY');
+    const drawer = render(createElement(PoolDrawer, { pool, view, onClose: () => {} }));
+    expect(drawer).toContain('Estimated APY by lock');
+    expect(drawer).toContain('Unsupported');
+    for (const period of poolApyEstimates(pool.yield)) {
+      expect(drawer).toContain(`<dt>${period.label}</dt>`);
+      if (period.apy !== null) expect(drawer).toContain(formatYieldPercent(period.apy));
+    }
     expect(drawer).not.toContain('APY · 1 week–2 years');
   });
 
-  it.each([100, 200, 2000])('shows a single N/A only when an APY endpoint exceeds 10,000%% (reward: %s)', (reward) => {
+  it.each([100, 1000, 2000])('shows a single N/A only when an APY endpoint exceeds 10,000%% (reward: %s)', (reward) => {
     const pool = { agentId: 1, stakeable: true, profile: null, activeStake: '3000000000000000000', weight: '0', powerShareBps: 0, lastEpochEmission: null, volumes: [], yield: { epoch: 24, startsAt: 0, endsAt: 604800, status: 'estimated', reward: (BigInt(reward) * 10n ** 18n).toString(), power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 } } as unknown as PoolView;
     const range = poolApyRange(pool.yield);
     const hidden = reward !== 100;
@@ -312,16 +331,19 @@ describe('staking dashboard displays', () => {
       expect(range.oneWeek.apy).toBeGreaterThan(10);
       expect(range.twoYears.apy).toBeLessThan(10000);
     }
-    if (reward === 200) expect(range.oneWeek.apy).toBeLessThan(10000);
+    if (reward === 1000) expect(range.oneWeek.apy).toBeLessThan(10000);
     if (reward === 2000) expect(range.oneWeek.apy).toBeGreaterThan(10000);
     const expected = hidden ? 'N/A' : `${formatYieldPercent(range.oneWeek.apy)} – ${formatYieldPercent(range.twoYears.apy)}`;
     const table = render(createElement(PoolsTable, { pools: [pool], currentEpoch: 25, loading: false, onOpen: () => {}, onStake: () => {} }));
-    const drawer = render(createElement(PoolDrawer, { pool, view: { currentEpoch: 25, networkVolumes: [], explorer: null } as unknown as PoolsView, onClose: () => {}, onStake: () => {} }));
-    for (const html of [table, drawer]) {
-      expect(html).toContain(hidden ? '>N/A</span>' : `>${expected}`);
-      expect(html.includes('APY is shown as N/A when either end of the range exceeds 10,000%.')).toBe(hidden);
-      expect(html).not.toContain('N/A – N/A');
-      expect(html).not.toContain(' – N/A');
+    const drawer = render(createElement(PoolDrawer, { pool, view: { currentEpoch: 25, networkVolumes: [], explorer: null } as unknown as PoolsView, onClose: () => {} }));
+    expect(table).toContain(hidden ? '>N/A</span>' : `>${expected}`);
+    expect(table.includes('APY is shown as N/A when either end of the range exceeds 10,000%.')).toBe(hidden);
+    expect(table).not.toContain('N/A – N/A');
+    expect(table).not.toContain(' – N/A');
+    const estimates = [...drawer.matchAll(/<dt>([^<]*)<\/dt><dd>(.*?)<\/dd>/g)];
+    for (const period of poolApyEstimates(pool.yield)) {
+      const row = estimates.find(match => match[1] === period.label);
+      expect(row?.[2]).toContain(period.status === 'unsupported' ? 'Unsupported' : formatYieldPercent(period.apy));
     }
   });
 
@@ -337,20 +359,20 @@ describe('staking dashboard displays', () => {
       ],
     } as PoolView;
     const view = { currentEpoch: 23, networkVolumes: [{ epoch: 22, usdc: '7751200000' }], explorer: null } as PoolsView;
-    const drawer = () => render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
-    const barEpochs = (html: string) => [...html.matchAll(/<span>Epoch (\d+)<\/span>/g)].map(match => Number(match[1]));
+    const drawer = () => render(createElement(PoolDrawer, { pool, view, onClose: () => {} }));
+    const chartEpochs = (html: string) => [...html.matchAll(/aria-label="Settled volume, epoch (\d+):/g)].map(match => Number(match[1]));
     try {
       const initial = drawer();
-      expect(barEpochs(initial)).toEqual([15, 19, 21, 22]);
+      expect(chartEpochs(initial)).toEqual([15, 19, 21, 22]);
       state.data['pool:47214'] = { ...pool, currentEpoch: status === 'available' ? 23 : 24,
         volumes: status === 'available' ? [...pool.volumes].reverse() : [], volumeStatus: status };
       const refreshed = drawer();
-      expect(barEpochs(refreshed)).toEqual(barEpochs(initial));
+      expect(chartEpochs(refreshed)).toEqual(chartEpochs(initial));
       expect(refreshed).toContain('21.42 USDC');
       expect(refreshed).toContain('0 USDC');
       expect(refreshed).toContain('Seller settled volume · completed epochs');
       expect(refreshed).toContain('Includes legacy seller activity.');
-      expect(refreshed).toContain('<th class="num">Seller</th>');
+      expect(refreshed).not.toContain('View epoch data');
       expect(refreshed.includes('Showing previously loaded history.')).toBe(status !== 'available');
       expect(refreshed).not.toContain('<p class="hint">1,000 ANTS reference stake');
     } finally {
@@ -365,7 +387,7 @@ describe('staking dashboard displays', () => {
     state.data['pool:47214'] = { ...pool, currentEpoch: 23 };
     try {
       const view = { currentEpoch: 23, networkVolumes: [], explorer: null } as unknown as PoolsView;
-      const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
+      const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {} }));
       expect(html).toContain('Settlement volume unavailable for completed epochs.');
       expect(html).not.toContain('volume-bar-row');
       expect(html).not.toContain('0 USDC');
@@ -378,7 +400,7 @@ describe('staking dashboard displays', () => {
   it('uses explorer ghost-rate percentage units without multiplying again', () => {
     const pool = { agentId: 1, stakeable: false, weight: '0', activeStake: '0', powerShareBps: 0, securityShareBps: 0, yourPower: '0', yourStake: '0', yourPositionIds: [], volumes: [], usagePoints: '0', weightedUsagePoints: '0', lastEpochUsagePoints: '0', lastEpochEmission: null, lastEpochRewardPer1kPower: null, projectedRewardPer1kPower: null, profile: { name: 'Seller', ghostRate: 12.4, providers: [] } } as unknown as PoolView;
     const view = { networkVolumes: [], explorer: 'https://antscan.co' } as unknown as PoolsView;
-    const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {}, onStake: () => {} }));
+    const html = render(createElement(PoolDrawer, { pool, view, onClose: () => {} }));
     expect(html).toContain('12.4%');
     expect(html).not.toContain('1240');
     for (const removed of ['Security share', 'Reward / 1k power', 'Usage points (this / last)', 'Model revenue breakdown unavailable', 'Your positions', 'Weighted usage points']) expect(html).not.toContain(removed);

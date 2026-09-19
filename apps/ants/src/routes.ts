@@ -3,6 +3,7 @@ import type { AntsContext } from './service/context.js';
 import { JobRunner, describeError } from './jobs.js';
 import type { ViewCache } from './view-cache.js';
 import type { StepReporter } from './service/steps.js';
+import { sellerModels } from './service/seller-models.js';
 import {
   overview, positions, stake, move, split, merge, extend, maxLock, previewWithdraw, withdraw,
   rewards, claim, restake, stakeUsageRewards, compound, poolsView, singlePool, usage, emissions,
@@ -50,6 +51,7 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get('/api/positions', (_request, reply) => respond(reply, () => cached('positions', () => positions(ctx))));
   app.get('/api/rewards', (_request, reply) => respond(reply, () => cached('rewards', () => rewards(ctx))));
   app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000)));
+  app.get<{ Params: { address: string } }>('/api/sellers/:address/models', (request, reply) => respond(reply, () => views.read(`seller-models:${request.params.address.toLowerCase()}`, () => sellerModels(ctx.chain.explorerApiUrl, request.params.address), 60_000)));
   app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));

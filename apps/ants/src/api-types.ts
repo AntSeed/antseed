@@ -141,6 +141,18 @@ export interface SellerProfile {
   lastSettledAt: number | null;
 }
 
+export interface SellerModelsView {
+  fetchedAt: number;
+  catalogStatus: 'live' | 'stale' | 'unavailable';
+  catalogUpdatedAt: number | null;
+  offerings: Array<{ id: string; name: string; provider: string; categories: string[]; inputUsdPerMillion: number | null; outputUsdPerMillion: number | null }>;
+  usageStatus: 'available' | 'unavailable';
+  usageError: string | null;
+  period: { epoch: number; from: number; to: number } | null;
+  totals: { settledVolumeUsdc: string; attributedVolumeUsdc: string; unattributedVolumeUsdc: string | null; excessAttributedVolumeUsdc: string } | null;
+  usage: Array<{ serviceId: string; name: string; requests: string; inputTokens: string; outputTokens: string; volumeUsdc: string }>;
+}
+
 export interface PoolYield {
   reward?: string | null;
   power?: string | null;

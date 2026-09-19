@@ -8,6 +8,16 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- ANTS provider overview: use Antscan's seller/period model-usage API for the last completed epoch instead of a capped network-wide sample. Show the epoch label, settled/model-attributed/unattributed volume, and volume-ranked models without lengthy explanatory copy; keep catalog availability independent of usage failures.
+
+- ANTS provider overview: show observed model usage before the final advertised-model catalog, replacing the catalog pricing table with one list of model tags, with each model name shown once.
+
+- ANTS provider overview: remove the expandable epoch-data table; keep per-epoch values on chart points.
+
+- ANTS provider overview: use a 10,000 ANTS reference stake for APY estimates, place the four lock durations in their own second-row tiles, and keep assumptions in tooltips rather than a visible reference-stake caption. Model request failures now show their cause and a retry action, with restart guidance when the running backend lacks the endpoint.
+
+- ANTS dashboard: replace the pool sidebar with an informational provider-overview popup, one dual-axis volume/network-share chart, 1-day/1-month/1-year/2-year lock APY estimates with unsupported durations labeled, lifetime activity, and lazily loaded Antscan model offerings and last-epoch model usage. Staking remains outside the popup. Keep shared-dialog keyboard focus guards active so Tab and Shift+Tab stay inside the open dialog.
+
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.
 - Protocol/CLI/Node: `typesafe-systemone` joins the well-known service API protocols with a one-question health probe. The buyer proxy accepts `POST /v1/systemone`, routes only to sellers advertising the protocol, and never adapts it onto chat protocols. Point `TYPESAFE_BASE_URL` at the buyer proxy to use the TypeSafe SDKs unchanged. `GET /v1/models` reports these services as `type: "decision"` (filter with `?type=decisions`), so chat clients no longer see them as text models. A chat request for a model served only on another API now returns `400 unsupported_protocol` naming the supported protocols instead of `model_not_found`. Desktop chat refuses decision-model services with a clear message.
@@ -32,7 +42,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - ANTS dashboard: remove standalone network/read-only header badges; load page sections independently, batch overview reads, reuse matching Antscan epoch data, and skip yield reads for sellers without pools. Show total active ANTS without table-wide staker-count fetching.
 
 - CLI/VPR: open the localhost staking dashboard in the system browser with connected-wallet approvals and verified transaction results. Keep terminal signing local, preserve the originating buyer separately from its authorized wallet, and retain explicit buyer-wallet authorization and one Manage staking entry.
-- ANTS dashboard: show one sortable APY range for 1-week through 2-year locks using a 1,000 ANTS reference stake and the last completed epoch's rewards and power. Explain actual whole-epoch durations and hypothetical-compounding assumptions, and preserve estimated/unavailable labels. Keep the staking form free of amount-sensitive projections. Sort settled volume independently of yield availability, and inspect seller activity. Model revenue breakdown remains unavailable.
+- ANTS dashboard: show one sortable APY range for 1-week through 2-year locks using a 10,000 ANTS reference stake and the last completed epoch's rewards and power. Explain actual whole-epoch durations and hypothetical-compounding assumptions, and preserve estimated/unavailable labels. Keep the staking form free of amount-sensitive projections. Sort settled volume independently of yield availability, and inspect seller activity. Model revenue breakdown remains unavailable.
 - ANTS dashboard: promote whole-position Move allocation, preview lock/power effects, and separate withdrawal principal, penalties, outstanding rewards and transfer restrictions. Reject partial-move requests; retain the separate Split action. Preserve recent closed-position rewards through chain-verified local history.
 - Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
 
