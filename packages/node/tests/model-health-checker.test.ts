@@ -90,6 +90,18 @@ describe('buildHealthProbeRequest', () => {
     });
   });
 
+  it('builds a single-question systemone probe', () => {
+    expect(supportsHealthProbe('typesafe-systemone')).toBe(true);
+    const req = buildHealthProbeRequest('jev-latest', 'typesafe-systemone');
+    expect(req.path).toBe('/v1/systemone');
+    const body = JSON.parse(new TextDecoder().decode(req.body));
+    expect(body).toEqual({
+      model: 'jev-latest',
+      state: 'ping',
+      questions: { ok: { type: 'noul', instructions: 'Is the state the word ping?' } },
+    });
+  });
+
   it('does not fall back to a chat probe for image services', () => {
     expect(supportsHealthProbe('openai-images')).toBe(false);
     expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(

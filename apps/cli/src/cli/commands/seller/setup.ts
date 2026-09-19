@@ -88,6 +88,8 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
       return 'sign in to Claude Code on this machine';
     case 'local-llm':
       return 'start your local LLM runtime (no API key required)';
+    case 'typesafe':
+      return 'export TYPESAFE_API_KEY=<key>';
     default:
       return `set the credentials required by ${pluginName}`;
   }

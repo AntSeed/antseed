@@ -475,6 +475,7 @@ Provider plugins authenticate with their upstream AI service. Credentials live i
 | `openai` | `OPENAI_API_KEY` | Set `providers.<name>.baseUrl` in config.json for Together/OpenRouter/etc. |
 | `claude-code` | keychain | Reads from `claude-code` secure storage |
 | `local-llm` | none | Ollama/llama.cpp |
+| `typesafe` | `TYPESAFE_API_KEY` | System One decision models (`POST /v1/systemone`). Set `providers.<name>.baseUrl` for a compatible upstream. |
 
 The separation is intentional:
 

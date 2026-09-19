@@ -70,6 +70,21 @@ describe('buildNetworkServiceOffers', () => {
     });
   });
 
+  it('types typesafe-systemone services as decision offers', () => {
+    expect(buildNetworkServiceOffers([{
+      peerId: 'c'.repeat(40),
+      providers: ['typesafe'],
+      providerServiceApiProtocols: {
+        typesafe: { services: { 'jev-latest': ['typesafe-systemone'] } },
+      },
+    }])).toMatchObject([{
+      serviceId: 'jev-latest',
+      provider: 'typesafe',
+      protocol: 'typesafe-systemone',
+      type: 'decision',
+    }]);
+  });
+
   it('supports legacy peer-wide service lists', () => {
     expect(buildNetworkServiceOffers([{
       peerId: 'b'.repeat(40),

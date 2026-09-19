@@ -280,6 +280,12 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
       };
     }
+    if (advertisedProtocol === 'typesafe-systemone') {
+      return {
+        ok: false,
+        error: `Service "${serviceId}" is a decision model and cannot be used for text chat. Select a text-capable model.`,
+      };
+    }
 
     const protocol: ChatServiceProtocol = advertisedProtocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
