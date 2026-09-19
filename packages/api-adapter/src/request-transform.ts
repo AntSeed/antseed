@@ -1,4 +1,5 @@
 import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
+import { readReasoningEffort, withReasoningEffort } from './reasoning.js';
 import {
   normalizeAnthropicMessagesRequestBody,
   normalizeOpenAIChatRequestBody,
@@ -103,13 +104,15 @@ export function transformRequest(
     transformedHeaders[CLIENT_STREAM_REQUESTED_HEADER] = streamRequested ? 'true' : 'false';
   }
 
+  const effort = readReasoningEffort(body, options.from);
+  const transformedRequest = {
+    ...request,
+    path,
+    headers: transformedHeaders,
+    body: encodeJson(transformedBody),
+  };
   return {
-    request: {
-      ...request,
-      path,
-      headers: transformedHeaders,
-      body: encodeJson(transformedBody),
-    },
+    request: effort === undefined ? transformedRequest : withReasoningEffort(transformedRequest, options.to, effort),
     streamRequested,
     requestedModel: normalized.model,
   };

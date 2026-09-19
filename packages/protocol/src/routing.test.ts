@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertRoutingPreferences, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingRequest, validateRoutingServiceMetadata, type RoutingPreferenceSchema } from './routing.js';
+import { assertRoutingPreferences, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingRequest, validateRoutingServiceMetadata, validateRoutingUsageContext, type RoutingPreferenceSchema } from './routing.js';
 
 const schema: RoutingPreferenceSchema = {
   type: 'object', additionalProperties: false,
@@ -12,6 +12,40 @@ const schema: RoutingPreferenceSchema = {
 };
 
 describe('router-defined preferences', () => {
+  it('validates candidate effort labels without coercion', () => {
+    const metadata = createRoutingServiceMetadata(schema);
+    const candidate = { serviceId: 'model', peerId: 'a'.repeat(40), inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+    const request = { version: 1, service: 'selector', preferencesSchemaHash: metadata.preferencesSchemaHash,
+      request: { path: '/v1/chat/completions', body: {} }, candidates: [candidate], preferences: {} };
+    for (const reasoningEfforts of [undefined, [], ['none', 'high']]) {
+      expect(() => validateRoutingRequest({ ...request, candidates: [{ ...candidate, reasoningEfforts }] }, metadata)).not.toThrow();
+    }
+    for (const reasoningEfforts of [null, 'high', ['unknown'], [1], ['high', 'high']]) {
+      expect(() => validateRoutingRequest({ ...request, candidates: [{ ...candidate, reasoningEfforts }] }, metadata)).toThrow('reasoning efforts');
+    }
+  });
+  it('validates optional usage history without requiring cache reports', () => {
+    const observation = { id: 'event-1', offer: { peerId: 'a'.repeat(40), provider: 'example', serviceId: 'model' }, inputTokens: 100, ageMs: 10 };
+    const context = { conversationRef: 'opaque', usageObservations: [observation], historyTruncated: false };
+    expect(() => validateRoutingUsageContext(context)).not.toThrow();
+    expect(context.usageObservations[0]).not.toHaveProperty('cachedInputTokens');
+    for (const cachedInputTokens of [0, 80]) expect(() => validateRoutingUsageContext({ ...context, usageObservations: [{ ...observation, cachedInputTokens }] })).not.toThrow();
+    for (const invalid of [
+      { ...context, unexpected: true }, { ...context, historyTruncated: 'false' }, { ...context, conversationRef: '' },
+      { ...context, usageObservations: [observation, observation] },
+      ...[-1, 101, null, '80', 0.5].map((cachedInputTokens) => ({ ...context, usageObservations: [{ ...observation, cachedInputTokens }] })),
+      ...[-1, Infinity, Number.MAX_SAFE_INTEGER + 1].map((inputTokens) => ({ ...context, usageObservations: [{ ...observation, inputTokens }] })),
+      { ...context, usageObservations: [{ ...observation, ageMs: -1 }] },
+      { ...context, usageObservations: [{ ...observation, prompt: 'must not be accepted' }] },
+      { ...context, usageObservations: [{ ...observation, offer: { ...observation.offer, peerId: 'invalid' } }] },
+      { ...context, usageObservations: Array.from({ length: 65 }, (_, index) => ({ ...observation, id: `event-${index}` })) },
+      { ...context, usageObservations: Array.from({ length: 64 }, (_, index) => ({ ...observation, id: `event-${index}`, offer: { ...observation.offer, provider: 'x'.repeat(256), serviceId: 'y'.repeat(256) } })) },
+    ]) expect(() => validateRoutingUsageContext(invalid)).toThrow();
+    const metadata = createRoutingServiceMetadata(schema);
+    const request = { version: 1, service: 'selector', preferencesSchemaHash: metadata.preferencesSchemaHash, request: { path: '/v1/chat/completions', body: {} }, candidates: [{ serviceId: 'model', peerId: 'a'.repeat(40), inputUsdPerMillion: 1, outputUsdPerMillion: 1 }], preferences: {}, context };
+    expect(() => validateRoutingRequest(request, metadata)).not.toThrow();
+    expect(() => validateRoutingRequest({ ...request, context: { ...context, usageObservations: [observation, observation] } }, metadata)).toThrow();
+  });
   it('preserves nested types and uses only advertised defaults', () => {
     const values = { count: 2, settings: {}, labels: ['one'] };
     expect(resolveRoutingPreferences(schema, values)).toEqual({ policy: 'first', count: 2, settings: { enabled: true }, labels: ['one'] });

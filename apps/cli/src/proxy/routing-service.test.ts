@@ -7,6 +7,17 @@ import { RoutingServiceExecutor } from './routing-service.js'
 const metadata = createRoutingServiceMetadata({ type: 'object', properties: {}, additionalProperties: false })
 const settings: RoutingServiceConfig = { peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'route-classifier' }
 
+test('routing usage context must match the buyer snapshot before paid dispatch', async () => {
+  const state = setup()
+  const context = { conversationRef: 'opaque', usageObservations: [{ id: 'event-1', offer: { peerId: 'b'.repeat(40), provider: 'example', serviceId: 'test-model' }, inputTokens: 10, ageMs: 0 }], historyTruncated: false }
+  state.context.usageContext = context
+  await assert.rejects(state.executor.invoke('missing-context', state.context, state.messages), /observations do not match/)
+  await assert.rejects(state.executor.invoke('changed-context', state.context, { ...state.messages, context: { ...context, conversationRef: 'changed' } }), /observations do not match/)
+  assert.equal(state.sent.length, 0)
+  await state.executor.invoke('valid-context', state.context, { ...state.messages, context })
+  assert.deepEqual(JSON.parse(state.sent[0][1].body.toString()).context, context)
+})
+
 test('metadata inspection resolves typed preferences and rejects unknown fields before dispatch', async () => {
   const state = setup()
   state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
@@ -69,7 +80,7 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
     node: { buyerPaymentManager: { maxPerRequestUsdc: 10000n } as any, sendRequest: async (...args: any[]) => {
       sent.push(args)
       const response = { requestId: args[1].requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
-        version: 1, recommendation: { serviceId: 'test-model' }, usage: { input_tokens: 100, output_tokens: 20 },
+        version: 1, recommendations: [{ serviceId: 'test-model' }], usage: { input_tokens: 100, output_tokens: 20 },
       })) }
       const validateResponse = args[2]?.acceptResponse
       if (validateResponse && validateResponse(response) !== true) throw new Error('invalid classification')
@@ -200,7 +211,7 @@ test('per-call routing validates the recommendation and authorizes only the adve
   let validations = 0
   const parseResponse = (response: { body: Uint8Array }) => {
     validations++
-    const model = JSON.parse(new TextDecoder().decode(response.body)).recommendation.serviceId
+    const model = JSON.parse(new TextDecoder().decode(response.body)).recommendations[0].serviceId
     return [{ peerId: 'b'.repeat(40), serviceId: model }]
   }
   await Promise.all([
@@ -233,6 +244,8 @@ for (const [name, routes] of Object.entries({
   'wrong peer': [{ peerId: 'c'.repeat(40), serviceId: 'test-model' }],
   'missing model': [{ peerId: 'b'.repeat(40) }],
   'partially invalid list': [{ peerId: 'b'.repeat(40), serviceId: 'test-model' }, { peerId: 'c'.repeat(40), serviceId: 'test-model' }],
+  'duplicate list': [{ serviceId: 'test-model' }, { serviceId: 'test-model' }],
+  'oversized list': Array.from({ length: 3 }, () => ({ serviceId: 'test-model' })),
 })) {
   test(`per-call validation rejects ${name} without retrying`, async () => {
     const state = setupPerCall()
@@ -267,10 +280,22 @@ for (const candidates of [[], [{ peerId: 'b'.repeat(40), serviceId: 'another-mod
   })
 }
 
-test('per-call routing rejects multiple recommendations instead of authorizing fallback', async () => {
+test('per-call routing accepts one ranked decision with exact and model-only recommendations', async () => {
   const state = setupPerCall()
   const exact = state.context.candidates![0]!
-  await assert.rejects(state.executor.invoke('parent', state.context, state.messages,
-    () => [{ peerId: exact.peerId, serviceId: exact.serviceId }, { serviceId: exact.serviceId }]), /invalid classification/)
+  state.context.candidates!.push({ peerId: 'c'.repeat(40), serviceId: 'another-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 })
+  state.messages.candidates = state.context.candidates!
+  const parser = () => [{ peerId: exact.peerId, serviceId: exact.serviceId }, { serviceId: 'another-model' }]
+  await Promise.all([
+    state.executor.invoke('parent', state.context, state.messages, parser),
+    state.executor.invoke('parent', state.context, state.messages, parser),
+  ])
   assert.equal(state.sent.length, 1)
+  assert.equal(state.records[0]?.outcome, 'succeeded')
+})
+
+test('unsupported reasoning choices are not accepted as successful per-call routing results', async () => {
+  const state = setupPerCall()
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages,
+    () => [{ serviceId: 'test-model', inference: { reasoningEffort: 'high' } }]), /invalid classification/)
 })

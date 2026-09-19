@@ -34,7 +34,7 @@ export {
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
 export type { Router, RouteCandidate, RouteRecommendation, RouteSelectionContext } from './interfaces/buyer-router.js';
-export { isRouteRecommendation, isRouteRecommendationEligible } from './routing/route-recommendation.js';
+export { isRouteRecommendation, isRouteRecommendationEligible, areRouteRecommendationsEligible } from './routing/route-recommendation.js';
 export type { ConversationIdentity } from './routing/conversation-identity.js';
 
 // Types (re-export everything)
@@ -371,5 +371,6 @@ export { readRouterSettings, validateRouterSettings, type RouterSettingField } f
 export { RoutingContextTracker, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
 
 export { isRoutingSelection, type RoutingSelection, type RoutingServiceTarget } from './routing/selection.js';
-export { createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest } from '@antseed/protocol';
-export type { RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1 } from '@antseed/protocol';
+export { createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest, validateRoutingUsageContext } from '@antseed/protocol';
+export type { ReasoningEffort, RoutingInference, RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1, RoutingUsageContext, RoutingUsageObservation } from '@antseed/protocol';
+export { RoutingObservationHistory } from './routing/usage-observations.js';

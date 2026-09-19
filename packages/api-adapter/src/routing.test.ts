@@ -11,6 +11,6 @@ describe('structured routing protocol', () => {
     expect(selectTargetProtocolForRequest('antseed-routing', ['antseed-routing'])).toEqual({ targetProtocol: 'antseed-routing', requiresTransform: false });
   });
   it('meters fresh and cached routing input separately', () => {
-    expect(extractUsage({ version: 1, recommendation: { serviceId: 'model' }, usage: { input_tokens: 5, cached_input_tokens: 20, output_tokens: 2 } })).toMatchObject({ inputTokens: 25, freshInputTokens: 5, cachedInputTokens: 20, outputTokens: 2 });
+    expect(extractUsage({ version: 1, recommendations: [{ serviceId: 'model' }], usage: { input_tokens: 5, cached_input_tokens: 20, output_tokens: 2 } })).toMatchObject({ inputTokens: 25, freshInputTokens: 5, cachedInputTokens: 20, outputTokens: 2 });
   });
 });

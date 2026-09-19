@@ -1,1 +1,1 @@
-{ "version": 1, "recommendation": { "serviceId": "unavailable-model" } }
+{ "version": 1, "recommendations": [{ "serviceId": "model-a" }, { "serviceId": "unavailable-model" }] }

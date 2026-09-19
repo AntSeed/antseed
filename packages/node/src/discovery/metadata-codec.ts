@@ -1,6 +1,6 @@
 import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
-import { SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION } from "./peer-metadata.js";
+import { SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -110,6 +110,11 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
   // each provider
   for (const p of metadata.providers) {
     for (const caps of Object.values(p.serviceCapabilities ?? {})) {
+      if (caps.reasoningEfforts !== undefined) {
+        if (metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error('Reasoning efforts require metadata v14 or newer');
+        const errors = validateServiceCapabilityFields(caps);
+        if (errors.length) throw new Error(errors.join('; '));
+      }
       if (caps.routing === undefined) continue;
       if (metadata.version < SERVICE_ROUTING_CAPABILITY_METADATA_VERSION) {
         throw new Error(`Service routing capability requires metadata v${SERVICE_ROUTING_CAPABILITY_METADATA_VERSION} or newer`);
@@ -239,8 +244,8 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts, metadata.version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION);
     }
 
-    if (p.serviceRouting && metadata.version < 14) throw new Error("Routing descriptors require metadata v14");
-    if (metadata.version >= 14) {
+    if (p.serviceRouting && metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error("Routing descriptors require metadata v14");
+    if (metadata.version >= SERVICE_ROUTING_METADATA_VERSION) {
       const entries = p.serviceRouting ?? {};
       Object.values(entries).forEach(validateRoutingServiceMetadata);
       const bytes = new TextEncoder().encode(canonicalRoutingJson(entries));
@@ -500,6 +505,7 @@ const CAP_HAS_STRUCTURED_OUTPUT = 1 << 5;
 const CAP_HAS_OUTPUTS = 1 << 6;
 const CAP_HAS_SUPPORTED_PARAMETERS = 1 << 7;
 const CAP_HAS_ROUTING = 1 << 8;
+const CAP_HAS_REASONING_EFFORTS = 1 << 9;
 const CAP_PRESENCE_MASK = CAP_HAS_CONTEXT_WINDOW | CAP_HAS_MAX_OUTPUT_TOKENS | CAP_HAS_INPUTS
   | CAP_HAS_REASONING | CAP_HAS_TOOL_USE | CAP_HAS_STRUCTURED_OUTPUT
   | CAP_HAS_OUTPUTS | CAP_HAS_SUPPORTED_PARAMETERS;
@@ -555,6 +561,7 @@ function encodeServiceCapabilities(
     if (caps.structuredOutput !== undefined) presence |= CAP_HAS_STRUCTURED_OUTPUT;
     if (caps.supportedParameters !== undefined) presence |= CAP_HAS_SUPPORTED_PARAMETERS;
     if (caps.routing !== undefined) presence |= CAP_HAS_ROUTING;
+    if (caps.reasoningEfforts !== undefined) presence |= CAP_HAS_REASONING_EFFORTS;
     if (hasRoutingCapability) {
       const presenceBuffer = new ArrayBuffer(2);
       new DataView(presenceBuffer).setUint16(0, presence, false);
@@ -596,6 +603,11 @@ function encodeServiceCapabilities(
         pushUtf8(parts, parameter);
       }
     }
+    if (caps.reasoningEfforts !== undefined) {
+      const efforts = [...caps.reasoningEfforts].sort();
+      parts.push(new Uint8Array([efforts.length]));
+      for (const effort of efforts) pushUtf8(parts, effort);
+    }
   }
 }
 
@@ -606,6 +618,7 @@ function decodeServiceCapabilities(
   checkBounds: (offset: number, needed: number, total: number) => void,
   hasWideServiceCounts: boolean,
   hasRoutingCapability: boolean,
+  hasReasoningEfforts: boolean,
 ): PeerMetadata["providers"][number]["serviceCapabilities"] | undefined {
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
@@ -620,7 +633,8 @@ function decodeServiceCapabilities(
       ? new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false)
       : data[offset]!;
     offset += presenceSize;
-    const presenceMask = CAP_PRESENCE_MASK | (hasRoutingCapability ? CAP_HAS_ROUTING : 0);
+    const presenceMask = CAP_PRESENCE_MASK | (hasRoutingCapability ? CAP_HAS_ROUTING : 0)
+      | (hasReasoningEfforts ? CAP_HAS_REASONING_EFFORTS : 0);
     if (presence & ~presenceMask) {
       // Unknown bits would decode into a struct that re-encodes to different
       // bytes and fails signature verification anyway — reject explicitly so
@@ -673,6 +687,19 @@ function decodeServiceCapabilities(
         parameters.push(parameter);
       }
       caps.supportedParameters = parameters;
+    }
+    if (presence & CAP_HAS_REASONING_EFFORTS) {
+      checkBounds(offset, 1, data.length);
+      const count = data[offset++]!;
+      const efforts: NonNullable<ServiceCapabilities['reasoningEfforts']> = [];
+      for (let index = 0; index < count; index += 1) {
+        const [effort, nextOffset] = readUtf8(data, offset, checkBounds);
+        offset = nextOffset;
+        efforts.push(effort as (typeof efforts)[number]);
+      }
+      caps.reasoningEfforts = efforts;
+      const errors = validateServiceCapabilityFields(caps);
+      if (errors.length) throw new Error(errors.join('; '));
     }
     serviceCapabilities[serviceName] = caps;
   }
@@ -983,11 +1010,11 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
-      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION)
+      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, version >= SERVICE_ROUTING_METADATA_VERSION)
       : undefined;
 
     let serviceRouting: import("./peer-metadata.js").ProviderAnnouncement['serviceRouting'];
-    if (version >= 14) {
+    if (version >= SERVICE_ROUTING_METADATA_VERSION) {
       checkBounds(offset, 4, data.length);
       const length = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
       offset += 4;

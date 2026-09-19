@@ -74,6 +74,13 @@ describe('parseServiceUnitBillingModelsJson', () => {
 });
 
 describe('parseServiceCapabilitiesJson', () => {
+  it('preserves advertised effort choices and rejects unknown or contradictory values', () => {
+    const capabilities = { model: { reasoning: true, reasoningEfforts: ['none', 'high'] } };
+    expect(parseServiceCapabilitiesJson(JSON.stringify(capabilities))).toEqual(capabilities);
+    for (const caps of [{ reasoningEfforts: ['unknown'] }, { reasoningEfforts: ['high', 'high'] }, { reasoning: false, reasoningEfforts: ['high'] }]) {
+      expect(() => parseServiceCapabilitiesJson(JSON.stringify({ model: caps }))).toThrow('reasoningEfforts');
+    }
+  });
   it('preserves and validates the explicit routing capability', () => {
     expect(parseServiceCapabilitiesJson(JSON.stringify({ classifier: { routing: true } })))
       .toEqual({ classifier: { routing: true } });

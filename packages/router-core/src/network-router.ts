@@ -1,13 +1,12 @@
-import { isRouteRecommendationEligible, type Router, type RouteRecommendation, type SerializedHttpResponse } from '@antseed/node';
+import { areRouteRecommendationsEligible, isRouteRecommendationEligible, type Router, type RouteRecommendation, type SerializedHttpResponse } from '@antseed/node';
 
-export function parseRoutingResponse(response: SerializedHttpResponse, candidates: readonly { serviceId: string; peerId: string }[]): RouteRecommendation[] {
+export function parseRoutingResponse(response: SerializedHttpResponse, candidates: Parameters<typeof areRouteRecommendationsEligible>[1]): RouteRecommendation[] {
   if (response.statusCode < 200 || response.statusCode >= 300) throw new Error('Routing service rejected the request');
   const value: unknown = JSON.parse(new TextDecoder().decode(response.body));
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid routing response');
   const result = value as Record<string, unknown>;
-  if (result.version !== 1 || Object.keys(result).some((key) => !['version', 'recommendation', 'usage'].includes(key))
-    || !isRouteRecommendationEligible(result.recommendation, candidates)
-    || Object.keys(result.recommendation).some((key) => !['serviceId', 'peerId'].includes(key))) throw new Error('Routing response must contain one eligible recommendation');
+  if (result.version !== 1 || Object.keys(result).some((key) => !['version', 'recommendations', 'usage'].includes(key))
+    || !areRouteRecommendationsEligible(result.recommendations, candidates)) throw new Error('Routing response must contain a nonempty ranked list of unique eligible recommendations');
   if (result.usage !== undefined) {
     if (!result.usage || typeof result.usage !== 'object' || Array.isArray(result.usage)) throw new Error('Invalid routing usage');
     const usage = result.usage as Record<string, unknown>;
@@ -16,7 +15,7 @@ export function parseRoutingResponse(response: SerializedHttpResponse, candidate
       if (!Number.isSafeInteger(usage[key]) || (usage[key] as number) < 0) throw new Error('Invalid routing usage');
     }
   }
-  return [{ ...result.recommendation }];
+  return structuredClone(result.recommendations);
 }
 
 export const selectNetworkRoute: NonNullable<Router['selectRoute']> = async (request, _peers, _conversation, _preferences, _defaultRoute, context) => {
@@ -24,8 +23,9 @@ export const selectNetworkRoute: NonNullable<Router['selectRoute']> = async (req
   context.signal.throwIfAborted();
   const candidates = structuredClone(context.candidates ?? []);
   if (!candidates.length) throw new Error('No eligible routing candidates');
-  const previous = context.routing?.previousRoute;
-  if (context.routing?.shouldRoute === false && previous && isRouteRecommendationEligible(previous, candidates)) return [previous];
+  const previous = context.routing?.previousRoutes ?? (context.routing?.previousRoute ? [context.routing.previousRoute] : []);
+  const reusable = previous.filter((recommendation) => isRouteRecommendationEligible(recommendation, candidates));
+  if (context.routing?.shouldRoute === false && areRouteRecommendationsEligible(reusable, candidates)) return structuredClone(reusable);
   const body: unknown = JSON.parse(new TextDecoder().decode(request.body));
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Routing requires a structured request body');
   const parseResponse = (response: SerializedHttpResponse) => parseRoutingResponse(response, candidates);
@@ -36,6 +36,7 @@ export const selectNetworkRoute: NonNullable<Router['selectRoute']> = async (req
     request: { path: request.path, body: body as import('@antseed/node').RoutingPreferences },
     candidates,
     preferences: structuredClone(context.networkRouting.preferences),
+    ...(context.usageContext ? { context: structuredClone(context.usageContext) } : {}),
   }, parseResponse);
   context.signal.throwIfAborted();
   return parseResponse(response);

@@ -1,6 +1,6 @@
 import { validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { perCallPriceMicroUsdc, validateUnitBillingModelV1 } from "../billing/unit.js";
@@ -600,7 +600,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
 
     if (p.serviceRouting !== undefined) {
       const field = `providers[${i}].serviceRouting`;
-      if (metadata.version < 14 || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
+      if (metadata.version < SERVICE_ROUTING_METADATA_VERSION || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
         errors.push({ field, message: "Routing descriptors require an object and metadata v14" });
       } else {
         for (const [service, descriptor] of Object.entries(p.serviceRouting)) {
@@ -645,6 +645,9 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         }
         for (const message of validateServiceCapabilityFields(caps)) {
           errors.push({ field, message });
+        }
+        if (caps.reasoningEfforts !== undefined && metadata.version < SERVICE_ROUTING_METADATA_VERSION) {
+          errors.push({ field: `${field}.reasoningEfforts`, message: 'Reasoning efforts require metadata version 14' });
         }
         if (caps.routing !== undefined && metadata.version < SERVICE_ROUTING_CAPABILITY_METADATA_VERSION) {
           errors.push({

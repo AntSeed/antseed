@@ -24,13 +24,31 @@ export type RoutingServiceMetadataV1 = {
   preferencesSchema: RoutingPreferenceSchema;
   preferencesSchemaHash: string;
 };
-export type RoutingRecommendation = { serviceId: string; peerId?: string };
-export type RoutingCandidate = RoutingRecommendation & {
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export type RoutingInference = { reasoningEffort: ReasoningEffort };
+export type RoutingRecommendation = { serviceId: string; peerId?: string; inference?: RoutingInference };
+export type RoutingCandidate = Pick<RoutingRecommendation, 'serviceId'> & {
   peerId: string;
+  reasoningEfforts?: ReasoningEffort[];
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion?: number | null;
 };
+export type RoutingUsageObservation = {
+  id: string;
+  offer: { peerId: string; provider: string; serviceId: string };
+  inputTokens: number;
+  cachedInputTokens?: number;
+  ageMs: number;
+};
+export type RoutingUsageContext = {
+  conversationRef: string;
+  usageObservations: RoutingUsageObservation[];
+  historyTruncated: boolean;
+};
+export const MAX_ROUTING_USAGE_OBSERVATIONS = 64;
+export const MAX_ROUTING_USAGE_CONTEXT_BYTES = 16 * 1024;
 export type RoutingRequestV1 = {
   version: 1;
   service: string;
@@ -38,10 +56,11 @@ export type RoutingRequestV1 = {
   request: { path: string; body: RoutingPreferences };
   candidates: RoutingCandidate[];
   preferences: RoutingPreferences;
+  context?: RoutingUsageContext;
 };
 export type RoutingResponseV1 = {
   version: 1;
-  recommendation: RoutingRecommendation;
+  recommendations: RoutingRecommendation[];
   usage?: { input_tokens: number; output_tokens: number; cached_input_tokens?: number };
 };
 export const MAX_ROUTING_PREFERENCE_BYTES = 16 * 1024;
@@ -174,8 +193,13 @@ export function validateRoutingRequest(value: unknown, metadata: RoutingServiceM
     || !object(value.request) || typeof value.request.path !== 'string' || !object(value.request.body)
     || !object(value.preferences) || !Array.isArray(value.candidates) || value.candidates.length === 0) throw new Error('Invalid routing request');
   if (value.preferencesSchemaHash !== metadata.preferencesSchemaHash) throw new Error('Routing preferences schema changed; refresh router metadata');
+  if (value.context !== undefined) validateRoutingUsageContext(value.context);
   for (const candidate of value.candidates) {
     if (!object(candidate) || typeof candidate.serviceId !== 'string' || !candidate.serviceId.trim() || typeof candidate.peerId !== 'string' || !/^[0-9a-f]{40}$/i.test(candidate.peerId)) throw new Error('Invalid routing candidate');
+    if (candidate.reasoningEfforts !== undefined && (!Array.isArray(candidate.reasoningEfforts)
+      || candidate.reasoningEfforts.length > REASONING_EFFORTS.length
+      || candidate.reasoningEfforts.some((effort) => !REASONING_EFFORTS.includes(effort))
+      || new Set(candidate.reasoningEfforts).size !== candidate.reasoningEfforts.length)) throw new Error('Invalid routing candidate reasoning efforts');
     for (const key of ['inputUsdPerMillion', 'outputUsdPerMillion', 'cachedInputUsdPerMillion']) {
       const rate = candidate[key];
       if (rate === undefined && key === 'cachedInputUsdPerMillion') continue;
@@ -183,4 +207,23 @@ export function validateRoutingRequest(value: unknown, metadata: RoutingServiceM
     }
   }
   resolveRoutingPreferences(metadata.preferencesSchema, value.preferences);
+}
+
+export function validateRoutingUsageContext(value: unknown): asserts value is RoutingUsageContext {
+  const identifier = (entry: unknown): entry is string => typeof entry === 'string' && entry.trim().length > 0 && entry.length <= 256;
+  const count = (entry: unknown): entry is number => typeof entry === 'number' && Number.isSafeInteger(entry) && entry >= 0;
+  if (!object(value) || Object.keys(value).some((key) => !['conversationRef', 'usageObservations', 'historyTruncated'].includes(key))
+    || !identifier(value.conversationRef) || typeof value.historyTruncated !== 'boolean'
+    || !Array.isArray(value.usageObservations) || value.usageObservations.length > MAX_ROUTING_USAGE_OBSERVATIONS) throw new Error('Invalid routing usage context');
+  if (toUtf8Bytes(canonicalRoutingJson(value)).length > MAX_ROUTING_USAGE_CONTEXT_BYTES) throw new Error('Routing usage context exceeds 16 KiB');
+  const seen = new Set<string>();
+  for (const observation of value.usageObservations) {
+    if (!object(observation) || Object.keys(observation).some((key) => !['id', 'offer', 'inputTokens', 'cachedInputTokens', 'ageMs'].includes(key))
+      || !identifier(observation.id) || seen.has(observation.id) || !count(observation.inputTokens) || !count(observation.ageMs)
+      || !object(observation.offer) || Object.keys(observation.offer).some((key) => !['peerId', 'provider', 'serviceId'].includes(key))
+      || typeof observation.offer.peerId !== 'string' || !/^[0-9a-f]{40}$/i.test(observation.offer.peerId)
+      || !identifier(observation.offer.provider) || !identifier(observation.offer.serviceId)
+      || (observation.cachedInputTokens !== undefined && (!count(observation.cachedInputTokens) || observation.cachedInputTokens > observation.inputTokens))) throw new Error('Invalid routing usage observation');
+    seen.add(observation.id);
+  }
 }

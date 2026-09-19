@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { validateRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingRequest, canonicalRoutingJson, type RoutingSelection, buildNetworkServiceOffers, perCallPriceMicroUsdc, isFreeUnitBillingModel, isRouteRecommendationEligible, isModelRouteEligible, validateUnitBillingModelV1, type AntseedNode, type ModelRoutingPreferences, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
+import { validateRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingRequest, canonicalRoutingJson, type RoutingSelection, buildNetworkServiceOffers, perCallPriceMicroUsdc, isFreeUnitBillingModel, areRouteRecommendationsEligible, isModelRouteEligible, validateUnitBillingModelV1, type AntseedNode, type ModelRoutingPreferences, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
 import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
 import { normalizedModelReputationScore } from './network-models.js'
 
@@ -77,7 +77,7 @@ export class RoutingServiceExecutor {
     this.operations.set(context.signal, operations)
     const previous = operations.get(parentRequestId)
     if (previous) return previous.fingerprint === fingerprint ? previous.result : Promise.reject(new Error('Only one routing service operation is allowed per request'))
-    const result = this.execute(parentRequestId, { ...context, candidates: structuredClone(context.candidates) }, input, structuredClone(target), parseResponse)
+    const result = this.execute(parentRequestId, { ...context, candidates: structuredClone(context.candidates), usageContext: structuredClone(context.usageContext) }, input, structuredClone(target), parseResponse)
     operations.set(parentRequestId, { fingerprint, result })
     return result
   }
@@ -105,6 +105,7 @@ export class RoutingServiceExecutor {
       try { validateRoutingRequest(request, offer.routing) } catch (error) { throw new RoutingConfigurationError(String(error)) }
       if (request.service !== target.serviceId) throw new Error('Routing request targets a different service')
       if (canonicalRoutingJson(request.candidates) !== canonicalRoutingJson(context.candidates ?? [])) throw new Error('Routing candidates do not match buyer policy')
+      if (canonicalRoutingJson(request.context ?? null) !== canonicalRoutingJson(context.usageContext ?? null)) throw new Error('Routing observations do not match buyer context')
       const rates = [offer.inputUsdPerMillion, offer.outputUsdPerMillion, offer.cachedInputUsdPerMillion ?? offer.inputUsdPerMillion]
       if (rates.some((rate) => !Number.isFinite(rate) || rate < 0)) throw new Error('Routing service has invalid prices')
       const policy = this.host.getPolicy()
@@ -135,8 +136,7 @@ export class RoutingServiceExecutor {
           acceptResponse: (response: SerializedHttpResponse) => {
             statusCode = response.statusCode
             const routes = parseResponse!(response)
-            return Array.isArray(routes) && routes.length === 1
-              && routes.every((route) => isRouteRecommendationEligible(route, context.candidates ?? []))
+            return areRouteRecommendationsEligible(routes, context.candidates ?? [])
           },
         } : {}),
       })

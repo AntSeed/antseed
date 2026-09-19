@@ -20,7 +20,7 @@ export const provider: Provider = {
       if (input.service !== 'selector') throw new Error('Unknown routing service');
       const preferences = resolveRoutingPreferences(metadata.preferencesSchema, input.preferences);
       const chosen = preferences.position === 'last' ? input.candidates.at(-1)! : input.candidates[0]!;
-      return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ version: 1, recommendation: { serviceId: chosen.serviceId, peerId: chosen.peerId } })) };
+      return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ version: 1, recommendations: [{ serviceId: chosen.serviceId, peerId: chosen.peerId }] })) };
     } catch (error) {
       return { requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'invalid_routing_request', message: String(error) } })) };
     }

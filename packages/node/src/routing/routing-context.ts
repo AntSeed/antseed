@@ -75,7 +75,7 @@ export class RoutingContextTracker {
     this.sessions.set(key, snapshot);
     while (this.sessions.size > this.capacity) this.sessions.delete(this.sessions.keys().next().value!);
     const shouldRoute = trigger !== 'continuation';
-    const previousRoutes = snapshot.routes.map((route) => ({ ...route }));
+    const previousRoutes = structuredClone(snapshot.routes);
     const previousRoute = previousRoutes[0] ?? null;
     if (shouldRoute) snapshot.routes = [];
     return { trigger, shouldRoute, previousRoute, previousRoutes };
@@ -90,6 +90,7 @@ export class RoutingContextTracker {
     const entry = this.sessions.get(this.key(conversation));
     if (entry?.requestId === requestId) {
       entry.routes = routes.map((route) => ({ serviceId: route.serviceId,
+        ...(route.inference === undefined ? {} : { inference: { ...route.inference } }),
         ...(route.peerId === undefined ? {} : { peerId: route.peerId }) }));
     }
   }

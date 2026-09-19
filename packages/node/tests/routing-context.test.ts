@@ -17,6 +17,18 @@ function started() {
   return tracker;
 }
 
+it('caches reasoning choices by value and invalidates unavailable efforts', () => {
+  const tracker = started();
+  const recommendation = { ...route, inference: { reasoningEffort: 'high' as const } };
+  tracker.recordRoute(conversation, 'request', recommendation);
+  const context = tracker.observe(request(), conversation);
+  expect(context.shouldRoute).toBe(false);
+  expect(context.previousRoute).toEqual(recommendation);
+  context.previousRoute!.inference!.reasoningEffort = 'low';
+  expect(tracker.observe(request(), conversation).previousRoute!.inference!.reasoningEffort).toBe('high');
+  expect(tracker.observe(request(), conversation, { isRouteAvailable: (entry) => entry.inference?.reasoningEffort !== 'high' }).trigger).toBe('route-unavailable');
+});
+
 describe('routing context and latest-user-text reuse', () => {
   it('preserves model-only intent and ordered exact-to-auto fallbacks across continuations', () => {
     const tracker = started();

@@ -16,6 +16,36 @@ function metadata(): PeerMetadata {
 }
 
 describe('signed routing metadata', () => {
+  it('round trips signed v14 descriptors and effort capabilities together and detects tampering', () => {
+    const source = metadata();
+    source.providers[0]!.serviceCapabilities!.selector = { routing: true, reasoning: true, reasoningEfforts: ['high', 'none', 'low'] };
+    const wallet = new Wallet(Wallet.createRandom().privateKey);
+    const signature = signData(wallet, encodeMetadataForSigning(source));
+    const decoded = decodeMetadata(encodeMetadata(source));
+    expect(validateMetadata(decoded)).toEqual([]);
+    expect(decoded.version).toBe(14);
+    expect(decoded.providers[0]!.serviceRouting).toEqual(source.providers[0]!.serviceRouting);
+    expect(decoded.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts).toEqual(['high', 'low', 'none']);
+    expect(verifySignature(wallet.address.slice(2), signature, encodeMetadataForSigning(decoded))).toBe(true);
+    decoded.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts = ['low'];
+    expect(verifySignature(wallet.address.slice(2), signature, encodeMetadataForSigning(decoded))).toBe(false);
+    source.version = 13;
+    expect(() => encodeMetadata(source)).toThrow('v14');
+    expect(validateMetadata(source)).toContainEqual({
+      field: 'providers[0].serviceCapabilities.selector.reasoningEfforts', message: 'Reasoning efforts require metadata version 14',
+    });
+  });
+  it.each([[], ['high', 'high'], ['unknown'], 'high', ['high', 3]])('rejects invalid advertised efforts %j', (efforts) => {
+    const source = metadata();
+    source.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts = efforts as never;
+    expect(validateMetadata(source).length).toBeGreaterThan(0);
+    expect(() => encodeMetadata(source)).toThrow();
+  });
+  it('rejects positive effort on a non-reasoning service', () => {
+    const source = metadata();
+    source.providers[0]!.serviceCapabilities!.selector = { reasoning: false, reasoningEfforts: ['high'] };
+    expect(validateMetadata(source).length).toBeGreaterThan(0);
+  });
   it('round trips descriptors through the binary and HTTP shapes', () => {
     const source = metadata();
     expect(validateMetadata(source)).toEqual([]);

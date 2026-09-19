@@ -188,7 +188,19 @@ describe('PeerAnnouncer metadata versions', () => {
 });
 
 describe('PeerAnnouncer routing capabilities', () => {
-  it('announces signed v14 only for services with routing descriptors', async () => {
+  it('uses signed v14 for effort choices without requiring routing descriptors', async () => {
+    const config = makeBaseConfig();
+    config.providers[0]!.serviceCapabilities = { 'gpt-4.1': { reasoning: true, reasoningEfforts: ['low', 'high'] } };
+    const announcer = new PeerAnnouncer(config);
+    await announcer.announce();
+    const metadata = decodeMetadata(encodeMetadata(announcer.getLatestMetadata()!));
+    expect(metadata.version).toBe(14);
+    expect(metadata.providers[0]!.serviceRouting).toBeUndefined();
+    expect(validateMetadata(metadata)).toEqual([]);
+    expect(metadata.providers[0]!.serviceCapabilities!['gpt-4.1']!.reasoningEfforts).toEqual(['high', 'low']);
+    expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
+  });
+  it('announces signed v14 for routing descriptors without requiring effort choices', async () => {
     const config = makeBaseConfig();
     config.providers = [{ provider: 'fixture', services: ['selector'], maxConcurrency: 1,
       serviceCapabilities: { selector: { routing: true } },

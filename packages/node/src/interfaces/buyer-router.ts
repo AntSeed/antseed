@@ -7,10 +7,12 @@ import type { ModelRoutingPreferences } from '../routing/model-route-ranking.js'
  * A candidate returned by `Router.selectRoute` — one seller offering one
  * model, already scored and ordered by the router's own objective.
  *
- * The host reconstructs all fields except peerId and serviceId from its
+ * The host reconstructs all fields except peerId, serviceId and inference from its
  * own discovery snapshot; plugin-supplied requests and prices are ignored.
  */
 export type RouteCandidate = {
+  inference?: import('@antseed/protocol').RoutingInference;
+  reasoningEfforts?: import('@antseed/protocol').ReasoningEffort[];
   peer: PeerInfo;
   peerId: string;
   /** The model this candidate serves. */
@@ -25,12 +27,10 @@ export type RouteCandidate = {
   minImageUsdPerImage: number | null;
 };
 
-export type RouteRecommendation = {
-  serviceId: string;
-  peerId?: string;
-};
+export type RouteRecommendation = import('@antseed/protocol').RoutingRecommendation;
 
 export type RouteSelectionContext = {
+  usageContext?: import('@antseed/protocol').RoutingUsageContext;
   routing?: import('../routing/routing-context.js').RoutingRequestContext;
   settings?: Record<string, string>;
   networkRouting?: {
@@ -40,7 +40,7 @@ export type RouteSelectionContext = {
   };
   signal: AbortSignal;
   deadlineMs: number;
-  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion'>>;
+  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion' | 'reasoningEfforts'>>;
   invokeService?: (
     request: import('@antseed/protocol').RoutingRequestV1,
     parseResponse?: (response: SerializedHttpResponse) => RouteRecommendation[],

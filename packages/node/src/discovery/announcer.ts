@@ -11,7 +11,7 @@ import {
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement, ServiceCapabilities } from "./peer-metadata.js";
-import { SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION } from "./peer-metadata.js";
+import { SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
   MAX_DOMAIN_VERIFICATION_CLAIMS,
@@ -345,7 +345,10 @@ export class PeerAnnouncer {
 
     return this._signAndValidateMetadata({
       peerId: this.config.identity.peerId,
-      version: providers.some((provider) => Object.keys(provider.serviceRouting ?? {}).length > 0) ? 14 : providers.some((provider) => Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined))
+      version: providers.some((provider) => Object.keys(provider.serviceRouting ?? {}).length > 0
+        || Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.reasoningEfforts !== undefined))
+        ? SERVICE_ROUTING_METADATA_VERSION
+        : providers.some((provider) => Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined))
         ? SERVICE_ROUTING_CAPABILITY_METADATA_VERSION
         : SERVICE_CAPABILITIES_METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),

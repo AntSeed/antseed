@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPerCallBillingModel, type PeerInfo } from '@antseed/node'
-import { validateRouterCandidate } from './router-policy.js'
+import { validateRouterCandidate, resolveRouterRecommendation } from './router-policy.js'
 
 function fixture() {
   const peer: PeerInfo = {
@@ -18,6 +18,23 @@ function fixture() {
   }
   return { peer, options }
 }
+
+test('model-only efforts select supporting sellers and preserve the router override', () => {
+  const { peer, options } = fixture()
+  options.maxPricing = undefined
+  const other = { ...peer, peerId: 'b'.repeat(40) as PeerInfo['peerId'] }
+  peer.providerServiceCapabilities = { openai: { services: { model: { reasoning: true, reasoningEfforts: ['low', 'high'] } } } }
+  const candidates = resolveRouterRecommendation({ ...options, peers: [other, peer], recommendation: { serviceId: 'model', inference: { reasoningEffort: 'high' } } })
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0]!.peerId, peer.peerId)
+  assert.equal(candidates[0]!.reasoningOverride, 'high')
+  assert.deepEqual(candidates[0]!.inference, { reasoningEffort: 'high' })
+  assert.equal(validateRouterCandidate({ ...options, peers: [other], recommendation: { serviceId: 'model', peerId: other.peerId, inference: { reasoningEffort: 'high' } } }), null)
+  peer.providerServiceCapabilities.openai!.services.model = { reasoning: false }
+  assert.equal(validateRouterCandidate(options)!.reasoningOverride, null)
+  peer.providerServiceCapabilities.openai!.services.model = {}
+  assert.equal(validateRouterCandidate(options)!.reasoningOverride, undefined)
+})
 
 test('router recommendations respect the existing global buyer limits', () => {
   const { options } = fixture()

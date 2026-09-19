@@ -4,9 +4,11 @@ import { effectiveModelReputationScore, normalizedModelReputationScore } from '.
 import { findAdvertisedServiceOffer, findMissingRequiredParameters, resolvePeerRoutePlan } from './routing.js'
 import { overrideRoutedModelInBody } from './request-utils.js'
 import type { ServiceApiProtocol } from './service-api-adapter.js'
+import { supportsReasoningEffort } from '@antseed/api-adapter'
+import type { ReasoningEffort } from '@antseed/node'
 
 export function validateRouterCandidate(options: {
-  recommendation: { peerId: string; serviceId: string }
+  recommendation: RouteRecommendation & { peerId: string }
   peers: PeerInfo[]
   request: SerializedHttpRequest
   protocol: ServiceApiProtocol | null
@@ -18,7 +20,7 @@ export function validateRouterCandidate(options: {
   now: number
 }) {
   const { recommendation, peers, request, protocol, provider, requiredParameters, preferences, maxPricing, now } = options
-  if (!recommendation || typeof recommendation.peerId !== 'string' || typeof recommendation.serviceId !== 'string') return null
+  if (!isRouteRecommendation(recommendation) || typeof recommendation.peerId !== 'string') return null
   const peer = peers.find((entry) => entry.peerId.toLowerCase() === recommendation.peerId.toLowerCase())
   if (!peer) return null
   const plan = resolvePeerRoutePlan(peer, protocol, recommendation.serviceId, provider, 'strict')
@@ -26,6 +28,12 @@ export function validateRouterCandidate(options: {
   const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
   if (!offer || offer.capabilities?.routing === true) return null
   const targetProtocol = plan.selection?.targetProtocol ?? protocol ?? offer.protocol
+  const reasoningEfforts = (offer.capabilities?.reasoningEfforts
+    ?? (offer.capabilities?.reasoning === false ? ['none' as const] : undefined))
+    ?.filter((effort) => supportsReasoningEffort(targetProtocol, effort))
+  if (recommendation.inference && !reasoningEfforts?.includes(recommendation.inference.reasoningEffort)) return null
+  const reasoningOverride: ReasoningEffort | null | undefined = offer.capabilities?.reasoning === false
+    ? null : recommendation.inference?.reasoningEffort
   if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_call') return null
   const missing = plan.selection?.requiresTransform
     ? requiredParameters
@@ -46,6 +54,9 @@ export function validateRouterCandidate(options: {
   }
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId, true)
   return {
+    ...(recommendation.inference ? { inference: { ...recommendation.inference } } : {}),
+    ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
+    reasoningOverride,
     peer,
     peerId: peer.peerId,
     serviceId: plan.serviceId,
@@ -69,7 +80,7 @@ export function resolveRouterRecommendation(options: Omit<Parameters<typeof vali
     : options.peers.filter((peer) => peer.peerId.toLowerCase() === recommendation.peerId!.toLowerCase())
   return matchingPeers.flatMap((peer) => {
     const candidate = validateRouterCandidate({ ...options,
-      recommendation: { serviceId: recommendation.serviceId, peerId: peer.peerId } })
+      recommendation: { ...recommendation, peerId: peer.peerId } })
     return candidate ? [candidate] : []
   })
 }
