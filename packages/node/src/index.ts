@@ -371,3 +371,5 @@ export { readRouterSettings, validateRouterSettings, type RouterSettingField } f
 export { RoutingContextTracker, type RoutingRequestContext, type RoutingTrigger } from './routing/routing-context.js';
 
 export { isRoutingSelection, type RoutingSelection, type RoutingServiceTarget } from './routing/selection.js';
+export { createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest } from '@antseed/protocol';
+export type { RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1 } from '@antseed/protocol';

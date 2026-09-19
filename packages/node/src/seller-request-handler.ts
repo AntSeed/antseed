@@ -1,3 +1,4 @@
+import { validateRoutingRequest } from '@antseed/protocol';
 import type { PeerAnnouncer } from './discovery/announcer.js';
 import type {
   Provider,
@@ -223,6 +224,28 @@ export class SellerRequestHandler {
         return;
       }
 
+      const routingService = this._extractRequestedService(request);
+      if ((routingService && provider.serviceRouting?.[routingService]) || detectRequestServiceApiProtocol(request) === 'antseed-routing') {
+        try {
+          const body: unknown = JSON.parse(new TextDecoder().decode(request.body));
+          const metadata = routingService ? provider.serviceRouting?.[routingService] : undefined;
+          if (request.method !== 'POST' || pathOnly.toLowerCase() !== '/v1/route'
+            || !routingService || !metadata || !provider.serviceApiProtocols?.[routingService]?.includes('antseed-routing')) {
+            throw new Error('Structured routing service unavailable');
+          }
+          validateRoutingRequest(body, metadata);
+        } catch (error) {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 400,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { code: 'invalid_routing_request', message: String(error) },
+            })),
+          });
+          return;
+        }
+      }
       const requestPricing = this.resolveProviderPricing(provider, request);
       const requestBilling = this._captureSellerBillingContext(provider, request);
       const unitBillingModel = requestBilling

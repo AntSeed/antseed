@@ -33,11 +33,16 @@ export type RouteRecommendation = {
 export type RouteSelectionContext = {
   routing?: import('../routing/routing-context.js').RoutingRequestContext;
   settings?: Record<string, string>;
+  networkRouting?: {
+    serviceId: string;
+    metadata: import('@antseed/protocol').RoutingServiceMetadataV1;
+    preferences: import('@antseed/protocol').RoutingPreferences;
+  };
   signal: AbortSignal;
   deadlineMs: number;
   candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion'>>;
   invokeService?: (
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    request: import('@antseed/protocol').RoutingRequestV1,
     parseResponse?: (response: SerializedHttpResponse) => RouteRecommendation[],
   ) => Promise<SerializedHttpResponse>;
 };

@@ -11,6 +11,7 @@ export function readRouterSettings(value: unknown): Record<string, Record<string
   const entries = Object.entries(value);
   if (entries.length > 100) throw new Error('Too many router settings namespaces');
   return Object.fromEntries(entries.map(([namespace, settings]) => {
+    if (namespace === 'plugin:classifier' || namespace === 'plugin:@antseed/router-classifier') throw new Error('Classifier settings are obsolete. Configure buyer.selection.preferences using the selected router metadata schema.');
     if (!/^(plugin|instance):[^\s]{1,200}$/.test(namespace) || !settings || typeof settings !== 'object' || Array.isArray(settings)) {
       throw new Error('Invalid router settings namespace');
     }

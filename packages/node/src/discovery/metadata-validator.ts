@@ -1,3 +1,4 @@
+import { validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
 import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
@@ -597,6 +598,19 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       }
     }
 
+    if (p.serviceRouting !== undefined) {
+      const field = `providers[${i}].serviceRouting`;
+      if (metadata.version < 14 || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
+        errors.push({ field, message: "Routing descriptors require an object and metadata v14" });
+      } else {
+        for (const [service, descriptor] of Object.entries(p.serviceRouting)) {
+          try {
+            validateRoutingServiceMetadata(descriptor);
+            if (!p.services.includes(service) || !p.serviceApiProtocols?.[service]?.includes('antseed-routing') || p.serviceCapabilities?.[service]?.routing !== true) throw new Error("Routing descriptor requires an advertised routing service");
+          } catch (error) { errors.push({ field: `${field}.${service}`, message: String(error) }); }
+        }
+      }
+    }
     if (p.serviceCapabilities !== undefined) {
       if (metadata.version < SERVICE_CAPABILITIES_METADATA_VERSION) {
         errors.push({

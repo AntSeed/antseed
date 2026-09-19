@@ -72,7 +72,7 @@ for (const scope of ['global', 'buyer'] as const) {
     await withConfigCommands(async (invoke, read) => {
       const set = (key: string, value: string) => invoke(scope === 'global' ? ['set', `buyer.${key}`, value] : ['buyer', 'set', key, value]);
       assert.equal((await set('selection', JSON.stringify(selection))).status, 0);
-      assert.equal((await set('routingPreferences.routerSettings', '{"plugin:classifier":{"instructions":"Prefer cheaper models"}}')).status, 0);
+      assert.equal((await set('routingPreferences.routerSettings', '{"plugin:example":{"instructions":"Prefer cheaper models"}}')).status, 0);
       assert.deepEqual((await read()).buyer.selection, selection);
       assert.equal((await set('selection', '{"kind":"model","model":"model-a"}')).status, 0);
       assert.deepEqual((await read()).buyer.selection, { kind: 'model', model: 'model-a' });

@@ -1,3 +1,5 @@
+import { assertRoutingPreferences, type RoutingPreferences } from '@antseed/protocol';
+
 export type RoutingServiceTarget = {
   peerId: string;
   provider: string;
@@ -6,7 +8,7 @@ export type RoutingServiceTarget = {
 
 export type RoutingSelection =
   | { kind: 'model'; model: string | null }
-  | { kind: 'router'; service?: RoutingServiceTarget };
+  | { kind: 'router'; service?: RoutingServiceTarget; preferences?: RoutingPreferences };
 
 export function isRoutingSelection(value: unknown): value is RoutingSelection {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -15,8 +17,11 @@ export function isRoutingSelection(value: unknown): value is RoutingSelection {
     return Object.keys(selection).every((key) => key === 'kind' || key === 'model')
       && (selection.model === null || (typeof selection.model === 'string' && selection.model.trim().length > 0));
   }
-  if (selection.kind !== 'router' || Object.keys(selection).some((key) => key !== 'kind' && key !== 'service')) return false;
-  if (selection.service === undefined) return true;
+  if (selection.kind !== 'router' || Object.keys(selection).some((key) => key !== 'kind' && key !== 'service' && key !== 'preferences')) return false;
+  if (selection.preferences !== undefined) {
+    try { assertRoutingPreferences(selection.preferences); } catch { return false; }
+  }
+  if (selection.service === undefined) return selection.preferences === undefined;
   if (!selection.service || typeof selection.service !== 'object' || Array.isArray(selection.service)) return false;
   const service = selection.service as Record<string, unknown>;
   return Object.keys(service).every((key) => ['peerId', 'provider', 'serviceId'].includes(key))

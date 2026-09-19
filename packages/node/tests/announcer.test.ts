@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createRoutingServiceMetadata } from '@antseed/protocol';
 import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
@@ -187,6 +188,23 @@ describe('PeerAnnouncer metadata versions', () => {
 });
 
 describe('PeerAnnouncer routing capabilities', () => {
+  it('announces signed v14 only for services with routing descriptors', async () => {
+    const config = makeBaseConfig();
+    config.providers = [{ provider: 'fixture', services: ['selector'], maxConcurrency: 1,
+      serviceCapabilities: { selector: { routing: true } },
+      serviceApiProtocols: { selector: ['antseed-routing'] },
+      serviceRouting: { selector: createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: {} }) },
+    }];
+    config.pricing = new Map([['fixture', { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } }]]);
+    const announcer = new PeerAnnouncer(config);
+    await announcer.announce();
+    const metadata = decodeMetadata(encodeMetadata(announcer.getLatestMetadata()!));
+    expect(metadata.version).toBe(14);
+    expect(metadata.providers[0]!.serviceRouting).toEqual(config.providers[0]!.serviceRouting);
+    expect(validateMetadata(metadata)).toEqual([]);
+    expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
+  });
+
   it.each([true, false])('uses signed v13 when routing is explicitly %s', async (routing) => {
     const config = makeBaseConfig();
     config.providers[0]!.serviceCapabilities = { 'gpt-4.1': { routing } };

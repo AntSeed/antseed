@@ -6,7 +6,8 @@ import {
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 13;
+export const METADATA_VERSION = 14;
+export const SERVICE_ROUTING_METADATA_VERSION = 14;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
@@ -138,6 +139,7 @@ export interface ProviderAnnouncement {
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
   serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
   serviceCapabilities?: Record<string, ServiceCapabilities>;
+  serviceRouting?: Record<string, import('./routing.js').RoutingServiceMetadataV1>;
   maxConcurrency: number;
   currentLoad: number;
 }

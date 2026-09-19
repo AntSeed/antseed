@@ -6,7 +6,8 @@ export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses'
-  | 'openai-images';
+  | 'openai-images'
+  | 'antseed-routing';
 
 export type CatalogServiceCapabilities = {
   routing?: boolean;
@@ -29,6 +30,7 @@ export type NetworkServiceCatalogPeer = {
   onChainTrustScore?: number | null;
   onChainReputationScore?: number | null;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerServiceRouting?: Record<string, { services: Record<string, import("@antseed/protocol").RoutingServiceMetadataV1> }>;
   providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
   providerServiceUnitBillingModels?: Record<string, {
     services: Record<string, Partial<Record<string, {
@@ -67,7 +69,8 @@ export type NetworkServiceOffer = {
   provider: string;
   protocols: string[];
   protocol: CatalogServiceProtocol | null;
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'routing';
+  routing?: import("@antseed/protocol").RoutingServiceMetadataV1;
   capabilities?: CatalogServiceCapabilities;
   categories?: string[];
   peerId: string;
@@ -85,6 +88,7 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-chat-completions',
   'openai-responses',
   'openai-images',
+  'antseed-routing',
 ]);
 
 export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
@@ -99,6 +103,7 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
 }
 
 export function resolveServiceProtocol(protocols: string[], provider: string): CatalogServiceProtocol | null {
+  if (protocols.includes('antseed-routing')) return 'antseed-routing';
   if (protocols.includes('openai-images')) return 'openai-images';
   const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol)) as CatalogServiceProtocol | undefined;
   return announced ?? inferServiceProtocol(provider);
@@ -175,7 +180,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+        const type = protocol === 'antseed-routing' ? 'routing' : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
             ? 'image'
             : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
@@ -197,6 +202,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           protocol,
           type,
           ...(capabilities ? { capabilities } : {}),
+          ...(peer.providerServiceRouting?.[provider]?.services[serviceId] ? { routing: peer.providerServiceRouting[provider]!.services[serviceId] } : {}),
           ...(categories?.length ? { categories } : {}),
           peerId: peer.peerId,
           ...(peer.displayName ? { displayName: peer.displayName } : {}),

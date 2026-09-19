@@ -36,8 +36,8 @@ async function loadPlugin<T>(
   opts?: { install?: boolean; pluginsDir?: string }
 ): Promise<T> {
   const pkgName = resolvePackageName(nameOrPackage)
-  if (kind === 'router' && pkgName === '@antseed/router-classifier') {
-    return (await import('@antseed/router-classifier')).default as T
+  if (kind === 'router' && (nameOrPackage === 'classifier' || pkgName === '@antseed/router-classifier')) {
+    throw new Error('The classifier plugin has been retired. Configure buyer.selection with a network service and metadata-defined preferences.')
   }
   const pluginsDir = opts?.pluginsDir ?? getPluginsDir()
   const pluginPath = join(pluginsDir, 'node_modules', pkgName, 'dist', 'index.js')

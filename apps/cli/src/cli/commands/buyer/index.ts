@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { registerBuyerRouterCommand } from './router.js';
 import { registerBuyerStartCommand } from './start.js';
 import { registerBuyerStatusCommand } from './status.js';
 import { registerBuyerDepositCommand } from './deposit.js';
@@ -17,6 +18,7 @@ export function registerBuyerCommands(program: Command): void {
     .description('Buyer commands — connect to sellers and manage payments');
 
   registerBuyerStartCommand(buyerCmd);
+  registerBuyerRouterCommand(buyerCmd);
   registerBuyerStatusCommand(buyerCmd);
   registerBuyerDepositCommand(buyerCmd);
   registerBuyerWithdrawCommand(buyerCmd);

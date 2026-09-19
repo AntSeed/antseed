@@ -135,7 +135,7 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
     ? (usage.input_tokens_details as Record<string, unknown>)
     : {};
   const subsetCached = toNonNegativeInt(promptDetails.cached_tokens ?? inputDetails.cached_tokens);
-  const separateCached = toNonNegativeInt(usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
+  const separateCached = toNonNegativeInt(usage.cached_input_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
 
   const isSubsetShape = hasPromptTokens || inputDetails.cached_tokens !== undefined;
   const cachedInputTokens = Math.max(subsetCached, separateCached);

@@ -4,21 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { assertPinnedPluginVersion, loadRouterPlugin, selectPluginExport } from './loader.js'
-import { ensurePluginsUpToDate } from './drift.js'
 
-test('bundled classifier loads without installing or updating a vendor plugin', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'antseed-bundled-router-'))
-  try {
-    const plugin = await loadRouterPlugin('classifier', { pluginsDir: directory })
-    assert.equal(plugin.name, 'classifier')
-    assert.equal(await loadRouterPlugin('@antseed/router-classifier', { pluginsDir: directory }), plugin)
-    let refreshes = 0
-    await ensurePluginsUpToDate(['@antseed/router-classifier'], { pluginsDir: directory, env: {}, log: () => {},
-      refresh: async () => { refreshes++; throw new Error('must not fetch the bundled adapter') } })
-    assert.equal(refreshes, 0)
-  } finally {
-    rmSync(directory, { recursive: true, force: true })
-  }
+test('retired classifier reports migration guidance', async () => {
+  await assert.rejects(loadRouterPlugin('@antseed/router-classifier'), /Configure buyer.selection/)
 })
 
 const TEE_PACKAGE = '@antseed/antseed-verifier'

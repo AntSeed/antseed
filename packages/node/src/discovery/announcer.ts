@@ -59,6 +59,7 @@ export interface AnnouncerConfig {
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
     serviceCapabilities?: Record<string, ServiceCapabilities>;
+    serviceRouting?: Record<string, import("@antseed/protocol").RoutingServiceMetadataV1>;
     maxConcurrency: number;
     /** Runtime availability predicate. Unavailable providers are omitted. */
     isAvailable?: () => boolean;
@@ -289,6 +290,8 @@ export class PeerAnnouncer {
         if (normalizedServiceUnitBillingModels) {
           providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
         }
+        const routingEntries = Object.entries(p.serviceRouting ?? {}).filter(([service]) => p.services.includes(service));
+        if (routingEntries.length) providerAnnouncement.serviceRouting = structuredClone(Object.fromEntries(routingEntries));
         const normalizedServiceCapabilities = this._normalizeServiceCapabilities(p.serviceCapabilities, p.services);
         if (normalizedServiceCapabilities) {
           providerAnnouncement.serviceCapabilities = normalizedServiceCapabilities;
@@ -342,7 +345,7 @@ export class PeerAnnouncer {
 
     return this._signAndValidateMetadata({
       peerId: this.config.identity.peerId,
-      version: providers.some((provider) => Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined))
+      version: providers.some((provider) => Object.keys(provider.serviceRouting ?? {}).length > 0) ? 14 : providers.some((provider) => Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined))
         ? SERVICE_ROUTING_CAPABILITY_METADATA_VERSION
         : SERVICE_CAPABILITIES_METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),

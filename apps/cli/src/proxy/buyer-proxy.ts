@@ -109,8 +109,9 @@ import { rankAutomaticCandidates, resolveRouterRecommendation, validateRouterCan
 import { executeRouter, RouterExecutionError } from './router-execution.js'
 import { validateRouterSettings, type RouterSettingField } from '@antseed/node'
 import { RoutingContextTracker } from '@antseed/node'
-import { RoutingServiceExecutor } from './routing-service.js'
-import { selectNetworkRoute, routingSettingsSchema as networkRoutingSettings } from '@antseed/router-classifier'
+import { RoutingServiceExecutor, RoutingConfigurationError } from './routing-service.js'
+import { selectNetworkRoute } from '@antseed/router-core'
+import { canonicalRoutingJson } from '@antseed/node'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -578,6 +579,7 @@ export function parsePersistedPeers(
     if (entry.providerServiceUnitBillingModels && typeof entry.providerServiceUnitBillingModels === 'object') {
       peer.providerServiceUnitBillingModels = entry.providerServiceUnitBillingModels as PeerInfo['providerServiceUnitBillingModels']
     }
+    if (entry.providerServiceRouting && typeof entry.providerServiceRouting === 'object') peer.providerServiceRouting = entry.providerServiceRouting as PeerInfo['providerServiceRouting']
     if (entry.providerServiceCapabilities && typeof entry.providerServiceCapabilities === 'object') {
       peer.providerServiceCapabilities = entry.providerServiceCapabilities as PeerInfo['providerServiceCapabilities']
     }
@@ -809,6 +811,7 @@ export class BuyerProxy {
   private readonly _routingSettingsSchema: RouterSettingField[]
   private readonly _routingContext = new RoutingContextTracker()
   private readonly _routerKey: string
+  private readonly _networkRoutingContexts = new Map<string, string>()
   private readonly _routingServiceExecutor: RoutingServiceExecutor
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -938,13 +941,17 @@ export class BuyerProxy {
     if (JSON.stringify(selection) === JSON.stringify(this._selection)) return
     this._invalidateRoutingContext()
     this._selection = structuredClone(selection)
-    if (selection.kind === 'router') this._pinnedPeer = null
+    if (selection.kind === 'router') {
+      this._pinnedPeer = null
+      if (selection.service) void this._routingServiceExecutor.inspect(selection).catch((error) => log('Router metadata unavailable', { message: String(error) }))
+    }
   }
 
   private _invalidateRoutingContext(includeUserSelections = false): void {
     this._selectionController.abort()
     this._selectionController = new AbortController()
     this._routingServiceExecutor.cancel()
+    this._networkRoutingContexts.clear()
     for (const conversation of this._conversations.list()) {
       if (includeUserSelections || conversation.peerSource !== 'user') this._routingContext.forgetConversation(conversation.tool, conversation.sessionKey)
     }
@@ -1279,6 +1286,7 @@ export class BuyerProxy {
       }
     }
 
+    this._routingServiceExecutor.updateMetadata(merged)
     this._cachedPeers = merged
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
@@ -1310,6 +1318,7 @@ export class BuyerProxy {
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
         providerServiceUnitBillingModels: p.providerServiceUnitBillingModels ?? null,
         providerServiceCapabilities: p.providerServiceCapabilities ?? null,
+        providerServiceRouting: p.providerServiceRouting ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
@@ -1699,6 +1708,7 @@ export class BuyerProxy {
         providerServiceApiProtocols: p.providerServiceApiProtocols,
         providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
         providerServiceCapabilities: p.providerServiceCapabilities,
+        providerServiceRouting: p.providerServiceRouting,
         reputationScore: p.reputationScore,
         lastSeen: p.lastSeen,
       }))
@@ -1771,6 +1781,17 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/router/metadata' && method === 'GET') {
+      try {
+        const description = await this._routingServiceExecutor.inspect(this._selection)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(description))
+      } catch (error) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'router_metadata_invalid', message: error instanceof Error ? error.message : String(error) } }))
+      }
+      return
+    }
     if (path === '/_antseed/route' && method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, model: this._defaultRoutedModel, selection: this._selection }))
@@ -2364,7 +2385,7 @@ export class BuyerProxy {
       ? { kind: 'model', model: inheritedSelection.kind === 'model' ? inheritedSelection.model : null }
       : requestRoutingMode === 'router' && inheritedSelection.kind !== 'router' ? { kind: 'router' } : inheritedSelection
     const selectedRouter = selectedSelection.kind === 'router' && selectedSelection.service ? selectNetworkRoute : this._node.router?.selectRoute?.bind(this._node.router)
-    const routerKey = selectedSelection.kind === 'router' && selectedSelection.service ? 'plugin:classifier' : this._routerKey
+    const routerKey = selectedSelection.kind === 'router' && selectedSelection.service ? 'network' : this._routerKey
     const lastRoutedPeer = !chatPinnedModel && storedConversation?.lastModel
       ? parsePeerPinnedService(storedConversation.lastModel)
       : null
@@ -2500,7 +2521,7 @@ export class BuyerProxy {
     log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
-    const automaticRouting = routingRequested && !explicitPeerId
+    const automaticRouting = routingRequested && !explicitPeerId && requestProtocol !== 'antseed-routing'
     if (automaticRouting && conversationIdentity && trackedConversationKey) {
       const id = `${conversationIdentity.tool}:${trackedConversationKey}`
       const controller = new AbortController()
@@ -2587,6 +2608,16 @@ export class BuyerProxy {
             return
           }
         }
+        const networkRouting = selectedSelection.kind === 'router' && selectedSelection.service
+          ? await executeRouter(() => this._routingServiceExecutor.describe(selectedSelection), routingSignal, this._requestTimeoutMs) : undefined
+        if (networkRouting && conversationIdentity) {
+          const key = `${conversationIdentity.tool}:${conversationIdentity.sessionKey}`
+          const fingerprint = canonicalRoutingJson({ target: networkRouting.target, schema: networkRouting.metadata.preferencesSchemaHash, preferences: networkRouting.preferences })
+          if (this._networkRoutingContexts.get(key) !== fingerprint) this._routingContext.forgetConversation(conversationIdentity.tool, conversationIdentity.sessionKey)
+          this._networkRoutingContexts.delete(key)
+          this._networkRoutingContexts.set(key, fingerprint)
+          while (this._networkRoutingContexts.size > 500) this._networkRoutingContexts.delete(this._networkRoutingContexts.keys().next().value!)
+        }
         routingContext = this._routingContext.observe(serializedReq, conversationIdentity, {
           isRouteAvailable: (recommendation) => {
             const candidates = resolveRouterRecommendation({ recommendation, peers, request: serializedReq,
@@ -2621,7 +2652,8 @@ export class BuyerProxy {
             {
               ...context,
               routing: structuredClone(routingContext),
-              settings: validateRouterSettings(selectedSelection.kind === 'router' && selectedSelection.service ? networkRoutingSettings : this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[routerKey] ?? {}),
+              settings: networkRouting ? undefined : validateRouterSettings(this._routingSettingsSchema, this._routingPreferences?.routerSettings?.[routerKey] ?? {}),
+              networkRouting,
               candidates: structuredClone(candidates),
               invokeService: (messages, parseResponse) => this._routingServiceExecutor.invoke(serializedReq.requestId, { ...context, candidates }, messages, parseResponse, selectedSelection.kind === 'router' ? selectedSelection.service : undefined),
             },
@@ -2643,7 +2675,7 @@ export class BuyerProxy {
       if (clientAbortController.signal.aborted) return
       const code = error instanceof RouterExecutionError ? error.code : 'router_unavailable'
       res.writeHead(code === 'router_timeout' ? 504 : 502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { type: code, code, message: 'The selected router could not select a route. No inference request was sent.' } }))
+      res.end(JSON.stringify({ error: { type: code, code, message: `The selected router could not select a route. No inference request was sent. ${error instanceof RoutingConfigurationError ? error.message : ''}` } }))
       return
     }
     if (clientAbortController.signal.aborted) return

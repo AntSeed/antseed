@@ -9,7 +9,7 @@ import {
   preferredModelDisplayName,
 } from '@antseed/node';
 
-export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images'>;
+export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images' | 'antseed-routing'>;
 export type { CatalogServiceCapabilities, CatalogServiceProtocol };
 
 export type ChatServiceCatalogEntry = {

@@ -18,6 +18,7 @@ export function detectRequestServiceApiProtocol(
   request: Pick<SerializedHttpRequest, 'path' | 'headers'>,
 ): ServiceApiProtocol | null {
   const normalizedPath = request.path.toLowerCase();
+  if (normalizedPath.split('?')[0] === '/v1/route') return 'antseed-routing';
   if (normalizedPath.startsWith('/v1/messages') || normalizedPath.startsWith('/v1/complete')) {
     return 'anthropic-messages';
   }

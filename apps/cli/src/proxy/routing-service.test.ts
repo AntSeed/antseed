@@ -1,17 +1,63 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createPerCallBillingModel, type PeerInfo, type RouteSelectionContext } from '@antseed/node'
+import { createRoutingServiceMetadata, createPerCallBillingModel, type PeerInfo, type RouteSelectionContext } from '@antseed/node'
 import type { RoutingServiceConfig } from '../config/types.js'
 import { RoutingServiceExecutor } from './routing-service.js'
 
+const metadata = createRoutingServiceMetadata({ type: 'object', properties: {}, additionalProperties: false })
 const settings: RoutingServiceConfig = { peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'route-classifier' }
+
+test('metadata inspection resolves typed preferences and rejects unknown fields before dispatch', async () => {
+  const state = setup()
+  state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
+    type: 'object', additionalProperties: false,
+    properties: { threshold: { type: 'number', default: 0.5 }, enabled: { type: 'boolean' } },
+  })
+  const selection = { kind: 'router' as const, service: state.config, preferences: { enabled: false } }
+  const description = await state.executor.describe(selection)
+  assert.deepEqual(description.preferences, { threshold: 0.5, enabled: false })
+  assert.equal(state.sent.length, 0)
+  await assert.rejects(state.executor.describe({ ...selection, preferences: { threshold: '0.5' } }), /preferences.threshold/)
+  await assert.rejects(state.executor.describe({ ...selection, preferences: { instructions: 'unknown' } }), /unknown preference/)
+  assert.equal(state.sent.length, 0)
+})
+
+test('schema changes reject stale requests before any service request', async () => {
+  const state = setup()
+  state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
+    type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' } },
+  })
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /refresh router metadata/)
+  assert.equal(state.sent.length, 0)
+})
+
+test('metadata refresh aborts an active call when its schema changes', async () => {
+  const state = setup()
+  await state.executor.describe({ kind: 'router', service: state.config })
+  let started!: () => void
+  const ready = new Promise<void>((resolve) => { started = resolve })
+  state.host.node.sendRequest = async (_peer, _request, options) => {
+    started()
+    return new Promise((_resolve, reject) => options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason), { once: true }))
+  }
+  const pending = state.executor.invoke('parent', state.context, state.messages)
+  const rejected = assert.rejects(pending, /abort/i)
+  await ready
+  state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
+    type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' } },
+  })
+  state.executor.updateMetadata([state.peer])
+  await rejected
+  assert.equal(state.records[0]?.outcome, 'cancelled')
+})
 
 function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
   const config = { ...settings, ...overrides }
   const peer: PeerInfo = {
     peerId: settings.peerId as PeerInfo['peerId'], lastSeen: Date.now(), providers: ['openai'],
     providerServiceCapabilities: { openai: { services: { 'route-classifier': { routing: true } } } },
-    providerServiceApiProtocols: { openai: { services: { 'route-classifier': ['openai-chat-completions'] } } },
+    providerServiceApiProtocols: { openai: { services: { 'route-classifier': ['antseed-routing'] } } },
+    providerServiceRouting: { openai: { services: { 'route-classifier': metadata } } },
     providerPricing: { openai: { defaults: { inputUsdPerMillion: price, outputUsdPerMillion: price * 2 },
       services: { 'route-classifier': { inputUsdPerMillion: price, outputUsdPerMillion: price * 2 } } } },
   }
@@ -23,7 +69,7 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
     node: { buyerPaymentManager: { maxPerRequestUsdc: 10000n } as any, sendRequest: async (...args: any[]) => {
       sent.push(args)
       const response = { requestId: args[1].requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
-        choices: [{ message: { role: 'assistant', content: 'test-model' } }], usage: { prompt_tokens: 100, completion_tokens: 20 },
+        version: 1, recommendation: { serviceId: 'test-model' }, usage: { input_tokens: 100, output_tokens: 20 },
       })) }
       const validateResponse = args[2]?.acceptResponse
       if (validateResponse && validateResponse(response) !== true) throw new Error('invalid classification')
@@ -34,8 +80,9 @@ function setup(overrides: Partial<RoutingServiceConfig> = {}, price = 1) {
   const invoke = executor.invoke.bind(executor)
   executor.invoke = (parent, context, messages, parser, target = config) => invoke(parent, context, messages, parser, target)
   const controller = new AbortController()
-  const context: RouteSelectionContext = { signal: controller.signal, deadlineMs: Date.now() + 10_000 }
-  const messages = [{ role: 'user' as const, content: 'private example prompt' }]
+  const candidates = [{ serviceId: 'test-model', peerId: 'b'.repeat(40), inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]
+  const context: RouteSelectionContext = { signal: controller.signal, deadlineMs: Date.now() + 10_000, candidates }
+  const messages: import('@antseed/node').RoutingRequestV1 = { version: 1, service: config.serviceId, preferencesSchemaHash: metadata.preferencesSchemaHash, request: { path: '/v1/chat/completions', body: { text: 'private example prompt' } }, candidates, preferences: {} }
   return { executor, context, messages, sent, records, config, peer, controller, host, policy }
 }
 
@@ -46,7 +93,7 @@ test('selected routing services use ordinary metered execution and existing poli
   const [peer, request, options] = state.sent[0]
   assert.equal(peer.peerId, settings.peerId)
   assert.notEqual(request.requestId, 'parent')
-  assert.equal(request.path, '/v1/chat/completions')
+  assert.equal(request.path, '/v1/route')
   assert.equal(request.headers['x-antseed-provider'], 'openai')
   assert.deepEqual(options.attribution, { purpose: 'routing', parentRequestId: 'parent' })
   assert.equal(options.controlPlane, undefined)
@@ -63,7 +110,7 @@ test('concurrent duplicate calls share one operation and a different input canno
   ])
   assert.equal(results[0], results[1])
   assert.equal(state.sent.length, 1)
-  await assert.rejects(state.executor.invoke('parent', state.context, [{ role: 'user', content: 'changed' }]), /Only one/)
+  await assert.rejects(state.executor.invoke('parent', state.context, { ...state.messages, request: { path: '/v1/chat/completions', body: { text: 'changed' } } }), /Only one/)
   await assert.rejects(state.executor.invoke('parent', state.context, state.messages, undefined, { ...state.config, peerId: 'b'.repeat(40) }), /Only one/)
 })
 
@@ -142,7 +189,7 @@ test('shutdown cancels active service calls', async () => {
 function setupPerCall() {
   const state = setup({}, 0)
   state.peer.providerServiceUnitBillingModels = { openai: { services: {
-    'route-classifier': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+    'route-classifier': { 'antseed-routing': createPerCallBillingModel('5000') },
   } } }
   state.context.candidates = [{ peerId: 'b'.repeat(40), serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]
   return state
@@ -153,7 +200,7 @@ test('per-call routing validates the recommendation and authorizes only the adve
   let validations = 0
   const parseResponse = (response: { body: Uint8Array }) => {
     validations++
-    const model = JSON.parse(new TextDecoder().decode(response.body)).choices[0].message.content
+    const model = JSON.parse(new TextDecoder().decode(response.body)).recommendation.serviceId
     return [{ peerId: 'b'.repeat(40), serviceId: model }]
   }
   await Promise.all([
@@ -168,7 +215,7 @@ test('per-call routing validates the recommendation and authorizes only the adve
 
 test('per-call routing requires a parser before contacting the seller', async () => {
   const state = setupPerCall()
-  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /requires a classification parser/)
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /requires a recommendation validator/)
   assert.equal(state.sent.length, 0)
 })
 
@@ -215,14 +262,15 @@ for (const candidates of [[], [{ peerId: 'b'.repeat(40), serviceId: 'another-mod
   test(`per-call routing rejects model-only answers without an eligible seller (${candidates.length} candidates)`, async () => {
     const state = setupPerCall()
     state.context.candidates = candidates
-    await assert.rejects(state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }]), /invalid classification/)
+    state.messages.candidates = candidates
+    await assert.rejects(state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }]), /invalid classification|Invalid routing request/)
   })
 }
 
-test('per-call routing accepts an exact seller followed by same-model automatic fallback', async () => {
+test('per-call routing rejects multiple recommendations instead of authorizing fallback', async () => {
   const state = setupPerCall()
   const exact = state.context.candidates![0]!
-  await state.executor.invoke('parent', state.context, state.messages,
-    () => [{ peerId: exact.peerId, serviceId: exact.serviceId }, { serviceId: exact.serviceId }])
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages,
+    () => [{ peerId: exact.peerId, serviceId: exact.serviceId }, { serviceId: exact.serviceId }]), /invalid classification/)
   assert.equal(state.sent.length, 1)
 })

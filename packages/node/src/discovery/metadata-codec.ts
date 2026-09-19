@@ -1,3 +1,4 @@
+import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
 import { SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
@@ -236,6 +237,17 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
     if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
       encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts, metadata.version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION);
+    }
+
+    if (p.serviceRouting && metadata.version < 14) throw new Error("Routing descriptors require metadata v14");
+    if (metadata.version >= 14) {
+      const entries = p.serviceRouting ?? {};
+      Object.values(entries).forEach(validateRoutingServiceMetadata);
+      const bytes = new TextEncoder().encode(canonicalRoutingJson(entries));
+      if (bytes.length > 128 * 1024) throw new Error("Routing descriptors exceed metadata limit");
+      const length = new Uint8Array(4);
+      new DataView(length.buffer).setUint32(0, bytes.length, false);
+      parts.push(length, bytes);
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -974,6 +986,20 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION)
       : undefined;
 
+    let serviceRouting: import("./peer-metadata.js").ProviderAnnouncement['serviceRouting'];
+    if (version >= 14) {
+      checkBounds(offset, 4, data.length);
+      const length = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+      if (length > 128 * 1024) throw new Error("Routing descriptors exceed metadata limit");
+      checkBounds(offset, length, data.length);
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(data.slice(offset, offset + length)));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid routing descriptors");
+      Object.values(parsed).forEach(validateRoutingServiceMetadata);
+      serviceRouting = parsed as NonNullable<typeof serviceRouting>;
+      offset += length;
+    }
+
     // maxConcurrency: 2 bytes uint16
     checkBounds(offset, 2, data.length);
     const maxConcView = new DataView(data.buffer, data.byteOffset + offset, 2);
@@ -999,6 +1025,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ...(serviceApiProtocols && Object.keys(serviceApiProtocols).length > 0 ? { serviceApiProtocols } : {}),
       ...(serviceUnitBillingModels && Object.keys(serviceUnitBillingModels).length > 0 ? { serviceUnitBillingModels } : {}),
       ...(serviceCapabilities && Object.keys(serviceCapabilities).length > 0 ? { serviceCapabilities } : {}),
+      ...(serviceRouting && Object.keys(serviceRouting).length > 0 ? { serviceRouting } : {}),
       maxConcurrency,
       currentLoad,
     });

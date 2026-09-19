@@ -14,7 +14,7 @@ import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
 
 test('loads namespaced router settings without converting plugin vocabulary', async () => {
-  const routerSettings = { 'plugin:classifier': { policy: 'fast' }, 'instance:other': { threshold: '0.5' } };
+  const routerSettings = { 'plugin:example': { policy: 'fast' }, 'instance:other': { threshold: '0.5' } };
   await withTempConfig(JSON.stringify({ buyer: { routingPreferences: { routerSettings } } }), async (path) => {
     assert.deepEqual((await loadConfig(path)).buyer.routingPreferences.routerSettings, routerSettings);
   });
@@ -60,7 +60,7 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
 });
 
 test('fixed model and local router selections round-trip without classifier settings', async () => {
-  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }]) {
+  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }, { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'fixture', serviceId: 'selector' }, preferences: { options: { enabled: false }, count: 2, labels: ['a'] } }]) {
     await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
       assert.deepEqual((await loadConfig(path)).buyer.selection, selection);
     });

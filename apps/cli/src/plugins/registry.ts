@@ -55,9 +55,7 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   },
 ]
 
-export const BUNDLED_ROUTER_PLUGINS: TrustedPlugin[] = [
-  { name: 'classifier', type: 'router', description: 'Bundled network routing adapter', package: '@antseed/router-classifier' },
-]
+export const BUNDLED_ROUTER_PLUGINS: TrustedPlugin[] = []
 
 export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
   {

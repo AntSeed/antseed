@@ -274,6 +274,9 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // protocol for the peer we're actually pinned to. Fall back to the
     // map only when we have no catalog row to read from.
     const advertisedProtocol = catalogEntry?.protocol;
+    if (advertisedProtocol === 'antseed-routing') {
+      return { ok: false, error: `Service "${serviceId}" selects routes and cannot answer text chat directly.` };
+    }
     if (advertisedProtocol === 'openai-images') {
       return {
         ok: false,

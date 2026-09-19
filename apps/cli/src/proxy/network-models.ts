@@ -24,7 +24,7 @@ import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/mode
 
 export { effectiveModelReputationScore } from '@antseed/node'
 
-export type NetworkModelType = 'text' | 'image'
+export type NetworkModelType = 'text' | 'image' | 'routing'
 
 export type NetworkModelPeerOffer = {
   peerId: string

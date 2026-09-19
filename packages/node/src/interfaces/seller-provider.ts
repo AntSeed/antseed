@@ -51,6 +51,7 @@ export interface Provider {
 
   /** Optional per-service model capability hints advertised via discovery metadata. */
   serviceCapabilities?: Record<string, ServiceCapabilities>;
+  serviceRouting?: Record<string, import("@antseed/protocol").RoutingServiceMetadataV1>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

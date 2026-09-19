@@ -14,6 +14,7 @@ import {
   adaptPeerFaultErrorResponse,
   buyerFault,
   computeOnChainReputationScore,
+  createRoutingServiceMetadata,
   createPerCallBillingModel,
   type ModelRoutingPreferences,
   type PeerInfo,
@@ -176,23 +177,82 @@ function routerPeer(seed: string, serviceId = 'test-model'): PeerInfo {
   }
 }
 
+test('one buyer discovers two preference schemas, persists typed values and invalidates reuse', async (t) => {
+  const peer = routerPeer('a')
+  const schemaA = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'number', default: 0.5 } } })
+  const schemaB = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { options: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean' } }, required: ['enabled'] } }, required: ['options'] })
+  peer.providerServiceRouting = { openai: { services: { 'selector-a': schemaA, 'selector-b': schemaB } } }
+  peer.providerServiceCapabilities = { openai: { services: {} } }
+  for (const service of ['selector-a', 'selector-b']) {
+    peer.providerServiceApiProtocols!.openai!.services[service] = ['antseed-routing']
+    peer.providerServiceCapabilities.openai!.services[service] = { routing: true }
+    peer.providerPricing!.openai!.services![service] = { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  const routed: any[] = []
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: any) => {
+    if (request.path === '/v1/route') {
+      routed.push(parseJsonBody(request.body))
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({ version: 1, recommendation: { serviceId: 'test-model' } })) }
+    }
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }
+  }
+  const select = (serviceId: string, preferences?: Record<string, any>) => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: {
+    selection: { kind: 'router', service: { peerId: peer.peerId, provider: 'openai', serviceId }, ...(preferences ? { preferences } : {}) },
+  } }))
+  const send = () => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'metadata-preferences' }, body: { model: 'antseed', messages: [{ role: 'user', content: 'same task' }] } }))
+  t.after(async () => {
+    await (proxy as any)._conversations.flush()
+    await (proxy as any)._stateWriteChain
+    await rm((proxy as any)._stateDir, { recursive: true, force: true })
+  })
+  assert.equal((await select('selector-a')).statusCode, 200)
+  const description = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/router/metadata' }))
+  assert.equal(description.statusCode, 200)
+  assert.deepEqual(JSON.parse(description.body).preferences, { threshold: 0.5 })
+  assert.equal((await send()).statusCode, 200)
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(routed.length, 1)
+  assert.deepEqual(routed[0].preferences, { threshold: 0.5 })
+  peer.providerServiceRouting.openai!.services['selector-a'] = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'number', default: 0.8 } } })
+  assert.equal((await send()).statusCode, 200)
+  assert.equal(routed.length, 2)
+  assert.deepEqual(routed[1].preferences, { threshold: 0.8 })
+  assert.equal((await select('selector-b', { options: { enabled: false } })).statusCode, 200)
+  assert.equal((await send()).statusCode, 200)
+  assert.deepEqual(routed[2].preferences, { options: { enabled: false } })
+  await (proxy as any)._stateWriteChain
+  const persisted = JSON.parse(await readFile(join((proxy as any)._stateDir, 'buyer.state.json'), 'utf8'))
+  assert.deepEqual(persisted.selection.preferences, { options: { enabled: false } })
+  assert.equal((await select('selector-b', { options: { enabled: 'false' } })).statusCode, 200)
+  const invalidDescription = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/router/metadata' }))
+  assert.equal(invalidDescription.statusCode, 200)
+  assert.equal(JSON.parse(invalidDescription.body).metadata.preferencesSchemaHash, schemaB.preferencesSchemaHash)
+  assert.match(JSON.parse(invalidDescription.body).preferencesError, /preferences.options.enabled/)
+  const invalid = await send()
+  assert.equal(invalid.statusCode, 502)
+  assert.match(invalid.body, /preferences.options.enabled/)
+  assert.equal(routed.length, 3)
+})
+
 test('a selected network service uses the bundled adapter and can also provide inference', async (t) => {
   const peer = routerPeer('a')
   peer.providerPricing!.openai!.services!['classifier'] = { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }
-  peer.providerServiceApiProtocols!.openai!.services['classifier'] = ['openai-chat-completions']
+  peer.providerServiceApiProtocols!.openai!.services['classifier'] = ['antseed-routing']
+  peer.providerServiceRouting = { openai: { services: { classifier: createRoutingServiceMetadata({ type: 'object', properties: {}, additionalProperties: false }) } } }
   peer.providerServiceCapabilities = { openai: { services: { classifier: { routing: true } } } }
   const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
   const sent: string[] = []
   ;(proxy as any)._node.sendRequest = async (target: PeerInfo, request: any) => {
     assert.equal(target.peerId, peer.peerId)
-    const body = parseJsonBody(request.body) as { model: string; messages: { content: string }[] }
-    sent.push(body.model)
-    if (body.model === 'classifier') {
-      const payload = JSON.parse(body.messages[1]!.content)
+    const body = parseJsonBody(request.body) as any
+    sent.push(body.service ?? body.model)
+    if (body.service === 'classifier') {
+      const payload = body
       assert.equal(payload.version, 1)
       assert.deepEqual(payload.candidates.map((candidate: any) => candidate.serviceId), ['test-model'])
       return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ serviceId: 'test-model', peerId: peer.peerId }) } }],
+        version: 1, recommendation: { serviceId: 'test-model', peerId: peer.peerId },
       })) }
     }
     return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{}') }

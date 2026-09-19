@@ -20,3 +20,4 @@ export {
   formatToolHints,
   type ToolHint,
 } from './tool-hints.js'
+export { selectNetworkRoute, parseRoutingResponse } from './network-router.js';
