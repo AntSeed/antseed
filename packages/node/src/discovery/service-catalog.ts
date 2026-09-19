@@ -5,7 +5,8 @@ export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses'
-  | 'openai-images';
+  | 'openai-images'
+  | 'typesafe-systemone';
 
 export type CatalogServiceCapabilities = {
   contextWindow?: number;
@@ -80,6 +81,7 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-chat-completions',
   'openai-responses',
   'openai-images',
+  'typesafe-systemone',
 ]);
 
 export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
@@ -90,6 +92,7 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
   if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
     return 'anthropic-messages';
   }
+  if (provider === 'typesafe') return 'typesafe-systemone';
   return null;
 }
 

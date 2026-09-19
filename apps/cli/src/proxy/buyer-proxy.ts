@@ -2186,6 +2186,7 @@ export class BuyerProxy {
       normalizedPath.startsWith('/v1/responses') ||
       normalizedPath.startsWith('/v1/images/generations') ||
       normalizedPath.startsWith('/v1/images/edits') ||
+      normalizedPath.startsWith('/v1/systemone') ||
       normalizedPath.startsWith('/v1/models')
     if (!isKnownApiPath) {
       res.writeHead(404, { 'content-type': 'application/json' })

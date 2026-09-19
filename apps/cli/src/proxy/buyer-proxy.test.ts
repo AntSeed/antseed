@@ -1297,6 +1297,39 @@ test('model-only routing skips a cooling-down peer when another offer is ready',
   assert.equal(selectedPeerId, ready.peerId)
 })
 
+test('POST /v1/systemone routes only to peers advertising typesafe-systemone', async () => {
+  const chatOnly = makePeer('a', ['openai'])
+  chatOnly.reputationScore = 95
+  chatOnly.providerServiceApiProtocols = {
+    openai: { services: { jev: ['openai-chat-completions'] } },
+  }
+  const decision = makePeer('b', ['openai'])
+  decision.reputationScore = 80
+  decision.providerServiceApiProtocols = {
+    openai: { services: { jev: ['typesafe-systemone'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([chatOnly, decision], [chatOnly, decision], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; path: string }) => {
+    attempts.push(peer.peerId)
+    assert.equal(request.path, '/v1/systemone')
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ model: 'jev', answers: {}, usage: { input_tokens: 3, output_tokens: 1 } })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/systemone',
+    body: { model: 'jev', state: 'hello', questions: { ok: { type: 'noul', instructions: 'Is it fine?' } } },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(attempts, [decision.peerId])
+})
+
 test('model-only routing does not fail over after a buyer-attributed failure', async () => {
   const first = makePeer('a', ['openai'])
   first.reputationScore = 95

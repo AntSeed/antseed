@@ -213,6 +213,7 @@ function selectAdvertisedServiceByProtocol(
         || protocol === 'openai-chat-completions'
         || protocol === 'openai-responses'
         || protocol === 'openai-images'
+        || protocol === 'typesafe-systemone'
       ))
     } else if (offer.protocol) {
       supportedProtocols = [offer.protocol]
@@ -314,6 +315,7 @@ const PROTOCOL_BASELINE_FIELDS: Partial<Record<ServiceApiProtocol, readonly stri
   'openai-chat-completions': ['model', 'messages', 'stream'],
   'openai-responses': ['model', 'input', 'stream'],
   'anthropic-messages': ['model', 'messages', 'max_tokens', 'stream'],
+  'typesafe-systemone': ['model', 'state', 'questions'],
 }
 
 /**
