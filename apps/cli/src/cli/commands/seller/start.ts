@@ -311,11 +311,14 @@ export function buildSellerPluginRuntimeEnv(
   if (Object.keys(serviceUnitBillingModels).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
+  const pluginPackage = resolvePluginPackage(providerCfg.plugin)
+  const envPrefix = pluginPackage === '@antseed/provider-local-llm'
+    ? 'LOCAL_LLM'
+    : pluginPackage === '@antseed/provider-typesafe'
+      ? 'TYPESAFE'
+      : 'OPENAI'
   if (providerCfg.baseUrl) {
-    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
-      ? 'LOCAL_LLM_BASE_URL'
-      : 'OPENAI_BASE_URL'
-    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
+    runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -323,7 +326,7 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.apiKeyEnv) {
     const apiKey = process.env[providerCfg.apiKeyEnv]
     if (apiKey) {
-      runtimeEnv['OPENAI_API_KEY'] = apiKey
+      runtimeEnv[`${envPrefix}_API_KEY`] = apiKey
     }
   }
 
