@@ -226,6 +226,40 @@ test('buildSellerPluginRuntimeEnv maps base URL and API key to TYPESAFE_* for th
   }
 });
 
+test('buildSellerPluginRuntimeEnv maps video provider credentials, base URLs, and pricing', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    runway: {
+      plugin: 'runway', apiKeyEnv: 'TEST_RUNWAY_KEY', baseUrl: 'https://runway.example',
+      services: { 'gen4.5': { unitBillingModels: {
+        'antseed-video-jobs-v1': { version: 1, components: [{ unit: 'output_video_seconds', priceUsd: 0.1 }] },
+      } } },
+    },
+    veo: {
+      plugin: 'veo', apiKeyEnv: 'TEST_GEMINI_KEY', baseUrl: 'https://gemini.example',
+      services: { 'veo-3.1-generate-preview': { unitBillingModels: {
+        'antseed-video-jobs-v1': { version: 1, components: [{ unit: 'output_videos', priceUsd: 1 }] },
+      } } },
+    },
+  };
+  const previousRunway = process.env['TEST_RUNWAY_KEY'];
+  const previousGemini = process.env['TEST_GEMINI_KEY'];
+  process.env['TEST_RUNWAY_KEY'] = 'runway-secret';
+  process.env['TEST_GEMINI_KEY'] = 'gemini-secret';
+  try {
+    const runway = buildSellerPluginRuntimeEnv(config.seller, 'runway');
+    assert.equal(runway['RUNWAY_API_KEY'], 'runway-secret');
+    assert.equal(runway['RUNWAY_BASE_URL'], 'https://runway.example');
+    assert.match(runway['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] ?? '', /output_video_seconds/);
+    const veo = buildSellerPluginRuntimeEnv(config.seller, 'veo');
+    assert.equal(veo['GEMINI_API_KEY'], 'gemini-secret');
+    assert.equal(veo['GEMINI_BASE_URL'], 'https://gemini.example');
+  } finally {
+    if (previousRunway === undefined) delete process.env['TEST_RUNWAY_KEY']; else process.env['TEST_RUNWAY_KEY'] = previousRunway;
+    if (previousGemini === undefined) delete process.env['TEST_GEMINI_KEY']; else process.env['TEST_GEMINI_KEY'] = previousGemini;
+  }
+});
+
 test('assertSellerPrerequisites fails when no services are configured', async () => {
   const config = createDefaultConfig();
   const seller = config.seller;

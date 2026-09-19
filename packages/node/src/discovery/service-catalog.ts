@@ -1,12 +1,14 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { parseVerifierCapabilities } from './verifier-capabilities.js';
+import type { VideoCapabilities } from '@antseed/protocol';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses'
   | 'openai-images'
-  | 'typesafe-systemone';
+  | 'typesafe-systemone'
+  | 'antseed-video-jobs-v1';
 
 export type CatalogServiceCapabilities = {
   contextWindow?: number;
@@ -17,6 +19,7 @@ export type CatalogServiceCapabilities = {
   toolUse?: boolean;
   structuredOutput?: boolean;
   supportedParameters?: string[];
+  video?: VideoCapabilities;
 };
 
 export type NetworkServiceCatalogPeer = {
@@ -58,7 +61,7 @@ export type NetworkServiceCatalogPeer = {
 };
 
 /** `decision`: System One models return typed answers, not text or images. */
-export type NetworkServiceOfferType = 'text' | 'image' | 'decision';
+export type NetworkServiceOfferType = 'text' | 'image' | 'decision' | 'video';
 
 export type NetworkServiceOffer = {
   advertisedVerifierIds?: string[];
@@ -77,6 +80,10 @@ export type NetworkServiceOffer = {
   cachedInputUsdPerMillion?: number;
   minImageUsdPerImage?: number;
   maxImageUsdPerImage?: number;
+  minVideoUsdPerSecond?: number;
+  maxVideoUsdPerSecond?: number;
+  minVideoUsdPerVideo?: number;
+  maxVideoUsdPerVideo?: number;
 };
 
 const VALID_PROTOCOLS = new Set<string>([
@@ -85,9 +92,10 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-responses',
   'openai-images',
   'typesafe-systemone',
+  'antseed-video-jobs-v1',
 ]);
 
-export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
+export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images' | 'antseed-video-jobs-v1'> | null {
   if (provider === 'openai-responses') return 'openai-responses';
   if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
     return 'openai-chat-completions';
@@ -100,6 +108,7 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
 }
 
 export function resolveServiceProtocol(protocols: string[], provider: string): CatalogServiceProtocol | null {
+  if (protocols.includes('antseed-video-jobs-v1')) return 'antseed-video-jobs-v1';
   if (protocols.includes('openai-images')) return 'openai-images';
   const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol)) as CatalogServiceProtocol | undefined;
   return announced ?? inferServiceProtocol(provider);
@@ -167,6 +176,30 @@ function resolveImagePriceRange(peer: NetworkServiceCatalogPeer, provider: strin
     : {};
 }
 
+function resolveVideoPriceRange(peer: NetworkServiceCatalogPeer, provider: string, serviceId: string) {
+  const billingByProtocol = peer.providerServiceUnitBillingModels?.[provider]?.services?.[serviceId];
+  const perSecondPrices = Object.values(billingByProtocol ?? {}).flatMap((model) =>
+    (model?.components ?? [])
+      .filter((component) => component.unit === 'output_video_seconds' && Number.isFinite(component.priceUsd) && component.priceUsd >= 0)
+      .map((component) => component.priceUsd),
+  );
+  const perVideoPrices = Object.values(billingByProtocol ?? {}).flatMap((model) =>
+    (model?.components ?? [])
+      .filter((component) => component.unit === 'output_videos' && Number.isFinite(component.priceUsd) && component.priceUsd >= 0)
+      .map((component) => component.priceUsd),
+  );
+  return {
+    ...(perSecondPrices.length > 0 ? {
+      minVideoUsdPerSecond: Math.min(...perSecondPrices),
+      maxVideoUsdPerSecond: Math.max(...perSecondPrices),
+    } : {}),
+    ...(perVideoPrices.length > 0 ? {
+      minVideoUsdPerVideo: Math.min(...perVideoPrices),
+      maxVideoUsdPerVideo: Math.max(...perVideoPrices),
+    } : {}),
+  };
+}
+
 export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): NetworkServiceOffer[] {
   const offers: NetworkServiceOffer[] = [];
   for (const peer of peers) {
@@ -178,9 +211,11 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const protocol = resolveServiceProtocol(protocols, provider);
         const type: NetworkServiceOfferType = protocol === 'typesafe-systemone'
           ? 'decision'
-          : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
-            ? 'image'
-            : 'text';
+          : protocol === 'antseed-video-jobs-v1' || capabilities?.outputs?.includes('video')
+            ? 'video'
+            : protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+              ? 'image'
+              : 'text';
         const pricing = resolvePricing(peer, provider, serviceId);
         offers.push({
           advertisedVerifierIds: parseVerifierCapabilities(peer.capabilities).supported,
@@ -198,6 +233,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           ...(pricing.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
           ...(pricing.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
           ...resolveImagePriceRange(peer, provider, serviceId),
+          ...resolveVideoPriceRange(peer, provider, serviceId),
         });
       }
     }
@@ -207,6 +243,9 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
 
 function comparableOfferPrice(offer: NetworkServiceOffer): number {
   if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
+  if (offer.type === 'video') {
+    return (offer.minVideoUsdPerVideo ?? 0) + (offer.minVideoUsdPerSecond ?? 0);
+  }
   if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
     return Number.POSITIVE_INFINITY;
   }

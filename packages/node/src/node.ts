@@ -114,6 +114,7 @@ import {
   type SybilContext,
 } from "./reputation/sybil-risk.js";
 import { buyerFault } from "./errors.js";
+import { VideoGenerationController } from "./video/video-generation-controller.js";
 
 /** Store the trust score on the peer; leaves the fields untouched when the peer is unscored. */
 function applyTrust(peer: PeerInfo): void {
@@ -234,6 +235,15 @@ export interface NodeVerificationConfig {
   samplesDir?: string;
 }
 
+export interface NodeVideoConfig {
+  autoApprove?: boolean;
+  maxTotalUsdc?: string;
+  maxDurationSeconds?: number;
+  retentionMs?: number;
+  maxArtifactBytes?: number;
+  maxInputAssetBytes?: number;
+}
+
 export interface NodeConfig {
   role: 'seller' | 'buyer';
   displayName?: string;
@@ -271,6 +281,8 @@ export interface NodeConfig {
   relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
   verification?: NodeVerificationConfig;
+  /** Async video generation buyer policy and seller artifact limits. */
+  video?: NodeVideoConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
@@ -374,6 +386,7 @@ export class AntseedNode extends EventEmitter {
   private _depositRelayer: DepositRelayer | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
+  private _videoController: VideoGenerationController | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
   /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
@@ -624,6 +637,8 @@ export class AntseedNode extends EventEmitter {
       this._sellerHandler.clearMetadataRefreshTimer();
       this._sellerHandler = null;
     }
+    this._videoController?.close();
+    this._videoController = null;
 
     // Remove NAT port mappings
     if (this._nat) {
@@ -1679,6 +1694,20 @@ export class AntseedNode extends EventEmitter {
       );
     }
 
+    const sellerDataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+    this._videoController = new VideoGenerationController({
+      identity,
+      providers: this._providers,
+      dataDir: sellerDataDir,
+      sellerPaymentManager: this._sellerPaymentManager,
+      retentionMs: this._config.video?.retentionMs,
+      maxArtifactBytes: this._config.video?.maxArtifactBytes,
+      maxInputAssetBytes: this._config.video?.maxInputAssetBytes,
+    });
+    if (this._videoController.enabled) {
+      await this._videoController.start();
+    }
+
     // Create seller request handler
     this._sellerHandler = new SellerRequestHandler({
       identity,
@@ -1689,6 +1718,7 @@ export class AntseedNode extends EventEmitter {
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,
+      videoController: this._videoController,
       maxUploadBodyBytes: this._config.maxUploadBodyBytes,
       ...(this._config.payments?.reserveEstimateOverdraftUsdc != null
         ? { reserveEstimateOverdraftUsdc: BigInt(this._config.payments.reserveEstimateOverdraftUsdc) }
@@ -1802,6 +1832,7 @@ export class AntseedNode extends EventEmitter {
         requestTimeoutMs: this._config.requestTimeoutMs,
         maxStreamBufferBytes: this._config.maxStreamBufferBytes,
         maxStreamDurationMs: this._config.maxStreamDurationMs,
+        videoPolicy: this._config.video,
       },
       {
         localPeerId: identity.peerId,

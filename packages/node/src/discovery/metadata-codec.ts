@@ -29,6 +29,7 @@ const DOMAIN_VERIFICATION_METHOD_IDS: Record<DomainVerificationMethod, number> =
 const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt", "https-well-known"];
 const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+const VIDEO_CAPABILITIES_METADATA_VERSION = 13;
 const WIDE_SERVICE_COUNTS_METADATA_VERSION = 12;
 const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
 const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
@@ -222,7 +223,12 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels, hasWideServiceCounts);
     }
     if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
-      encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts);
+      encodeServiceCapabilities(
+        parts,
+        p.serviceCapabilities,
+        hasWideServiceCounts,
+        metadata.version >= VIDEO_CAPABILITIES_METADATA_VERSION,
+      );
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -501,6 +507,7 @@ function encodeServiceCapabilities(
   parts: Uint8Array[],
   serviceCapabilities: PeerMetadata["providers"][number]["serviceCapabilities"],
   hasWideServiceCounts: boolean,
+  includeVideoCapabilities: boolean,
 ): void {
   // Code-unit sort, not localeCompare: buyers verify signatures by re-encoding
   // decoded metadata, so entry order must not depend on the verifier's locale.
@@ -552,6 +559,14 @@ function encodeServiceCapabilities(
         pushUtf8(parts, parameter);
       }
     }
+    if (includeVideoCapabilities) {
+      if (caps.video === undefined) {
+        parts.push(new Uint8Array([0]));
+      } else {
+        parts.push(new Uint8Array([1]));
+        pushUtf8U16(parts, JSON.stringify(caps.video));
+      }
+    }
   }
 }
 
@@ -561,6 +576,7 @@ function decodeServiceCapabilities(
   setOffset: (offset: number) => void,
   checkBounds: (offset: number, needed: number, total: number) => void,
   hasWideServiceCounts: boolean,
+  includeVideoCapabilities: boolean,
 ): PeerMetadata["providers"][number]["serviceCapabilities"] | undefined {
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
@@ -620,6 +636,17 @@ function decodeServiceCapabilities(
       }
       caps.supportedParameters = parameters;
     }
+    if (includeVideoCapabilities) {
+      checkBounds(offset, 1, data.length);
+      const hasVideo = data[offset] === 1;
+      offset += 1;
+      if (hasVideo) {
+        const [rawVideo, videoOffset] = readUtf8U16(data, offset, checkBounds);
+        offset = videoOffset;
+        const parsed = JSON.parse(rawVideo) as ServiceCapabilities['video'];
+        caps.video = parsed;
+      }
+    }
     serviceCapabilities[serviceName] = caps;
   }
   setOffset(offset);
@@ -633,6 +660,26 @@ function pushUtf8(parts: Uint8Array[], value: string): void {
   }
   parts.push(new Uint8Array([bytes.length]));
   parts.push(bytes);
+}
+
+function pushUtf8U16(parts: Uint8Array[], value: string): void {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.length > 65_535) throw new Error(`Metadata string too long (${bytes.length} bytes)`);
+  const length = new Uint8Array(2);
+  new DataView(length.buffer).setUint16(0, bytes.length, false);
+  parts.push(length, bytes);
+}
+
+function readUtf8U16(
+  data: Uint8Array,
+  offset: number,
+  checkBounds: (offset: number, needed: number, total: number) => void,
+): [string, number] {
+  checkBounds(offset, 2, data.length);
+  const length = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false);
+  offset += 2;
+  checkBounds(offset, length, data.length);
+  return [new TextDecoder().decode(data.slice(offset, offset + length)), offset + length];
 }
 
 function pushServiceEntryCount(parts: Uint8Array[], count: number, hasWideServiceCounts: boolean): void {
@@ -928,7 +975,14 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
-      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
+      ? decodeServiceCapabilities(
+          data,
+          () => offset,
+          (next) => { offset = next; },
+          checkBounds,
+          hasWideServiceCounts,
+          version >= VIDEO_CAPABILITIES_METADATA_VERSION,
+        )
       : undefined;
 
     // maxConcurrency: 2 bytes uint16

@@ -316,7 +316,11 @@ export function buildSellerPluginRuntimeEnv(
     ? 'LOCAL_LLM'
     : pluginPackage === '@antseed/provider-typesafe'
       ? 'TYPESAFE'
-      : 'OPENAI'
+      : pluginPackage === '@antseed/provider-runway'
+        ? 'RUNWAY'
+        : pluginPackage === '@antseed/provider-veo'
+          ? 'GEMINI'
+          : 'OPENAI'
   if (providerCfg.baseUrl) {
     runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl
   }

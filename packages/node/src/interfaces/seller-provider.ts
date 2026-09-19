@@ -2,6 +2,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpRespo
 import type { ServiceApiProtocol } from '../types/service-api.js';
 import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
 import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
+import type { VideoProviderAdapter } from './video-provider.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -54,6 +55,9 @@ export interface Provider {
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;
+
+  /** Optional durable async-video adapter handled by VideoGenerationController. */
+  videoAdapter?: VideoProviderAdapter;
 
   /**
    * Handle an incoming inference request and return the response.

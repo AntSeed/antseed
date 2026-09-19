@@ -822,6 +822,36 @@ test('returns an empty list when no peers are discovered', () => {
   assert.deepEqual(buildNetworkModels([], NOW_MS), [])
 })
 
+test('discovers video alongside decision models and supports video filters', () => {
+  const video = makePeer({
+    peerId: '7'.repeat(40),
+    providerServiceApiProtocols: { runway: { services: { 'gen4-turbo': ['antseed-video-jobs-v1'] } } },
+  })
+  const decision = makePeer({
+    peerId: '8'.repeat(40),
+    providerServiceApiProtocols: { typesafe: { services: { 'jev-latest': ['typesafe-systemone'] } } },
+  })
+  const models = buildNetworkModels([video, decision], NOW_MS)
+  assert.equal(models.find((model) => model.id === 'gen4-turbo')?.type, 'video')
+  assert.equal(models.find((model) => model.id === 'jev-latest')?.type, 'decision')
+  assert.equal(parseModelTypeFilter('video'), 'video')
+  assert.equal(parseModelTypeFilter('videos'), 'video')
+})
+
+test('merges video model types consistently regardless of discovery order', () => {
+  const protocols = ['typesafe-systemone', 'antseed-video-jobs-v1', 'openai-images', 'openai-chat-completions'] as const
+  const expectedTypes = ['decision', 'video', 'image', 'text'] as const
+  const peers = protocols.map((protocol, index) => makePeer({
+    peerId: String(index + 1).repeat(40),
+    providerServiceApiProtocols: { shared: { services: { 'shared-model': [protocol] } } },
+  }))
+  for (let count = 2; count <= peers.length; count += 1) {
+    const subset = peers.slice(0, count)
+    assert.equal(buildNetworkModels(subset, NOW_MS)[0]?.type, expectedTypes[count - 1])
+    assert.equal(buildNetworkModels([...subset].reverse(), NOW_MS)[0]?.type, expectedTypes[count - 1])
+  }
+})
+
 test('keeps a canonically merged model text-routable when any peer serves text', () => {
   const image = makePeer({
     peerId: '4'.repeat(40),

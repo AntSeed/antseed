@@ -321,11 +321,11 @@ describe('ModelHealthChecker', () => {
     expect(paths.sort()).toEqual(['/v1/chat/completions', '/v1/messages']);
   });
 
-  it('skips image services without calling the provider or changing availability', async () => {
+  it.each(['openai-images', 'antseed-video-jobs-v1'] as const)('skips %s without calling the provider or changing availability', async (protocol) => {
     const handleRequest = vi.fn(async (req: SerializedHttpRequest) => jsonResponse(req.requestId, 500));
     const provider = makeProvider({
       services: ['gpt-image-1'],
-      serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+      serviceApiProtocols: { 'gpt-image-1': [protocol] },
       onRequest: handleRequest,
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 1 });
@@ -340,7 +340,7 @@ describe('ModelHealthChecker', () => {
         advertised: true,
         consecutiveFailures: 0,
         lastStatusCode: null,
-        lastDetail: 'Skipped health probe for unsupported protocol openai-images',
+        lastDetail: `Skipped health probe for unsupported protocol ${protocol}`,
       }),
     ]);
   });

@@ -2,6 +2,8 @@ import type { ServiceApiProtocol } from './service-api.js';
 
 export const UNIT_BILLING_UNITS_V1 = [
   'output_images',
+  'output_videos',
+  'output_video_seconds',
 ] as const;
 
 export const UNIT_BILLING_MATCH_KEYS_V1 = [
@@ -9,6 +11,9 @@ export const UNIT_BILLING_MATCH_KEYS_V1 = [
   'size',
   'quality',
   'resolution',
+  'aspect_ratio',
+  'audio',
+  'output_format',
 ] as const;
 
 export type UnitBillingUnitV1 = (typeof UNIT_BILLING_UNITS_V1)[number];
@@ -49,6 +54,8 @@ export interface UnitBillingContext {
 }
 
 export const GENERATED_IMAGE_OUTPUT_UNIT_V1 = 'output_images' satisfies UnitBillingUnitV1;
+export const GENERATED_VIDEO_OUTPUT_UNIT_V1 = 'output_videos' satisfies UnitBillingUnitV1;
+export const GENERATED_VIDEO_SECONDS_UNIT_V1 = 'output_video_seconds' satisfies UnitBillingUnitV1;
 
 export const FREE_UNIT_BILLING_MODEL_V1: UnitBillingModelV1 = {
   version: 1,
