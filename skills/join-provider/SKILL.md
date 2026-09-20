@@ -18,7 +18,7 @@ A **provider** (seller) offers AI services on the Antseed network. Buyers pay pe
 
 **Requirements:**
 - Node.js 20+
-- An EVM wallet funded with USDC (for staking) and ETH (for gas) on Base
+- An EVM wallet funded with ETH (for gas) on Base
 - An upstream AI API key (Anthropic, OpenAI, Together, etc.) or a local LLM
 
 ## Step 1: Install the CLI
@@ -155,7 +155,7 @@ antseed seller status
 
 This runs all readiness checks:
 - Identity registered on-chain
-- USDC staked above minimum
+- Seller eligible on-chain (registration is enough; stake is optional)
 - Provider credentials valid
 
 All checks must pass before starting the seller.
