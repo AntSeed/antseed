@@ -20,3 +20,4 @@ export * from './connection-state.js';
 // for the discovery constant.
 export { METADATA_VERSION } from './signatures.js';
 export * from './routing.js';
+export * from './reasoning.js';
