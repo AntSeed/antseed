@@ -1,9 +1,11 @@
 # Generic quantity billing
 
-This is PR 1/4 of the unreleased routing stack. It defines the billing contract,
+This is PR 1/5 of the unreleased routing stack. It defines the billing contract,
 quantity adapters, buyer verification, seller estimates, discovery pricing, and
 local configuration migration. Router selection, preference schemas, conversation
 behavior, reasoning controls, and shared request-lifecycle changes are separate PRs.
+Reasoning-effort announcements are PR 2/5, routing protocol/discovery is PR 3/5,
+shared execution is PR 4/5, and buyer routing integration is PR 5/5.
 
 ## Contract
 
@@ -79,7 +81,8 @@ wire layout is not retained as a second decoder.
 Signed quantity offers use metadata v13. Legacy billing advertisements and usage
 reports are rejected rather than reinterpreted; supported token-only older metadata
 continues to work. Metadata v13 is an unreleased stack format whose complete routing
-descriptor extension is finalized in PR 2/4. These are review boundaries, not
+descriptor extension is finalized in PR 3/5, after reasoning-effort announcements
+in PR 2/5. These are review boundaries, not
 separate protocol releases: deploy the completed stack together. Historical
 receipts, SQLite columns, and released database migrations are not rewritten.
 
