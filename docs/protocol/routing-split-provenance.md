@@ -1,7 +1,7 @@
 # Five-PR stack update
 
 The current stack is #1039 (1/5, generic quantity billing),
-`codex/reasoning-effort-announcements` (2/5, signed reasoning-effort capabilities),
+#1040 (2/5, signed reasoning-effort capabilities),
 #1034 (3/5, routing protocol/discovery), #1035 (4/5, shared execution), and
 #1036 (5/5, buyer integration).
 Billing is extracted onto current main; reasoning announcements build on it without
