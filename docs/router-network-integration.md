@@ -118,16 +118,29 @@ this change does not introduce another cache policy or a separate paid routing c
 
 ## Preference schemas
 
-Schemas support object, array, string, number, integer and boolean. The root is an
-object; objects require declared `properties` and `additionalProperties: false`, with
-optional `required`. Arrays require one `items` schema. Supported keywords also include
-`enum`, `minimum`, `maximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `title`,
-`description` and `default`. Other keywords, remote references, regular expressions,
-composition and executable extensions are rejected. Each schema/value has a 16 KiB
-limit and depth limit 8; the overall metadata limit still applies.
+Schemas use a flat object with declared string-enum `properties`,
+`additionalProperties: false`, and optional `required`. Fields can include
+`description` and a valid enum `default`. Nested settings, arrays, numeric/boolean
+fields, `title`, remote references, regular expressions, and executable extensions
+are rejected. Each schema/value has a 16 KiB limit; the overall metadata limit applies.
 
-Defaults fill absent fields only. An absent optional object is not constructed unless
-its own default supplies it. Preferences never override buyer spending or trust policy.
+Defaults fill absent fields only. Preferences never override buyer spending or trust policy.
+
+## Quantity pricing
+
+Quantity billing is inherited from PR 1/4: v2 models carry additive integer
+micro-USDC components, and reports carry only quantity. Image conditions are
+resolved from adapter-captured request attributes. Catalogs expose the rules
+without a flat price or range when pricing is conditional; request-specific
+ranking resolves the exact price and rejects unmatched offers before dispatch.
+
+Routing fees remain unconditional. Their component prices are summed before the
+per-request spending limit is checked, and complete recommendation acceptance is
+still required before a routing fee is authorized. Conditional image recommendations
+can be validated when no token-only maximum-price policy is configured. A token-price
+ceiling cannot prove an image quantity charge is acceptable, so those recommendations
+fail closed rather than comparing incompatible units. Per-call text inference remains
+excluded from router recommendations as before. No VPR settings UI is added.
 
 ## Routing API
 

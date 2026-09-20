@@ -74,9 +74,7 @@ const imageSeller = makePeer({
     openai: {
       services: {
         'flux-1-schnell': {
-          'openai-images': {
-            version: 2, priceMicroUsdc: '10000',
-          },
+          'openai-images': { version: 2, components: [{ priceMicroUsdc: '10000' }] },
         },
       },
     },
@@ -605,6 +603,19 @@ test('keeps only the cheapest canonical offer across providers for one peer', ()
   ])
 })
 
+test('preserves conditional billing in serialized catalog entries without a flat image price', () => {
+  const billing = { version: 2 as const, components: [{ priceMicroUsdc: '40000', match: { quality: 'hd' } }] }
+  const peer = makePeer({ peerId: '9'.repeat(40),
+    providerServiceApiProtocols: { openai: { services: { 'flux-1-schnell': ['openai-images'] } } },
+    providerServiceUnitBillingModels: { openai: { services: { 'flux-1-schnell': { 'openai-images': billing } } } },
+  })
+  const model = JSON.parse(JSON.stringify(buildNetworkModels([peer], NOW_MS)[0]))
+  assert.deepEqual(model.peers[0].billing, { kind: 'per_quantity', pricing: 'conditional', model: billing })
+  assert.equal(model.peers[0].minImageUsdPerImage, undefined)
+  assert.equal(model.peers[0].maxImageUsdPerImage, undefined)
+  assert.equal(model.peers[0].billing.amountMicroUsdc, undefined)
+})
+
 test('keeps only the lowest-priced duplicate image offer from one peer', () => {
   const peer = makePeer({
     peerId: '9'.repeat(40),
@@ -620,10 +631,10 @@ test('keeps only the lowest-priced duplicate image offer from one peer', () => {
       openai: {
         services: {
           'flux-1-schnell': {
-            'openai-images': { version: 2, priceMicroUsdc: "40000" },
+            'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
           },
           'flux1-schnell': {
-            'openai-images': { version: 2, priceMicroUsdc: "10000" },
+            'openai-images': { version: 2, components: [{ priceMicroUsdc: '10000' }] },
           },
         },
       },
@@ -652,7 +663,7 @@ test('prefers a known duplicate price over an unknown price', () => {
       openai: {
         services: {
           'flux1-schnell': {
-            'openai-images': { version: 2, priceMicroUsdc: "20000" },
+            'openai-images': { version: 2, components: [{ priceMicroUsdc: '20000' }] },
           },
         },
       },

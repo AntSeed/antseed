@@ -10,9 +10,9 @@ execution guards, new metadata versions, or database migrations in this slice.
 
 The contract and configuration migration are supplied by [PR 1/4](quantity-billing.md).
 
-The billing model is `{ "version": 2, "priceMicroUsdc": "40000" }` and the usage
+The billing model is `{ "version": 2, "components": [{ "priceMicroUsdc": "40000" }] }` and the usage
 report is `{ "version": 2, "quantity": "4" }`. This example costs 160,000 micro-USDC.
-There are no named units or conditional components. `captureUnitBillingContext`
+There are no named units. Conditional components remain supported by the image adapter, and matching prices are additive. `captureUnitBillingContext`
 captures the selected seller, provider, service, protocol, and request limit before
 execution. `computeFinalUnitBilling` uses that context and the final response to
 calculate quantity and cost with integer arithmetic.
@@ -33,13 +33,13 @@ the responsibility of the integration slice.
 ### Local configuration migration and compatibility
 
 Seller configuration loading and the shared provider config parser normalize old
-v1 models to v2 before provider construction. A single unconditional image component
-(`output_images`) maps to the image adapter; a single `successful_requests`
-component maps to a supported request-counting adapter. Empty models map to a zero
-price. Prices must be exactly representable as uint32 micro-USDC. Conditional,
-multiple-component, incompatible-unit, and inexact prices fail with a migration
-error instead of silently changing billing. Configure a fixed v2 price explicitly
-for those services. Migration does not automatically rewrite the config file.
+v1 models to v2 before provider construction. Image components (`output_images`)
+map to the image adapter with conditions and additive behavior intact;
+`successful_requests` components map to supported request-counting adapters.
+Empty models remain free. Prices must be exactly representable as uint32
+micro-USDC. Incompatible units, unsupported conditions, mixed formats, and inexact
+prices fail explicitly. Interim local flat-v2 models normalize to one unconditional
+component. Migration does not automatically rewrite the config file.
 
 Only v2 models and usage reports are accepted on the network. The v2 billing
 discriminator prevents old component models/reports from being interpreted as the

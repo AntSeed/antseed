@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createUnitBillingModel, unitPriceMicroUsdc, validateUnitBillingModelV2, validateUnitBillingUsage,
-  computeFinalUnitBilling, evaluateUnitBilling, captureUnitBillingContext } from '../src/billing/unit.js';
+  computeFinalUnitBilling, evaluateUnitBilling, captureUnitBillingContext, assertQuantityBillingModel } from '../src/billing/unit.js';
 import { buildNetworkServiceOffers, compareNetworkServiceOfferPrice } from '../src/discovery/service-catalog.js';
 import type { UnitBillingContext } from '../src/types/billing.js';
 
@@ -39,9 +39,10 @@ describe('per-call billing contract', () => {
     expect(validateUnitBillingUsage(model, context, report, 5000n, 1.5, { quantity: 1 })).toBe(5000n);
     for (const count of [2, -1, 0.5, NaN]) expect(() => evaluateUnitBilling(model, context, { quantity: count })).toThrow();
   });
-  it('rejects sub-micro prices, conditional tariffs, and duplicate components', () => {
-    expect(validateUnitBillingModelV2({ version: 2, priceMicroUsdc: '0.1' })).not.toEqual([]);
-    expect(validateUnitBillingModelV2({ ...model, components: [] })).not.toEqual([]);
+  it('rejects sub-micro prices and adapter-unsupported conditional tariffs', () => {
+    expect(validateUnitBillingModelV2({ version: 2, components: [{ priceMicroUsdc: '0.1' }] })).not.toEqual([]);
+    expect(validateUnitBillingModelV2({ ...model, components: [] })).toEqual([]);
+    expect(() => assertQuantityBillingModel({ version: 2, components: [{ priceMicroUsdc: '5000', match: { model: 'classifier' } }] }, 'openai-chat-completions')).toThrow('unsupported');
     expect(validateUnitBillingModelV2({ ...model, match: { model: 'classifier' } })).not.toEqual([]);
   });
   it('exposes the per-call offer without treating it as free token inference', () => {
@@ -50,7 +51,7 @@ describe('per-call billing contract', () => {
       providerServiceApiProtocols: { openai: { services: { classifier: ['openai-chat-completions'] } } },
       providerServiceUnitBillingModels: { openai: { services: { classifier: { 'openai-chat-completions': model } } } },
     }]);
-    expect(offers[0]?.billing).toEqual({ kind: 'per_quantity', amountMicroUsdc: '5000' });
+    expect(offers[0]?.billing).toEqual({ kind: 'per_quantity', pricing: 'fixed', model, amountMicroUsdc: '5000' });
     const tokenOffer = { ...offers[0]!, billing: undefined, inputUsdPerMillion: 1, outputUsdPerMillion: 2 };
     expect(compareNetworkServiceOfferPrice(offers[0]!, tokenOffer)).toBeGreaterThan(0);
   });

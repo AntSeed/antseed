@@ -46,7 +46,7 @@ describe('parseServiceUnitBillingModelsJson', () => {
   it('rejects unknown service API protocol keys', () => {
     expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({
       'gpt-image-1': {
-        'not-a-protocol': { version: 2, priceMicroUsdc: "0" },
+        'not-a-protocol': { version: 2, components: [{ priceMicroUsdc: '0' }] },
       },
     }))).toThrow(/known service API protocol/);
   });
@@ -54,11 +54,11 @@ describe('parseServiceUnitBillingModelsJson', () => {
   it('accepts known service API protocol keys', () => {
     expect(parseServiceUnitBillingModelsJson(JSON.stringify({
       'gpt-image-1': {
-        'openai-images': { version: 2, priceMicroUsdc: "0" },
+        'openai-images': { version: 2, components: [{ priceMicroUsdc: '0' }] },
       },
     }))).toEqual({
       'gpt-image-1': {
-        'openai-images': { version: 2, priceMicroUsdc: "0" },
+        'openai-images': { version: 2, components: [{ priceMicroUsdc: '0' }] },
       },
     });
   });
@@ -177,21 +177,38 @@ describe('parseServiceCapabilitiesJson', () => {
 describe('legacy seller quantity-billing migration', () => {
   it.each([['openai-images', 'output_images'], ['openai-chat-completions', 'successful_requests'], ['antseed-routing', 'successful_requests']])('migrates %s without changing its adapter quantity', (protocol, unit) => {
     const input = { service: { [protocol]: { version: 1, components: [{ unit, priceUsd: 0.04 }] } } };
-    expect(parseServiceUnitBillingModelsJson(JSON.stringify(input))).toEqual({ service: { [protocol]: { version: 2, priceMicroUsdc: '40000' } } });
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify(input))).toEqual({ service: { [protocol]: { version: 2, components: [{ priceMicroUsdc: '40000' }] } } });
     expect(input.service[protocol].version).toBe(1);
   });
   it.each([
     ['openai-images', [{ unit: 'successful_requests', priceUsd: 0.04 }]],
     ['antseed-routing', [{ unit: 'output_images', priceUsd: 0.04 }]],
-    ['openai-images', [{ unit: 'output_images', priceUsd: 0.04, match: { quality: 'high' } }]],
-    ['openai-images', [{ unit: 'output_images', priceUsd: 0.04 }, { unit: 'output_images', priceUsd: 0.08 }]],
+    ['openai-images', [{ unit: 'output_images', priceUsd: 0.04, match: { arbitrary: 'high' } }]],
+    ['antseed-routing', [{ unit: 'successful_requests', priceUsd: 0.04, match: { quality: 'high' } }]],
     ['openai-images', [{ unit: 'output_images', priceUsd: 0.0000001 }]],
     ['openai-images', [{ unit: 'output_images', priceUsd: -1 }]],
   ])('rejects ambiguous or inexact legacy conversion %j', (protocol, components) => {
     expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({ service: { [protocol as string]: { version: 1, components } } }))).toThrow('cannot safely migrate');
   });
   it('migrates a legacy free model and validates the resulting v2 shape', () => {
-    expect(parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 1, components: [] } } }))).toEqual({ service: { 'openai-images': { version: 2, priceMicroUsdc: '0' } } });
-    expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 2, priceMicroUsdc: '01' } } }))).toThrow();
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 1, components: [] } } }))).toEqual({ service: { 'openai-images': { version: 2, components: [] } } });
+    expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 2, components: [{ priceMicroUsdc: '01' }] } } }))).toThrow();
+  });
+  it('preserves legacy conditional and additive components without mutating input', () => {
+    const components = [
+      { unit: 'output_images', priceUsd: 0.04 },
+      { unit: 'output_images', priceUsd: 0.02, match: { quality: 'hd', size: '1536x1024' } },
+    ];
+    const input = { service: { 'openai-images': { version: 1, components } } };
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify(input))).toEqual({ service: { 'openai-images': { version: 2, components: [
+      { priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000', match: { quality: 'hd', size: '1536x1024' } },
+    ] } } });
+    expect(input.service['openai-images'].version).toBe(1);
+    expect(components[0]!.unit).toBe('output_images');
+  });
+  it('normalizes interim local flat v2 input but rejects mixed formats', () => {
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 2, priceMicroUsdc: '123' } } })))
+      .toEqual({ service: { 'openai-images': { version: 2, components: [{ priceMicroUsdc: '123' }] } } });
+    expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({ service: { 'openai-images': { version: 2, priceMicroUsdc: '123', components: [] } } }))).toThrow('Unsupported');
   });
 });

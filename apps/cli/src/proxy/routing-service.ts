@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { validateRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingRequest, canonicalRoutingJson, type RoutingSelection, buildNetworkServiceOffers, unitPriceMicroUsdc, isFreeUnitBillingModel, areRouteRecommendationsEligible, isModelRouteEligible, validateUnitBillingModelV2, type AntseedNode, type ModelRoutingPreferences, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
+import { validateRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingRequest, canonicalRoutingJson, type RoutingSelection, buildNetworkServiceOffers, unitPriceMicroUsdc, isFreeUnitBillingModel, areRouteRecommendationsEligible, isModelRouteEligible, assertQuantityBillingModel, type AntseedNode, type ModelRoutingPreferences, type PeerInfo, type RouteSelectionContext, type SerializedHttpResponse } from '@antseed/node'
 import type { HierarchicalPricingConfig, RoutingServiceConfig } from '../config/types.js'
 import { normalizedModelReputationScore } from '@antseed/node'
 
@@ -117,7 +117,7 @@ export class RoutingServiceExecutor {
       if (limits && (rates[0]! > limits.inputUsdPerMillion || rates[1]! > limits.outputUsdPerMillion
         || rates[2]! > (limits.cachedInputUsdPerMillion ?? limits.inputUsdPerMillion))) throw new Error('Routing service exceeds buyer prices')
       const unitModel = peer.providerServiceUnitBillingModels?.[target.provider]?.services[target.serviceId]?.['antseed-routing']
-      if (unitModel && validateUnitBillingModelV2(unitModel).length > 0) throw new Error('Routing service has invalid billing')
+      if (unitModel) assertQuantityBillingModel(unitModel, 'antseed-routing')
       const perCallAmount = unitPriceMicroUsdc(unitModel)
       if (perCallAmount !== null) {
         if (rates.some((rate) => rate !== 0)) throw new Error('Per-call routing cannot include token charges')

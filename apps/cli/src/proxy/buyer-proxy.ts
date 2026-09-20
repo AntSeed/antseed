@@ -12,6 +12,8 @@ import {
   buildNetworkServiceOffers,
   adaptPeerFaultErrorResponse,
   computeTrustScore,
+  captureUnitBillingContext,
+  resolveUnitPriceMicroUsdc,
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
@@ -2855,11 +2857,26 @@ export class BuyerProxy {
             }
             const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
             if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
+            const billingProtocol = plan.selection?.targetProtocol ?? offer.protocol
+            const billing = billingProtocol ? offer.billingByProtocol?.[billingProtocol] : undefined
+            let quantityPriceMicroUsdc: string | undefined
+            if (billing && billingProtocol) {
+              try {
+                const captured = captureUnitBillingContext({ sellerPeerId: peer.peerId, provider: plan.provider,
+                  service: plan.serviceId, serviceApiProtocol: billingProtocol, request: requestForPolicy, unitModel: billing.model })
+                quantityPriceMicroUsdc = resolveUnitPriceMicroUsdc(billing.model, captured.context).toString()
+              } catch {
+                return null
+              }
+            }
             return {
               peer,
               peerId: peer.peerId,
               serviceId: plan.serviceId,
               request: requestForPolicy,
+              type: offer.type,
+              billing,
+              quantityPriceMicroUsdc,
               reputation: normalizedModelReputationScore(peer) ?? -1,
               hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
               inputUsdPerMillion: offer.inputUsdPerMillion ?? null,

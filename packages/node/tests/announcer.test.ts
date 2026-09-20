@@ -139,8 +139,8 @@ describe('PeerAnnouncer capabilities', () => {
 describe('PeerAnnouncer metadata versions', () => {
   it.each([
     { version: 1, components: [] },
-    { version: 2, priceMicroUsdc: '01' },
-    { version: 2, priceMicroUsdc: '1', unit: 'image' },
+    { version: 2, components: [{ priceMicroUsdc: '01' }] },
+    { version: 2, components: [{ priceMicroUsdc: '1' }], unit: 'image' },
   ])('rejects invalid plugin billing instead of dropping its price: %j', async (model) => {
     const config = makeBaseConfig();
     config.providers[0]!.serviceApiProtocols = { 'gpt-4.1': ['openai-chat-completions'] };
@@ -163,7 +163,7 @@ describe('PeerAnnouncer metadata versions', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': { version: 2, priceMicroUsdc: "40000" },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
             },
           },
           serviceCapabilities: {
@@ -179,7 +179,7 @@ describe('PeerAnnouncer metadata versions', () => {
 
     const metadata = announcer.getLatestMetadata();
     expect(metadata?.version).toBe(13);
-    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: "40000" });
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, components: [{ priceMicroUsdc: '40000' }] });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
       'gpt-image-1': { inputs: ['text'] },

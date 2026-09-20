@@ -32,14 +32,14 @@ describe('network service catalog', () => {
     })]);
     const classifier = offers.find((offer) => offer.serviceId === 'classifier')!;
     expect(classifier.capabilities?.routing).toBe(true);
-    expect(classifier.billingByProtocol).toEqual({
+    expect(classifier.billingByProtocol).toMatchObject({
       'anthropic-messages': { kind: 'per_quantity', amountMicroUsdc: '5000' },
       'openai-chat-completions': { kind: 'per_quantity', amountMicroUsdc: '16777217' },
       'openai-responses': { kind: 'per_quantity', amountMicroUsdc: '0' },
       'openai-completions': { kind: 'per_quantity', amountMicroUsdc: '2500' },
     });
     expect(classifier.billingByProtocol?.['openai-images']).toBeUndefined();
-    expect(classifier.billing).toEqual({ kind: 'per_quantity', amountMicroUsdc: reverse ? '0' : '5000' });
+    expect(classifier.billing).toMatchObject({ kind: 'per_quantity', pricing: 'fixed', amountMicroUsdc: reverse ? '0' : '5000' });
     expect(offers.find((offer) => offer.serviceId === 'inference')?.capabilities?.routing).toBe(false);
     expect(offers.find((offer) => offer.serviceId === 'unknown')?.capabilities?.routing).toBeUndefined();
   });
@@ -56,8 +56,8 @@ describe('network service catalog', () => {
     const offer = buildNetworkServiceOffers([metadata])[0]!;
     expect(offer.billing).toBeUndefined();
     expect(offer.billingByProtocol?.['openai-chat-completions']).toBeUndefined();
-    expect(offer.billingByProtocol?.['openai-responses']).toEqual({ kind: 'per_quantity', amountMicroUsdc: '5000' });
-    metadata.providerServiceUnitBillingModels!.openai!.services.model!['openai-responses']!.priceMicroUsdc = '1000000';
+    expect(offer.billingByProtocol?.['openai-responses']).toMatchObject({ kind: 'per_quantity', pricing: 'fixed', amountMicroUsdc: '5000' });
+    metadata.providerServiceUnitBillingModels!.openai!.services.model!['openai-responses']!.components[0]!.priceMicroUsdc = '1000000';
     expect(offer.billingByProtocol?.['openai-responses']?.amountMicroUsdc).toBe('5000');
   });
 
@@ -65,7 +65,7 @@ describe('network service catalog', () => {
     const legacy = buildNetworkServiceOffers([peer({ providers: ['openai'], services: ['legacy'] })])[0]!;
     expect(legacy.billingByProtocol).toBeUndefined();
     const image = buildNetworkServiceOffers([peer({ providerServiceApiProtocols: { openai: { services: { image: ['openai-images'] } } }, providerServiceUnitBillingModels: { openai: { services: { image: { 'openai-images': createUnitBillingModel('40000') } } } } })])[0]!;
-    expect(image.billingByProtocol?.['openai-images']).toEqual({ kind: 'per_quantity', amountMicroUsdc: '40000' });
+    expect(image.billingByProtocol?.['openai-images']).toEqual({ kind: 'per_quantity', pricing: 'fixed', model: createUnitBillingModel('40000'), amountMicroUsdc: '40000' });
   });
 
   it('uses legacy services when provider pricing only announces defaults', () => {

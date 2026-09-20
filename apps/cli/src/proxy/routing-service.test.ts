@@ -237,6 +237,21 @@ test('per-call fees must fit the existing payment policy', async () => {
   assert.equal(state.sent.length, 0)
 })
 
+test('routing adds unconditional fee components before enforcing the payment limit', async () => {
+  const state = setupPerCall()
+  state.peer.providerServiceUnitBillingModels!.openai!.services['route-classifier']!['antseed-routing']!.components.push({ priceMicroUsdc: '5000' })
+  Object.defineProperty(state.host.node, 'buyerPaymentManager', { value: { maxPerRequestUsdc: 9999n } })
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }]), /payment policy/)
+  assert.equal(state.sent.length, 0)
+})
+
+test('routing refuses image conditions before contacting a seller', async () => {
+  const state = setupPerCall()
+  state.peer.providerServiceUnitBillingModels!.openai!.services['route-classifier']!['antseed-routing']!.components[0]!.match = { quality: 'hd' }
+  await assert.rejects(state.executor.invoke('parent', state.context, state.messages, () => [{ serviceId: 'test-model' }]), /unsupported/)
+  assert.equal(state.sent.length, 0)
+})
+
 for (const [name, routes] of Object.entries({
   'empty recommendation': [],
   'missing recommendation': null,

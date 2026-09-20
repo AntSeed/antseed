@@ -429,7 +429,32 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(recordSpend).not.toHaveBeenCalled();
   });
 
-  it('adds image unit billing on top of existing token pricing', async () => {
+  it('rejects unmatched conditional free pricing before payment or provider execution', async () => {
+    const provider = makeProvider(0, 0, {
+      name: 'openai', services: ['image'], serviceApiProtocols: { image: ['openai-images'] },
+      serviceUnitBillingModels: { image: { 'openai-images': { version: 2, components: [{ priceMicroUsdc: '0', match: { quality: 'hd' } }] } } },
+    });
+    vi.spyOn(provider, 'handleRequest');
+    const recordSpend = vi.fn();
+    const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: makeSpmMock({ recordSpend }),
+      sessionTracker: null, channelsClient: {} as any, announcer: null, emit: () => false });
+    const frames: Uint8Array[] = [];
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any;
+    const { mux } = handler.handleConnection(makeConn(frames), 'b'.repeat(40), paymentMux);
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({
+      requestId: 'unmatched-image', method: 'POST', path: '/v1/images/generations', headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'image', quality: 'standard' })),
+    }) });
+    const response = decodeHttpResponse(decodeFrame(frames[0]!)!.message.payload);
+    expect(response.statusCode).toBe(400);
+    expect(new TextDecoder().decode(response.body)).toContain('No billing component matched');
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(recordSpend).not.toHaveBeenCalled();
+    expect(paymentMux.sendNeedAuth).not.toHaveBeenCalled();
+    expect(paymentMux.sendPaymentRequired).not.toHaveBeenCalled();
+  });
+
+  it('adds conditional image unit billing on top of existing token pricing', async () => {
     const provider = makeProvider(1, 1, {
       name: 'openai',
       services: ['gpt-image-1'],
@@ -441,7 +466,11 @@ describe('SellerRequestHandler payment pricing selection', () => {
       },
       serviceUnitBillingModels: {
         'gpt-image-1': {
-          'openai-images': { version: 2, priceMicroUsdc: '40000' },
+          'openai-images': { version: 2, components: [
+            { priceMicroUsdc: '20000' },
+            { priceMicroUsdc: '20000', match: { model: 'gpt-image-1', size: '1024x1024' } },
+            { priceMicroUsdc: '50000', match: { quality: 'hd' } },
+          ] },
         },
       },
     });

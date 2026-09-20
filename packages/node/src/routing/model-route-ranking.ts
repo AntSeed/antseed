@@ -1,4 +1,5 @@
 import { normalizedModelReputationScore } from '../reputation/model-reputation.js';
+import type { CatalogServiceBilling } from '../discovery/service-catalog.js';
 
 export type ModelRoutingPreferences = {
   routerSettings?: Record<string, Record<string, string>>;
@@ -19,6 +20,9 @@ export const DEFAULT_MODEL_ROUTING_PREFERENCES: ModelRoutingPreferences = {
 
 export type ModelRouteCandidate = {
   peerId: string;
+  type?: string;
+  billing?: CatalogServiceBilling;
+  quantityPriceMicroUsdc?: string;
   effectiveReputationScore?: number | null;
   onChainReputationScore?: number | null;
   reputationScore?: number | null;
@@ -55,10 +59,15 @@ export function modelRouteReputationScore(route: ModelRouteCandidate): number | 
 }
 
 export function modelRouteTotalPrice(route: ModelRouteCandidate): number | null {
+  if (route.billing?.kind === 'per_quantity') {
+    const amount = route.quantityPriceMicroUsdc ?? (route.billing.pricing === 'fixed' ? route.billing.amountMicroUsdc : undefined);
+    return amount !== undefined && /^(0|[1-9]\d*)$/.test(amount) && Number.isFinite(Number(amount)) ? Number(amount) / 1_000_000 : null;
+  }
   const imagePrice = route.minImageUsdPerImage;
   if (typeof imagePrice === 'number' && Number.isFinite(imagePrice) && imagePrice >= 0) {
     return imagePrice;
   }
+  if (route.type === 'image') return null;
   const input = route.inputUsdPerMillion;
   const output = route.outputUsdPerMillion;
   if (

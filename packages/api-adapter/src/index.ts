@@ -49,3 +49,4 @@ export {
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
   isKnownServiceApiProtocol,
 } from './types.js';
+export { getQuantityBillingAdapter, validateQuantityBillingConditions, type QuantityBillingAdapter, type QuantityBillingRequestFacts } from './quantity-billing.js';

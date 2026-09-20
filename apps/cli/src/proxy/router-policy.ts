@@ -1,4 +1,4 @@
-import { isModelRouteEligible, isModelRouteCoolingDown, isRouteRecommendation, modelRouteTotalPrice, rankModelRoutes, type ModelRouteCandidate, type ModelRoutingPreferences, type PeerInfo, type RouteRecommendation, type SerializedHttpRequest } from '@antseed/node'
+import { captureUnitBillingContext, resolveUnitPriceMicroUsdc, isModelRouteEligible, isModelRouteCoolingDown, isRouteRecommendation, modelRouteTotalPrice, rankModelRoutes, type ModelRouteCandidate, type ModelRoutingPreferences, type PeerInfo, type RouteRecommendation, type SerializedHttpRequest } from '@antseed/node'
 import type { HierarchicalPricingConfig } from '../config/types.js'
 import { effectiveModelReputationScore, normalizedModelReputationScore } from '@antseed/node'
 import { findAdvertisedServiceOffer, findMissingRequiredParameters, resolvePeerRoutePlan } from './routing.js'
@@ -6,6 +6,22 @@ import { overrideRoutedModelInBody } from './request-utils.js'
 import type { ServiceApiProtocol } from './service-api-adapter.js'
 import { supportsReasoningEffort } from '@antseed/api-adapter'
 import { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/node'
+
+export interface ValidatedRouterCandidate extends Omit<ModelRouteCandidate, 'peerCooldownUntil' | 'peerFailureStreak'> {
+  peer: PeerInfo
+  serviceId: string
+  request: SerializedHttpRequest
+  inference?: RouteRecommendation['inference']
+  reasoningEfforts: ReasoningEffort[]
+  reasoningOverride: ReasoningEffort | null | undefined
+  reputation: number
+  effectiveReputationScore: number | null
+  hasCachedInputPricing: boolean
+  inputUsdPerMillion: number | null
+  cachedInputUsdPerMillion: number | null
+  outputUsdPerMillion: number | null
+  minImageUsdPerImage: number | null
+}
 
 export function validateRouterCandidate(options: {
   recommendation: RouteRecommendation & { peerId: string }
@@ -18,7 +34,7 @@ export function validateRouterCandidate(options: {
   maxPricing?: HierarchicalPricingConfig
   minPeerReputation?: number
   now: number
-}) {
+}): ValidatedRouterCandidate | null {
   const { recommendation, peers, request, protocol, provider, requiredParameters, preferences, maxPricing } = options
   if (!isRouteRecommendation(recommendation) || typeof recommendation.peerId !== 'string') return null
   const peer = peers.find((entry) => entry.peerId.toLowerCase() === recommendation.peerId.toLowerCase())
@@ -35,7 +51,8 @@ export function validateRouterCandidate(options: {
   if (recommendation.inference && !reasoningEfforts.includes(recommendation.inference.reasoningEffort)) return null
   const reasoningOverride: ReasoningEffort | null | undefined = offer.capabilities?.reasoning === false
     ? null : recommendation.inference?.reasoningEffort
-  if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_quantity') return null
+  const billing = targetProtocol ? offer.billingByProtocol?.[targetProtocol] : undefined
+  if (billing && (targetProtocol !== 'openai-images' || maxPricing)) return null
   const missing = plan.selection?.requiresTransform
     ? requiredParameters
     : findMissingRequiredParameters(peer, plan.provider, plan.serviceId, requiredParameters)
@@ -54,6 +71,17 @@ export function validateRouterCandidate(options: {
       || cached > (limits.cachedInputUsdPerMillion ?? limits.inputUsdPerMillion)) return null
   }
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId, true)
+  const requestForPeer = { ...request, body: rewritten.body, headers: rewritten.headers }
+  let quantityPriceMicroUsdc: string | undefined
+  if (billing && targetProtocol) {
+    try {
+      const captured = captureUnitBillingContext({ sellerPeerId: peer.peerId, provider: plan.provider, service: plan.serviceId,
+        serviceApiProtocol: targetProtocol, request: requestForPeer, unitModel: billing.model })
+      quantityPriceMicroUsdc = resolveUnitPriceMicroUsdc(billing.model, captured.context).toString()
+    } catch {
+      return null
+    }
+  }
   return {
     ...(recommendation.inference ? { inference: { ...recommendation.inference } } : {}),
     reasoningEfforts,
@@ -61,7 +89,10 @@ export function validateRouterCandidate(options: {
     peer,
     peerId: peer.peerId,
     serviceId: plan.serviceId,
-    request: { ...request, body: rewritten.body, headers: rewritten.headers },
+    request: requestForPeer,
+    type: offer.type,
+    billing,
+    quantityPriceMicroUsdc,
     reputation: reputation ?? -1,
     effectiveReputationScore: reputation,
     hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
@@ -74,7 +105,7 @@ export function validateRouterCandidate(options: {
 
 export function resolveRouterRecommendation(options: Omit<Parameters<typeof validateRouterCandidate>[0], 'recommendation'> & {
   recommendation: RouteRecommendation
-}) {
+}): ValidatedRouterCandidate[] {
   if (!isRouteRecommendation(options.recommendation)) return []
   const { recommendation } = options
   const matchingPeers = recommendation.peerId === undefined ? options.peers
