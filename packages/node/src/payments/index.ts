@@ -155,7 +155,7 @@ export {
   estimateCostFromBytes,
   estimateTokensFromBytes,
   isFreeUnitBillingModel,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
 } from './pricing.js';
 export type { ServicePricing } from './pricing.js';
 

@@ -1,4 +1,4 @@
-import type { ServiceUnitBillingModelsV1 } from '@antseed/node';
+import type { ServiceUnitBillingModelsV2 } from '@antseed/node';
 import {
   parseServiceCapabilitiesJson,
   parseServiceUnitBillingModelsJson,
@@ -63,7 +63,7 @@ export function validateServiceMetadata(
   if (service.unitBillingModels !== undefined) {
     try {
       parseServiceUnitBillingModelsJson(
-        JSON.stringify({ [SYNTHETIC_SERVICE_ID]: service.unitBillingModels } satisfies ServiceUnitBillingModelsV1),
+        JSON.stringify({ [SYNTHETIC_SERVICE_ID]: service.unitBillingModels } satisfies ServiceUnitBillingModelsV2),
         `${path}.unitBillingModels`,
       );
     } catch (error) {

@@ -102,11 +102,13 @@ Receipts are the unit of billing. The seller generates a signed receipt after ea
 
 ### Non-Token Unit Usage
 
-Protocols may define canonical non-token usage alongside token counts. Metadata v11 introduces `UnitBillingModelV1`; the initial supported unit is `output_images` for the `openai-images` API protocol.
+Metadata v13 carries `UnitBillingModelV2`: `{ "version": 2, "priceMicroUsdc": "40000" }`. The corresponding report is `{ "version": 2, "quantity": "4" }`; cost is integer price multiplied by independently verified quantity. Prices are uint32 micro-USDC and quantities are nonnegative safe integers encoded as decimal strings. There are no unit labels or conditional price components.
 
-For image responses, both peers count non-empty `b64_json` or `url` outputs. The seller's advertised component model maps the observed count and request attributes (`model`, `size`, `quality`, or `resolution`) to a USD amount. Positive delivered usage must match at least one component. Unmatched usage is an error, not a zero-price result.
+The advertised service API protocol defines quantity. For `openai-images`, both peers count non-empty `b64_json` or `url` outputs, capped by the requested image count. For non-streaming `openai-chat-completions`, a fulfilled response counts as one. Invalid or failed responses count as zero. Unsupported quantity adapters and excessive claims are rejected.
 
 Token and unit costs are computed independently and then summed. The buyer verifies both portions before authorizing cumulative payment.
+
+Legacy billing wire payloads are rejected. Compatible local seller configurations are migrated before startup; ambiguous or conditional legacy prices require explicit reconfiguration. See [quantity accounting and migration](../../quantity-billing.md). Existing historical receipts and database columns are unchanged.
 
 ### UsageReceipt Interface
 

@@ -25,7 +25,7 @@ import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED 
 import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
-import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
+import type { UnitBillingContext, UnitBillingModelV2, UnitBillingUsage, UnitBillingUsageReportV2 } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel, type CapturedUnitBillingContext } from './billing/unit.js';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
@@ -469,7 +469,7 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
-      let billingUsageReport: UnitBillingUsageReportV1 | null = null;
+      let billingUsageReport: UnitBillingUsageReportV2 | null = null;
       let unitCostUsdc = 0n;
       // Hold the channel open for the whole billable span — provider call,
       // spend recording, and NeedAuth — so a buyer-requested close can't land
@@ -760,7 +760,7 @@ export class SellerRequestHandler {
   resolveProviderUnitBillingModel(
     provider: Provider,
     context: UnitBillingContext,
-  ): UnitBillingModelV1 | undefined {
+  ): UnitBillingModelV2 | undefined {
     return provider.serviceUnitBillingModels?.[context.service]?.[context.serviceApiProtocol];
   }
 
@@ -839,16 +839,9 @@ export class SellerRequestHandler {
 
   private _estimateUnitRequestCostUsdc(
     requestBilling: CapturedUnitBillingContext,
-    model: UnitBillingModelV1,
+    model: UnitBillingModelV2,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
-    const unit = model.components.some((component) => component.unit === 'successful_requests')
-      ? 'successful_requests'
-      : 'output_images';
-    const usage: UnitBillingUsage = {
-      units: {
-        [unit]: Math.floor(requestBilling.requestUsage.units[unit] ?? 0),
-      },
-    };
+    const usage: UnitBillingUsage = { quantity: requestBilling.requestUsage.quantity };
     return {
       cost: evaluateUnitBilling(model, requestBilling.context, usage),
       inputTokens: 0,
@@ -860,7 +853,7 @@ export class SellerRequestHandler {
     request: SerializedHttpRequest,
     requestBilling: CapturedUnitBillingContext,
     pricing: ProviderTokenPricing,
-    unitModel: UnitBillingModelV1 | undefined,
+    unitModel: UnitBillingModelV2 | undefined,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
     const tokenEstimate = this._estimateMaxTokenRequestCostUsdc(request, pricing);
     const unitEstimate = unitModel

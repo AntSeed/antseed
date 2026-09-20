@@ -1,21 +1,12 @@
 import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
-import { SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { QUANTITY_BILLING_METADATA_VERSION, SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS, isKnownServiceApiProtocol } from "../types/service-api.js";
-import type {
-  UnitBillingComponentV1,
-  UnitBillingMatchKeyV1,
-  UnitBillingModelV1,
-  UnitBillingUnitV1,
-} from "../types/billing.js";
-import {
-  UNIT_BILLING_MATCH_KEYS_V1,
-  UNIT_BILLING_UNITS_V1,
-} from "../types/billing.js";
+import { createUnitBillingModel, isQuantityBillingProtocol, validateUnitBillingModelV2, type UnitBillingModelV2 } from "../types/billing.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
@@ -31,10 +22,6 @@ const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt"
 const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
 const WIDE_SERVICE_COUNTS_METADATA_VERSION = 12;
-const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
-const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
-const UNIT_BILLING_MATCH_KEYS_BY_ID: UnitBillingMatchKeyV1[] = [...UNIT_BILLING_MATCH_KEYS_V1];
-const UNIT_BILLING_MATCH_KEY_IDS = new Map<UnitBillingMatchKeyV1, number>(UNIT_BILLING_MATCH_KEYS_BY_ID.map((key, index) => [key, index]));
 
 /**
  * Encode metadata into binary format:
@@ -111,7 +98,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
   for (const p of metadata.providers) {
     for (const caps of Object.values(p.serviceCapabilities ?? {})) {
       if (caps.reasoningEfforts !== undefined) {
-        if (metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error('Reasoning efforts require metadata v14 or newer');
+        if (metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error('Reasoning efforts require metadata v13 or newer');
         const errors = validateServiceCapabilityFields(caps);
         if (errors.length) throw new Error(errors.join('; '));
       }
@@ -123,9 +110,9 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
         throw new Error("Service routing capability must be a boolean");
       }
     }
-    if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION
+    if (metadata.version < QUANTITY_BILLING_METADATA_VERSION
       && Object.values(p.serviceUnitBillingModels ?? {}).some((models) => Object.keys(models).length > 0)) {
-      throw new Error(`Service unit billing requires metadata v${SERVICE_UNIT_BILLING_METADATA_VERSION} or newer`);
+      throw new Error(`Quantity billing requires metadata v${QUANTITY_BILLING_METADATA_VERSION} or newer`);
     }
     const providerNameBytes = new TextEncoder().encode(p.provider);
     parts.push(new Uint8Array([providerNameBytes.length]));
@@ -244,7 +231,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts, metadata.version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION);
     }
 
-    if (p.serviceRouting && metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error("Routing descriptors require metadata v14");
+    if (p.serviceRouting && metadata.version < SERVICE_ROUTING_METADATA_VERSION) throw new Error("Routing descriptors require metadata v13");
     if (metadata.version >= SERVICE_ROUTING_METADATA_VERSION) {
       const entries = p.serviceRouting ?? {};
       Object.values(entries).forEach(validateRoutingServiceMetadata);
@@ -451,7 +438,7 @@ function encodeServiceUnitBillingModels(
   serviceUnitBillingModels: PeerMetadata["providers"][number]["serviceUnitBillingModels"],
   hasWideServiceCounts: boolean,
 ): void {
-  const entries: Array<[string, ServiceApiProtocol, UnitBillingModelV1]> = [];
+  const entries: Array<[string, ServiceApiProtocol, UnitBillingModelV2]> = [];
   for (const [serviceName, protocolModels] of Object.entries(serviceUnitBillingModels ?? {})) {
     for (const protocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
       const model = protocolModels?.[protocol];
@@ -467,30 +454,13 @@ function encodeServiceUnitBillingModels(
   for (const [serviceName, protocol, model] of entries) {
     pushUtf8(parts, serviceName);
     parts.push(new Uint8Array([WELL_KNOWN_SERVICE_API_PROTOCOLS.indexOf(protocol)]));
-    parts.push(new Uint8Array([model.version]));
-    parts.push(new Uint8Array([model.components.length]));
-    for (const component of model.components) {
-      parts.push(new Uint8Array([UNIT_BILLING_UNIT_IDS.get(component.unit) ?? 255]));
-      const priceBuf = new ArrayBuffer(4);
-      if (component.unit === 'successful_requests') {
-        const micros = Math.round(component.priceUsd * 1_000_000);
-        if (!Number.isSafeInteger(micros) || micros < 0 || micros > 0xffff_ffff || micros / 1_000_000 !== component.priceUsd) {
-          throw new Error('Invalid per-call micro-USDC price');
-        }
-        new DataView(priceBuf).setUint32(0, micros, false);
-      } else {
-        new DataView(priceBuf).setFloat32(0, component.priceUsd, false);
-      }
-      parts.push(new Uint8Array(priceBuf));
-      const matchEntries = Object.entries(component.match ?? {})
-        .filter((entry): entry is [UnitBillingMatchKeyV1, string] => UNIT_BILLING_MATCH_KEY_IDS.has(entry[0] as UnitBillingMatchKeyV1))
-        .sort(([a], [b]) => (UNIT_BILLING_MATCH_KEY_IDS.get(a) ?? 0) - (UNIT_BILLING_MATCH_KEY_IDS.get(b) ?? 0));
-      parts.push(new Uint8Array([matchEntries.length]));
-      for (const [key, value] of matchEntries) {
-        parts.push(new Uint8Array([UNIT_BILLING_MATCH_KEY_IDS.get(key) ?? 255]));
-        pushUtf8(parts, value);
-      }
-    }
+    const errors = validateUnitBillingModelV2(model);
+    if (errors.length) throw new Error(errors.join('; '));
+    if (!isQuantityBillingProtocol(protocol)) throw new Error('Unsupported quantity billing protocol');
+    parts.push(new Uint8Array([2]));
+    const price = new Uint8Array(4);
+    new DataView(price.buffer).setUint32(0, Number(model.priceMicroUsdc), false);
+    parts.push(price);
   }
 }
 
@@ -746,63 +716,27 @@ function decodeServiceUnitBillingModels(
   setOffset: (offset: number) => void,
   checkBounds: (offset: number, needed: number, total: number) => void,
   hasWideServiceCounts: boolean,
+  metadataVersion: number,
 ): PeerMetadata["providers"][number]["serviceUnitBillingModels"] | undefined {
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
   offset = nextOffset;
-  const serviceUnitBillingModels: NonNullable<PeerMetadata["providers"][number]["serviceUnitBillingModels"]> = {};
-  for (let i = 0; i < entryCount; i += 1) {
+  if (entryCount > 0 && metadataVersion < QUANTITY_BILLING_METADATA_VERSION) throw new Error('Legacy unit billing advertisement; seller upgrade required');
+  const models: NonNullable<PeerMetadata["providers"][number]["serviceUnitBillingModels"]> = {};
+  for (let index = 0; index < entryCount; index += 1) {
     const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
     offset = serviceOffset;
-    checkBounds(offset, 1, data.length);
-    const protocol = WELL_KNOWN_SERVICE_API_PROTOCOLS[data[offset]!];
-    offset += 1;
-    if (!protocol) {
-      throw new Error("Unsupported service unit billing protocol id");
-    }
-    checkBounds(offset, 2, data.length);
-    const version = data[offset]!;
-    offset += 1;
-    if (version !== 1) {
-      throw new Error(`Unsupported service unit billing model version ${version}`);
-    }
-    const componentCount = data[offset]!;
-    offset += 1;
-    const components: UnitBillingComponentV1[] = [];
-    for (let j = 0; j < componentCount; j += 1) {
-      checkBounds(offset, 6, data.length);
-      const unit = UNIT_BILLING_UNITS_BY_ID[data[offset]!];
-      offset += 1;
-      if (!unit) {
-        throw new Error("Unsupported service unit billing component unit");
-      }
-      const priceView = new DataView(data.buffer, data.byteOffset + offset, 4);
-      const priceUsd = unit === 'successful_requests' ? priceView.getUint32(0, false) / 1_000_000 : priceView.getFloat32(0, false);
-      offset += 4;
-      const matchCount = data[offset]!;
-      offset += 1;
-      const match: Partial<Record<UnitBillingMatchKeyV1, string>> = {};
-      for (let k = 0; k < matchCount; k += 1) {
-        checkBounds(offset, 1, data.length);
-        const key = UNIT_BILLING_MATCH_KEYS_BY_ID[data[offset]!];
-        offset += 1;
-        if (!key) {
-          throw new Error("Unsupported service unit billing match key");
-        }
-        const [value, valueOffset] = readUtf8(data, offset, checkBounds);
-        offset = valueOffset;
-        match[key] = value;
-      }
-      const base = { unit, priceUsd, ...(Object.keys(match).length > 0 ? { match } : {}) };
-      components.push(base as UnitBillingComponentV1);
-    }
-    serviceUnitBillingModels[serviceName] = {
-      ...(serviceUnitBillingModels[serviceName] ?? {}),
-      [protocol]: { version: 1, components },
-    };
+    checkBounds(offset, 6, data.length);
+    const protocol = WELL_KNOWN_SERVICE_API_PROTOCOLS[data[offset++]!];
+    if (!protocol || !isQuantityBillingProtocol(protocol)) throw new Error('Unsupported quantity billing protocol');
+    if (data[offset++] !== 2) throw new Error('Unsupported service unit billing model version; expected 2');
+    const price = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+    offset += 4;
+    if (models[serviceName]?.[protocol]) throw new Error('Duplicate quantity billing offer');
+    models[serviceName] = { ...models[serviceName], [protocol]: createUnitBillingModel(String(price)) };
   }
   setOffset(offset);
-  return Object.keys(serviceUnitBillingModels).length > 0 ? serviceUnitBillingModels : undefined;
+  return entryCount > 0 ? models : undefined;
 }
 
 function readUtf8(
@@ -1007,7 +941,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
 
     const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
-      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
+      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
       ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, version >= SERVICE_ROUTING_METADATA_VERSION)

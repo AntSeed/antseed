@@ -10,7 +10,7 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
-import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
+import type { ServiceUnitBillingModelsV2 } from "./types/billing.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -2427,6 +2427,7 @@ export class AntseedNode extends EventEmitter {
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
     const providerServiceUnitBillingModelEntries: NonNullable<PeerInfo["providerServiceUnitBillingModels"]> = {};
     const providerServiceCapabilityEntries: NonNullable<PeerInfo["providerServiceCapabilities"]> = {};
+    const providerServiceRoutingEntries: NonNullable<PeerInfo["providerServiceRouting"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -2484,7 +2485,7 @@ export class AntseedNode extends EventEmitter {
 
       if (providerAnnouncement.serviceUnitBillingModels && Object.keys(providerAnnouncement.serviceUnitBillingModels).length > 0) {
         const existingBillingModels = providerServiceUnitBillingModelEntries[provName];
-        const newEntries: ServiceUnitBillingModelsV1 = { ...providerAnnouncement.serviceUnitBillingModels };
+        const newEntries: ServiceUnitBillingModelsV2 = { ...providerAnnouncement.serviceUnitBillingModels };
         if (existingBillingModels) {
           Object.assign(existingBillingModels.services, newEntries);
         } else {
@@ -2499,6 +2500,16 @@ export class AntseedNode extends EventEmitter {
           Object.assign(existingCapabilities.services, newEntries);
         } else {
           providerServiceCapabilityEntries[provName] = { services: newEntries };
+        }
+      }
+
+      if (providerAnnouncement.serviceRouting) {
+        const existingRouting = providerServiceRoutingEntries[provName];
+        const newEntries = structuredClone(providerAnnouncement.serviceRouting);
+        if (existingRouting) {
+          Object.assign(existingRouting.services, newEntries);
+        } else {
+          providerServiceRoutingEntries[provName] = { services: newEntries };
         }
       }
     }
@@ -2530,7 +2541,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       ...(hasProviderServiceUnitBillingModels ? { providerServiceUnitBillingModels: providerServiceUnitBillingModelEntries } : {}),
       ...(hasProviderServiceCapabilities ? { providerServiceCapabilities: providerServiceCapabilityEntries } : {}),
-      providerServiceRouting: Object.fromEntries(result.metadata.providers.filter((entry) => entry.serviceRouting).map((entry) => [entry.provider, { services: structuredClone(entry.serviceRouting!) }])),
+      providerServiceRouting: providerServiceRoutingEntries,
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

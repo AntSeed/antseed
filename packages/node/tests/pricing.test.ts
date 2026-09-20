@@ -5,7 +5,7 @@ import {
   estimateTokensFromBytes,
   estimateTokensFromText,
   isFreeUnitBillingModel,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
 } from '../src/payments/pricing.js';
 import { evaluateUnitBilling } from '../src/billing/unit.js';
 
@@ -92,42 +92,20 @@ describe('pricing utilities', () => {
     expect(result.cost).toBeGreaterThan(0n);
   });
 
-  it('evaluates image unit billing with exact match attributes', () => {
-    const costUsdc = evaluateUnitBilling({
-      version: 1,
-      components: [
-        { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        { unit: 'output_images', priceUsd: 0.08, match: { size: '2048x2048' } },
-      ],
-    }, {
-      sellerPeerId: 'seller',
-      provider: 'openai',
-      service: 'gpt-image-1',
-      serviceApiProtocol: 'openai-images',
-      attributes: { size: '1024x1024' },
-    }, {
-      units: { output_images: 2 },
-    });
-    expect(costUsdc).toBe(80_000n);
+  it('evaluates exact generic quantity billing', () => {
+    expect(evaluateUnitBilling({ version: 2, priceMicroUsdc: '40000' }, {
+      sellerPeerId: 'seller', provider: 'openai', service: 'image', serviceApiProtocol: 'openai-images', maxQuantity: 4,
+    }, { quantity: 4 })).toBe(160000n);
   });
 
-  it('validates unit and price shape', () => {
-    expect(validateUnitBillingModelV1({
-      version: 1,
-      components: [
-        { unit: 'requests', priceUsd: Number.NaN } as any,
-      ],
-    })).toEqual(expect.arrayContaining([
-      expect.stringContaining('unsupported'),
-      expect.stringContaining('priceUsd'),
-    ]));
+  it('validates quantity price shape', () => {
+    expect(validateUnitBillingModelV2({ version: 2, priceMicroUsdc: '-1' })).not.toEqual([]);
+    expect(validateUnitBillingModelV2({ version: 1, components: [] })).not.toEqual([]);
+    expect(validateUnitBillingModelV2({ version: 2, priceMicroUsdc: '40000' })).toEqual([]);
   });
 
   it('treats non-zero image billing as paid even with free token fallback', () => {
-    expect(isFreeUnitBillingModel({ version: 1, components: [] })).toBe(true);
-    expect(isFreeUnitBillingModel({
-      version: 1,
-      components: [{ unit: 'output_images', priceUsd: 0.01 }],
-    })).toBe(false);
+    expect(isFreeUnitBillingModel({ version: 2, priceMicroUsdc: "0" })).toBe(true);
+    expect(isFreeUnitBillingModel({ version: 2, priceMicroUsdc: "10000" })).toBe(false);
   });
 });

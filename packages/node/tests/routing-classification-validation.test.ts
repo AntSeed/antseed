@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BuyerRequestHandler, type RequestExecutionOptions } from '../src/buyer-request-handler.js';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 import { ConnectionState } from '../src/types/connection.js';
 import type { PeerInfo } from '../src/types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
@@ -12,7 +12,7 @@ function setup(statuses = [200]) {
     peerId: 'a'.repeat(40) as PeerInfo['peerId'], lastSeen: Date.now(), providers: ['openai'],
     providerPricing: { openai: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }, services: {} } },
     providerServiceApiProtocols: { openai: { services: { classifier: ['openai-chat-completions'] } } },
-    providerServiceUnitBillingModels: { openai: { services: { classifier: { 'openai-chat-completions': createPerCallBillingModel('5000') } } } },
+    providerServiceUnitBillingModels: { openai: { services: { classifier: { 'openai-chat-completions': createUnitBillingModel('5000') } } } },
   };
   const request: SerializedHttpRequest = { requestId: 'classification', method: 'POST', path: '/v1/chat/completions',
     headers: { 'content-type': 'application/json', 'x-antseed-provider': 'openai' },

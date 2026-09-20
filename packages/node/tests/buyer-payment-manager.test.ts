@@ -12,7 +12,7 @@ import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { estimateCostFromBytes } from '../src/payments/pricing.js';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 
 const enc = new TextEncoder();
 
@@ -157,18 +157,18 @@ describe('BuyerPaymentManager', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 1n, reserve, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
     await manager.handleAuthAck(sellerPeerId, { channelId });
     const entry = { signal: controller.signal, attribution: { purpose: 'routing' as const, parentRequestId: 'inference' }, context: { sellerPeerId, provider: 'openai', service: 'classifier', serviceApiProtocol: 'openai-chat-completions' as const },
-      unitModel: createPerCallBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+      unitModel: createUnitBillingModel('5000'), tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
     manager.trackRequestBilling(requestId, entry);
     const response = { requestId, service: 'classifier', inputBytes: enc.encode('prompt'), outputBytes: enc.encode('selection'),
-      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { units: { successful_requests: 1 } } };
+      reportedInputTokens: 100n, reportedOutputTokens: 20n, sellerClaimedCost: 5000n, unitUsage: { quantity: 1 } };
     const claim = { channelId, requestId, requiredCumulativeAmount: '5000', currentAcceptedCumulative: '0', deposit: '10000000',
-      lastRequestCost: '5000', inputTokens: '100', outputTokens: '20', billingUsage: { version: 1 as const, units: { successful_requests: '1' } } };
+      lastRequestCost: '5000', inputTokens: '100', outputTokens: '20', billingUsage: { version: 2 as const, quantity: '1' } };
     return { sellerPeerId, requestId, controller, channelId, entry, response, claim };
   }
 
   it.each(['buyer-first', 'seller-first'])('signs one fixed fee under concurrent authorization (%s)', async (order) => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     const events: any[] = [];
     manager.setSpendListener((event) => events.push(event));
     const operations = [() => manager.signPerRequestAuth(state.sellerPeerId, state.response),
@@ -183,11 +183,11 @@ describe('BuyerPaymentManager', () => {
 
   it('does not sign a per-call fee without observed success or after cancellation', async () => {
     const state = await setupPerCall();
-    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed fulfillment/);
     expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 0 } });
-    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed successful/);
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 0 });
+    await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/observed fulfillment/);
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     state.controller.abort();
     await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/cancelled/);
     expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
@@ -195,9 +195,9 @@ describe('BuyerPaymentManager', () => {
 
   it('rejects omitted evidence, duplicate units, and even a one-micro overcharge', async () => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, billingUsage: undefined }, mux);
-    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '10000', billingUsage: { version: 1, units: { successful_requests: '2' } } }, mux);
+    await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '10000', billingUsage: { version: 2, quantity: '2' } }, mux);
     await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, lastRequestCost: '5001' }, mux);
     expect(manager.getActiveSession(state.sellerPeerId)?.authMax).toBe('0');
     await manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
@@ -206,21 +206,21 @@ describe('BuyerPaymentManager', () => {
 
   it('rejects changed per-call models and snapshots the accepted billing context', async () => {
     const state = await setupPerCall();
-    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, unitModel: createPerCallBillingModel('5001') })).toThrow(/already tracked/);
+    expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, unitModel: createUnitBillingModel('5001') })).toThrow(/already tracked/);
     expect(() => manager.trackRequestBilling(state.requestId, { ...state.entry, tokenPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 0 } })).toThrow(/already tracked/);
-    state.entry.unitModel.components[0]!.priceUsd = 9;
-    expect(manager.getRequestBilling(state.requestId)?.unitModel?.components[0]?.priceUsd).toBe(0.005);
+    state.entry.unitModel.priceMicroUsdc = '9000000';
+    expect(manager.getRequestBilling(state.requestId)?.unitModel?.priceMicroUsdc).toBe('5000');
   });
 
   it('supports two fixed-fee requests completing out of order on one channel', async () => {
     const state = await setupPerCall();
     manager.trackRequestBilling('second', { ...state.entry, attribution: { purpose: 'routing', parentRequestId: 'second-parent' } });
-    manager.recordObservedUnitUsage('second', { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage('second', { quantity: 1 });
     const events: any[] = [];
     manager.setSpendListener((event) => events.push(event));
     await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'second' });
     expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     await Promise.all([
       manager.signPerRequestAuth(state.sellerPeerId, state.response),
       manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, requestId: 'second' }, mux),
@@ -236,12 +236,12 @@ describe('BuyerPaymentManager', () => {
     const state = await setupPerCall();
     manager.trackRequestBilling('ready', state.entry);
     const waiting = manager.handleNeedAuth(state.sellerPeerId, state.claim, mux);
-    manager.recordObservedUnitUsage('ready', { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage('ready', { quantity: 1 });
     try {
       await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'ready' });
       expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
     } finally {
-      manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+      manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
       await waiting;
     }
     expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(10000n);
@@ -250,8 +250,8 @@ describe('BuyerPaymentManager', () => {
   it('cancels one request without cancelling another request to the same seller', async () => {
     const state = await setupPerCall();
     manager.trackRequestBilling('independent', { ...state.entry, signal: undefined });
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
-    manager.recordObservedUnitUsage('independent', { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
+    manager.recordObservedUnitUsage('independent', { quantity: 1 });
     state.controller.abort();
     await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow(/cancelled/);
     await manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, requestId: 'independent' });
@@ -264,7 +264,7 @@ describe('BuyerPaymentManager', () => {
     await manager.handleNeedAuth(state.sellerPeerId, { ...state.claim, requestId: 'free', billingUsage: undefined,
       lastRequestCost: undefined, requiredCumulativeAmount: '100000' }, mux);
     expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     await manager.signPerRequestAuth(state.sellerPeerId, state.response);
     expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
   });
@@ -272,8 +272,8 @@ describe('BuyerPaymentManager', () => {
   it('finishes a response payment after a reserve top-up without recounting its fee or usage', async () => {
     const state = await setupPerCall(6000n);
     manager.trackRequestBilling('second', state.entry);
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
-    manager.recordObservedUnitUsage('second', { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
+    manager.recordObservedUnitUsage('second', { quantity: 1 });
     const second = { ...state.response, requestId: 'second' };
     await manager.signPerRequestAuth(state.sellerPeerId, state.response);
     const partial = await manager.signPerRequestAuth(state.sellerPeerId, second);
@@ -300,7 +300,7 @@ describe('BuyerPaymentManager', () => {
     vi.spyOn(manager, 'getBalance').mockImplementation(() => { started.resolve(); return balance.promise; });
     const topUp = manager.topUpReserve(state.sellerPeerId, mux);
     await started.promise;
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     try {
       await manager.signPerRequestAuth(state.sellerPeerId, state.response);
       expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(5000n);
@@ -324,7 +324,7 @@ describe('BuyerPaymentManager', () => {
 
   it('checks the request seller and service independently of attribution', async () => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     await expect(manager.signPerRequestAuth(fakePeerId('other'), state.response)).rejects.toThrow(/does not match/);
     await expect(manager.signPerRequestAuth(state.sellerPeerId, { ...state.response, service: 'other' })).rejects.toThrow(/does not match/);
     expect(manager.getCumulativeAmount(state.sellerPeerId)).toBe(0n);
@@ -332,7 +332,7 @@ describe('BuyerPaymentManager', () => {
 
   it('does not count a request until its authorization is persisted', async () => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     const originalCommit = store.commitAuthorization.bind(store);
     vi.spyOn(store, 'commitAuthorization').mockRejectedValueOnce(new Error('write failed')).mockImplementation(originalCommit);
     await expect(manager.signPerRequestAuth(state.sellerPeerId, state.response)).rejects.toThrow('write failed');
@@ -344,7 +344,7 @@ describe('BuyerPaymentManager', () => {
 
   it('does not persist payment cancelled while the signer is running', async () => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     manager.setSigner(identity.wallet);
     const sign = identity.wallet.signTypedData.bind(identity.wallet);
     vi.spyOn(identity.wallet, 'signTypedData').mockImplementation(async (...args) => {
@@ -358,7 +358,7 @@ describe('BuyerPaymentManager', () => {
 
   it('retains the billing snapshot and duplicate tracking through a channel rollover', async () => {
     const state = await setupPerCall();
-    manager.recordObservedUnitUsage(state.requestId, { units: { successful_requests: 1 } });
+    manager.recordObservedUnitUsage(state.requestId, { quantity: 1 });
     await manager.signPerRequestAuth(state.sellerPeerId, state.response);
     await manager.retireSession(state.sellerPeerId, CHANNEL_STATUS.SETTLED);
     const channelId = await manager.authorizeSpending(state.sellerPeerId, mux, 1n, { inputUsdPerMillion: 9, outputUsdPerMillion: 9 });
@@ -1084,10 +1084,7 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = fakePeerId('seller-image-headroom-race');
     const service = 'qwen-image-3-pro';
     const requestId = 'req-image-headroom-race';
-    const unitModel = {
-      version: 1 as const,
-      components: [{ unit: 'output_images' as const, priceUsd: 0.025 }],
-    };
+    const unitModel = { version: 2 as const, priceMicroUsdc: "25000" };
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     manager.trackRequestBilling(requestId, {
       context: {
@@ -1095,8 +1092,7 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service,
         serviceApiProtocol: 'openai-images',
-        attributes: { model: service },
-        unitLimits: { output_images: 1 },
+        maxQuantity: 1,
       },
       unitModel,
     });
@@ -1119,7 +1115,7 @@ describe('BuyerPaymentManager', () => {
       reportedInputTokens: 0n,
       reportedCachedInputTokens: 0n,
       reportedOutputTokens: 0n,
-      unitUsage: { units: { output_images: 1 } },
+      unitUsage: { quantity: 1 },
       service,
       requestId,
     });
@@ -1182,17 +1178,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 1, components: [] },
+        defaults: { version: 2, priceMicroUsdc: "0" },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': {
-                  version: 1,
-                  components: [
-                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                  ],
-                },
+                'openai-images': { version: 2, priceMicroUsdc: "40000" },
               },
             },
           },
@@ -1205,14 +1196,8 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+      unitModel: { version: 2, priceMicroUsdc: "40000" },
     });
     mux.sentSpendingAuths.length = 0;
 
@@ -1231,7 +1216,7 @@ describe('BuyerPaymentManager', () => {
     expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
   });
 
-  it('handleNeedAuth rejects image billingUsage whose tier does not match buyer request context', async () => {
+  it('handleNeedAuth rejects image billingUsage exceeding the buyer request limit', async () => {
     const sellerPeerId = fakePeerId('seller-image-tier');
     const channelId = await manager.authorizeSpending(
       sellerPeerId,
@@ -1242,17 +1227,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 1, components: [] },
+        defaults: { version: 2, priceMicroUsdc: "0" },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': {
-                  version: 1,
-                  components: [
-                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                  ],
-                },
+                'openai-images': { version: 2, priceMicroUsdc: "40000" },
               },
             },
           },
@@ -1265,16 +1245,11 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '256x256' },
+        maxQuantity: 0,
       },
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+      unitModel: { version: 2, priceMicroUsdc: "40000" },
     });
-    manager.recordObservedUnitUsage('req-image-tier-mismatch', { units: { output_images: 2 } });
+    manager.recordObservedUnitUsage('req-image-tier-mismatch', { quantity: 2 });
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -1287,8 +1262,8 @@ describe('BuyerPaymentManager', () => {
       inputTokens: '0',
       outputTokens: '0',
       billingUsage: {
-        version: 1,
-        units: { output_images: '1' },
+        version: 2,
+        quantity: '1',
       },
     }, mux);
 
@@ -1304,24 +1279,18 @@ describe('BuyerPaymentManager', () => {
       10_000n,
       TEST_PRICING,
     );
-    const imageModel = {
-      version: 1 as const,
-      components: [
-        { unit: 'output_images' as const, priceUsd: 0.004, match: { size: '1024x1024' } },
-      ],
-    };
+    const imageModel = { version: 2 as const, priceMicroUsdc: "4000" };
     manager.trackRequestBilling('req-image-hybrid', {
       context: {
         sellerPeerId,
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
       tokenPricing: TEST_PRICING,
       unitModel: imageModel,
     });
-    manager.recordObservedUnitUsage('req-image-hybrid', { units: { output_images: 2 } });
+    manager.recordObservedUnitUsage('req-image-hybrid', { quantity: 2 });
     mux.sentSpendingAuths.length = 0;
 
     const tokenCost = 3_750n; // 1000 input at $3/M + 50 output at $15/M
@@ -1339,8 +1308,8 @@ describe('BuyerPaymentManager', () => {
       cachedInputTokens: '0',
       outputTokens: '50',
       billingUsage: {
-        version: 1,
-        units: { output_images: '2' },
+        version: 2,
+        quantity: '2',
       },
     }, mux);
 
@@ -1367,16 +1336,10 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+      unitModel: { version: 2, priceMicroUsdc: "40000" },
     });
-    manager.recordObservedUnitUsage('req-image-observed', { units: { output_images: 1 } });
+    manager.recordObservedUnitUsage('req-image-observed', { quantity: 1 });
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -1389,8 +1352,8 @@ describe('BuyerPaymentManager', () => {
       inputTokens: '0',
       outputTokens: '0',
       billingUsage: {
-        version: 1,
-        units: { output_images: '2' },
+        version: 2,
+        quantity: '2',
       },
     }, mux);
 
@@ -1406,7 +1369,6 @@ describe('BuyerPaymentManager', () => {
       provider: 'openai',
       service: 'gpt-image-2',
       serviceApiProtocol: 'openai-images',
-      attributes: { model: 'gpt-image-2', size: '1024x1024' },
     });
     mux.sentSpendingAuths.length = 0;
 

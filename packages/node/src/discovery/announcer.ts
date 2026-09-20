@@ -11,7 +11,7 @@ import {
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement, ServiceCapabilities } from "./peer-metadata.js";
-import { SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION } from "./peer-metadata.js";
+import { SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
   MAX_DOMAIN_VERIFICATION_CLAIMS,
@@ -23,7 +23,7 @@ import {
 
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
-import type { ServiceUnitBillingModelsV1 } from "../types/billing.js";
+import { isQuantityBillingProtocol, validateUnitBillingModelV2, type ServiceUnitBillingModelsV2 } from "../types/billing.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
@@ -57,7 +57,7 @@ export interface AnnouncerConfig {
     services: string[];
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
-    serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+    serviceUnitBillingModels?: ServiceUnitBillingModelsV2;
     serviceCapabilities?: Record<string, ServiceCapabilities>;
     serviceRouting?: Record<string, import("@antseed/protocol").RoutingServiceMetadataV1>;
     maxConcurrency: number;
@@ -290,7 +290,7 @@ export class PeerAnnouncer {
         if (normalizedServiceUnitBillingModels) {
           providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
         }
-        const routingEntries = Object.entries(p.serviceRouting ?? {}).filter(([service]) => p.services.includes(service));
+        const routingEntries = Object.entries(p.serviceRouting ?? {}).filter(([service]) => p.services.length === 0 || p.services.includes(service));
         if (routingEntries.length) providerAnnouncement.serviceRouting = structuredClone(Object.fromEntries(routingEntries));
         const normalizedServiceCapabilities = this._normalizeServiceCapabilities(p.serviceCapabilities, p.services);
         if (normalizedServiceCapabilities) {
@@ -346,10 +346,9 @@ export class PeerAnnouncer {
     return this._signAndValidateMetadata({
       peerId: this.config.identity.peerId,
       version: providers.some((provider) => Object.keys(provider.serviceRouting ?? {}).length > 0
-        || Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.reasoningEfforts !== undefined))
+        || Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined || caps.reasoningEfforts !== undefined)
+        || Object.keys(provider.serviceUnitBillingModels ?? {}).length > 0)
         ? SERVICE_ROUTING_METADATA_VERSION
-        : providers.some((provider) => Object.values(provider.serviceCapabilities ?? {}).some((caps) => caps.routing !== undefined))
-        ? SERVICE_ROUTING_CAPABILITY_METADATA_VERSION
         : SERVICE_CAPABILITIES_METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
@@ -516,26 +515,30 @@ export class PeerAnnouncer {
   }
 
   private _normalizeServiceUnitBillingModels(
-    serviceUnitBillingModels: ServiceUnitBillingModelsV1 | undefined,
+    serviceUnitBillingModels: ServiceUnitBillingModelsV2 | undefined,
     supportedServices: string[],
-  ): ServiceUnitBillingModelsV1 | undefined {
+  ): ServiceUnitBillingModelsV2 | undefined {
     if (!serviceUnitBillingModels) {
       return undefined;
     }
 
     const hasWildcardServices = supportedServices.length === 0;
     const supportedServiceSet = new Set(supportedServices);
-    const normalized: ServiceUnitBillingModelsV1 = {};
+    const normalized: ServiceUnitBillingModelsV2 = {};
     for (const [service, protocolModels] of Object.entries(serviceUnitBillingModels)) {
       if (!hasWildcardServices && !supportedServiceSet.has(service)) {
         continue;
       }
-      const entries = Object.entries(protocolModels)
-        .filter(([protocol, model]) => isKnownServiceApiProtocol(protocol) && model?.version === 1 && Array.isArray(model.components));
+      const entries = Object.entries(protocolModels);
+      for (const [protocol, model] of entries) {
+        if (!isQuantityBillingProtocol(protocol)) throw new Error(`Unsupported quantity billing adapter: ${service}.${protocol}`);
+        const errors = validateUnitBillingModelV2(model);
+        if (errors.length > 0) throw new Error(`Invalid billing model for ${service}.${protocol}: ${errors.join('; ')}`);
+      }
       if (entries.length === 0) {
         continue;
       }
-      normalized[service] = Object.fromEntries(entries) as ServiceUnitBillingModelsV1[string];
+      normalized[service] = Object.fromEntries(entries) as ServiceUnitBillingModelsV2[string];
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { METADATA_VERSION, validateServiceCapabilityFields, type ServiceCapabilities } from './peer-metadata.js';
 
 describe('routing service capabilities', () => {
-  it('supports metadata through v14', () => {
-    expect(METADATA_VERSION).toBe(14);
+  it('supports metadata through v13', () => {
+    expect(METADATA_VERSION).toBe(13);
   });
 
   it.each([true, false, undefined])('accepts routing %s', (routing) => {

@@ -74,19 +74,13 @@ describe('provider-openai plugin', () => {
         ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
         ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
           'cover-art': {
-            'openai-images': {
-              version: 1,
-              components: [],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: "0" },
           },
         }),
       });
 
       expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
-      expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
-        version: 1,
-        components: [],
-      });
+      expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: "0" });
 
       const response = await provider.handleRequest({
         requestId: 'req-image-1',
@@ -127,30 +121,12 @@ describe('provider-openai plugin', () => {
       ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
       ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
         'cover-art': {
-          'openai-images': {
-            version: 1,
-            components: [
-              {
-                unit: 'output_images',
-                priceUsd: 0.00816,
-                match: { size: '1024x1024', quality: 'low' },
-              },
-            ],
-          },
+          'openai-images': { version: 2, priceMicroUsdc: "8160" },
         },
       }),
     });
 
-    expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
-      version: 1,
-      components: [
-        {
-          unit: 'output_images',
-          priceUsd: 0.00816,
-          match: { size: '1024x1024', quality: 'low' },
-        },
-      ],
-    });
+    expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: "8160" });
   });
 
   it('defaults image services to outputs: ["image"] capabilities', async () => {

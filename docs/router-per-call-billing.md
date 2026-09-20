@@ -1,24 +1,51 @@
 # Shared payments and request execution
 
-This is PR 2 of the routing stack: the shared execution machinery used by node
-and browser buyers. PR 1 defines the routing contract and complete signed metadata
-v14; PR 3 wires network selection and buyer policy into this machinery. Intermediate
+This is PR 3/4 of the routing stack: the shared execution machinery used by node
+and browser buyers. PR 2/4 defines the routing contract and complete signed metadata
+v13; PR 4/4 wires network selection and buyer policy into this machinery. Intermediate
 slices are not intended for standalone deployment. There are no temporary
 execution guards, new metadata versions, or database migrations in this slice.
 
-## Per-call accounting
+## Quantity accounting
 
-`successful_requests` measures a successful HTTP response as one unit, capped by
-the captured request limit. A fixed per-call price is an integer number of
-micro-USDC. `captureUnitBillingContext` captures the selected seller, provider,
-service, protocol, and request limits before execution. `computeFinalUnitBilling`
-uses that context and the final response to calculate unit usage and cost.
+The contract and configuration migration are supplied by [PR 1/4](quantity-billing.md).
 
-The same helpers serve buyer accounting and seller reserve estimates. Existing
-image-unit billing remains supported. Token usage is recorded separately from
-per-call units, including fresh/cached input attribution. The generic payment
+The billing model is `{ "version": 2, "priceMicroUsdc": "40000" }` and the usage
+report is `{ "version": 2, "quantity": "4" }`. This example costs 160,000 micro-USDC.
+There are no named units or conditional components. `captureUnitBillingContext`
+captures the selected seller, provider, service, protocol, and request limit before
+execution. `computeFinalUnitBilling` uses that context and the final response to
+calculate quantity and cost with integer arithmetic.
+
+The advertised service API protocol selects the adapter, rather than an offer's
+unit label. `openai-images` counts delivered, nonempty image outputs, at most the
+requested `n` (default 1). `antseed-routing` and non-streaming
+`openai-chat-completions` count a fulfilled response as 1, otherwise 0. An HTTP 2xx
+alone is not sufficient. Buyer and seller independently measure the response;
+claims above the request limit or buyer-observed quantity are rejected. Routing
+response acceptance also validates the complete recommendation list before payment.
+
+The same helpers serve buyer accounting and seller reserve estimates. Token usage
+is recorded separately, including fresh/cached input attribution. The generic payment
 runtime can combine token and unit charges; routing-specific pricing policy is
-the responsibility of the later integration slice.
+the responsibility of the integration slice.
+
+### Local configuration migration and compatibility
+
+Seller configuration loading and the shared provider config parser normalize old
+v1 models to v2 before provider construction. A single unconditional image component
+(`output_images`) maps to the image adapter; a single `successful_requests`
+component maps to a supported request-counting adapter. Empty models map to a zero
+price. Prices must be exactly representable as uint32 micro-USDC. Conditional,
+multiple-component, incompatible-unit, and inexact prices fail with a migration
+error instead of silently changing billing. Configure a fixed v2 price explicitly
+for those services. Migration does not automatically rewrite the config file.
+
+Only v2 models and usage reports are accepted on the network. The v2 billing
+discriminator prevents old component models/reports from being interpreted as the
+new quantity contract; it is separate from metadata v13 and routing request v1.
+There is no legacy runtime billing engine. Historical receipts and SQLite columns
+are left intact rather than rewritten.
 
 ## Execution options
 
@@ -36,7 +63,7 @@ the responsibility of the later integration slice.
 Acceptance is opt-in and applies to 2xx responses. It is not a built-in routing
 parser or buyer-policy engine. The integration slice supplies those decisions.
 For per-call work requiring acceptance, a rejected response does not earn the
-successful-request unit. This does not promise that all rejected token-priced
+quantity of 1. This does not promise that all rejected token-priced
 work is free: token authorization can already have occurred during execution.
 
 The contract-to-payment tests use PR 1's recommendation eligibility helper with
@@ -82,10 +109,39 @@ the repository's `forge-std` dependency. The fixture uses temporary test wallets
 and a local image provider, checks successful request delivery after reconnect,
 and verifies final settlement, released reserves, and unchanged ghost counts.
 
-## Deferred routing integration
+## Routing integration
 
-PR 3 supplies CLI/config selection, the network adapter, routing request/schema
-dispatch, buyer-policy checks, ranked fallback, usage-observation collection,
-reasoning overrides, continuation reuse, and local-chain routing end-to-end
-fixtures. The optional result telemetry fields introduced here define the
-reporting contract; they do not activate those behaviors.
+The network adapter accepts free, token-priced, or fixed-per-call routing services.
+Per-call services must advertise zero token rates: the adapter rejects mixed
+per-call/token pricing even though the shared payment runtime supports hybrid
+accounting for other services. Routing uses existing authenticated dispatch and
+payment policies, not a separate wallet, grant, subscription, or seller lock.
+
+The buyer checks signed metadata, preferences, schema hash, candidate eligibility,
+usage context, and advertised prices before invocation. The seller validates the
+structured request before negotiation and provider execution. The adapter wires
+the complete ranked-list validator into per-call response acceptance; malformed,
+duplicate, or partially ineligible lists do not earn a successful-request charge.
+
+Identical routing attempts for one parent request share an operation. A schema
+mismatch or failed routing response does not trigger a second paid routing call.
+An eligible continuation reuses its decision. A ranked list incurs one routing
+fee, independent of the number of inference attempts; an inference failure does
+not undo that fee or other already-incurred charges. Each inference attempt gets
+a distinct billing request ID, even when models share a seller. Conversation
+spend and router result callbacks retain the originating user-request identity.
+
+## Local-chain scenarios
+
+After building the workspace, these fixtures deploy to an isolated local Anvil
+chain. They require Foundry (`anvil`, `forge`, `cast`) and the repository's pinned
+`forge-std` submodule; they do not use real funds.
+
+```sh
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call
+node e2e/scripts/local-chain-routing-flow.mjs --per-call --invalid-route
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call --concurrent
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --ranked-fallback
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call --ranked-fallback
+```

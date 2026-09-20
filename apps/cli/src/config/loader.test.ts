@@ -116,10 +116,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
                   toolUse: true,
                 },
                 unitBillingModels: {
-                  'openai-images': {
-                    version: 1,
-                    components: [{ unit: 'output_images', priceUsd: 0.04 }],
-                  },
+                  'openai-images': { version: 2, priceMicroUsdc: '40000' },
                 },
               },
             },
@@ -145,7 +142,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
         inputs: ['text', 'image'],
         toolUse: true,
       });
-      assert.equal(service.unitBillingModels?.['openai-images']?.components[0]?.priceUsd, 0.04);
+      assert.equal(service.unitBillingModels?.['openai-images']?.priceMicroUsdc, '40000');
     }
   );
 });
@@ -731,4 +728,28 @@ test('loadConfig preserves seller agentDir setting', async () => {
       assert.equal(config.seller.agentDir, '/etc/antseed/my-agent');
     }
   );
+});
+
+test('loadConfig migrates compatible legacy seller billing before provider construction', async () => {
+  for (const [protocol, unit] of [['openai-images', 'output_images'], ['openai-chat-completions', 'successful_requests']]) {
+    const config = { seller: { providers: { example: { plugin: 'openai', services: {
+      example: { unitBillingModels: { [protocol!]: { version: 1, components: [{ unit, priceUsd: 0.04 }] } } },
+    } } } } };
+    await withTempConfig(JSON.stringify(config), async (path) => {
+      const loaded = await loadConfig(path);
+      assert.deepEqual(loaded.seller.providers.example?.services?.example?.unitBillingModels,
+        { [protocol!]: { version: 2, priceMicroUsdc: '40000' } });
+    });
+  }
+});
+
+test('loadConfig rejects conditional legacy billing instead of silently flattening prices', async () => {
+  const config = { seller: { providers: { example: { plugin: 'openai', services: {
+    example: { unitBillingModels: { 'openai-images': { version: 1, components: [
+      { unit: 'output_images', priceUsd: 0.04, match: { quality: 'high' } },
+    ] } } },
+  } } } } };
+  await withTempConfig(JSON.stringify(config), async (path) => {
+    await assert.rejects(loadConfig(path), /cannot safely migrate/);
+  });
 });

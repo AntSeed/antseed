@@ -441,12 +441,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       },
       serviceUnitBillingModels: {
         'gpt-image-1': {
-          'openai-images': {
-            version: 1,
-            components: [
-              { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-            ],
-          },
+          'openai-images': { version: 2, priceMicroUsdc: '40000' },
         },
       },
     });
@@ -500,9 +495,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       inputTokens: '1000',
       outputTokens: '500',
       freshInputTokens: '1000',
-      billingUsage: expect.objectContaining({
-        units: { output_images: '2' },
-      }),
+      billingUsage: expect.objectContaining({ quantity: '2' }),
     }));
   });
 

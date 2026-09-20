@@ -1,3 +1,12 @@
+# Four-PR stack update
+
+The current stack is #1039 (1/4, generic quantity billing), #1034 (2/4,
+protocol/discovery), #1035 (3/4, shared execution), and #1036 (4/4, buyer integration).
+Billing is extracted onto current main; later branches merge their new parent,
+preserving the original contributor commits and review fixes without force-pushes.
+The numbered extraction history below records the earlier three-slice layout;
+its source commit IDs remain historical provenance, not current PR numbering.
+
 # Routing stack provenance and extraction ledger
 
 Source: [AntSeed/antseed#1014](https://github.com/AntSeed/antseed/pull/1014),
@@ -23,7 +32,7 @@ source snapshots. Existing decision-service and verifier behavior is retained.
 - Subsequent split-specific compatibility tests, documentation, and catalog type
   adjustments are separate commits, not attributed to an original contributor
   who did not implement those changes.
-- The combined v14 conformance test exposed a source inconsistency: metadata
+- The combined v13 conformance test exposed a source inconsistency: metadata
   accepted per-call chat pricing but rejected the same representation for
   `antseed-routing`. A separate fix aligns discovery with the structured protocol.
   Execution-side usage-count and charge-tolerance checks remain in PR 2.
@@ -40,7 +49,7 @@ alone. It contains **no temporary per-call execution guards** and no associated
 intermediate-state guard tests. The three slices are separate reviews, not an
 assertion that this intermediate protocol state is ready for standalone deployment.
 This supersedes the guard requirement in the initial split plan. Payment execution
-belongs to PR 2 and buyer activation to PR 3; all signed v14 fields land in PR 1.
+belongs to PR 2 and buyer activation to PR 3; all signed v13 fields land in PR 1.
 
 ## PR 2 extraction
 
@@ -74,10 +83,37 @@ the second review limited to shared payments and request execution.
   of development databases containing extra columns. In-memory recovery and
   persisted cumulative authorizations are not an exactly-once restart guarantee.
 
-PR 2 changes no signed metadata bytes and introduces no v15 or temporary guards.
+PR 2 changes no signed metadata bytes and introduces no further metadata version or temporary guards.
 CLI/config activation, routing-schema dispatch, network selection, policy checks,
 ranked fallback, observation collection, reasoning overrides, and continuation
 reuse remain in PR 3. The original PR and PR 1 branches remain untouched.
+
+## PR 3 extraction and complete-stack audit
+
+PR 3, `codex/routing-buyer-integration`, starts from PR #1035 at
+`90c826bd084d651ee39a4c5fa5ecdcb25db3449c`. It includes the remaining selection,
+CLI/config, plugin settings, network adapter, schema dispatch, buyer policy,
+ranked fallback, observations, reasoning, continuation, and end-to-end changes.
+All original source files are accounted for in the
+[complete-stack coverage audit](routing-split-coverage.md), including explicit
+explanations of adaptations and obsolete source assertions.
+
+`93100eb31` extracts the conversation identity type with Dawe000's original
+author/date and Claude co-author credit. `48dc8512a` retains alexanderludwig's
+authorship, Dawe000/Claude co-author credit, and references the 31 contributing
+source commits. Shahaf Antwarg's earlier conversation-pin contribution is already
+an ancestor of the stack's main base (`b347768a2`) and remains in its history.
+
+Compatibility adaptations retain main's shared trust-score helpers, decision
+service support, verifier metadata, and TEE shutdown. The network adapter imports
+PR 1's existing response parser rather than adding a second parser. The desktop
+catalog already excludes routing services at runtime and in its type, so the
+source's now-unreachable extra chat check is not copied. No temporary guard or
+metadata revision is introduced. All five deferred routing dispatch/schema tests
+from PR 2 are included here. Split-specific tests/documentation remain separate
+from the source-attributed extraction. The local-chain fixture's expected fallback
+candidate includes the supported reasoning-effort list emitted by the source
+policy, fixing an incomplete source assertion without relaxing eligibility checks.
 
 ## Complete source-file allocation
 
@@ -120,7 +156,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `apps/cli/src/proxy/routing-usage.test.ts` | 3 |
 | `apps/cli/src/proxy/routing-usage.ts` | 3 |
 | `apps/desktop/src/main/chat/service-catalog.ts` | 1 |
-| `apps/desktop/src/main/chat/streaming-run.ts` | 3 |
+| `apps/desktop/src/main/chat/streaming-run.ts` | Covered by 1 — routing excluded by the catalog; redundant unreachable source check omitted |
 | `docs/protocol/templates/routing-provider/README.md` | 1 |
 | `docs/protocol/templates/routing-provider/check-compatibility.mjs` | 1 |
 | `docs/protocol/templates/routing-provider/fixtures/invalid-response.json` | 1 |
@@ -129,7 +165,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `docs/protocol/templates/routing-provider/fixtures/response.json` | 1 |
 | `docs/protocol/templates/routing-provider/src/index.ts` | 1 |
 | `docs/router-network-integration.md` | 1 / 3 — contract documented separately / buyer behavior deferred |
-| `docs/router-per-call-billing.md` | 2 |
+| `docs/router-per-call-billing.md` | 2 / 3 — shared execution / routing integration and local-chain scenarios |
 | `e2e/package.json` | 3 |
 | `e2e/scripts/local-chain-routing-flow.mjs` | 3 |
 | `packages/api-adapter/package.json` | 3 |

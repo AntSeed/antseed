@@ -13,7 +13,7 @@ import {
   type PaymentRequiredPayload,
   type CloseChannelResultPayload,
 } from '@antseed/protocol/messages';
-import { perCallPriceMicroUsdc } from '@antseed/protocol/billing';
+import { unitPriceMicroUsdc } from '@antseed/protocol/billing';
 import type { RequestExecutionOptions } from './buyer-request-handler.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
@@ -34,12 +34,11 @@ import { parseResponseUsage } from './response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '@antseed/protocol/json-codec';
-import type { UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
+import type { UnitBillingModelV2, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   captureUnitBillingContext,
   computeFinalUnitBilling,
-  extractUnitResponseUsage,
   type FinalUnitBillingResult,
 } from './unit-billing.js';
 import { buyerFault, peerFault } from './errors.js';
@@ -93,7 +92,7 @@ export interface SelectedBillingRoute {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  unitModel?: UnitBillingModelV1;
+  unitModel?: UnitBillingModelV2;
   tokenPricing?: ServicePricing;
 }
 
@@ -680,7 +679,7 @@ export class BuyerPaymentNegotiator {
         existingSessionBudgetRequest,
         requiredCumulativeTarget,
         requiredCumulativeTarget == null,
-        perCallPriceMicroUsdc(requestBilling?.unitModel) !== null,
+        unitPriceMicroUsdc(requestBilling?.unitModel) !== null,
       );
       if (recovered) {
         return { action: 'retry' };
@@ -776,7 +775,7 @@ export class BuyerPaymentNegotiator {
       try {
         unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response);
       } catch (err) {
-        const observed = extractUnitResponseUsage(response, billingEntry.context.unitLimits);
+        const observed = { usage: { quantity: 0 }, tokenUsage: parseResponseUsage(response.body) };
         if (requestId) {
           this._bpm.recordObservedUnitUsage(requestId, observed.usage);
         }
@@ -794,7 +793,7 @@ export class BuyerPaymentNegotiator {
     if (unitBilling && requestId) {
       this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
     }
-    if (perCallPriceMicroUsdc(unitModel) !== null && unitBilling?.usage.units.successful_requests !== 1) return;
+    if (unitPriceMicroUsdc(unitModel) !== null && (unitBilling?.usage.quantity ?? 0) <= 0) return;
     const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
     const pricing = billingEntry?.tokenPricing
       ?? this._bpm.getSessionPricing(peer.peerId, service)

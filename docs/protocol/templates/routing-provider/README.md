@@ -13,7 +13,7 @@ the pure response parser; executing ranked fallback belongs to the buyer integra
 A recommendation can include `inference: { reasoningEffort: "high" }`. An explicit
 `reasoningEfforts` list restricts accepted values; missing capability metadata allows a
 best-effort choice without guaranteeing backend support. Inference
-service capability advertisements carrying this list use the same signed metadata v14
+service capability advertisements carrying this list use the same signed metadata v13
 extension as routing descriptors.
 For model-only recommendations, at least one eligible seller must permit the effort.
 The fixtures demonstrate an explicit effort followed by a choice without an override.

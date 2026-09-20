@@ -26,7 +26,7 @@ import type { Provider } from '../src/interfaces/seller-provider.js';
 
 const encoder = new TextEncoder();
 const pricing = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
-const unitModel = { version: 1 as const, components: [{ unit: 'output_images' as const, priceUsd: 0.025 }] };
+const unitModel = { version: 2 as const, priceMicroUsdc: "25000" };
 const chain: { rpcUrl: string; usdc: string; registry: string; staking: string; deposits: string; channels: string } | undefined
   = process.env.PAYMENT_RECONNECT_CHAIN_CONFIG ? JSON.parse(process.env.PAYMENT_RECONNECT_CHAIN_CONFIG) : undefined;
 
