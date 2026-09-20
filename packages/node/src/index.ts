@@ -35,8 +35,8 @@ export {
 export { formatEther, parseEther } from 'ethers';
 export type { Router, RouteCandidate, RouteRecommendation } from './interfaces/buyer-router.js';
 export { isRouteRecommendation, isRouteRecommendationEligible, areRouteRecommendationsEligible } from './routing/route-recommendation.js';
-export { REASONING_EFFORTS, createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest, validateRoutingUsageContext } from '@antseed/protocol';
-export type { ReasoningEffort, RoutingInference, RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1, RoutingUsageContext, RoutingUsageObservation } from '@antseed/protocol';
+export { createRoutingServiceMetadata, validateRoutingServiceMetadata, validateRoutingPreferenceSchema, resolveRoutingPreferences, assertRoutingPreferences, canonicalRoutingJson, validateRoutingRequest, validateRoutingUsageContext } from '@antseed/protocol';
+export type { RoutingInference, RoutingJson, RoutingPreferences, RoutingPreferenceSchema, RoutingServiceMetadataV1, RoutingRequestV1, RoutingResponseV1, RoutingUsageContext, RoutingUsageObservation } from '@antseed/protocol';
 
 // Types (re-export everything)
 export * from './types/index.js';
@@ -367,3 +367,4 @@ export {
   type LoadedProvider,
   type LoadedRouter,
 } from './config/plugin-loader.js'
+export { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/protocol';

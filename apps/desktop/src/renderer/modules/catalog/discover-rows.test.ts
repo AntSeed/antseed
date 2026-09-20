@@ -181,3 +181,9 @@ test('projectRowsToChatServiceOptions preserves peer display name and cached inp
   assert.equal(option.peerIconUrl, null);
   assert.equal(option.cachedInputUsdPerMillion, 0.5);
 });
+test('normalizeDiscoverRow preserves only known advertised reasoning efforts', () => {
+  const base = { peerId: 'abc', serviceId: 'model' };
+  const row = normalizeDiscoverRow({ ...base, capabilities: { reasoning: true, reasoningEfforts: ['high', 'none', 'high', 'unknown'] } });
+  assert.deepEqual(row?.capabilities?.reasoningEfforts, ['none', 'high']);
+  assert.equal(normalizeDiscoverRow({ ...base, capabilities: { reasoning: true } })?.capabilities?.reasoningEfforts, undefined);
+});

@@ -22,6 +22,24 @@ test('routing services remain outside the persisted chat catalog', () => {
   assert.deepEqual(catalog.map((entry) => entry.id).sort(), ['chat', 'decision']);
 });
 
+test('reasoning efforts survive live, persisted, normalization and discovery projections', async () => {
+  const capabilities = { reasoning: true, reasoningEfforts: ['none', 'low', 'high'] };
+  const live = buildChatServiceCatalogFromNetworkModels({ data: [{ peers: [{
+    peerId: venicePeerId, provider: 'openai', serviceId: 'gpt-test', protocol: 'openai-chat-completions', capabilities,
+  }] }] });
+  const persisted = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: venicePeerId, providers: ['openai'], services: ['gpt-test'],
+    providerServiceCapabilities: { openai: { services: { 'gpt-test': capabilities } } },
+  }] });
+  for (const entries of [live, persisted]) {
+    assert.deepEqual(entries[0]?.capabilities, capabilities);
+    const normalized = normalizeChatServiceCatalogEntries(entries);
+    assert.deepEqual(normalized[0]?.capabilities, capabilities);
+    const rows = await buildDiscoverRows(normalized, new Map(), {}, new Map());
+    assert.deepEqual(rows[0]?.capabilities, capabilities);
+  }
+});
+
 test('TEE advertisements survive live, persisted, normalization and discovery projections', async () => {
   const offer = {
     peerId: venicePeerId, provider: 'openai', serviceId: 'gpt-test', protocol: 'openai-chat-completions',
@@ -96,6 +114,7 @@ function modelsPayload(): unknown {
             inputs: ['text', 'image'],
             outputs: ['text'],
             reasoning: true,
+            reasoningEfforts: ['none', 'high'],
             toolUse: true,
             structuredOutput: true,
           },
@@ -138,6 +157,7 @@ test('network models catalog preserves peer pricing, capabilities, and categorie
     inputs: ['text', 'image'],
     outputs: ['text'],
     reasoning: true,
+    reasoningEfforts: ['none', 'high'],
     toolUse: true,
     structuredOutput: true,
   });

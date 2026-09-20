@@ -1,14 +1,15 @@
 # Shared payments and request execution
 
-This is PR 3/4 of the routing stack: the shared execution machinery used by node
-and browser buyers. PR 2/4 defines the routing contract and complete signed metadata
-v13; PR 4/4 wires network selection and buyer policy into this machinery. Intermediate
+This is PR 4/5 of the routing stack: the shared execution machinery used by node
+and browser buyers. PR 2/5 adds reasoning-effort announcements; PR 3/5 defines the
+routing contract and complete signed metadata v13; PR 5/5 wires network selection
+and buyer policy into this machinery. Intermediate
 slices are not intended for standalone deployment. There are no temporary
 execution guards, new metadata versions, or database migrations in this slice.
 
 ## Quantity accounting
 
-The contract and configuration migration are supplied by [PR 1/4](quantity-billing.md).
+The contract and configuration migration are supplied by [PR 1/5](quantity-billing.md).
 
 The billing model is `{ "version": 2, "components": [{ "priceMicroUsdc": "40000" }] }` and the usage
 report is `{ "version": 2, "quantity": "4" }`. This example costs 160,000 micro-USDC.
@@ -66,7 +67,7 @@ For per-call work requiring acceptance, a rejected response does not earn the
 quantity of 1. This does not promise that all rejected token-priced
 work is free: token authorization can already have occurred during execution.
 
-The contract-to-payment tests use PR 1's recommendation eligibility helper with
+The contract-to-payment tests use PR 3/5's recommendation eligibility helper with
 the actual shared payment manager, negotiator, and request handler. An accepted
 recommendation authorizes the advertised 5,000 micro-USDC; an ineligible one does
 not authorize that per-call charge.

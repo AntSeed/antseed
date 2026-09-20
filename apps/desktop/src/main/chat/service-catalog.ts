@@ -5,6 +5,7 @@ import type {
   PeerInfo,
 } from '@antseed/node';
 import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
+import { REASONING_EFFORTS } from '@antseed/protocol';
 import {
   buildNetworkServiceOffers,
   normalizedModelReputationScore,
@@ -95,6 +96,8 @@ function normalizeCapabilities(value: unknown): CatalogServiceCapabilities | und
     if (values.length > 0) capabilities[key] = values;
   }
   if (typeof raw.reasoning === 'boolean') capabilities.reasoning = raw.reasoning;
+  const reasoningEfforts = REASONING_EFFORTS.filter(effort => Array.isArray(raw.reasoningEfforts) && raw.reasoningEfforts.includes(effort));
+  if (reasoningEfforts.length > 0) capabilities.reasoningEfforts = reasoningEfforts;
   if (typeof raw.toolUse === 'boolean') capabilities.toolUse = raw.toolUse;
   if (typeof raw.structuredOutput === 'boolean') capabilities.structuredOutput = raw.structuredOutput;
   return Object.keys(capabilities).length > 0 ? capabilities : undefined;

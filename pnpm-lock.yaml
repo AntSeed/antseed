@@ -145,6 +145,9 @@ importers:
       '@antseed/payments':
         specifier: workspace:*
         version: link:../payments
+      '@antseed/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@mariozechner/pi-ai':
         specifier: ^0.64.0
         version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
