@@ -25,7 +25,7 @@ antseed seller start --base-rpc-url <url>
                                       Use a custom Base RPC URL for this run
 antseed seller register               Register peer identity on-chain (ERC-8004)
 antseed seller stake <ants> --epochs <n>
-                                      Stake ANTS only (requires the upgrade)
+                                      Stake ANTS only (optional; requires the upgrade)
 antseed seller legacy stake <amount>  Stake USDC as a provider (pre-cutover, min $10)
 antseed seller legacy unstake         Withdraw legacy USDC stake
 antseed seller legacy claim-starter   Claim the legacy-seller starter ANTS position
