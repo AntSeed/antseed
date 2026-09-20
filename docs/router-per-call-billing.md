@@ -64,7 +64,25 @@ in-memory request tracking do not guarantee exactly-once billing across process
 restarts. Obsolete source tests for removed SQLite recovery columns are documented in the
 [extraction ledger](protocol/routing-split-provenance.md).
 
-## Deferred integration
+## Retained-channel reconnect
+
+Retained payment channels support reconnecting with the existing cumulative
+SpendingAuth: sellers validate and acknowledge the replay without increasing the
+bill or resetting delivered usage. Disconnected and disk-restored channels must
+pass on-chain validation before acknowledgment; closed, blocked, closing, or
+superseded channels are not reactivated. A disconnect during validation prevents
+reactivation without discarding a valid authorization for already-delivered work.
+
+Run the buyer/seller reconnect regression with
+`pnpm --filter @antseed/node exec vitest run tests/payment-reconnect.test.ts`.
+After building protocol, API adapter, and buyer-core, run
+`pnpm --filter @antseed/e2e run flow:local-chain-payment-reconnect` to repeat the
+cases against freshly deployed local contracts. This requires Anvil, Forge, and
+the repository's `forge-std` dependency. The fixture uses temporary test wallets
+and a local image provider, checks successful request delivery after reconnect,
+and verifies final settlement, released reserves, and unchanged ghost counts.
+
+## Deferred routing integration
 
 PR 3 supplies CLI/config selection, the network adapter, routing request/schema
 dispatch, buyer-policy checks, ranked fallback, usage-observation collection,
