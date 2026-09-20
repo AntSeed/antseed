@@ -23,7 +23,7 @@ test('routing services remain outside the persisted chat catalog', () => {
 });
 
 test('reasoning efforts survive live, persisted, normalization and discovery projections', async () => {
-  const capabilities = { reasoning: true, reasoningEfforts: ['none', 'low', 'high'] };
+  const capabilities = { reasoning: true, reasoningEfforts: ['adaptive', 'deep-analysis'] };
   const live = buildChatServiceCatalogFromNetworkModels({ data: [{ peers: [{
     peerId: venicePeerId, provider: 'openai', serviceId: 'gpt-test', protocol: 'openai-chat-completions', capabilities,
   }] }] });

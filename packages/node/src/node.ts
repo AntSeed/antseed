@@ -39,7 +39,9 @@ import {
   type AnnouncerConfig,
   type SellerContractConfig,
 } from "./discovery/announcer.js";
-import type { PeerVerifications } from "./discovery/peer-metadata.js";
+import { METADATA_VERSION, type PeerVerifications, type ProviderAnnouncement } from "./discovery/peer-metadata.js";
+import { validateProviderAnnouncements } from "./discovery/metadata-validator.js";
+import { encodeMetadataForSigning } from "./discovery/metadata-codec.js";
 import { verifyPeerMetadataDomains } from "./discovery/domain-verification.js";
 import { verifyPeerMetadataGithub } from "./discovery/github-verification.js";
 import {
@@ -565,11 +567,61 @@ export class AntseedNode extends EventEmitter {
       throw new Error("Node already started");
     }
 
+    let sellerAnnouncements: ProviderAnnouncement[] | undefined;
+    if (this._config.role === 'seller') {
+      sellerAnnouncements = this._providers.map((provider) => ({
+        provider: provider?.name,
+        services: provider?.services,
+        defaultPricing: provider?.pricing?.defaults,
+        servicePricing: provider?.pricing?.services,
+        serviceCategories: provider?.serviceCategories,
+        serviceApiProtocols: provider?.serviceApiProtocols,
+        serviceUnitBillingModels: provider?.serviceUnitBillingModels,
+        serviceCapabilities: provider?.serviceCapabilities,
+        serviceRouting: provider?.serviceRouting,
+        maxConcurrency: provider?.maxConcurrency,
+        currentLoad: 0,
+      }));
+      const errors = validateProviderAnnouncements(sellerAnnouncements);
+      for (const [index, provider] of this._providers.entries()) {
+        for (const method of ['handleRequest', 'getCapacity'] as const) {
+          if (typeof provider?.[method] !== 'function') errors.push({ field: `providers[${index}].${method}`, message: `${method} must be a function` });
+        }
+        for (const [service, protocols] of Object.entries(provider?.serviceApiProtocols ?? {})) {
+          if (Array.isArray(protocols) && protocols.includes('antseed-routing') && !provider.serviceRouting?.[service]) {
+            errors.push({ field: `providers[${index}].serviceRouting.${service}`, message: 'An antseed-routing service must declare its routing preferences schema and hash' });
+          }
+        }
+      }
+      if (errors.length) {
+        throw new Error(`Invalid seller configuration: ${errors.map((error) => `${error.field}: ${error.message}`).join('; ')}`);
+      }
+    }
+
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
 
     // Load or create identity
     this._identity = await loadOrCreateIdentity(this._config.identityStore ?? dataDir);
     debugLog(`[Node] Identity loaded: ${this._identity.peerId.slice(0, 12)}...`);
+
+    if (sellerAnnouncements) {
+      try {
+        encodeMetadataForSigning({
+          peerId: this._identity.peerId,
+          version: METADATA_VERSION,
+          providers: sellerAnnouncements,
+          region: 'unknown',
+          timestamp: Date.now(),
+          displayName: this._config.displayName,
+          publicAddress: this._config.publicAddress,
+          verifications: this._config.verifications,
+          capabilities: this._config.capabilities,
+          signature: '',
+        });
+      } catch (error) {
+        throw new Error(`Invalid seller configuration: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
 
     // Determine bootstrap nodes — merge official + any user-configured nodes unless
     // noOfficialBootstrap is set (e.g. isolated local testing).
