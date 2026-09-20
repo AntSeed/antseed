@@ -1,5 +1,5 @@
-import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV1, UnitBillingComponentV1, UnitBillingModelV1 } from '@antseed/node';
-import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV1 } from '@antseed/node';
+import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV2, UnitBillingModelV2 } from '@antseed/node';
+import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, createUnitBillingModel, isQuantityBillingProtocol, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV2 } from '@antseed/node';
 
 export function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -50,7 +50,7 @@ export function parseServicePricingJson(raw: string | undefined): Provider['pric
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-export function parseServiceUnitBillingModelsJson(raw: string | undefined, key = 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'): ServiceUnitBillingModelsV1 | undefined {
+export function parseServiceUnitBillingModelsJson(raw: string | undefined, key = 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'): ServiceUnitBillingModelsV2 | undefined {
   if (!raw) return undefined;
 
   let parsed: unknown;
@@ -64,7 +64,7 @@ export function parseServiceUnitBillingModelsJson(raw: string | undefined, key =
     throw new Error(`${key} must be an object map of service -> protocol -> unit billing model`);
   }
 
-  const out: ServiceUnitBillingModelsV1 = {};
+  const out: ServiceUnitBillingModelsV2 = {};
   for (const [service, protocols] of Object.entries(parsed as Record<string, unknown>)) {
     if (!protocols || typeof protocols !== 'object' || Array.isArray(protocols)) {
       throw new Error(`${key}.${service} must be an object map of protocol -> unit billing model`);
@@ -76,41 +76,40 @@ export function parseServiceUnitBillingModelsJson(raw: string | undefined, key =
       if (!model || typeof model !== 'object' || Array.isArray(model)) {
         throw new Error(`${key}.${service}.${protocol} must be a unit billing model object`);
       }
-      const normalized = normalizeUnitBillingModel(model as Record<string, unknown>, `${key}.${service}.${protocol}`);
-      const errors = validateUnitBillingModelV1(normalized);
+      const normalized = normalizeUnitBillingModel(model as Record<string, unknown>, protocol, `${key}.${service}.${protocol}`);
+      const errors = validateUnitBillingModelV2(normalized);
       if (errors.length > 0) {
         throw new Error(`${key}.${service}.${protocol}: ${errors.join('; ')}`);
       }
       out[service] = {
         ...(out[service] ?? {}),
         [protocol]: normalized,
-      } as ServiceUnitBillingModelsV1[string];
+      } as ServiceUnitBillingModelsV2[string];
     }
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function normalizeUnitBillingModel(raw: Record<string, unknown>, field: string): UnitBillingModelV1 {
-  if (raw.version !== 1 || !Array.isArray(raw.components)) {
-    throw new Error(`${field} must have version=1 and a components array`);
+function normalizeUnitBillingModel(raw: Record<string, unknown>, protocol: string, field: string): UnitBillingModelV2 {
+  if (!isQuantityBillingProtocol(protocol)) throw new Error(field + ': unsupported quantity billing adapter');
+  if (raw.version === 2) {
+    const errors = validateUnitBillingModelV2(raw);
+    if (errors.length) throw new Error(field + ': ' + errors.join('; '));
+    return { version: 2, priceMicroUsdc: raw.priceMicroUsdc as string };
   }
-  const components = raw.components.map((component, index): UnitBillingComponentV1 => {
-    if (!component || typeof component !== 'object' || Array.isArray(component)) {
-      throw new Error(`${field}.components[${index}] must be an object`);
-    }
-    const c = component as Record<string, unknown>;
-    if (typeof c.unit !== 'string' || typeof c.priceUsd !== 'number') {
-      throw new Error(`${field}.components[${index}] requires unit and numeric priceUsd`);
-    }
-    const match = c.match;
-    return {
-      unit: c.unit,
-      priceUsd: c.priceUsd,
-      ...(match && typeof match === 'object' && !Array.isArray(match) ? { match: match as Record<string, string> } : {}),
-    } as UnitBillingComponentV1;
-  });
-  return { version: 1, components };
+  const migrationError = () => new Error(field + ': cannot safely migrate legacy billing; configure one fixed priceMicroUsdc matching the service adapter');
+  if (raw.version !== 1 || Object.keys(raw).some(key => !['version', 'components'].includes(key)) || !Array.isArray(raw.components) || raw.components.length > 1) throw migrationError();
+  if (raw.components.length === 0) return createUnitBillingModel('0');
+  const component = raw.components[0];
+  if (!component || typeof component !== 'object' || Array.isArray(component)
+    || Object.keys(component).some(key => !['unit', 'priceUsd', 'match'].includes(key))
+    || (component.match !== undefined && (!component.match || typeof component.match !== 'object' || Array.isArray(component.match) || Object.keys(component.match).length > 0))
+    || component.unit !== (protocol === 'openai-images' ? 'output_images' : 'successful_requests')
+    || typeof component.priceUsd !== 'number' || !Number.isFinite(component.priceUsd) || component.priceUsd < 0) throw migrationError();
+  const micros = Math.round(component.priceUsd * 1_000_000);
+  if (!Number.isSafeInteger(micros) || micros / 1_000_000 !== component.priceUsd) throw migrationError();
+  try { return createUnitBillingModel(String(micros)); } catch { throw migrationError(); }
 }
 
 export function parseCsv(raw: string | undefined): string[] {

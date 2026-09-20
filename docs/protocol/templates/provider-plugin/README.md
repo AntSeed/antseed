@@ -178,7 +178,7 @@ npm run verify
 | `pricing.services?` | `Record<string, { inputUsdPerMillion; cachedInputUsdPerMillion?; outputUsdPerMillion }>` | Optional per-service pricing overrides |
 | `serviceCategories?` | `Record<string, string[]>` | Optional discovery tags by service |
 | `serviceCapabilities?` | `Record<string, ServiceCapabilities>` | Optional context, modality, reasoning, tool-use, and structured-output hints |
-| `serviceUnitBillingModels?` | `ServiceUnitBillingModelsV1` | Optional per-service/protocol non-token billing models |
+| `serviceUnitBillingModels?` | `ServiceUnitBillingModelsV2` | Optional per-service/protocol fixed quantity prices (`version: 2`, `priceMicroUsdc`) |
 | `serviceCategories?` | `Record<string, string[]>` | Optional per-service discovery tags (e.g. `coding`, `privacy`) |
 | `maxConcurrency` | `number` | Max concurrent requests |
 | `handleRequest(req)` | `Promise<SerializedHttpResponse>` | Handle an inference request |

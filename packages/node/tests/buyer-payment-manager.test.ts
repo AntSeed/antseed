@@ -851,10 +851,7 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = fakePeerId('seller-image-headroom-race');
     const service = 'qwen-image-3-pro';
     const requestId = 'req-image-headroom-race';
-    const unitModel = {
-      version: 1 as const,
-      components: [{ unit: 'output_images' as const, priceUsd: 0.025 }],
-    };
+    const unitModel = { version: 2 as const, priceMicroUsdc: '25000' };
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     manager.trackRequestBilling(requestId, {
       context: {
@@ -862,10 +859,10 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service,
         serviceApiProtocol: 'openai-images',
-        attributes: { model: service },
-        unitLimits: { output_images: 1 },
+
+        maxQuantity: 1,
       },
-      requestFacts: { model: service, requestedImages: 1 },
+
       unitModel,
     });
     mux.sentSpendingAuths.length = 0;
@@ -887,7 +884,7 @@ describe('BuyerPaymentManager', () => {
       reportedInputTokens: 0n,
       reportedCachedInputTokens: 0n,
       reportedOutputTokens: 0n,
-      unitUsage: { units: { output_images: 1 } },
+      unitUsage: { quantity: 1 },
       service,
       requestId,
     });
@@ -950,17 +947,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 1, components: [] },
+        defaults: { version: 2, priceMicroUsdc: '0' },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': {
-                  version: 1,
-                  components: [
-                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                  ],
-                },
+                'openai-images': { version: 2, priceMicroUsdc: '40000' },
               },
             },
           },
@@ -973,15 +965,10 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
+
       },
-      requestFacts: {},
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+
+      unitModel: { version: 2, priceMicroUsdc: '40000' },
     });
     mux.sentSpendingAuths.length = 0;
 
@@ -1000,7 +987,7 @@ describe('BuyerPaymentManager', () => {
     expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
   });
 
-  it('handleNeedAuth rejects image billingUsage whose tier does not match buyer request context', async () => {
+  it('handleNeedAuth rejects image billingUsage exceeding the buyer request limit', async () => {
     const sellerPeerId = fakePeerId('seller-image-tier');
     const channelId = await manager.authorizeSpending(
       sellerPeerId,
@@ -1011,17 +998,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 1, components: [] },
+        defaults: { version: 2, priceMicroUsdc: "0" },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': {
-                  version: 1,
-                  components: [
-                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                  ],
-                },
+                'openai-images': { version: 2, priceMicroUsdc: "40000" },
               },
             },
           },
@@ -1034,17 +1016,11 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '256x256' },
+        maxQuantity: 0,
       },
-      requestFacts: {},
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+      unitModel: { version: 2, priceMicroUsdc: "40000" },
     });
-    manager.recordObservedUnitUsage('req-image-tier-mismatch', { units: { output_images: 2 } });
+    manager.recordObservedUnitUsage('req-image-tier-mismatch', { quantity: 2 });
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -1057,8 +1033,8 @@ describe('BuyerPaymentManager', () => {
       inputTokens: '0',
       outputTokens: '0',
       billingUsage: {
-        version: 1,
-        units: { output_images: '1' },
+        version: 2,
+        quantity: '1',
       },
     }, mux);
 
@@ -1074,25 +1050,20 @@ describe('BuyerPaymentManager', () => {
       10_000n,
       TEST_PRICING,
     );
-    const imageModel = {
-      version: 1 as const,
-      components: [
-        { unit: 'output_images' as const, priceUsd: 0.004, match: { size: '1024x1024' } },
-      ],
-    };
+    const imageModel = { version: 2 as const, priceMicroUsdc: '4000' };
     manager.trackRequestBilling('req-image-hybrid', {
       context: {
         sellerPeerId,
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
+
       },
-      requestFacts: {},
+
       tokenPricing: TEST_PRICING,
       unitModel: imageModel,
     });
-    manager.recordObservedUnitUsage('req-image-hybrid', { units: { output_images: 2 } });
+    manager.recordObservedUnitUsage('req-image-hybrid', { quantity: 2 });
     mux.sentSpendingAuths.length = 0;
 
     const tokenCost = 3_750n; // 1000 input at $3/M + 50 output at $15/M
@@ -1109,10 +1080,7 @@ describe('BuyerPaymentManager', () => {
       freshInputTokens: '1000',
       cachedInputTokens: '0',
       outputTokens: '50',
-      billingUsage: {
-        version: 1,
-        units: { output_images: '2' },
-      },
+      billingUsage: { version: 2, quantity: '2' },
     }, mux);
 
     expect(mux.sentSpendingAuths.length).toBe(1);
@@ -1138,17 +1106,12 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2', size: '1024x1024' },
+
       },
-      requestFacts: {},
-      unitModel: {
-        version: 1,
-        components: [
-          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-        ],
-      },
+
+      unitModel: { version: 2, priceMicroUsdc: '40000' },
     });
-    manager.recordObservedUnitUsage('req-image-observed', { units: { output_images: 1 } });
+    manager.recordObservedUnitUsage('req-image-observed', { quantity: 1 });
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -1160,10 +1123,7 @@ describe('BuyerPaymentManager', () => {
       lastRequestCost: '80000',
       inputTokens: '0',
       outputTokens: '0',
-      billingUsage: {
-        version: 1,
-        units: { output_images: '2' },
-      },
+      billingUsage: { version: 2, quantity: '2' },
     }, mux);
 
     expect(mux.sentSpendingAuths.length).toBe(0);
@@ -1178,7 +1138,7 @@ describe('BuyerPaymentManager', () => {
       provider: 'openai',
       service: 'gpt-image-2',
       serviceApiProtocol: 'openai-images',
-      attributes: { model: 'gpt-image-2', size: '1024x1024' },
+
     });
     mux.sentSpendingAuths.length = 0;
 

@@ -10,7 +10,7 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
-import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
+import type { ServiceUnitBillingModelsV2 } from "./types/billing.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -2483,7 +2483,7 @@ export class AntseedNode extends EventEmitter {
 
       if (providerAnnouncement.serviceUnitBillingModels && Object.keys(providerAnnouncement.serviceUnitBillingModels).length > 0) {
         const existingBillingModels = providerServiceUnitBillingModelEntries[provName];
-        const newEntries: ServiceUnitBillingModelsV1 = { ...providerAnnouncement.serviceUnitBillingModels };
+        const newEntries: ServiceUnitBillingModelsV2 = { ...providerAnnouncement.serviceUnitBillingModels };
         if (existingBillingModels) {
           Object.assign(existingBillingModels.services, newEntries);
         } else {

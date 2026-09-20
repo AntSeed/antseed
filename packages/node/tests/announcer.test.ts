@@ -144,10 +144,7 @@ describe('PeerAnnouncer metadata versions', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [{ unit: 'output_images', priceUsd: 0.04 }],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: '40000' },
             },
           },
           serviceCapabilities: {
@@ -163,22 +160,19 @@ describe('PeerAnnouncer metadata versions', () => {
 
     const metadata = announcer.getLatestMetadata();
     expect(metadata?.version).toBe(METADATA_VERSION);
-    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
-      version: 1,
-      components: [{ unit: 'output_images', priceUsd: 0.04 }],
-    });
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: '40000' });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
       'gpt-image-1': { inputs: ['text'] },
     });
   });
 
-  it('announces current-version metadata without billing models when none are configured', async () => {
+  it('announces v12 metadata without billing models when none are configured', async () => {
     const announcer = new PeerAnnouncer(makeBaseConfig());
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(METADATA_VERSION);
+    expect(metadata?.version).toBe(12);
     expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

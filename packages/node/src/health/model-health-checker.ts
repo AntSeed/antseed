@@ -317,9 +317,8 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  // Image generations cost real money per probe; everything else has a
-  // near-free minimal request shape.
-  return protocol !== 'openai-images';
+  // Quantity-billed images and routing calls must not generate paid probes.
+  return protocol !== 'openai-images' && protocol !== 'antseed-routing';
 }
 
 /**
@@ -370,6 +369,8 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       break;
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
+    case 'antseed-routing':
+      throw new Error('Health probes are not supported for antseed-routing services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

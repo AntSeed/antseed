@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- Non-token billing uses fixed integer micro-USDC prices and generic quantity reports (billing v2), replacing image/request unit components. API-protocol adapters measure fulfillment and buyers verify quantity and request limits independently. Compatible legacy seller configuration migrates before provider construction; ambiguous or inexact prices require explicit configuration. Legacy billing wire payloads are rejected; token pricing and historical storage remain unchanged. This is PR 1/4 of the unreleased routing stack; protocol/discovery, shared execution, and buyer integration follow separately.
+
 ### Added
 
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.

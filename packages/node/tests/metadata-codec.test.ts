@@ -43,10 +43,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     );
     const serviceUnitBillingModels = Object.fromEntries(
       services.map((service) => [service, {
-        'openai-images': {
-          version: 1 as const,
-          components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
-        },
+        'openai-images': { version: 2 as const, priceMicroUsdc: '40000' },
       }]),
     );
     const serviceCapabilities = Object.fromEntries(
@@ -198,9 +195,9 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
   });
 
-  it('round-trips v11 service unit billing models and signs billing bytes', () => {
+  it('round-trips v13 quantity billing models and signs billing bytes', () => {
     const original = makeMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [
         {
           provider: 'openai',
@@ -209,12 +206,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [
-                  { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                ],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: "40000" },
             },
           },
           maxConcurrency: 3,
@@ -223,8 +215,8 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
     const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components).toHaveLength(1);
-    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components[0]?.priceUsd).toBeCloseTo(0.04, 5);
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.version).toBe(2);
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.priceMicroUsdc).toBe('40000');
 
     const changed = makeMetadata({
       ...original,
@@ -232,10 +224,7 @@ describe('encodeMetadata / decodeMetadata', () => {
         ...original.providers[0]!,
         serviceUnitBillingModels: {
           'gpt-image-1': {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.05 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: "50000" },
           },
         },
       }],
@@ -322,7 +311,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]?.serviceCapabilities).toBeUndefined();
   });
 
-  it('excludes service unit billing models from v10 metadata bytes', () => {
+  it('rejects dropping service unit billing models from v10 metadata bytes', () => {
     const original = makeMetadata({
       version: 10,
       providers: [
@@ -333,10 +322,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [{ unit: 'output_images', priceUsd: 0.04 }],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: "40000" },
             },
           },
           maxConcurrency: 3,
@@ -345,11 +331,8 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
 
-    const decoded = decodeMetadata(encodeMetadata(original));
-
-    expect(decoded.version).toBe(10);
-    expect(decoded.providers[0]?.serviceApiProtocols?.['gpt-image-1']).toEqual(['openai-images']);
-    expect(decoded.providers[0]?.serviceUnitBillingModels).toBeUndefined();
+    expect(() => encodeMetadata(original)).toThrow('Quantity billing requires metadata v13 or newer');
+    expect(() => encodeMetadataForSigning(original)).toThrow('Quantity billing requires metadata v13 or newer');
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {

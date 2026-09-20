@@ -32,12 +32,11 @@ import { parseResponseUsage } from './response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '@antseed/protocol/json-codec';
-import type { UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
+import type { UnitBillingModelV2, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   captureUnitBillingContext,
   computeFinalUnitBilling,
-  extractUnitResponseUsage,
   type FinalUnitBillingResult,
 } from './unit-billing.js';
 import { buyerFault, peerFault } from './errors.js';
@@ -91,7 +90,7 @@ export interface SelectedBillingRoute {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  unitModel?: UnitBillingModelV1;
+  unitModel?: UnitBillingModelV2;
   tokenPricing?: ServicePricing;
 }
 
@@ -277,7 +276,7 @@ export class BuyerPaymentNegotiator {
       });
       this._bpm.trackRequestBilling(request.requestId, {
         context: captured.context,
-        requestFacts: captured.requestFacts,
+        estimatedPromptTokens: captured.estimatedPromptTokens,
         ...(route.unitModel ? { unitModel: route.unitModel } : {}),
         ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
       });
@@ -712,16 +711,15 @@ export class BuyerPaymentNegotiator {
     // Post-response cost estimation feeds the next SpendingAuth. Token pricing
     // stays on computeCostUsdc; image unit billing is an optional surcharge.
     const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
-    const requestFacts = billingEntry?.requestFacts;
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
     const unitModel = billingEntry?.unitModel;
     let unitBilling: FinalUnitBillingResult | null = null;
     if (unitModel && billingEntry) {
       try {
-        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);
+        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response);
       } catch (err) {
-        const observed = extractUnitResponseUsage(response, requestFacts);
+        const observed = { usage: { quantity: 0 }, tokenUsage: parseResponseUsage(response.body) };
         if (requestId) {
           this._bpm.recordObservedUnitUsage(requestId, observed.usage);
         }

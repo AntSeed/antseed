@@ -1,6 +1,6 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
-import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
+import type { ServiceUnitBillingModelsV2 } from '../types/billing.js';
 import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
@@ -47,7 +47,7 @@ export interface Provider {
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Optional per-service/protocol unit billing model support advertised via discovery metadata. */
-  serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+  serviceUnitBillingModels?: ServiceUnitBillingModelsV2;
 
   /** Optional per-service model capability hints advertised via discovery metadata. */
   serviceCapabilities?: Record<string, ServiceCapabilities>;

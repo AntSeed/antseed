@@ -126,6 +126,7 @@ export {
   inferServiceProtocol,
   resolveServiceProtocol,
   type CatalogServiceCapabilities,
+  type CatalogServiceBilling,
   type CatalogServiceProtocol,
   type NetworkServiceCatalogPeer,
   type NetworkServiceOffer,

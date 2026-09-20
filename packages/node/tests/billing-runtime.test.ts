@@ -4,13 +4,13 @@ import {
   computeFinalUnitBilling,
   isFreeUnitBillingModel,
   unitUsageFromReport,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
   validateUnitBillingUsage,
-  validateUnitBillingUsageReportV1,
+  validateUnitBillingUsageReportV2,
 } from "../src/billing/unit.js";
 import type {
   UnitBillingContext,
-  UnitBillingModelV1,
+  UnitBillingModelV2,
 } from "../src/types/billing.js";
 import type { SerializedHttpRequest } from "../src/types/http.js";
 
@@ -19,47 +19,20 @@ const imageContext: UnitBillingContext = {
   provider: "openai",
   service: "gpt-image-2",
   serviceApiProtocol: "openai-images",
-  attributes: { model: "gpt-image-2", size: "1024x1024", quality: "low" },
-  unitLimits: { output_images: 1 },
+  maxQuantity: 1,
 };
 
-const imageModel: UnitBillingModelV1 = {
-  version: 1,
-  components: [
-    {
-      unit: "output_images",
-      priceUsd: 0.04,
-      match: { size: "1024x1024" },
-    },
-  ],
-};
+const imageModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "40000" };
 
 describe("unit billing runtime", () => {
   it("rejects positive billingUsage cost when buyer recomputation is zero", () => {
-    const mismatchedContext: UnitBillingContext = {
-      ...imageContext,
-      attributes: { ...imageContext.attributes, size: "256x256" },
-    };
-
-    expect(() =>
-      validateUnitBillingUsage(
-        imageModel,
-        mismatchedContext,
-        {
-          version: 1,
-          units: { output_images: "1" },
-        },
-        40_000n,
-        1.4,
-        { units: { output_images: 1 } },
-      ),
-    ).toThrow(/No billing component matched/);
+    expect(() => validateUnitBillingUsage({ version: 2, priceMicroUsdc: '0' }, imageContext, { version: 2, quantity: '1' }, 40000n, 1.4, { quantity: 1 })).toThrow('exceeds');
   });
 
   it("computes final output image cost from delivered response images", () => {
     const result = computeFinalUnitBilling(
       imageModel,
-      imageContext,
+      { ...imageContext, maxQuantity: 4 },
       {
         requestId: "req-1",
         statusCode: 200,
@@ -68,65 +41,33 @@ describe("unit billing runtime", () => {
           data: [{ b64_json: "first" }, { url: "https://example.test/second.png" }],
         })),
       },
-      {
-        requestedImages: 4,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
-      },
     );
 
-    expect(result.usage.units.output_images).toBe(2);
+    expect(result.usage.quantity).toBe(2);
     expect(result.costUsdc).toBe(80_000n);
     expect(result.billingUsage).toEqual({
-      version: 1,
-      units: { output_images: "2" },
+      version: 2,
+      quantity: "2",
     });
   });
 
-  it("caps over-delivered output images to the request limit", () => {
-    const result = computeFinalUnitBilling(
-      imageModel,
-      imageContext,
-      {
-        requestId: "req-1",
-        statusCode: 200,
-        headers: { "content-type": "application/json" },
-        body: new TextEncoder().encode(JSON.stringify({
-          data: [{ b64_json: "first" }, { b64_json: "second" }],
-        })),
-      },
-      {
-        requestedImages: 1,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
-      },
-    );
-
-    expect(result.usage.units.output_images).toBe(1);
-    expect(result.costUsdc).toBe(40_000n);
+  it("rejects over-delivered quantities rather than authorizing an ambiguous result", () => {
+    expect(() => computeFinalUnitBilling(imageModel, imageContext, { requestId: 'request', statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: [{ b64_json: 'one' }, { b64_json: 'two' }] })) })).toThrow('limit');
   });
 
   it("does not bill placeholder response entries as delivered images", () => {
     const result = computeFinalUnitBilling(
       imageModel,
-      imageContext,
+      { ...imageContext, maxQuantity: 2 },
       {
         requestId: "req-placeholder",
         statusCode: 200,
         headers: { "content-type": "application/json" },
         body: new TextEncoder().encode(JSON.stringify({ data: [{}, { b64_json: "" }] })),
       },
-      {
-        requestedImages: 2,
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
-      },
     );
 
-    expect(result.usage.units.output_images).toBe(0);
+    expect(result.usage.quantity).toBe(0);
     expect(result.costUsdc).toBe(0n);
   });
 
@@ -136,19 +77,19 @@ describe("unit billing runtime", () => {
         imageModel,
         imageContext,
         {
-          version: 1,
-          units: { output_images: "2" },
+          version: 2,
+          quantity: "2",
         },
         80_000n,
         1.4,
       ),
-    ).toThrow(/request allowed 1/);
+    ).toThrow(/request limit/);
   });
 
   it("rejects seller unit usage above what the response actually delivered", () => {
     const context: UnitBillingContext = {
       ...imageContext,
-      unitLimits: { output_images: 4 },
+      maxQuantity: 4,
     };
 
     expect(() =>
@@ -156,14 +97,14 @@ describe("unit billing runtime", () => {
         imageModel,
         context,
         {
-          version: 1,
-          units: { output_images: "4" },
+          version: 2,
+          quantity: "4",
         },
         160_000n,
         1.4,
-        { units: { output_images: 1 } },
+        { quantity: 1 },
       ),
-    ).toThrow(/response delivered 1/);
+    ).toThrow(/observed/);
   });
 
   it("rejects positive seller unit usage when the observed response delivered nothing", () => {
@@ -172,14 +113,14 @@ describe("unit billing runtime", () => {
         imageModel,
         imageContext,
         {
-          version: 1,
-          units: { output_images: "1" },
+          version: 2,
+          quantity: "1",
         },
         40_000n,
         1.4,
-        { units: {} },
+        { quantity: 0 },
       ),
-    ).toThrow(/response delivered 0/);
+    ).toThrow(/observed/);
   });
 
   it("accepts seller unit usage matching the observed response", () => {
@@ -188,12 +129,12 @@ describe("unit billing runtime", () => {
         imageModel,
         imageContext,
         {
-          version: 1,
-          units: { output_images: "1" },
+          version: 2,
+          quantity: "1",
         },
         40_000n,
         1.4,
-        { units: { output_images: 1 } },
+        { quantity: 1 },
       ),
     ).toBe(40_000n);
   });
@@ -204,8 +145,8 @@ describe("unit billing runtime", () => {
         imageModel,
         imageContext,
         {
-          version: 1,
-          units: { output_images: "1" },
+          version: 2,
+          quantity: "1",
         },
         40_000n,
         1.4,
@@ -220,8 +161,8 @@ describe("unit billing runtime", () => {
         imageModel,
         imageContext,
         {
-          version: 1,
-          units: { output_images: "0" },
+          version: 2,
+          quantity: "0",
         },
         0n,
         1.4,
@@ -232,51 +173,46 @@ describe("unit billing runtime", () => {
 
   it("rejects non-canonical and unsafe unit count strings", () => {
     expect(
-      validateUnitBillingUsageReportV1({
-        version: 1,
-        units: { output_images: "1e3" },
+      validateUnitBillingUsageReportV2({
+        version: 2,
+        quantity: "1e3",
       }),
     ).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "canonical non-negative integer decimal string",
+          "canonical safe non-negative integer decimal string",
         ),
       ]),
     );
 
     expect(
-      validateUnitBillingUsageReportV1({
-        version: 1,
-        units: { output_images: "01" },
+      validateUnitBillingUsageReportV2({
+        version: 2,
+        quantity: "01",
       }),
     ).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "canonical non-negative integer decimal string",
+          "canonical safe non-negative integer decimal string",
         ),
       ]),
     );
 
     expect(() =>
       unitUsageFromReport({
-        version: 1,
-        units: { output_images: String(Number.MAX_SAFE_INTEGER + 1) },
+        version: 2,
+        quantity: String(Number.MAX_SAFE_INTEGER + 1),
       }),
-    ).toThrow(/maximum safe integer/);
+    ).toThrow(/safe non-negative/);
   });
 
   it("does not classify malformed non-finite prices as free", () => {
-    const model = {
-      version: 1,
-      components: [
-        { unit: "output_images", priceUsd: Number.NaN },
-      ],
-    } as UnitBillingModelV1;
+    const model = { version: 2, priceMicroUsdc: String(Math.round((Number.NaN) * 1_000_000)) } as UnitBillingModelV2;
 
     expect(isFreeUnitBillingModel(model)).toBe(false);
-    expect(validateUnitBillingModelV1(model)).toEqual(
+    expect(validateUnitBillingModelV2(model)).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("non-negative finite number"),
+        expect.stringContaining("canonical uint32"),
       ]),
     );
   });
@@ -305,20 +241,10 @@ describe("unit billing runtime", () => {
 
     expect(captured.context).toMatchObject({
       serviceApiProtocol: "openai-images",
-      attributes: {
-        model: "gpt-image-2",
-        size: "1024x1024",
-        quality: "low",
-      },
-      unitLimits: { output_images: 1 },
+      maxQuantity: 1,
     });
-    expect(captured.requestFacts).toEqual({
-      model: "gpt-image-2",
-      size: "1024x1024",
-      quality: "low",
-      requestedImages: 1,
-      promptTokens: 1,
-    });
+    expect(captured.estimatedPromptTokens).toBe(1);
+    expect(captured.requestUsage).toEqual({ quantity: 1 });
   });
 
   it("captures unit context from a multipart image edits request", () => {
@@ -365,43 +291,17 @@ describe("unit billing runtime", () => {
 
     expect(captured.context).toMatchObject({
       serviceApiProtocol: "openai-images",
-      attributes: { model: "gpt-image-2", size: "1024x1024", quality: "auto" },
-      unitLimits: { output_images: 2 },
+      maxQuantity: 2,
     });
-    expect(captured.requestFacts).toEqual({
-      model: "gpt-image-2",
-      size: "1024x1024",
-      quality: "auto",
-      requestedImages: 2,
-      promptTokens: 4,
-    });
+    expect(captured.estimatedPromptTokens).toBe(4);
+    expect(captured.requestUsage).toEqual({ quantity: 2 });
   });
 
-  it("normalizes omitted image tiers and invalid counts before billing", () => {
-    const request: SerializedHttpRequest = {
-      requestId: "req-image-defaults",
-      method: "POST",
-      path: "/v1/images/generations",
-      headers: { "content-type": "application/json" },
-      body: new TextEncoder().encode(JSON.stringify({
-        model: "gpt-image-2",
-        n: 0,
-      })),
-    };
-
-    const captured = captureUnitBillingContext({
-      sellerPeerId: "a".repeat(40),
-      provider: "openai",
-      service: "gpt-image-2",
-      serviceApiProtocol: "openai-images",
-      request,
-    });
-
-    expect(captured.context.attributes).toEqual({
-      model: "gpt-image-2",
-      size: "auto",
-      quality: "auto",
-    });
-    expect(captured.context.unitLimits).toEqual({ output_images: 1 });
+  it("defaults missing image quantity to one and rejects invalid explicit quantities", () => {
+    const request: SerializedHttpRequest = { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: {}, body: new TextEncoder().encode(JSON.stringify({ model: 'image' })) };
+    const args = { ...imageContext, request };
+    expect(captureUnitBillingContext(args).context.maxQuantity).toBe(1);
+    request.body = new TextEncoder().encode(JSON.stringify({ n: 0 }));
+    expect(() => captureUnitBillingContext(args)).toThrow('positive safe integer');
   });
 });

@@ -1,8 +1,8 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, QUANTITY_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
-import { validateUnitBillingModelV1 } from "../billing/unit.js";
+import { isQuantityBillingProtocol, validateUnitBillingModelV2 } from "../billing/unit.js";
 
 // Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
 // snapshot bounded while allowing large aggregator catalogs.
@@ -20,9 +20,6 @@ export const MAX_GITHUB_REPOSITORY_LENGTH = 100;
 export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 64;
 export const MAX_SERVICE_CATEGORY_LENGTH = 32;
 export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
-export const MAX_BILLING_COMPONENTS_PER_MODEL = 8;
-export const MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT = 3;
-export const MAX_BILLING_MATCH_VALUE_BYTES = 32;
 export const MAX_PEER_CAPABILITIES = 16;
 export const MAX_PEER_CAPABILITY_LENGTH = 64;
 export { MAX_CAPABILITY_TOKEN_COUNT } from "./peer-metadata.js";
@@ -509,10 +506,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceUnitBillingModels !== undefined) {
-      if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION) {
+      if (metadata.version < QUANTITY_BILLING_METADATA_VERSION) {
         errors.push({
           field: `providers[${i}].serviceUnitBillingModels`,
-          message: `Service unit billing models require metadata version ${SERVICE_UNIT_BILLING_METADATA_VERSION}`,
+          message: `Quantity billing requires metadata version ${QUANTITY_BILLING_METADATA_VERSION}`,
         });
       }
       let expandedBillingModelCount = 0;
@@ -544,10 +541,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
-          } else if (protocol !== "openai-images") {
+          } else if (!isQuantityBillingProtocol(protocol)) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing models currently support openai-images only",
+              message: "Quantity billing requires a supported response adapter",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({
@@ -555,37 +552,14 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               message: "Billing model protocol must be announced for the service",
             });
           }
-          const modelErrors = validateUnitBillingModelV1(model);
+          const modelErrors = validateUnitBillingModelV2(model);
           for (const message of modelErrors) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message,
             });
           }
-          if (model.components.length > MAX_BILLING_COMPONENTS_PER_MODEL) {
-            errors.push({
-              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components`,
-              message: `Billing component count ${model.components.length} exceeds max ${MAX_BILLING_COMPONENTS_PER_MODEL}`,
-            });
-          }
-          model.components.forEach((component, componentIndex) => {
-            const matchEntries = Object.entries(component.match ?? {});
-            if (matchEntries.length > MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT) {
-              errors.push({
-                field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match`,
-                message: `Billing match entry count ${matchEntries.length} exceeds max ${MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT}`,
-              });
-            }
-            for (const [key, value] of matchEntries) {
-              const byteLength = new TextEncoder().encode(value).length;
-              if (byteLength > MAX_BILLING_MATCH_VALUE_BYTES) {
-                errors.push({
-                  field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match.${key}`,
-                  message: `Billing match value length ${byteLength} exceeds max ${MAX_BILLING_MATCH_VALUE_BYTES} bytes`,
-                });
-              }
-            }
-          });
+
         }
       }
       if (expandedBillingModelCount > MAX_SERVICES_PER_PROVIDER) {

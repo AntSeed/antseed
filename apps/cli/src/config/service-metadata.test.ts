@@ -18,12 +18,9 @@ test('parseServiceCapabilitiesInput validates CLI capability JSON', () => {
 
 test('parseServiceUnitBillingModelsInput validates CLI billing JSON', () => {
   const models = parseServiceUnitBillingModelsInput(JSON.stringify({
-    'openai-images': {
-      version: 1,
-      components: [{ unit: 'output_images', priceUsd: 0.04, match: { quality: 'high' } }],
-    },
+    'openai-images': { version: 2, priceMicroUsdc: '40000' },
   }));
-  assert.equal(models['openai-images']?.components[0]?.priceUsd, 0.04);
+  assert.equal(models['openai-images']?.priceMicroUsdc, '40000');
   assert.throws(
     () => parseServiceUnitBillingModelsInput('{"unknown":{"version":1,"components":[]}}'),
     /known service API protocol/,

@@ -1,3 +1,4 @@
+import { createUnitBillingModel } from '../src/types/billing.js';
 import { describe, it, expect } from 'vitest';
 import {
   validateMetadata,
@@ -270,12 +271,7 @@ describe('validateMetadata', () => {
       },
       serviceUnitBillingModels: {
         'gpt-image-1': {
-          'openai-images': {
-            version: 1,
-            components: [
-              { unit: 'output_images', priceUsd: 0.04 },
-            ],
-          },
+          'openai-images': { version: 2, priceMicroUsdc: "40000" },
         },
       },
       maxConcurrency: 1,
@@ -283,13 +279,13 @@ describe('validateMetadata', () => {
     } satisfies PeerMetadata['providers'][number];
 
     const unitOnlyErrors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [unitOnlyProvider],
     }));
     expect(unitOnlyErrors).toEqual([]);
 
     const bothErrors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [
         {
           ...unitOnlyProvider,
@@ -305,48 +301,10 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects non-image service unit billing models for now', () => {
-    const errors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
-      providers: [
-        {
-          provider: 'openai',
-          services: ['gpt-4.1'],
-          defaultPricing: {
-            inputUsdPerMillion: 0,
-            outputUsdPerMillion: 0,
-          },
-          serviceApiProtocols: {
-            'gpt-4.1': ['openai-chat-completions'],
-          },
-          serviceUnitBillingModels: {
-            'gpt-4.1': {
-              'openai-chat-completions': {
-                version: 1,
-                components: [
-                  { unit: 'requests', priceUsd: 1 } as any,
-                ],
-              },
-            },
-          },
-          maxConcurrency: 1,
-          currentLoad: 0,
-        },
-      ],
-    }));
-
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images only'),
-        }),
-        expect.objectContaining({
-          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('components[0].unit is unsupported'),
-        }),
-      ]),
-    );
+  it('rejects quantity billing without a supported adapter', () => {
+    const metadata = validMetadata();
+    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createUnitBillingModel('40000') } };
+    expect(validateMetadata(metadata)).toEqual(expect.arrayContaining([expect.objectContaining({ message: 'Quantity billing requires a supported response adapter' })]));
   });
 
   it('accepts valid service capabilities and rejects malformed ones', () => {

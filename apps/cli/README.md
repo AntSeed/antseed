@@ -126,7 +126,7 @@ Per-service capability hints and non-token billing are durable config fields:
 antseed config seller add-service openai gpt-image-1 \
   --input 0 --output 0 \
   --capabilities '{"inputs":["text","image"]}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --unit-billing-models '{"openai-images":{"version":2,"priceMicroUsdc":"40000"}}'
 ```
 
 `--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.

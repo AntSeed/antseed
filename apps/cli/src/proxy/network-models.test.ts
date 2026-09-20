@@ -60,13 +60,7 @@ const imageSeller = makePeer({
     openai: {
       services: {
         'flux-1-schnell': {
-          'openai-images': {
-            version: 1,
-            components: [
-              { unit: 'output_images', priceUsd: 0.01, match: { size: '512x512' } },
-              { unit: 'output_images', priceUsd: 0.05, match: { size: '1024x1024' } },
-            ],
-          },
+          'openai-images': { version: 2, priceMicroUsdc: '10000' },
         },
       },
     },
@@ -610,16 +604,10 @@ test('keeps only the lowest-priced duplicate image offer from one peer', () => {
       openai: {
         services: {
           'flux-1-schnell': {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.04 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: '40000' },
           },
           'flux1-schnell': {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.01 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: '10000' },
           },
         },
       },
@@ -648,10 +636,7 @@ test('prefers a known duplicate price over an unknown price', () => {
       openai: {
         services: {
           'flux1-schnell': {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.02 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: '20000' },
           },
         },
       },
@@ -792,7 +777,7 @@ test('image models are detected via protocol or capability outputs', () => {
   assert.equal(flux?.type, 'image')
   assert.equal(sdxl?.type, 'image')
   assert.equal(flux?.peers[0]?.minImageUsdPerImage, 0.01)
-  assert.equal(flux?.peers[0]?.maxImageUsdPerImage, 0.05)
+  assert.equal(flux?.peers[0]?.maxImageUsdPerImage, 0.01)
 })
 
 test('type filter splits text and image models', () => {
