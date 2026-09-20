@@ -15,8 +15,8 @@ import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protoc
 import type { ServiceApiProtocol } from '../src/types/service-api.js';
 import { VerificationMux } from '../src/verification/verification-mux.js';
 
-const perCallModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "5000" };
-const imageModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "40000" };
+const perCallModel: UnitBillingModelV2 = { version: 2, components: [{ priceMicroUsdc: "5000" }] };
+const imageModel: UnitBillingModelV2 = { version: 2, components: [{ priceMicroUsdc: "40000" }] };
 const buyerPeerId = '22'.repeat(20);
 
 function makeHarness(model: UnitBillingModelV2, remainingReserve: bigint, images = false) {

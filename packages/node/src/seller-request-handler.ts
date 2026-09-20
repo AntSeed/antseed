@@ -224,7 +224,18 @@ export class SellerRequestHandler {
       }
 
       const requestPricing = this.resolveProviderPricing(provider, request);
-      const requestBilling = this._captureSellerBillingContext(provider, request);
+      let requestBilling: ReturnType<SellerRequestHandler['_captureSellerBillingContext']>;
+      try {
+        requestBilling = this._captureSellerBillingContext(provider, request);
+      } catch (error) {
+        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({ error: {
+            type: 'invalid_request_error', message: error instanceof Error ? error.message : String(error),
+          } })),
+        });
+        return;
+      }
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
         : undefined;
@@ -818,6 +829,7 @@ export class SellerRequestHandler {
       provider: provider.name,
       service,
       serviceApiProtocol: this._selectSellerProtocolForService(provider, service, request),
+      unitModel: provider.serviceUnitBillingModels?.[service]?.[this._selectSellerProtocolForService(provider, service, request)],
       request,
     });
   }

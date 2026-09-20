@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chooseBestModelRoute,
   isModelRouteEligible,
+  modelRouteTotalPrice,
   rankModelRoutes,
   scoreModelRoute,
   type ModelRouteCandidate,
@@ -15,6 +16,15 @@ const preferences: ModelRoutingPreferences = {
   allowedPeerIds: [],
   blockedPeerIds: [],
 };
+
+it('does not rank conditional quantity pricing as free or fall back to token prices', () => {
+  const candidate: ModelRouteCandidate = { peerId: 'seller', inputUsdPerMillion: 0, outputUsdPerMillion: 0,
+    billing: { kind: 'per_quantity', pricing: 'conditional', model: { version: 2, components: [{ priceMicroUsdc: '80000', match: { quality: 'hd' } }] } } };
+  expect(modelRouteTotalPrice(candidate)).toBeNull();
+  expect(scoreModelRoute(candidate, { ...preferences, preferFreePeers: true }).reasons).not.toContain('free peer preferred');
+  expect(modelRouteTotalPrice({ ...candidate, quantityPriceMicroUsdc: '80000' })).toBe(0.08);
+  expect(modelRouteTotalPrice({ peerId: 'seller', type: 'image', inputUsdPerMillion: 0, outputUsdPerMillion: 0 })).toBeNull();
+});
 
 function route(overrides: Partial<ModelRouteCandidate>): ModelRouteCandidate {
   return {

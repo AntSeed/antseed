@@ -1,5 +1,5 @@
 import { hexlify, randomBytes } from 'ethers';
-import { isFreeUnitBillingModel, unitPriceMicroUsdc } from '@antseed/protocol/billing';
+import { isFreeUnitBillingModel, validateUnitBillingModelV2 } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
 import type { PaymentMux } from './payment-mux.js';
@@ -181,7 +181,7 @@ export class BuyerPaymentManager {
     if (entry.requiresResponseAcceptance && !entry.responseAccepted) {
       throw buyerFault('Payment requires an accepted response', 'buyer-session-state');
     }
-    if (unitPriceMicroUsdc(entry.unitModel) !== null && entry.context.serviceApiProtocol !== 'openai-images' && (entry.observedUnitUsage?.quantity ?? 0) <= 0) {
+    if (entry.unitModel && validateUnitBillingModelV2(entry.unitModel).length === 0 && entry.context.serviceApiProtocol !== 'openai-images' && (entry.observedUnitUsage?.quantity ?? 0) <= 0) {
       throw buyerFault('Quantity payment requires observed fulfillment', 'buyer-session-state');
     }
   }
@@ -1413,7 +1413,7 @@ export class BuyerPaymentManager {
       acceptedCost = buyerEstimatedRequestCost;
     }
     if (requestBilling?.tokenPricing && buyerEstimatedRequestCost === 0n) acceptedCost = 0n;
-    if (unitPriceMicroUsdc(unitBillingModel) !== null) acceptedCost = buyerEstimatedRequestCost;
+    if (unitBillingModel && validateUnitBillingModelV2(unitBillingModel).length === 0) acceptedCost = buyerEstimatedRequestCost;
     const totalAcceptedCost = billingState?.acceptedCostUsdc ?? acceptedCost;
     if (alreadyCounted) {
       acceptedCost = outstandingCost;
@@ -1555,7 +1555,7 @@ export class BuyerPaymentManager {
       && requestBilling.tokenPricing.outputUsdPerMillion === 0
       && (requestBilling.tokenPricing.cachedInputUsdPerMillion ?? 0) === 0
       && (!requestBilling.unitModel || isFreeUnitBillingModel(requestBilling.unitModel))) return;
-    const requestCounted = requestBilling?.unitModel && requestBilling.context.serviceApiProtocol !== 'openai-images' && unitPriceMicroUsdc(requestBilling.unitModel) !== null;
+    const requestCounted = requestBilling?.unitModel && requestBilling.context.serviceApiProtocol !== 'openai-images' && validateUnitBillingModelV2(requestBilling.unitModel).length === 0;
     if (requestBilling && (requestCounted || billingState?.acceptedCostUsdc !== undefined)) {
       if (requestCounted) {
         try {

@@ -22,11 +22,11 @@ const imageContext: UnitBillingContext = {
   maxQuantity: 1,
 };
 
-const imageModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "40000" };
+const imageModel: UnitBillingModelV2 = { version: 2, components: [{ priceMicroUsdc: "40000" }] };
 
 describe("unit billing runtime", () => {
   it("rejects positive billingUsage cost when buyer recomputation is zero", () => {
-    expect(() => validateUnitBillingUsage({ version: 2, priceMicroUsdc: '0' }, imageContext, { version: 2, quantity: '1' }, 40000n, 1.4, { quantity: 1 })).toThrow('exceeds');
+    expect(() => validateUnitBillingUsage({ version: 2, components: [{ priceMicroUsdc: '0' }] }, imageContext, { version: 2, quantity: '1' }, 40000n, 1.4, { quantity: 1 })).toThrow('exceeds');
   });
 
   it("computes final output image cost from delivered response images", () => {
@@ -207,7 +207,7 @@ describe("unit billing runtime", () => {
   });
 
   it("does not classify malformed non-finite prices as free", () => {
-    const model = { version: 2, priceMicroUsdc: String(Math.round((Number.NaN) * 1_000_000)) } as UnitBillingModelV2;
+    const model = { version: 2, components: [{ priceMicroUsdc: String(Math.round((Number.NaN) * 1_000_000)) }] } as UnitBillingModelV2;
 
     expect(isFreeUnitBillingModel(model)).toBe(false);
     expect(validateUnitBillingModelV2(model)).toEqual(

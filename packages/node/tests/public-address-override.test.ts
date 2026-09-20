@@ -90,7 +90,7 @@ describe('AntseedNode publicAddress override', () => {
             serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
             serviceUnitBillingModels: {
               'gpt-image-1': {
-                'openai-images': { version: 2, priceMicroUsdc: '40000' },
+                'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
               },
             },
             maxConcurrency: 10,
@@ -101,6 +101,6 @@ describe('AntseedNode publicAddress override', () => {
     });
 
     expect(v10Peer.providerServiceUnitBillingModels).toBeUndefined();
-    expect(v11Peer.providerServiceUnitBillingModels?.openai?.services['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: '40000' });
+    expect(v11Peer.providerServiceUnitBillingModels?.openai?.services['gpt-image-1']?.['openai-images']).toEqual({ version: 2, components: [{ priceMicroUsdc: '40000' }] });
   });
 });

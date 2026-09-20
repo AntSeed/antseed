@@ -1,4 +1,6 @@
 export {
+  assertQuantityBillingModel,
+  validateQuantityBillingConditions,
   captureUnitBillingContext,
   computeFinalUnitBilling,
   evaluateUnitBilling,

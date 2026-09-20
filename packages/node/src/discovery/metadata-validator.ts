@@ -1,13 +1,14 @@
+import { validateQuantityBillingConditions } from '@antseed/api-adapter';
 import { validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
 import { QUANTITY_BILLING_METADATA_VERSION, METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
-import { encodeMetadata } from "./metadata-codec.js";
+import { encodeMetadata, MAX_ENCODED_METADATA_SIZE } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { isQuantityBillingProtocol, validateUnitBillingModelV2 } from "../billing/unit.js";
 
 // Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
 // snapshot bounded while allowing large aggregator catalogs.
-export const MAX_METADATA_SIZE = 128 * 1024;
+export const MAX_METADATA_SIZE = MAX_ENCODED_METADATA_SIZE;
 export const MAX_PROVIDERS = 10;
 export const MAX_SERVICES_PER_PROVIDER = 512;
 export const MAX_SERVICE_NAME_LENGTH = 64;
@@ -554,6 +555,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
             });
           }
           const modelErrors = validateUnitBillingModelV2(model);
+          if (modelErrors.length === 0) modelErrors.push(...validateQuantityBillingConditions(protocol, model));
           for (const message of modelErrors) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,

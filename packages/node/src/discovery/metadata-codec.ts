@@ -1,4 +1,5 @@
 import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
+import { assertQuantityBillingModel } from '../billing/unit.js';
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
 import { QUANTITY_BILLING_METADATA_VERSION, SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
@@ -6,9 +7,10 @@ import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS, isKnownServiceApiProtocol } from "../types/service-api.js";
-import { createUnitBillingModel, isQuantityBillingProtocol, validateUnitBillingModelV2, type UnitBillingModelV2 } from "../types/billing.js";
+import { isQuantityBillingProtocol, type UnitBillingModelV2 } from "../types/billing.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
+export const MAX_ENCODED_METADATA_SIZE = 128 * 1024;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
 const PUBLIC_ADDRESS_METADATA_VERSION = 5;
 const SELLER_CONTRACT_METADATA_VERSION = 8;
@@ -424,6 +426,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
 
   // Combine all parts
   const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
+  if (totalLength + 65 > MAX_ENCODED_METADATA_SIZE) throw new Error(`Encoded size ${totalLength + 65} exceeds max ${MAX_ENCODED_METADATA_SIZE}`);
   const result = new Uint8Array(totalLength);
   let offset = 0;
   for (const part of parts) {
@@ -454,13 +457,19 @@ function encodeServiceUnitBillingModels(
   for (const [serviceName, protocol, model] of entries) {
     pushUtf8(parts, serviceName);
     parts.push(new Uint8Array([WELL_KNOWN_SERVICE_API_PROTOCOLS.indexOf(protocol)]));
-    const errors = validateUnitBillingModelV2(model);
-    if (errors.length) throw new Error(errors.join('; '));
-    if (!isQuantityBillingProtocol(protocol)) throw new Error('Unsupported quantity billing protocol');
-    parts.push(new Uint8Array([2]));
-    const price = new Uint8Array(4);
-    new DataView(price.buffer).setUint32(0, Number(model.priceMicroUsdc), false);
-    parts.push(price);
+    assertQuantityBillingModel(model, protocol);
+    parts.push(new Uint8Array([2, model.components.length]));
+    for (const component of model.components) {
+      const price = new Uint8Array(4);
+      new DataView(price.buffer).setUint32(0, Number(component.priceMicroUsdc), false);
+      parts.push(price);
+      const conditions = Object.entries(component.match ?? {}).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      parts.push(new Uint8Array([conditions.length]));
+      for (const [key, value] of conditions) {
+        pushUtf8(parts, key);
+        pushUtf8(parts, value);
+      }
+    }
   }
 }
 
@@ -726,14 +735,30 @@ function decodeServiceUnitBillingModels(
   for (let index = 0; index < entryCount; index += 1) {
     const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
     offset = serviceOffset;
-    checkBounds(offset, 6, data.length);
+    checkBounds(offset, 3, data.length);
     const protocol = WELL_KNOWN_SERVICE_API_PROTOCOLS[data[offset++]!];
     if (!protocol || !isQuantityBillingProtocol(protocol)) throw new Error('Unsupported quantity billing protocol');
     if (data[offset++] !== 2) throw new Error('Unsupported service unit billing model version; expected 2');
-    const price = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
-    offset += 4;
+    const componentCount = data[offset++]!;
+    const model: UnitBillingModelV2 = { version: 2, components: [] };
+    for (let componentIndex = 0; componentIndex < componentCount; componentIndex += 1) {
+      checkBounds(offset, 5, data.length);
+      const price = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+      const matchCount = data[offset++]!;
+      const match: Record<string, string> = Object.create(null);
+      for (let matchIndex = 0; matchIndex < matchCount; matchIndex += 1) {
+        const [key, keyOffset] = readUtf8(data, offset, checkBounds);
+        const [value, valueOffset] = readUtf8(data, keyOffset, checkBounds);
+        offset = valueOffset;
+        if (Object.hasOwn(match, key)) throw new Error('Duplicate billing condition key');
+        match[key] = value;
+      }
+      model.components.push({ priceMicroUsdc: String(price), ...(matchCount > 0 ? { match } : {}) });
+    }
+    assertQuantityBillingModel(model, protocol);
     if (models[serviceName]?.[protocol]) throw new Error('Duplicate quantity billing offer');
-    models[serviceName] = { ...models[serviceName], [protocol]: createUnitBillingModel(String(price)) };
+    models[serviceName] = { ...models[serviceName], [protocol]: model };
   }
   setOffset(offset);
   return entryCount > 0 ? models : undefined;
@@ -755,6 +780,7 @@ function readUtf8(
  * Decode binary metadata back into PeerMetadata.
  */
 export function decodeMetadata(data: Uint8Array): PeerMetadata {
+  if (data.length > MAX_ENCODED_METADATA_SIZE) throw new Error('Metadata exceeds maximum encoded size');
   function checkBounds(offset: number, needed: number, total: number): void {
     if (offset + needed > total) throw new Error('Truncated metadata buffer');
   }
