@@ -209,9 +209,9 @@ describe('PeerAnnouncer routing capabilities', () => {
     expect(metadata.providers[0]!.serviceCapabilities!['gpt-4.1']!.reasoningEfforts).toEqual(['high', 'low']);
     expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
   });
-  it('announces signed v13 for routing descriptors without requiring effort choices', async () => {
+  it.each([{ services: ['selector'] }, { services: [] }])('announces signed v13 routing descriptors with service list $services', async ({ services }) => {
     const config = makeBaseConfig();
-    config.providers = [{ provider: 'fixture', services: ['selector'], maxConcurrency: 1,
+    config.providers = [{ provider: 'fixture', services, maxConcurrency: 1,
       serviceCapabilities: { selector: { routing: true } },
       serviceApiProtocols: { selector: ['antseed-routing'] },
       serviceRouting: { selector: createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: {} }) },
@@ -224,6 +224,20 @@ describe('PeerAnnouncer routing capabilities', () => {
     expect(metadata.providers[0]!.serviceRouting).toEqual(config.providers[0]!.serviceRouting);
     expect(validateMetadata(metadata)).toEqual([]);
     expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
+  });
+
+  it('still filters routing descriptors excluded by a nonempty service list', async () => {
+    const config = makeBaseConfig();
+    config.providers[0]!.serviceRouting = {
+      selector: createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: {} }),
+    };
+    const announcer = new PeerAnnouncer(config);
+
+    await announcer.announce();
+
+    const metadata = announcer.getLatestMetadata()!;
+    expect(metadata.providers[0]!.serviceRouting).toBeUndefined();
+    expect(validateMetadata(metadata)).toEqual([]);
   });
 
   it.each([true, false])('uses signed v13 when routing is explicitly %s', async (routing) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertRoutingPreferences, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingRequest, validateRoutingServiceMetadata, validateRoutingUsageContext, type RoutingPreferenceSchema } from './routing.js';
+import { MAX_ROUTING_PREFERENCE_BYTES, assertRoutingPreferences, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingRequest, validateRoutingServiceMetadata, validateRoutingUsageContext, type RoutingPreferenceSchema } from './routing.js';
 
 const schema: RoutingPreferenceSchema = {
   type: 'object', additionalProperties: false,
@@ -102,5 +102,99 @@ describe('router-defined preferences', () => {
     expect(() => validateRoutingRequest({ ...request, preferencesSchemaHash: 'stale' }, metadata)).toThrow('refresh');
     expect(() => validateRoutingRequest({ ...request, preferences: { count: '2' } }, metadata)).toThrow();
     expect(() => validateRoutingRequest({ ...request, candidates: [] }, metadata)).toThrow();
+  });
+});
+
+describe('routing preference expansion limits', () => {
+  function expandingSchema(): unknown {
+    let child: unknown = { type: 'string', default: 'x' };
+    for (let depth = 0; depth < 3; depth++) {
+      child = {
+        type: 'array',
+        items: { type: 'object', additionalProperties: false, properties: { child } },
+        default: Array.from({ length: 30 }, () => ({})),
+      };
+    }
+    return { type: 'object', additionalProperties: false, properties: { child } };
+  }
+
+  it('rejects compact nested defaults without expanding them', () => {
+    const preferencesSchema = expandingSchema();
+    expect(new TextEncoder().encode(JSON.stringify(preferencesSchema)).length).toBeLessThan(1024);
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('string choices');
+    expect(() => createRoutingServiceMetadata(preferencesSchema as RoutingPreferenceSchema)).toThrow('string choices');
+  });
+
+  it('rejects expanding defaults before checking an untrusted descriptor hash', () => {
+    expect(() => validateRoutingServiceMetadata({
+      version: 1, preferencesSchema: expandingSchema(), preferencesSchemaHash: 'untrusted',
+    })).toThrow('string choices');
+  });
+
+  it('rejects nested enum values without expanding defaults', () => {
+    const preferencesSchema = {
+      type: 'object', additionalProperties: false,
+      properties: {
+        entries: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', default: 'example' } } },
+          enum: [Array.from({ length: 2000 }, () => ({}))],
+        },
+      },
+    };
+    expect(new TextEncoder().encode(JSON.stringify(preferencesSchema)).length).toBeLessThan(MAX_ROUTING_PREFERENCE_BYTES);
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('string choices');
+  });
+
+  it('rejects sibling default fan-out instead of doing recursive validation work', () => {
+    const rows = {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => ['field' + index, { type: 'boolean' }])),
+      },
+      default: Array.from({ length: 400 }, () => ({})),
+    };
+    const single = { type: 'object', additionalProperties: false, properties: { first: rows } };
+    const combined = { ...single, properties: { first: rows, second: structuredClone(rows) } };
+    expect(new TextEncoder().encode(JSON.stringify(combined)).length).toBeLessThan(MAX_ROUTING_PREFERENCE_BYTES);
+    expect(() => validateRoutingPreferenceSchema(single)).toThrow('string choices');
+    expect(() => validateRoutingPreferenceSchema(combined)).toThrow('string choices');
+  });
+
+  it('rejects supplied nested preferences before recursive resolution', () => {
+    const preferencesSchema = {
+      type: 'object', additionalProperties: false,
+      properties: {
+        rows: {
+          type: 'array',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => ['field' + index, { type: 'boolean' }])),
+          },
+        },
+      },
+    };
+    expect(() => resolveRoutingPreferences(preferencesSchema as unknown as RoutingPreferenceSchema, { rows: Array.from({ length: 700 }, () => ({})) }))
+      .toThrow('string choices');
+    expect(() => resolveRoutingPreferences(schema, { policy: Array.from({ length: 700 }, () => ({})) }))
+      .toThrow('flat object');
+  });
+
+  it.each(['é🙂', '"\\\n'])('counts UTF-8 bytes, escapes and punctuation at the schema/value limits: %j', (text) => {
+    const field = { type: 'string' as const, enum: [text], default: text, description: '' };
+    const preferencesSchema: RoutingPreferenceSchema = {
+      type: 'object', additionalProperties: false, properties: { 'quoted"key': field },
+    };
+    field.description = 'x'.repeat(MAX_ROUTING_PREFERENCE_BYTES - new TextEncoder().encode(JSON.stringify(preferencesSchema)).length);
+    expect(() => createRoutingServiceMetadata(preferencesSchema)).not.toThrow();
+    expect(resolveRoutingPreferences(preferencesSchema, {})).toEqual({ 'quoted"key': text });
+    field.description += 'x';
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('16 KiB');
+
+    const input = { 'quoted"key': text, padding: '' };
+    input.padding = 'x'.repeat(MAX_ROUTING_PREFERENCE_BYTES - new TextEncoder().encode(JSON.stringify(input)).length);
+    expect(() => assertRoutingPreferences(input)).not.toThrow();
+    expect(() => assertRoutingPreferences({ ...input, padding: input.padding + 'x' })).toThrow('16 KiB');
   });
 });

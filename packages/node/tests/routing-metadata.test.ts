@@ -17,6 +17,26 @@ function metadata(): PeerMetadata {
 }
 
 describe('signed routing metadata', () => {
+  it('accepts descriptors with an empty service list without relaxing protocol or capability requirements', () => {
+    const source = metadata();
+    const provider = source.providers[0]!;
+    provider.services = [];
+    expect(validateMetadata(source)).toEqual([]);
+
+    const decoded = decodeMetadata(encodeMetadata(source));
+    expect(decoded.providers[0]!.serviceRouting).toEqual(provider.serviceRouting);
+    expect(validateMetadata(decoded)).toEqual([]);
+
+    provider.serviceApiProtocols = {};
+    expect(validateMetadata(source)).toContainEqual(expect.objectContaining({ field: 'providers[0].serviceRouting.selector' }));
+    provider.serviceApiProtocols = { selector: ['antseed-routing'] };
+    provider.serviceCapabilities = { selector: { routing: false } };
+    expect(validateMetadata(source)).toContainEqual(expect.objectContaining({ field: 'providers[0].serviceRouting.selector' }));
+    provider.serviceCapabilities = { selector: { routing: true } };
+    provider.services = ['other-service'];
+    expect(validateMetadata(source)).toContainEqual(expect.objectContaining({ field: 'providers[0].serviceRouting.selector' }));
+  });
+
   it('round trips signed v13 descriptors and effort capabilities together and detects tampering', () => {
     const source = metadata();
     source.providers[0]!.serviceCapabilities!.selector = { routing: true, reasoning: true, reasoningEfforts: ['high', 'none', 'low'] };

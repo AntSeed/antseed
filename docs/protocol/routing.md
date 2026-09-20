@@ -30,6 +30,12 @@ Routing descriptors propagate through provider announcements, peer discovery, an
 service catalogs. Routing offers are excluded from ordinary inference model lists
 and are not sent billable health probes. Existing TypeSafe decision services and
 verifier advertisements remain supported.
+Routing descriptors follow the existing discovery convention for an empty service
+list: their named entries are preserved, but must still advertise the routing
+protocol and capability. A nonempty list restricts descriptors to its named
+services. This does not change seller startup requirements or request matching.
+Health probes skip services marked `routing: true` or advertising `antseed-routing`
+anywhere in their protocol list, regardless of protocol order.
 
 Updated discovery accepts supported older metadata versions. Announcements without
 new fields retain their existing version selection. An older buyer that only accepts
@@ -101,6 +107,10 @@ Unknown keywords, undeclared preferences, invalid defaults, and prototype-relate
 keys are rejected. Schemas and preference values are each bounded to 16 KiB.
 `resolveRoutingPreferences` applies defaults without mutating the input. This
 restriction applies only to preferences, not to the inference request's JSON body.
+Flat string enums eliminate recursive default expansion: array/object defaults and
+nested enum values are rejected rather than expanded. The schema, supplied values,
+and resolved values retain the 16 KiB UTF-8 JSON limit, bounding the number of fields
+and enum choices validated without a separate recursive-expansion engine.
 
 Optional `context` contains `conversationRef`, `usageObservations`, and
 `historyTruncated`. Each observation has an opaque `id`, an `offer` identifying

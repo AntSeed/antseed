@@ -579,7 +579,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         for (const [service, descriptor] of Object.entries(p.serviceRouting)) {
           try {
             validateRoutingServiceMetadata(descriptor);
-            if (!p.services.includes(service) || !p.serviceApiProtocols?.[service]?.includes('antseed-routing') || p.serviceCapabilities?.[service]?.routing !== true) throw new Error("Routing descriptor requires an advertised routing service");
+            if ((!hasWildcardServices && !p.services.includes(service)) || !p.serviceApiProtocols?.[service]?.includes('antseed-routing') || p.serviceCapabilities?.[service]?.routing !== true) throw new Error("Routing descriptor requires an advertised routing service");
           } catch (error) { errors.push({ field: `${field}.${service}`, message: String(error) }); }
         }
       }

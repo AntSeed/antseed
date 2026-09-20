@@ -290,7 +290,7 @@ export class PeerAnnouncer {
         if (normalizedServiceUnitBillingModels) {
           providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
         }
-        const routingEntries = Object.entries(p.serviceRouting ?? {}).filter(([service]) => p.services.includes(service));
+        const routingEntries = Object.entries(p.serviceRouting ?? {}).filter(([service]) => p.services.length === 0 || p.services.includes(service));
         if (routingEntries.length) providerAnnouncement.serviceRouting = structuredClone(Object.fromEntries(routingEntries));
         const normalizedServiceCapabilities = this._normalizeServiceCapabilities(p.serviceCapabilities, p.services);
         if (normalizedServiceCapabilities) {

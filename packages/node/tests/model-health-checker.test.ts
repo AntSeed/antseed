@@ -115,6 +115,51 @@ describe('buildHealthProbeRequest', () => {
 });
 
 describe('ModelHealthChecker', () => {
+  it.each<{
+    label: string;
+    protocols?: NonNullable<Provider['serviceApiProtocols']>[string];
+    routing?: boolean;
+    useProbeProvider?: boolean;
+  }>([
+    { label: 'routing protocol first', protocols: ['antseed-routing', 'openai-chat-completions'], routing: true },
+    { label: 'routing protocol last', protocols: ['openai-chat-completions', 'antseed-routing'], routing: true },
+    { label: 'routing protocol without a capability', protocols: ['openai-chat-completions', 'antseed-routing'] },
+    { label: 'routing capability with a chat protocol', protocols: ['openai-chat-completions'], routing: true },
+    { label: 'routing capability without protocols', routing: true },
+    { label: 'routing service with a separate probe provider', protocols: ['openai-chat-completions', 'antseed-routing'], useProbeProvider: true },
+  ])('skips $label while continuing to probe ordinary inference services', async ({ protocols, routing, useProbeProvider }) => {
+    const handleRequest = vi.fn(async (request: SerializedHttpRequest) => {
+      const body = JSON.parse(new TextDecoder().decode(request.body)) as { model: string };
+      return jsonResponse(request.requestId, body.model === 'selector' ? 500 : 200);
+    });
+    const provider = makeProvider({
+      services: ['selector', 'chat-model'],
+      serviceApiProtocols: { 'chat-model': ['openai-chat-completions'], ...(protocols ? { selector: protocols } : {}) },
+      serviceCapabilities: { 'chat-model': { routing: false }, ...(routing === undefined ? {} : { selector: { routing } }) },
+      onRequest: handleRequest,
+    });
+    const probeRequest = vi.fn(handleRequest);
+    const probeProvider = useProbeProvider ? makeProvider({ onRequest: probeRequest }) : undefined;
+    const onChange = vi.fn();
+    const checker = new ModelHealthChecker({ targets: [{ provider, probeProvider }], failureThreshold: 1, onChange });
+
+    for (let sweep = 0; sweep < 3; sweep++) await checker.runSweep();
+
+    expect(handleRequest).toHaveBeenCalledTimes(3);
+    for (const [request] of handleRequest.mock.calls) {
+      expect(request.path).toBe('/v1/chat/completions');
+      expect(JSON.parse(new TextDecoder().decode(request.body)).model).toBe('chat-model');
+    }
+    expect(probeRequest).toHaveBeenCalledTimes(useProbeProvider ? 3 : 0);
+    expect(provider.services).toEqual(['selector', 'chat-model']);
+    expect(provider.healthCheckAvailable).not.toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(checker.getSnapshot()).toContainEqual(expect.objectContaining({
+      service: 'selector', advertised: true, consecutiveFailures: 0, lastStatusCode: null,
+      lastDetail: 'Skipped health probe for unsupported protocol antseed-routing',
+    }));
+  });
+
   it('unadvertises a service after the failure threshold and emits an event', async () => {
     const provider = makeProvider({
       onRequest: statusSequence({ 'model-a': [500, 500, 500], 'model-b': [200, 200, 200] }),
