@@ -184,7 +184,7 @@ describe('BuyerRequestHandler streaming security guards', () => {
   // Cost trailer tests removed — cost data now flows through NeedAuth on PaymentMux.
   // Done chunks pass through to the client untouched.
 
-  it('passes done chunk data through without modification', async () => {
+  it.each([true, false])('passes binary chunks through with collectResponseBody=%s', async (collectResponseBody) => {
     const requestId = 'stream-passthrough';
     const { handler, harness } = createHandler({
       maxStreamBufferBytes: 1024,
@@ -206,7 +206,7 @@ describe('BuyerRequestHandler streaming security guards', () => {
       onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
         if (chunk.data.length > 0) chunks.push(chunk.data);
       },
-    });
+    }, { collectResponseBody });
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     harness.emitChunk({
@@ -216,7 +216,7 @@ describe('BuyerRequestHandler streaming security guards', () => {
     });
 
     const response = await promise;
-    expect([...response.body]).toEqual([1, 0, 2, 3]);
+    expect([...response.body]).toEqual(collectResponseBody ? [1, 0, 2, 3] : []);
     expect([...chunks[0]!]).toEqual([1, 0, 2, 3]);
   });
 

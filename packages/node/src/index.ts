@@ -4,6 +4,7 @@ export {
   type NodeConfig,
   type NodePaymentsConfig,
   type NodeRelayerConfig,
+  type NodeVideoConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
@@ -12,6 +13,16 @@ export {
   type BuyerChannelSummary,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export type {
+  VideoProviderAdapter,
+  ProviderVideoArtifact,
+  ProviderVideoJob,
+  ProviderVideoStatus,
+  ProviderVideoCancelResult,
+  VideoAdapterContext,
+} from './interfaces/video-provider.js';
+export * from '@antseed/protocol/video';
+export { VideoJobStore, type VideoJobDiagnostics } from './video/video-job-store.js';
 export {
   ModelHealthChecker,
   DEFAULT_HEALTH_CHECK_INTERVAL_MS,

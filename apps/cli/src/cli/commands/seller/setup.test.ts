@@ -34,6 +34,8 @@ test('getSellerSetupCredentialHint matches the selected plugin', () => {
   assert.equal(getSellerSetupCredentialHint('anthropic'), 'export ANTHROPIC_API_KEY=<key>');
   assert.equal(getSellerSetupCredentialHint('local-llm'), 'start your local LLM runtime (no API key required)');
   assert.equal(getSellerSetupCredentialHint('typesafe'), 'export TYPESAFE_API_KEY=<key>');
+  assert.equal(getSellerSetupCredentialHint('runway'), 'export RUNWAY_API_KEY=<key>');
+  assert.equal(getSellerSetupCredentialHint('veo'), 'export GEMINI_API_KEY=<key>');
 });
 
 test('applySellerSetupRpcUrl stores valid custom RPC URLs, ignores blanks, and clears with dash', () => {

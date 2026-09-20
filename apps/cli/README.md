@@ -44,6 +44,8 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
 | `antseed buyer balance` | Check wallet and deposit balance |
 | `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
+| `antseed video create` | Submit an asynchronous Runway or Veo generation |
+| `antseed video status/list/cancel/download` | Manage durable jobs and verified artifact downloads |
 | **Session** | |
 | `antseed buyer connection get` | Show current session state (pinned service, peer) |
 | `antseed buyer connection set` | Update service/peer overrides on a running proxy |
@@ -81,6 +83,43 @@ antseed seller start
 ```
 
 `config.json` is the durable source of truth. Env vars are for secrets and one-off overrides.
+
+## Video Generation
+
+Start the buyer proxy, then use the canonical asynchronous commands:
+
+```bash
+antseed buyer start
+antseed video create \
+  --model veo-3.1-generate-preview \
+  --prompt "A cinematic sunrise above an alpine observatory" \
+  --duration 8 --aspect-ratio 16:9 --resolution 1080p \
+  --provider veo --wait --download sunrise.mp4
+```
+
+Use `--image first-frame.png` for image-to-video. Creation is asynchronous unless `--wait` or `--download` is supplied. Downloads resume from `<output>.part`, validate `Content-Range`, verify SHA-256, and atomically rename only after success.
+
+Buyer auto-approval defaults to 5 USDC total and 10 seconds:
+
+```json
+{
+  "buyer": {
+    "video": {
+      "autoApprove": true,
+      "maxTotalUsdc": "5000000",
+      "maxDurationSeconds": 10
+    }
+  }
+}
+```
+
+Per-command `--max-total-usdc` can only tighten the total-price cap. A rejected quote is printed without upstream submission.
+
+Runway and Veo sellers are configured through `antseed seller setup`. Video uses a single full-price execution charge: the buyer authorizes 100% before submission, and the seller earns it when the upstream provider accepts the job. Downloads are hash-verified and require no second payment or delivery receipt.
+
+**Buyer risk:** payment purchases an accepted generation attempt, not guaranteed delivery or quality. An accepted job that later fails remains payable; refunds require seller support. This is not escrow, and a malicious seller can misuse a valid authorization. Total-price and duration caps remain in force.
+
+The former `--max-upfront-percent`, `buyer.video.maxUpfrontBps`, seller `videoPayment`, and `ANTSEED_VIDEO_UPFRONT_BPS` settings are removed. Old config settings fail explicitly; remove them only after accepting full-price billing. Upgrade buyers and sellers together and finish or reconcile old split-payment jobs first. See `docs/protocol/spec/10-video-jobs.md` for upgrade details and the threat model.
 
 ### Buyer state isolation
 

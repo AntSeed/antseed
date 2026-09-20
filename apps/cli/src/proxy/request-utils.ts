@@ -42,6 +42,9 @@ export function parsePeerPinnedService(value: string): { peerId: string; service
 }
 
 export function extractRequestedService(request: SerializedHttpRequest): string | null {
+  const headerService = getHeader(request.headers, 'x-antseed-service').trim()
+    || getHeader(request.headers, 'x-antseed-model').trim()
+  if (headerService) return headerService
   const contentType = getHeader(request.headers, 'content-type').toLowerCase()
   if (!contentType.includes('application/json') && !contentType.startsWith('multipart/form-data')) {
     return null

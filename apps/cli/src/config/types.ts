@@ -210,6 +210,12 @@ export interface BuyerCLIConfig {
   autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+  /** Automatic approval limits for signed asynchronous video quotes. */
+  video?: {
+    autoApprove: boolean;
+    maxTotalUsdc: string;
+    maxDurationSeconds: number;
+  };
 }
 
 /**
