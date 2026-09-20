@@ -17,7 +17,7 @@ import {
   CONNECTION_CAPABILITY_SIGNED_SDP_V1,
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
-import { SERVICE_CAPABILITIES_METADATA_VERSION } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
 import { decodeMetadata, encodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { verifySignature } from '@antseed/protocol/signing';
 import { createUnitBillingModel } from '../src/types/billing.js';
@@ -139,8 +139,8 @@ describe('PeerAnnouncer capabilities', () => {
 describe('PeerAnnouncer metadata versions', () => {
   it.each([
     { version: 1, components: [] },
-    { version: 2, priceMicroUsdc: '01' },
-    { version: 2, priceMicroUsdc: '1', unit: 'image' },
+    { version: 2, components: [{ priceMicroUsdc: '01' }] },
+    { version: 2, components: [{ priceMicroUsdc: '1' }], unit: 'image' },
   ])('rejects invalid plugin billing instead of dropping its price: %j', async (model) => {
     const config = makeBaseConfig();
     config.providers[0]!.serviceApiProtocols = { 'gpt-4.1': ['openai-chat-completions'] };
@@ -163,7 +163,7 @@ describe('PeerAnnouncer metadata versions', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': { version: 2, priceMicroUsdc: "40000" },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
             },
           },
           serviceCapabilities: {
@@ -179,19 +179,19 @@ describe('PeerAnnouncer metadata versions', () => {
 
     const metadata = announcer.getLatestMetadata();
     expect(metadata?.version).toBe(13);
-    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: "40000" });
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, components: [{ priceMicroUsdc: '40000' }] });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
       'gpt-image-1': { inputs: ['text'] },
     });
   });
 
-  it('announces backward-compatible v12 metadata without billing models when none are configured', async () => {
+  it('announces current-version metadata without billing models when none are configured', async () => {
     const announcer = new PeerAnnouncer(makeBaseConfig());
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(SERVICE_CAPABILITIES_METADATA_VERSION);
+    expect(metadata?.version).toBe(METADATA_VERSION);
     expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });
@@ -257,7 +257,7 @@ describe('PeerAnnouncer routing capabilities', () => {
     expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
   });
 
-  it('keeps v12 when routing belongs only to an unavailable provider or unannounced service', async () => {
+  it('uses current-version metadata when routing belongs only to an unavailable provider or unannounced service', async () => {
     const config = makeBaseConfig();
     config.providers[0]!.serviceCapabilities = { 'unannounced': { routing: true } };
     config.providers.push({
@@ -269,7 +269,7 @@ describe('PeerAnnouncer routing capabilities', () => {
     });
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
-    expect(announcer.getLatestMetadata()!.version).toBe(12);
+    expect(announcer.getLatestMetadata()!.version).toBe(METADATA_VERSION);
     expect(announcer.getLatestMetadata()!.providers).toHaveLength(1);
   });
 });

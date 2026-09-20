@@ -2,6 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { buildNetworkServiceOffers } from './service-catalog.js';
 
 describe('buildNetworkServiceOffers', () => {
+  it('exposes conditional rules without an invented flat price or image range', () => {
+    const model = { version: 2 as const, components: [
+      { priceMicroUsdc: '40000', match: { quality: 'standard' } },
+      { priceMicroUsdc: '80000', match: { quality: 'hd' } },
+      { priceMicroUsdc: '20000', match: { quality: 'hd', size: '1536x1024' } },
+    ] };
+    const [offer] = buildNetworkServiceOffers([{ peerId: 'seller', providers: ['openai'], services: ['image'],
+      providerServiceApiProtocols: { openai: { services: { image: ['openai-images'] } } },
+      providerServiceUnitBillingModels: { openai: { services: { image: { 'openai-images': model } } } },
+    }]);
+    expect(offer?.billing).toEqual({ kind: 'per_quantity', pricing: 'conditional', model });
+    expect(offer?.billingByProtocol?.['openai-images']).toEqual(offer?.billing);
+    expect(offer?.billing).not.toHaveProperty('amountMicroUsdc');
+    expect(offer).not.toHaveProperty('minImageUsdPerImage');
+    expect(offer).not.toHaveProperty('maxImageUsdPerImage');
+  });
+  it('summarizes additive unconditional components as one fixed price', () => {
+    const model = { version: 2 as const, components: [{ priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000' }] };
+    const [offer] = buildNetworkServiceOffers([{ peerId: 'seller', providers: ['openai'], services: ['image'],
+      providerServiceApiProtocols: { openai: { services: { image: ['openai-images'] } } },
+      providerServiceUnitBillingModels: { openai: { services: { image: { 'openai-images': model } } } },
+    }]);
+    expect(offer?.billing).toEqual({ kind: 'per_quantity', pricing: 'fixed', amountMicroUsdc: '60000', model });
+    expect(offer?.minImageUsdPerImage).toBe(0.06);
+    expect(offer?.maxImageUsdPerImage).toBe(0.06);
+  });
   it('projects peer-level verifier advertisements to every service offer', () => {
     const offers = buildNetworkServiceOffers([{
       peerId: 'tee-seller', providers: ['openai'], services: ['model-a', 'model-b'],
@@ -38,7 +64,7 @@ describe('buildNetworkServiceOffers', () => {
         openai: {
           services: {
             'gpt-image-test': {
-              'openai-images': { version: 2, priceMicroUsdc: '40000' },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
             },
           },
         },

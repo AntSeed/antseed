@@ -1,8 +1,13 @@
 import type { ServiceApiProtocol } from './service-api.js';
 
+export interface UnitBillingComponentV2 {
+  priceMicroUsdc: string;
+  match?: Record<string, string>;
+}
+
 export interface UnitBillingModelV2 {
   version: 2;
-  priceMicroUsdc: string;
+  components: UnitBillingComponentV2[];
 }
 
 export type ServiceUnitBillingModelsV2 = Record<string, Partial<Record<ServiceApiProtocol, UnitBillingModelV2>>>;
@@ -22,32 +27,61 @@ export interface UnitBillingContext {
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
   maxQuantity?: number;
+  attributes?: Record<string, string>;
 }
 
 export const MAX_UNIT_PRICE_MICRO_USDC = 0xffff_ffffn;
-export const FREE_UNIT_BILLING_MODEL_V2: UnitBillingModelV2 = { version: 2, priceMicroUsdc: '0' };
+export const FREE_UNIT_BILLING_MODEL_V2: UnitBillingModelV2 = { version: 2, components: [] };
 
 export function isQuantityBillingProtocol(protocol: string): boolean {
   return protocol === 'openai-images' || protocol === 'openai-chat-completions' || protocol === 'antseed-routing';
 }
 
 export function createUnitBillingModel(priceMicroUsdc: string): UnitBillingModelV2 {
-  const model: UnitBillingModelV2 = { version: 2, priceMicroUsdc };
+  const model: UnitBillingModelV2 = { version: 2, components: [{ priceMicroUsdc }] };
   const errors = validateUnitBillingModelV2(model);
   if (errors.length) throw new Error(errors.join('; '));
   return model;
 }
 
 export function unitPriceMicroUsdc(model: UnitBillingModelV2 | undefined): bigint | null {
-  return model && validateUnitBillingModelV2(model).length === 0 ? BigInt(model.priceMicroUsdc) : null;
+  if (!model || validateUnitBillingModelV2(model).length > 0
+    || model.components.some(component => Object.keys(component.match ?? {}).length > 0)) return null;
+  return model.components.reduce((total, component) => total + BigInt(component.priceMicroUsdc), 0n);
 }
 
 export function validateUnitBillingModelV2(model: unknown): string[] {
   if (!isObject(model) || model.version !== 2) return ['Unit billing model must be version 2; migrate legacy seller configuration'];
-  if (Object.keys(model).some(key => !['version', 'priceMicroUsdc'].includes(key))) return ['Unsupported unit billing model field'];
-  if (!isCanonicalInteger(model.priceMicroUsdc) || model.priceMicroUsdc.length > 10
-    || BigInt(model.priceMicroUsdc) > MAX_UNIT_PRICE_MICRO_USDC) return ['priceMicroUsdc must be a canonical uint32 micro-USDC amount'];
-  return [];
+  if (Object.keys(model).some(key => !['version', 'components'].includes(key))) return ['Unsupported unit billing model field'];
+  if (!Array.isArray(model.components) || model.components.length > 255) return ['components must be an array of at most 255 pricing components'];
+  const errors: string[] = [];
+  for (const [index, component] of model.components.entries()) {
+    const field = `components[${index}]`;
+    if (!isObject(component)) { errors.push(`${field} must be an object`); continue; }
+    if (Object.keys(component).some(key => !['priceMicroUsdc', 'match'].includes(key))) errors.push(`${field}: unsupported component field`);
+    if (!isCanonicalInteger(component.priceMicroUsdc) || component.priceMicroUsdc.length > 10
+      || BigInt(component.priceMicroUsdc) > MAX_UNIT_PRICE_MICRO_USDC) errors.push(`${field}.priceMicroUsdc must be a canonical uint32 micro-USDC amount`);
+    if (component.match !== undefined) {
+      if (!isObject(component.match) || Object.keys(component.match).length > 255) {
+        errors.push(`${field}.match must be an object with at most 255 conditions`);
+      } else {
+        for (const [key, value] of Object.entries(component.match)) {
+          if (!key || new TextEncoder().encode(key).length > 255 || typeof value !== 'string' || !value.length
+            || new TextEncoder().encode(value).length > 255) errors.push(`${field}.match: conditions must have nonempty UTF-8 keys and string values of at most 255 bytes`);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+export function resolveUnitPriceMicroUsdc(model: UnitBillingModelV2, context: Pick<UnitBillingContext, 'attributes'>): bigint {
+  const errors = validateUnitBillingModelV2(model);
+  if (errors.length) throw new Error(errors.join('; '));
+  const matched = model.components.filter(component => Object.entries(component.match ?? {})
+    .every(([key, value]) => Object.hasOwn(context.attributes ?? {}, key) && context.attributes![key] === value));
+  if (model.components.length > 0 && matched.length === 0) throw new Error('No billing component matched the request attributes');
+  return matched.reduce((total, component) => total + BigInt(component.priceMicroUsdc), 0n);
 }
 
 export function isFreeUnitBillingModel(model: UnitBillingModelV2): boolean {
@@ -77,7 +111,7 @@ export function evaluateUnitBilling(model: UnitBillingModelV2, context: UnitBill
   const errors = validateUnitBillingModelV2(model);
   if (errors.length) throw new Error(errors.join('; '));
   validateQuantityWithinRequest(usage, context);
-  return BigInt(model.priceMicroUsdc) * BigInt(usage.quantity);
+  return usage.quantity === 0 ? 0n : resolveUnitPriceMicroUsdc(model, context) * BigInt(usage.quantity);
 }
 
 export function validateUnitBillingUsage(

@@ -75,19 +75,22 @@ test('loadConfig migrates compatible legacy seller billing before provider const
     await withTempConfig(JSON.stringify(config), async (path) => {
       const loaded = await loadConfig(path);
       assert.deepEqual(loaded.seller.providers.example?.services?.example?.unitBillingModels,
-        { [protocol!]: { version: 2, priceMicroUsdc: '40000' } });
+        { [protocol!]: { version: 2, components: [{ priceMicroUsdc: '40000' }] } });
     });
   }
 });
 
-test('loadConfig rejects conditional legacy billing instead of silently flattening prices', async () => {
+test('loadConfig preserves conditional legacy billing instead of silently flattening prices', async () => {
   const config = { seller: { providers: { example: { plugin: 'openai', services: {
     example: { unitBillingModels: { 'openai-images': { version: 1, components: [
       { unit: 'output_images', priceUsd: 0.04, match: { quality: 'high' } },
     ] } } },
   } } } } };
   await withTempConfig(JSON.stringify(config), async (path) => {
-    await assert.rejects(loadConfig(path), /cannot safely migrate/);
+    const loaded = await loadConfig(path);
+    assert.deepEqual(loaded.seller.providers.example?.services?.example?.unitBillingModels, {
+      'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000', match: { quality: 'high' } }] },
+    });
   });
 });
 
@@ -173,7 +176,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
                   toolUse: true,
                 },
                 unitBillingModels: {
-                  'openai-images': { version: 2, priceMicroUsdc: "40000" },
+                  'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
                 },
               },
             },
@@ -199,7 +202,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
         inputs: ['text', 'image'],
         toolUse: true,
       });
-      assert.equal(service.unitBillingModels?.['openai-images']?.priceMicroUsdc, '40000');
+      assert.equal(service.unitBillingModels?.['openai-images']?.components[0]?.priceMicroUsdc, '40000');
     }
   );
 });

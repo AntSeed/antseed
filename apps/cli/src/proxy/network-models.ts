@@ -14,6 +14,7 @@ import {
   rankModelRoutes,
   selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
+  type CatalogServiceBilling,
   type CatalogServiceProtocol,
   type NetworkServiceOffer,
   type ModelRoutingPreferences,
@@ -26,6 +27,8 @@ export { effectiveModelReputationScore } from '@antseed/node'
 export type NetworkModelType = 'text' | 'image' | 'decision' | 'routing'
 
 export type NetworkModelPeerOffer = {
+  billing?: CatalogServiceBilling
+  billingByProtocol?: NetworkServiceOffer['billingByProtocol']
   advertisedVerifierIds?: string[]
   peerId: string
   displayName?: string
@@ -264,6 +267,8 @@ export function buildNetworkModels(
       provider: offer.provider,
       serviceId: offer.serviceId,
       protocol: offer.protocol,
+      ...(offer.billing ? { billing: offer.billing } : {}),
+      ...(offer.billingByProtocol ? { billingByProtocol: offer.billingByProtocol } : {}),
       protocols: offer.protocols,
       type: offer.type,
       ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),

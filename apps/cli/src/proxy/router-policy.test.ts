@@ -132,3 +132,26 @@ test('explicit router requests can omit a model and receive the selected model',
   assert.ok(candidate)
   assert.equal(JSON.parse(Buffer.from(candidate.request.body).toString()).model, 'model')
 })
+
+test('image candidates resolve conditional prices without treating unknown prices as free', () => {
+  const { peer, options } = fixture()
+  options.maxPricing = undefined
+  options.protocol = 'openai-images'
+  options.request.path = '/v1/images/generations'
+  options.request.body = Buffer.from(JSON.stringify({ model: 'model', prompt: 'cube', quality: 'hd' }))
+  peer.providerServiceApiProtocols!.openai!.services.model = ['openai-images']
+  peer.providerServiceUnitBillingModels = { openai: { services: { model: { 'openai-images': { version: 2, components: [
+    { priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000', match: { quality: 'hd' } },
+  ] } } } } }
+  const candidate = validateRouterCandidate(options)
+  assert.ok(candidate)
+  assert.equal(candidate.quantityPriceMicroUsdc, '60000')
+  assert.equal(candidate.billing?.pricing, 'conditional')
+  assert.equal(candidate.minImageUsdPerImage, null)
+  options.maxPricing = { defaults: { inputUsdPerMillion: 25, outputUsdPerMillion: 25 } }
+  assert.equal(validateRouterCandidate(options), null)
+  options.maxPricing = undefined
+  peer.providerServiceUnitBillingModels.openai!.services.model!['openai-images']!.components.shift()
+  options.request.body = Buffer.from(JSON.stringify({ model: 'model', quality: 'standard' }))
+  assert.equal(validateRouterCandidate(options), null)
+})

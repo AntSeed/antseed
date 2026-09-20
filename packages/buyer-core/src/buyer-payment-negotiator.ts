@@ -13,7 +13,7 @@ import {
   type PaymentRequiredPayload,
   type CloseChannelResultPayload,
 } from '@antseed/protocol/messages';
-import { unitPriceMicroUsdc } from '@antseed/protocol/billing';
+import { validateUnitBillingModelV2 } from '@antseed/protocol/billing';
 import type { RequestExecutionOptions } from './buyer-request-handler.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
@@ -277,6 +277,7 @@ export class BuyerPaymentNegotiator {
         provider: route.provider,
         service: route.service,
         serviceApiProtocol: route.serviceApiProtocol,
+        unitModel: route.unitModel,
         request,
       });
       this._bpm.trackRequestBilling(request.requestId, {
@@ -679,7 +680,7 @@ export class BuyerPaymentNegotiator {
         existingSessionBudgetRequest,
         requiredCumulativeTarget,
         requiredCumulativeTarget == null,
-        unitPriceMicroUsdc(requestBilling?.unitModel) !== null,
+        requestBilling?.unitModel !== undefined && validateUnitBillingModelV2(requestBilling.unitModel).length === 0,
       );
       if (recovered) {
         return { action: 'retry' };
@@ -793,7 +794,7 @@ export class BuyerPaymentNegotiator {
     if (unitBilling && requestId) {
       this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
     }
-    if (unitPriceMicroUsdc(unitModel) !== null && (unitBilling?.usage.quantity ?? 0) <= 0) return;
+    if (unitModel && validateUnitBillingModelV2(unitModel).length === 0 && (unitBilling?.usage.quantity ?? 0) <= 0) return;
     const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
     const pricing = billingEntry?.tokenPricing
       ?? this._bpm.getSessionPricing(peer.peerId, service)
