@@ -10,7 +10,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - Quantity billing retains conditional and additive pricing components without named billing units. Image adapters support model, size, quality, and resolution conditions; buyers independently resolve request prices and verify delivered quantities. Legacy startup migration preserves compatible conditions. Catalogs expose conditional rules without misleading flat prices or ranges.
 
-- Non-token billing uses fixed integer micro-USDC prices and generic quantity reports (billing v2), replacing image/request unit components. API-protocol adapters measure fulfillment and buyers verify quantity and request limits independently. Compatible legacy seller configuration migrates before provider construction; ambiguous or inexact prices require explicit configuration. Legacy billing wire payloads are rejected; token pricing and historical storage remain unchanged. This is PR 1/4 of the unreleased routing stack; protocol/discovery, shared execution, and buyer integration follow separately.
+- Non-token billing uses fixed integer micro-USDC prices and generic quantity reports (billing v2), replacing image/request unit components. API-protocol adapters measure fulfillment and buyers verify quantity and request limits independently. Compatible legacy seller configuration migrates before provider construction; ambiguous or inexact prices require explicit configuration. Legacy billing wire payloads are rejected; token pricing and historical storage remain unchanged. This is PR 1/5 of the unreleased routing stack; reasoning-effort announcements, routing protocol/discovery, shared execution, and buyer integration follow separately.
 
 ### Added
 
