@@ -55,8 +55,8 @@ describe('network routing', () => {
 
   it('calls two differently configured services without service-specific adapter logic', async () => {
     const schemas: RoutingPreferenceSchema[] = [
-      { type: 'object', additionalProperties: false, properties: { chooseLast: { type: 'boolean', default: true } } },
-      { type: 'object', additionalProperties: false, properties: { options: { type: 'object', additionalProperties: false, properties: { index: { type: 'integer', default: 0 } }, default: {} } } },
+      { type: 'object', additionalProperties: false, properties: { policy: { type: 'string', enum: ['quality', 'cost'], default: 'quality', description: 'Routing policy' } } },
+      { type: 'object', additionalProperties: false, properties: { position: { type: 'string', enum: ['first', 'last'], default: 'last', description: 'Candidate preference' } } },
     ];
     for (const [index, schema] of schemas.entries()) {
       const metadata = createRoutingServiceMetadata(schema);

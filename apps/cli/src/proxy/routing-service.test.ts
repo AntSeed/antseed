@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRoutingServiceMetadata, createPerCallBillingModel, type PeerInfo, type RouteSelectionContext } from '@antseed/node'
+import { createRoutingServiceMetadata, createUnitBillingModel, type PeerInfo, type RouteSelectionContext } from '@antseed/node'
 import type { RoutingServiceConfig } from '../config/types.js'
 import { RoutingServiceExecutor } from './routing-service.js'
 
@@ -22,11 +22,11 @@ test('metadata inspection resolves typed preferences and rejects unknown fields 
   const state = setup()
   state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
     type: 'object', additionalProperties: false,
-    properties: { threshold: { type: 'number', default: 0.5 }, enabled: { type: 'boolean' } },
+    properties: { threshold: { type: 'string', enum: ['balanced', 'quality'], default: 'balanced' }, enabled: { type: 'string', enum: ['enabled', 'disabled'] } },
   })
-  const selection = { kind: 'router' as const, service: state.config, preferences: { enabled: false } }
+  const selection = { kind: 'router' as const, service: state.config, preferences: { enabled: 'disabled' } }
   const description = await state.executor.describe(selection)
-  assert.deepEqual(description.preferences, { threshold: 0.5, enabled: false })
+  assert.deepEqual(description.preferences, { threshold: 'balanced', enabled: 'disabled' })
   assert.equal(state.sent.length, 0)
   await assert.rejects(state.executor.describe({ ...selection, preferences: { threshold: '0.5' } }), /preferences.threshold/)
   await assert.rejects(state.executor.describe({ ...selection, preferences: { instructions: 'unknown' } }), /unknown preference/)
@@ -36,7 +36,7 @@ test('metadata inspection resolves typed preferences and rejects unknown fields 
 test('schema changes reject stale requests before any service request', async () => {
   const state = setup()
   state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
-    type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' } },
+    type: 'object', additionalProperties: false, properties: { flag: { type: 'string', enum: ['enabled', 'disabled'] } },
   })
   await assert.rejects(state.executor.invoke('parent', state.context, state.messages), /refresh router metadata/)
   assert.equal(state.sent.length, 0)
@@ -55,7 +55,7 @@ test('metadata refresh aborts an active call when its schema changes', async () 
   const rejected = assert.rejects(pending, /abort/i)
   await ready
   state.peer.providerServiceRouting!.openai!.services['route-classifier'] = createRoutingServiceMetadata({
-    type: 'object', additionalProperties: false, properties: { flag: { type: 'boolean' } },
+    type: 'object', additionalProperties: false, properties: { flag: { type: 'string', enum: ['enabled', 'disabled'] } },
   })
   state.executor.updateMetadata([state.peer])
   await rejected
@@ -200,7 +200,7 @@ test('shutdown cancels active service calls', async () => {
 function setupPerCall() {
   const state = setup({}, 0)
   state.peer.providerServiceUnitBillingModels = { openai: { services: {
-    'route-classifier': { 'antseed-routing': createPerCallBillingModel('5000') },
+    'route-classifier': { 'antseed-routing': createUnitBillingModel('5000') },
   } } }
   state.context.candidates = [{ peerId: 'b'.repeat(40), serviceId: 'test-model', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]
   return state

@@ -6,9 +6,9 @@ export {
   isFreeUnitBillingModel,
   usdToMicroUsdc,
   unitUsageFromReport,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
   validateUnitBillingUsage,
-  validateUnitBillingUsageReportV1,
+  validateUnitBillingUsageReportV2,
   type CapturedUnitBillingContext,
   type FinalUnitBillingResult,
 } from "./unit.js";

@@ -4,8 +4,8 @@ import { readRouterSettings } from '../src/routing/router-settings.js';
 
 describe('typed routing selection', () => {
   const service = { peerId: 'a'.repeat(40), provider: 'fixture', serviceId: 'selector' };
-  it('accepts typed nested values only for network selections', () => {
-    expect(isRoutingSelection({ kind: 'router', service, preferences: { options: { enabled: true }, count: 2, labels: ['a'] } })).toBe(true);
+  it('accepts flat string choices only for network selections', () => {
+    expect(isRoutingSelection({ kind: 'router', service, preferences: { policy: 'balanced' } })).toBe(true);
     expect(isRoutingSelection({ kind: 'router', preferences: {} })).toBe(false);
     expect(isRoutingSelection({ kind: 'model', model: 'model', preferences: {} })).toBe(false);
   });

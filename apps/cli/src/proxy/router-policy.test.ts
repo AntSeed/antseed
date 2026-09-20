@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { areRouteRecommendationsEligible, createPerCallBillingModel, type PeerInfo, type ServiceCapabilities } from '@antseed/node'
+import { areRouteRecommendationsEligible, createUnitBillingModel, type PeerInfo, type ServiceCapabilities } from '@antseed/node'
 import { validateRouterCandidate, resolveRouterRecommendation } from './router-policy.js'
 
 function fixture() {
@@ -117,7 +117,7 @@ for (const protocols of [['openai-responses', 'openai-chat-completions'], ['open
     peer.providerPricing!.openai!.defaults = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
     peer.providerServiceApiProtocols!.openai!.services.model = [...protocols]
     peer.providerServiceUnitBillingModels = { openai: { services: { model: {
-      'openai-chat-completions': createPerCallBillingModel('5000'),
+      'openai-chat-completions': createUnitBillingModel('5000'),
     } } } }
     assert.equal(validateRouterCandidate(options), null)
     options.protocol = 'openai-responses'

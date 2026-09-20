@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { AntseedNode, ChannelsClient, createRoutingServiceMetadata, createPerCallBillingModel, loadOrCreateIdentity, makeDepositsDomain, signSetOperator } from '@antseed/node';
+import { AntseedNode, ChannelsClient, createRoutingServiceMetadata, createUnitBillingModel, loadOrCreateIdentity, makeDepositsDomain, signSetOperator } from '@antseed/node';
 import { BuyerProxy } from '../../apps/cli/dist/proxy/buyer-proxy.js';
 import localPlugin from '../../plugins/router-local/dist/index.js';
 
@@ -140,7 +140,7 @@ try {
   fixtureProviders[0].serviceRouting = { 'route-classifier': createRoutingServiceMetadata({ type: 'object', properties: {}, additionalProperties: false }) };
   if (perCall) {
     fixtureProviders[0].pricing = { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
-    fixtureProviders[0].serviceUnitBillingModels = { 'route-classifier': { 'antseed-routing': createPerCallBillingModel('5000') } };
+    fixtureProviders[0].serviceUnitBillingModels = { 'route-classifier': { 'antseed-routing': createUnitBillingModel('5000') } };
     fixtureProviders[0].omitUsage = true;
   }
   const peers = [];

@@ -127,26 +127,14 @@ function buildKnownUnitBillingModel(service) {
   const normalized = service.trim().toLowerCase();
   if (normalized.startsWith("grok-imagine-image-quality") || normalized.startsWith("grok-imagine-image-pro")) {
     return {
-      version: 1,
-      components: [
-        {
-          unit: "output_images",
-          priceUsd: 0.05,
-          match: { model: service },
-        },
-      ],
+      version: 2,
+      priceMicroUsdc: "50000",
     };
   }
   if (normalized.startsWith("grok-imagine-image")) {
     return {
-      version: 1,
-      components: [
-        {
-          unit: "output_images",
-          priceUsd: 0.02,
-          match: { model: service },
-        },
-      ],
+      version: 2,
+      priceMicroUsdc: "20000",
     };
   }
   return null;

@@ -1,5 +1,5 @@
 import { hexlify, randomBytes } from 'ethers';
-import { isFreeUnitBillingModel, perCallPriceMicroUsdc } from '@antseed/protocol/billing';
+import { isFreeUnitBillingModel, unitPriceMicroUsdc } from '@antseed/protocol/billing';
 import { type AbstractSigner } from 'ethers';
 import type { BuyerIdentity } from './interfaces.js';
 import type { PaymentMux } from './payment-mux.js';
@@ -38,7 +38,7 @@ import {
   computeCostUsdc,
   type ServicePricing,
 } from './pricing.js';
-import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
+import type { UnitBillingContext, UnitBillingModelV2, UnitBillingUsage } from '@antseed/protocol/billing';
 import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { buyerFault, faultCodeOf } from './errors.js';
 
@@ -55,12 +55,12 @@ const MAX_REQUEST_BILLING_ENTRIES = 512;
  *  to record delivered unit usage before rejecting a positive claim. */
 const OBSERVED_UNIT_USAGE_WAIT_MS = 5_000;
 
-function countOutputImages(usage: UnitBillingUsage | undefined): bigint {
-  return BigInt(Math.max(0, Math.floor(usage?.units.output_images ?? 0)));
+function countOutputImages(usage: UnitBillingUsage | undefined, context?: UnitBillingContext): bigint {
+  return context?.serviceApiProtocol === 'openai-images' ? BigInt(usage?.quantity ?? 0) : 0n;
 }
 
 function validateUnitNormalizedCost(
-  model: UnitBillingModelV1,
+  model: UnitBillingModelV2,
   context: UnitBillingContext,
   usage: UnitBillingUsage,
 ): bigint {
@@ -101,7 +101,7 @@ export interface PerRequestAuthResult {
 export interface BuyerRequestBillingEntry {
   context: UnitBillingContext;
   estimatedPromptTokens?: number;
-  unitModel?: UnitBillingModelV1;
+  unitModel?: UnitBillingModelV2;
   tokenPricing?: ServicePricing;
   observedUnitUsage?: UnitBillingUsage;
   signal?: AbortSignal;
@@ -181,8 +181,8 @@ export class BuyerPaymentManager {
     if (entry.requiresResponseAcceptance && !entry.responseAccepted) {
       throw buyerFault('Payment requires an accepted response', 'buyer-session-state');
     }
-    if (perCallPriceMicroUsdc(entry.unitModel) !== null && entry.observedUnitUsage?.units.successful_requests !== 1) {
-      throw buyerFault('Per-call payment requires an observed successful response', 'buyer-session-state');
+    if (unitPriceMicroUsdc(entry.unitModel) !== null && entry.context.serviceApiProtocol !== 'openai-images' && (entry.observedUnitUsage?.quantity ?? 0) <= 0) {
+      throw buyerFault('Quantity payment requires observed fulfillment', 'buyer-session-state');
     }
   }
 
@@ -1374,7 +1374,7 @@ export class BuyerPaymentManager {
     // Image attribution (metadata/stats only — never cost). The count is the
     // buyer's own observation of the delivered response, so it survives a
     // headroom NeedAuth having already consumed the request-billing entry.
-    const estimatedOutputImages = countOutputImages(responseStats.unitUsage);
+    const estimatedOutputImages = countOutputImages(responseStats.unitUsage, requestBilling?.context);
     if (estimatedOutputImages > 0n) {
       if (byteEstimatedTokens) {
         // Byte estimates of an image response are base64 noise, not tokens.
@@ -1413,7 +1413,7 @@ export class BuyerPaymentManager {
       acceptedCost = buyerEstimatedRequestCost;
     }
     if (requestBilling?.tokenPricing && buyerEstimatedRequestCost === 0n) acceptedCost = 0n;
-    if (perCallPriceMicroUsdc(unitBillingModel) !== null) acceptedCost = buyerEstimatedRequestCost;
+    if (unitPriceMicroUsdc(unitBillingModel) !== null) acceptedCost = buyerEstimatedRequestCost;
     const totalAcceptedCost = billingState?.acceptedCostUsdc ?? acceptedCost;
     if (alreadyCounted) {
       acceptedCost = outstandingCost;
@@ -1546,7 +1546,6 @@ export class BuyerPaymentManager {
     const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);
-    const buyerBillingContext = requestBilling?.context;
     if (session.sessionId !== payload.channelId) return;
     this._assertRequest(sellerPeerId, payload.requestId, buyerService);
     const billingState = payload.requestId ? this._requestBillingEntries.get(payload.requestId) : undefined;
@@ -1556,9 +1555,9 @@ export class BuyerPaymentManager {
       && requestBilling.tokenPricing.outputUsdPerMillion === 0
       && (requestBilling.tokenPricing.cachedInputUsdPerMillion ?? 0) === 0
       && (!requestBilling.unitModel || isFreeUnitBillingModel(requestBilling.unitModel))) return;
-    const perCall = requestBilling?.unitModel && perCallPriceMicroUsdc(requestBilling.unitModel) !== null;
-    if (requestBilling && (perCall || billingState?.acceptedCostUsdc !== undefined)) {
-      if (perCall) {
+    const requestCounted = requestBilling?.unitModel && requestBilling.context.serviceApiProtocol !== 'openai-images' && unitPriceMicroUsdc(requestBilling.unitModel) !== null;
+    if (requestBilling && (requestCounted || billingState?.acceptedCostUsdc !== undefined)) {
+      if (requestCounted) {
         try {
           if (!payload.billingUsage) return;
           validateUnitBillingUsage(requestBilling.unitModel!, requestBilling.context, payload.billingUsage,
@@ -1636,7 +1635,7 @@ export class BuyerPaymentManager {
             this._costTolerance,
             observedUnitUsage,
           );
-          acceptedOutputImages = countOutputImages(unitUsageFromReport(payload.billingUsage));
+          acceptedOutputImages = countOutputImages(unitUsageFromReport(payload.billingUsage), requestBilling.context);
         }
 
         const buyerEstimate = tokenEstimate + acceptedUnitCost;
@@ -1658,8 +1657,7 @@ export class BuyerPaymentManager {
       }
     } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
-      if (sellerCost > 0n && unitBillingModel && (buyerBillingContext?.serviceApiProtocol === 'openai-images'
-        || unitBillingModel.components.some((component) => component.unit === 'successful_requests'))) {
+      if (sellerCost > 0n && unitBillingModel) {
         debugWarn(
           `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
         );

@@ -1,6 +1,6 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { parseVerifierCapabilities } from './verifier-capabilities.js';
-import { perCallPriceMicroUsdc, type UnitBillingModelV1 } from '@antseed/protocol/billing';
+import { unitPriceMicroUsdc, type UnitBillingModelV2 } from '@antseed/protocol/billing';
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from '@antseed/protocol/service-api';
 
 export type CatalogServiceProtocol =
@@ -38,7 +38,7 @@ export type NetworkServiceCatalogPeer = {
   providerServiceUnitBillingModels?: Record<string, {
     services: Record<string, Partial<Record<string, {
       version: number;
-      components: Array<{ unit: string; priceUsd: number; match?: Record<string, string> }>;
+      priceMicroUsdc: string;
     }>>>;
   }>;
   providerPricing?: Record<string, {
@@ -66,7 +66,7 @@ export type NetworkServiceCatalogPeer = {
 /** `decision`: System One models return typed answers, not text or images. */
 export type NetworkServiceOfferType = 'text' | 'image' | 'decision' | 'routing';
 
-export type CatalogServiceBilling = { kind: 'per_call'; amountMicroUsdc: string };
+export type CatalogServiceBilling = { kind: 'per_quantity'; amountMicroUsdc: string };
 
 export type NetworkServiceOffer = {
   billing?: CatalogServiceBilling;
@@ -170,14 +170,8 @@ function resolvePricing(peer: NetworkServiceCatalogPeer, provider: string, servi
 
 function resolveImagePriceRange(peer: NetworkServiceCatalogPeer, provider: string, serviceId: string) {
   const billingByProtocol = peer.providerServiceUnitBillingModels?.[provider]?.services?.[serviceId];
-  const prices = Object.values(billingByProtocol ?? {}).flatMap((model) =>
-    (model?.components ?? [])
-      .filter((component) => component.unit === 'output_images' && Number.isFinite(component.priceUsd) && component.priceUsd >= 0)
-      .map((component) => component.priceUsd),
-  );
-  return prices.length > 0
-    ? { minImageUsdPerImage: Math.min(...prices), maxImageUsdPerImage: Math.max(...prices) }
-    : {};
+  const price = unitPriceMicroUsdc(billingByProtocol?.['openai-images'] as UnitBillingModelV2 | undefined);
+  return price === null ? {} : { minImageUsdPerImage: Number(price) / 1_000_000, maxImageUsdPerImage: Number(price) / 1_000_000 };
 }
 
 export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): NetworkServiceOffer[] {
@@ -200,9 +194,9 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const unitModels = peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId];
         const billingByProtocol: Partial<Record<string, CatalogServiceBilling>> = {};
         for (const billingProtocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
-          const perCallAmount = perCallPriceMicroUsdc(unitModels?.[billingProtocol] as UnitBillingModelV1 | undefined);
-          if (perCallAmount !== null) {
-            billingByProtocol[billingProtocol] = { kind: 'per_call', amountMicroUsdc: perCallAmount.toString() };
+          const quantityPrice = unitPriceMicroUsdc(unitModels?.[billingProtocol] as UnitBillingModelV2 | undefined);
+          if (quantityPrice !== null) {
+            billingByProtocol[billingProtocol] = { kind: 'per_quantity', amountMicroUsdc: quantityPrice.toString() };
           }
         }
         const billing = protocol ? billingByProtocol[protocol] : undefined;
@@ -233,8 +227,8 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
 }
 
 function comparableOfferPrice(offer: NetworkServiceOffer): number {
-  if (offer.billing?.kind === 'per_call') return Number.POSITIVE_INFINITY;
   if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
+  if (offer.billing?.kind === 'per_quantity') return Number.POSITIVE_INFINITY;
   if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
     return Number.POSITIVE_INFINITY;
   }

@@ -1,19 +1,19 @@
 import type { PeerId } from './peer-id.js';
 import { REASONING_EFFORTS, type ReasoningEffort } from './routing.js';
 import type { PeerOffering } from './capability.js';
-import type { ServiceUnitBillingModelsV1 } from './billing.js';
+import type { ServiceUnitBillingModelsV2 } from './billing.js';
 import {
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 14;
-export const SERVICE_ROUTING_METADATA_VERSION = 14;
+export const METADATA_VERSION = 13;
+export const SERVICE_ROUTING_METADATA_VERSION = 13;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
-export const SERVICE_ROUTING_CAPABILITY_METADATA_VERSION = 13;
+export const SERVICE_ROUTING_CAPABILITY_METADATA_VERSION = SERVICE_ROUTING_METADATA_VERSION;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -149,7 +149,7 @@ export interface ProviderAnnouncement {
   servicePricing?: Record<string, TokenPricingUsdPerMillion>;
   serviceCategories?: Record<string, string[]>;
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
-  serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+  serviceUnitBillingModels?: ServiceUnitBillingModelsV2;
   serviceCapabilities?: Record<string, ServiceCapabilities>;
   serviceRouting?: Record<string, import('./routing.js').RoutingServiceMetadataV1>;
   maxConcurrency: number;

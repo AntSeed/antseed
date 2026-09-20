@@ -1,23 +1,18 @@
 import { sha256, toUtf8Bytes } from 'ethers';
 
 export type RoutingJson = null | boolean | number | string | RoutingJson[] | { [key: string]: RoutingJson };
-export type RoutingPreferences = { [key: string]: RoutingJson };
-export type RoutingPreferenceSchema = {
-  type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean';
-  properties?: Record<string, RoutingPreferenceSchema>;
-  additionalProperties?: false;
-  required?: string[];
-  items?: RoutingPreferenceSchema;
-  enum?: RoutingJson[];
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  minItems?: number;
-  maxItems?: number;
-  title?: string;
+export type RoutingPreferences = Record<string, string>;
+export type RoutingPreferenceField = {
+  type: 'string';
+  enum: string[];
   description?: string;
-  default?: RoutingJson;
+  default?: string;
+};
+export type RoutingPreferenceSchema = {
+  type: 'object';
+  properties: Record<string, RoutingPreferenceField>;
+  additionalProperties: false;
+  required?: string[];
 };
 export type RoutingServiceMetadataV1 = {
   version: 1;
@@ -53,7 +48,7 @@ export type RoutingRequestV1 = {
   version: 1;
   service: string;
   preferencesSchemaHash: string;
-  request: { path: string; body: RoutingPreferences };
+  request: { path: string; body: { [key: string]: RoutingJson } };
   candidates: RoutingCandidate[];
   preferences: RoutingPreferences;
   context?: RoutingUsageContext;
@@ -89,89 +84,40 @@ function bounded(value: unknown): void {
   if (toUtf8Bytes(canonicalRoutingJson(value)).length > MAX_ROUTING_PREFERENCE_BYTES) throw new Error('Routing preferences/schema exceed 16 KiB');
 }
 
-export function assertRoutingPreferences(value: unknown, depth = 0): asserts value is RoutingPreferences {
-  if (!object(value)) throw new Error('Routing preferences must be an object');
-  const visit = (entry: unknown, level: number): void => {
-    if (level > MAX_ROUTING_PREFERENCE_DEPTH) throw new Error('Routing preferences nesting exceeds 8');
-    if (Array.isArray(entry)) entry.forEach((child) => visit(child, level + 1));
-    else if (object(entry)) Object.values(entry).forEach((child) => visit(child, level + 1));
-  };
+export function assertRoutingPreferences(value: unknown): asserts value is RoutingPreferences {
+  if (!object(value) || Object.values(value).some(entry => typeof entry !== 'string')) throw new Error('Routing preferences must be a flat object of string choices');
   bounded(value);
-  visit(value, depth);
 }
 
 export function validateRoutingPreferenceSchema(value: unknown): asserts value is RoutingPreferenceSchema {
   bounded(value);
-  const visit = (schema: unknown, path: string, depth: number): void => {
-    if (depth > MAX_ROUTING_PREFERENCE_DEPTH || !object(schema)) throw new Error(`${path}: invalid schema or nesting exceeds 8`);
-    const common = ['type', 'title', 'description', 'default', 'enum'];
-    const fields: Record<string, string[]> = {
-      object: ['properties', 'required', 'additionalProperties'], array: ['items', 'minItems', 'maxItems'],
-      string: ['minLength', 'maxLength'], number: ['minimum', 'maximum'], integer: ['minimum', 'maximum'], boolean: [],
-    };
-    const type = schema.type;
-    if (typeof type !== 'string' || !own(fields, type)) throw new Error(`${path}: unsupported schema type`);
-    for (const key of Object.keys(schema)) if (![...common, ...fields[type]!].includes(key)) throw new Error(`${path}.${key}: unsupported schema keyword`);
-    for (const key of ['title', 'description']) if (own(schema, key) && typeof schema[key] !== 'string') throw new Error(`${path}.${key}: expected string`);
-    if (type === 'object') {
-      if (!object(schema.properties) || schema.additionalProperties !== false) throw new Error(`${path}: objects require properties and additionalProperties: false`);
-      for (const [key, child] of Object.entries(schema.properties)) visit(child, `${path}.${key}`, depth + 1);
-      if (schema.required !== undefined && (!Array.isArray(schema.required) || new Set(schema.required).size !== schema.required.length
-        || schema.required.some((key) => typeof key !== 'string' || !own(schema.properties as object, key)))) throw new Error(`${path}.required: expected unique declared properties`);
-    }
-    if (type === 'array') visit(schema.items, `${path}[]`, depth + 1);
-    for (const [minKey, maxKey] of [['minimum', 'maximum'], ['minLength', 'maxLength'], ['minItems', 'maxItems']] as const) {
-      for (const key of [minKey, maxKey]) if (own(schema, key) && (typeof schema[key] !== 'number' || !Number.isFinite(schema[key])
-        || (key !== 'minimum' && key !== 'maximum' && (!Number.isSafeInteger(schema[key]) || (schema[key] as number) < 0)))) throw new Error(`${path}.${key}: invalid bound`);
-      if (typeof schema[minKey] === 'number' && typeof schema[maxKey] === 'number' && schema[minKey] > schema[maxKey]) throw new Error(`${path}: inverted bounds`);
-    }
-    if (own(schema, 'enum')) {
-      if (!Array.isArray(schema.enum) || schema.enum.length === 0) throw new Error(`${path}.enum: expected nonempty array`);
-      const encoded = schema.enum.map((entry) => canonicalRoutingJson(entry));
-      if (new Set(encoded).size !== encoded.length) throw new Error(`${path}.enum: duplicate values`);
-      for (const entry of schema.enum) validateValue({ ...schema, enum: undefined } as RoutingPreferenceSchema, entry, path, depth);
-    }
-    if (own(schema, 'default')) validateValue(schema as RoutingPreferenceSchema, schema.default, `${path}.default`, depth);
-  };
-  visit(value, 'preferences', 0);
-  if ((value as RoutingPreferenceSchema).type !== 'object') throw new Error('Routing preferences schema must be an object');
-}
-
-function validateValue(schema: RoutingPreferenceSchema, value: unknown, path: string, depth: number): RoutingJson {
-  if (depth > MAX_ROUTING_PREFERENCE_DEPTH) throw new Error(`${path}: nesting exceeds 8`);
-  let result: RoutingJson;
-  if (schema.type === 'object') {
-    if (!object(value)) throw new Error(`${path}: expected object`);
-    for (const key of Object.keys(value)) if (!own(schema.properties!, key)) throw new Error(`${path}.${key}: unknown preference`);
-    const output: RoutingPreferences = {};
-    for (const [key, child] of Object.entries(schema.properties!)) {
-      if (own(value, key)) output[key] = validateValue(child, value[key], `${path}.${key}`, depth + 1);
-      else if (own(child, 'default')) output[key] = validateValue(child, child.default, `${path}.${key}`, depth + 1);
-      else if (schema.required?.includes(key)) throw new Error(`${path}.${key}: required preference`);
-    }
-    result = output;
-  } else if (schema.type === 'array') {
-    if (!Array.isArray(value) || value.length < (schema.minItems ?? 0) || value.length > (schema.maxItems ?? Infinity)) throw new Error(`${path}: invalid array`);
-    result = value.map((entry, index) => validateValue(schema.items!, entry, `${path}[${index}]`, depth + 1));
-  } else if (schema.type === 'string') {
-    if (typeof value !== 'string' || [...value].length < (schema.minLength ?? 0) || [...value].length > (schema.maxLength ?? Infinity)) throw new Error(`${path}: invalid string`);
-    result = value;
-  } else if (schema.type === 'boolean') {
-    if (typeof value !== 'boolean') throw new Error(`${path}: expected boolean`);
-    result = value;
-  } else {
-    if (typeof value !== 'number' || !Number.isFinite(value) || (schema.type === 'integer' && !Number.isSafeInteger(value))
-      || value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity)) throw new Error(`${path}: invalid ${schema.type}`);
-    result = value;
+  if (!object(value) || value.type !== 'object' || !object(value.properties) || value.additionalProperties !== false
+    || Object.keys(value).some(key => !['type', 'properties', 'additionalProperties', 'required'].includes(key))) throw new Error('Routing preferences require a flat object schema with additionalProperties: false');
+  for (const [key, field] of Object.entries(value.properties)) {
+    if (!key.trim() || forbiddenKeys.has(key) || !object(field) || field.type !== 'string'
+      || Object.keys(field).some(name => !['type', 'enum', 'description', 'default'].includes(name))
+      || !Array.isArray(field.enum) || field.enum.length === 0
+      || field.enum.some(choice => typeof choice !== 'string' || !choice.trim())
+      || new Set(field.enum).size !== field.enum.length) throw new Error('preferences.' + key + ': expected unique nonempty string choices');
+    if (own(field, 'description') && typeof field.description !== 'string') throw new Error('Preference description must be a string');
+    if (own(field, 'default') && !field.enum.includes(field.default)) throw new Error('Preference default must be an enum choice');
   }
-  if (schema.enum && !schema.enum.some((entry) => canonicalRoutingJson(entry) === canonicalRoutingJson(result))) throw new Error(`${path}: value is not in enum`);
-  return result;
+  if (value.required !== undefined && (!Array.isArray(value.required) || new Set(value.required).size !== value.required.length
+    || value.required.some(key => typeof key !== 'string' || !own(value.properties as object, key)))) throw new Error('Required preferences must be unique declared fields');
 }
 
 export function resolveRoutingPreferences(schema: RoutingPreferenceSchema, values: unknown = {}): RoutingPreferences {
   validateRoutingPreferenceSchema(schema);
   assertRoutingPreferences(values);
-  const result = validateValue(schema, values, 'preferences', 0);
+  const result: RoutingPreferences = {};
+  for (const key of Object.keys(values)) if (!own(schema.properties, key)) throw new Error('preferences.' + key + ': unknown preference');
+  for (const [key, field] of Object.entries(schema.properties)) {
+    const selected = own(values, key) ? values[key] : field.default;
+    if (selected !== undefined) {
+      if (!field.enum.includes(selected)) throw new Error('preferences.' + key + ': invalid enum choice');
+      result[key] = selected;
+    } else if (schema.required?.includes(key)) throw new Error('Required routing preference: ' + key);
+  }
   assertRoutingPreferences(result);
   return result;
 }

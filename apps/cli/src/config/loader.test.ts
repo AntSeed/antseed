@@ -60,11 +60,35 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
 });
 
 test('fixed model and local router selections round-trip without classifier settings', async () => {
-  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }, { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'fixture', serviceId: 'selector' }, preferences: { options: { enabled: false }, count: 2, labels: ['a'] } }]) {
+  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }, { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'fixture', serviceId: 'selector' }, preferences: { policy: 'quality', position: 'first' } }]) {
     await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
       assert.deepEqual((await loadConfig(path)).buyer.selection, selection);
     });
   }
+});
+
+test('loadConfig migrates compatible legacy seller billing before provider construction', async () => {
+  for (const [protocol, unit] of [['openai-images', 'output_images'], ['antseed-routing', 'successful_requests']]) {
+    const config = { seller: { providers: { example: { plugin: 'openai', services: {
+      example: { unitBillingModels: { [protocol!]: { version: 1, components: [{ unit, priceUsd: 0.04 }] } } },
+    } } } } };
+    await withTempConfig(JSON.stringify(config), async (path) => {
+      const loaded = await loadConfig(path);
+      assert.deepEqual(loaded.seller.providers.example?.services?.example?.unitBillingModels,
+        { [protocol!]: { version: 2, priceMicroUsdc: '40000' } });
+    });
+  }
+});
+
+test('loadConfig rejects conditional legacy billing instead of silently flattening prices', async () => {
+  const config = { seller: { providers: { example: { plugin: 'openai', services: {
+    example: { unitBillingModels: { 'openai-images': { version: 1, components: [
+      { unit: 'output_images', priceUsd: 0.04, match: { quality: 'high' } },
+    ] } } },
+  } } } } };
+  await withTempConfig(JSON.stringify(config), async (path) => {
+    await assert.rejects(loadConfig(path), /cannot safely migrate/);
+  });
 });
 
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {
@@ -149,10 +173,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
                   toolUse: true,
                 },
                 unitBillingModels: {
-                  'openai-images': {
-                    version: 1,
-                    components: [{ unit: 'output_images', priceUsd: 0.04 }],
-                  },
+                  'openai-images': { version: 2, priceMicroUsdc: "40000" },
                 },
               },
             },
@@ -178,7 +199,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
         inputs: ['text', 'image'],
         toolUse: true,
       });
-      assert.equal(service.unitBillingModels?.['openai-images']?.components[0]?.priceUsd, 0.04);
+      assert.equal(service.unitBillingModels?.['openai-images']?.priceMicroUsdc, '40000');
     }
   );
 });

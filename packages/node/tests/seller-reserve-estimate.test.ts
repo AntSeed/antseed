@@ -9,23 +9,17 @@ import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { SellerPaymentManager } from '../src/payments/seller-payment-manager.js';
 import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-codec.js';
 import { SellerRequestHandler } from '../src/seller-request-handler.js';
-import type { UnitBillingModelV1 } from '../src/types/billing.js';
+import type { UnitBillingModelV2 } from '../src/types/billing.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import type { ServiceApiProtocol } from '../src/types/service-api.js';
 import { VerificationMux } from '../src/verification/verification-mux.js';
 
-const perCallModel: UnitBillingModelV1 = {
-  version: 1,
-  components: [{ unit: 'successful_requests', priceUsd: 0.005 }],
-};
-const imageModel: UnitBillingModelV1 = {
-  version: 1,
-  components: [{ unit: 'output_images', priceUsd: 0.04 }],
-};
+const perCallModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "5000" };
+const imageModel: UnitBillingModelV2 = { version: 2, priceMicroUsdc: "40000" };
 const buyerPeerId = '22'.repeat(20);
 
-function makeHarness(model: UnitBillingModelV1, remainingReserve: bigint, images = false) {
+function makeHarness(model: UnitBillingModelV2, remainingReserve: bigint, images = false) {
   const protocol: ServiceApiProtocol = images ? 'openai-images' : 'openai-chat-completions';
   const request: SerializedHttpRequest = {
     requestId: 'req-reserve-estimate',
@@ -114,7 +108,7 @@ function makeHarness(model: UnitBillingModelV1, remainingReserve: bigint, images
 describe('seller reserve estimates', () => {
   it.each(['stale-schema', 'invalid-preferences', 'alternate-path', 'wrong-method', 'uppercase-path-stale-schema'])('rejects routing %s before billing or provider dispatch', async (reason) => {
     const harness = makeHarness(perCallModel, 10000n);
-    const metadata = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean' } } });
+    const metadata = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { enabled: { type: 'string', enum: ['enabled', 'disabled'] } } });
     harness.provider.serviceApiProtocols = { 'test-model': ['antseed-routing'] };
     harness.provider.serviceRouting = { 'test-model': metadata };
     harness.request.path = reason === 'alternate-path' ? '/v1/chat/completions'
@@ -138,7 +132,7 @@ describe('seller reserve estimates', () => {
   it('estimates one per-call fee from captured request usage', () => {
     const { handler, requestBilling } = makeHarness(perCallModel, 1_000n);
 
-    expect(requestBilling.requestUsage.units.successful_requests).toBe(1);
+    expect(requestBilling.requestUsage.quantity).toBe(1);
     expect(handler['_estimateUnitRequestCostUsdc'](requestBilling, perCallModel)).toEqual({
       cost: 5_000n, inputTokens: 0, maxOutputTokens: 0,
     });
@@ -177,7 +171,7 @@ describe('seller reserve estimates', () => {
     expect(harness.paymentMux.sendPaymentRequired).not.toHaveBeenCalled();
     expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
       lastRequestCost: '5000',
-      billingUsage: { version: 1, units: { successful_requests: '1' } },
+      billingUsage: { version: 2, quantity: '1' },
     }));
   });
 
@@ -191,16 +185,15 @@ describe('seller reserve estimates', () => {
     expect(harness.sellerPaymentManager.recordSpend).toHaveBeenCalledWith('session-1', 80_000n);
     expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
       lastRequestCost: '80000',
-      billingUsage: { version: 1, units: { output_images: '2' } },
+      billingUsage: { version: 2, quantity: '2' },
     }));
   });
 
-  it('estimates only the per-call fee for an image request billed per call', async () => {
-    const harness = makeHarness(perCallModel, 5_000n, true);
-
-    expect(harness.requestBilling.requestUsage.units.output_images).toBe(2);
-    expect(harness.handler['_estimateUnitRequestCostUsdc'](harness.requestBilling, perCallModel).cost).toBe(5_000n);
+  it('uses the image adapter quantity with the shared billing price', async () => {
+    const harness = makeHarness(perCallModel, 10000n, true);
+    expect(harness.requestBilling.requestUsage.quantity).toBe(2);
+    expect(harness.handler['_estimateUnitRequestCostUsdc'](harness.requestBilling, perCallModel).cost).toBe(10000n);
     expect((await harness.serve()).statusCode).toBe(200);
-    expect(harness.sellerPaymentManager.recordSpend).toHaveBeenCalledWith('session-1', 5_000n);
+    expect(harness.sellerPaymentManager.recordSpend).toHaveBeenCalledWith('session-1', 10000n);
   });
 });

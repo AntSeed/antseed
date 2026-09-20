@@ -20,7 +20,7 @@ a source-delta audit, not a claim that new split commit SHAs or all bytes match.
 
 | Responsibility | Implementation and verification |
 | --- | --- |
-| Protocol/discovery — PR 1 (#1034) | Structured request/response and schema validation; ranked eligibility; signed v14 metadata; per-call representation; catalog propagation and filtering; reference provider and protocol tests. |
+| Protocol/discovery — PR 1 (#1034) | Structured request/response and schema validation; ranked eligibility; signed v13 metadata; per-call representation; catalog propagation and filtering; reference provider and protocol tests. |
 | Payments/execution — PR 2 (#1035) | Shared billing helpers; request IDs and attribution; response acceptance; cancellation; serialized same-seller authorization; recovery and released-schema tests. |
 | Buyer integration — PR 3 | CLI/config selection and inspection; plugin settings; network adapter; seller schema dispatch; policy validation; ranked fallback; observation history; reasoning overrides; continuation reuse; proxy and local-chain tests. |
 
@@ -126,7 +126,7 @@ earlier conversation work remains in the inherited main history.
 | `packages/node/src/discovery/announcer.ts` | Identical to source. |
 | `packages/node/src/discovery/index.ts` | Source delta applied unchanged; newer main preserved. |
 | `packages/node/src/discovery/metadata-codec.ts` | Identical to source. |
-| `packages/node/src/discovery/metadata-validator.ts` | Fixes a source inconsistency: exact per-call pricing under antseed-routing is accepted alongside the signed v14 descriptor. |
+| `packages/node/src/discovery/metadata-validator.ts` | Fixes a source inconsistency: exact per-call pricing under antseed-routing is accepted alongside the signed v13 descriptor. |
 | `packages/node/src/discovery/service-catalog.ts` | Combines routing/billing descriptors with existing decision types and advertised verifier IDs. |
 | `packages/node/src/health/model-health-checker.ts` | Excludes routing from paid probes while retaining current-main probe behavior. |
 | `packages/node/src/index.ts` | Exports the complete routing API once; preserves split protocol exports and current-main exports. |
@@ -162,7 +162,7 @@ earlier conversation work remains in the inherited main history.
 | `packages/node/tests/router-settings.test.ts` | Identical to source. |
 | `packages/node/tests/routing-classification-validation.test.ts` | Identical to source. |
 | `packages/node/tests/routing-context.test.ts` | Identical to source. |
-| `packages/node/tests/routing-metadata.test.ts` | Adds a combined signed-v14 fixture containing descriptor, reasoning efforts, and per-call price. |
+| `packages/node/tests/routing-metadata.test.ts` | Adds a combined signed-v13 fixture containing descriptor, reasoning efforts, and per-call price. |
 | `packages/node/tests/routing-payment-recovery.test.ts` | Adds two contract-to-payment acceptance cases without dropping source recovery tests. |
 | `packages/node/tests/routing-selection.test.ts` | Identical to source. |
 | `packages/node/tests/seller-reserve-estimate.test.ts` | Identical to source. |

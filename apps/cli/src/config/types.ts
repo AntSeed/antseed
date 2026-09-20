@@ -1,7 +1,7 @@
 import type {
   ServiceApiProtocol,
   ServiceCapabilities,
-  UnitBillingModelV1,
+  UnitBillingModelV2,
   RoutingSelection,
   RoutingServiceTarget,
 } from '@antseed/node';
@@ -44,7 +44,7 @@ export interface SellerServiceConfig {
   /** Model capability hints announced to buyers for this service. */
   capabilities?: ServiceCapabilities;
   /** Per-protocol non-token billing models for this service. */
-  unitBillingModels?: Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>;
+  unitBillingModels?: Partial<Record<ServiceApiProtocol, UnitBillingModelV2>>;
 }
 
 /**

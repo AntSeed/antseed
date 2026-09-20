@@ -182,8 +182,8 @@ describe('payment codec round-trips', () => {
       inputTokens: '0',
       outputTokens: '0',
       billingUsage: {
-        version: 1 as const,
-        units: { output_images: '2' },
+        version: 2 as const,
+        quantity: '2',
       },
     };
     expect(decodeNeedAuth(encodeNeedAuth(payload))).toEqual(payload);
@@ -196,8 +196,8 @@ describe('payment codec round-trips', () => {
       currentAcceptedCumulative: '200000',
       deposit: '1000000',
       billingUsage: {
-        version: 1,
-        units: { output_images: '-1' },
+        version: 2,
+        quantity: '-1',
       },
     }));
     expect(() => decodeNeedAuth(encoded)).toThrow(/billingUsage/);

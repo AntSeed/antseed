@@ -73,10 +73,7 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
             toolUse: true,
           },
           unitBillingModels: {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.04 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: "40000" },
           },
         },
         'claude-opus-4-5': {
@@ -125,10 +122,7 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
 
   const unitBillingModels = JSON.parse(runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] ?? '{}') as Record<string, unknown>;
   assert.deepEqual(unitBillingModels['claude-sonnet-4-5-20250929'], {
-    'openai-images': {
-      version: 1,
-      components: [{ unit: 'output_images', priceUsd: 0.04 }],
-    },
+    'openai-images': { version: 2, priceMicroUsdc: "40000" },
   });
 });
 
@@ -148,10 +142,7 @@ test('getUnsupportedUnitBillingWarning identifies plugins that ignore configured
     services: {
       'claude-sonnet': {
         unitBillingModels: {
-          'openai-images': {
-            version: 1 as const,
-            components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
-          },
+          'openai-images': { version: 2 as const, priceMicroUsdc: "40000" },
         },
       },
     },

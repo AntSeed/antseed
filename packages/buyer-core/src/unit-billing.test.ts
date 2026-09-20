@@ -1,87 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { createPerCallBillingModel, type UnitBillingContext, type UnitBillingModelV1 } from '@antseed/protocol/billing';
-import type { SerializedHttpResponse } from '@antseed/protocol/http';
-import { captureUnitBillingContext, computeFinalUnitBilling, extractUnitResponseUsage } from './unit-billing.js';
+import { createUnitBillingModel, type UnitBillingContext } from '@antseed/protocol/billing';
+import { captureUnitBillingContext, computeFinalUnitBilling } from './unit-billing.js';
 
-const context: UnitBillingContext = {
-  sellerPeerId: 'a'.repeat(40), provider: 'openai', service: 'example', serviceApiProtocol: 'openai-images',
-  attributes: { size: '1024x1024' }, unitLimits: { output_images: 1, successful_requests: 1 },
-};
-const imageModel: UnitBillingModelV1 = {
-  version: 1, components: [{ unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } }],
-};
-const response: SerializedHttpResponse = {
-  requestId: 'request', statusCode: 200, headers: { 'content-type': 'application/json' },
-  body: new TextEncoder().encode(JSON.stringify({
-    data: [{ b64_json: 'image' }, { url: 'https://example.test/image.png' }, {}, { b64_json: ' ' }],
-    usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 30 } },
-  })),
-};
-const tokenUsage = { inputTokens: 100, cachedInputTokens: 30, freshInputTokens: 70, outputTokens: 20 };
+const context: UnitBillingContext = { sellerPeerId: 'a'.repeat(40), provider: 'example', service: 'image', serviceApiProtocol: 'openai-images', maxQuantity: 4 };
+const response = (body: unknown, statusCode = 200) => ({ requestId: 'request', statusCode, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) });
+const imageModel = createUnitBillingModel('40000');
 
-describe('normalized unit billing', () => {
-  it('captures a classifier request without an image-specific billing entry', () => {
-    const captured = captureUnitBillingContext({
-      ...context, serviceApiProtocol: 'openai-chat-completions',
-      request: { requestId: 'request', method: 'POST', path: '/v1/chat/completions', headers: response.headers,
-        body: new TextEncoder().encode(JSON.stringify({ model: 'classifier', messages: [{ role: 'user', content: 'hello' }] })) },
-    });
-    expect(captured).toEqual({
-      context: { ...context, serviceApiProtocol: 'openai-chat-completions', attributes: { model: 'classifier' },
-        unitLimits: { successful_requests: 1 } },
-      requestUsage: { units: { successful_requests: 1 } },
-    });
+describe('adapter-defined quantity billing', () => {
+  it('captures image request limits without billing unit names or attributes', () => {
+    const captured = captureUnitBillingContext({ ...context, request: { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ n: 4, prompt: 'hello', quality: 'high' })) } });
+    expect(captured.context.maxQuantity).toBe(4);
+    expect(captured.requestUsage).toEqual({ quantity: 4 });
+    expect(captured.context).not.toHaveProperty('unitLimits');
+    expect(captured.context).not.toHaveProperty('attributes');
   });
-
-  it('normalizes image facts into generic attributes, limits, and a separate prompt estimate', () => {
-    const captured = captureUnitBillingContext({
-      ...context,
-      request: { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: response.headers,
-        body: new TextEncoder().encode(JSON.stringify({ model: 'image-model', n: 2, size: '1024x1024', prompt: 'hello' })) },
-    });
-    expect(captured.context.attributes).toEqual({ model: 'image-model', size: '1024x1024', quality: 'auto' });
-    expect(captured.context.unitLimits).toEqual({ successful_requests: 1, output_images: 2 });
-    expect(captured.requestUsage).toEqual({ units: { successful_requests: 1, output_images: 2 } });
-    expect(captured.estimatedPromptTokens).toBe(1);
-    expect(captured).not.toHaveProperty('requestFacts');
-    captured.requestUsage.units.output_images = 99;
-    expect(captured.context.unitLimits?.output_images).toBe(2);
+  it.each([0, -1, 0.5, 'invalid', Number.MAX_SAFE_INTEGER + 1, null, true, [4], { count: 4 }])('rejects invalid requested quantities %j', quantity => {
+    expect(() => captureUnitBillingContext({ ...context, request: { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: {}, body: new TextEncoder().encode(JSON.stringify({ n: quantity })) } })).toThrow();
   });
-
-  it.each([
-    { limit: undefined, count: 2 },
-    { limit: 0, count: 0 },
-    { limit: 1, count: 1 },
-    { limit: 4, count: 2 },
-  ])('uses only context limits to price delivered images: $limit', ({ limit, count }) => {
-    const result = computeFinalUnitBilling(imageModel, {
-      ...context, unitLimits: limit === undefined ? undefined : { output_images: limit },
-    }, response);
-    expect(result.usage).toEqual({ units: { output_images: count } });
-    expect(result.costUsdc).toBe(BigInt(count) * 40_000n);
-    expect(result.billingUsage).toEqual({ version: 1, units: { output_images: String(count) } });
-    expect(result.tokenUsage).toEqual(tokenUsage);
+  it('charges for accepted images, including partial fulfillment', () => {
+    const result = computeFinalUnitBilling(imageModel, context, response({ data: [{ b64_json: 'image-one' }, { url: 'https://example.com/image.png' }, {}] }));
+    expect(result.usage).toEqual({ quantity: 2 });
+    expect(result.costUsdc).toBe(80000n);
+    expect(result.billingUsage).toEqual({ version: 2, quantity: '2' });
   });
-
-  it.each([200, 201, 204, 302, 400, 503])('measures one or zero calls without image charges for HTTP %s', (statusCode) => {
-    const result = computeFinalUnitBilling(createPerCallBillingModel('5000'), context, { ...response, statusCode });
-    const count = statusCode >= 200 && statusCode < 300 ? 1 : 0;
-    expect(result.usage).toEqual({ units: { successful_requests: count } });
-    expect(result.costUsdc).toBe(BigInt(count) * 5000n);
-    expect(result.billingUsage).toEqual({ version: 1, units: { successful_requests: String(count) } });
-    expect(result.tokenUsage).toEqual(tokenUsage);
+  it('rejects more delivered images than requested', () => {
+    expect(() => computeFinalUnitBilling(imageModel, { ...context, maxQuantity: 1 }, response({ data: [{ b64_json: 'one' }, { b64_json: 'two' }] }))).toThrow('limit');
   });
-
-  it('selects observed units explicitly without a per-call boolean or post-measurement deletion', () => {
-    expect(extractUnitResponseUsage(response, context.unitLimits).usage).toEqual({ units: { output_images: 1 } });
-    expect(extractUnitResponseUsage(response, context.unitLimits, ['successful_requests']).usage)
-      .toEqual({ units: { successful_requests: 1 } });
-    expect(extractUnitResponseUsage(response, context.unitLimits, []).usage).toEqual({ units: {} });
+  it.each([{}, { data: [] }, { data: [{}] }, { error: 'failed', data: [{ b64_json: 'image' }] }])('does not charge for unfulfilled images %j', body => {
+    expect(computeFinalUnitBilling(imageModel, context, response(body)).costUsdc).toBe(0n);
   });
-
-  it('retains observed image quantities for a free model without charging for them', () => {
-    expect(computeFinalUnitBilling({ version: 1, components: [] }, context, response)).toMatchObject({
-      usage: { units: { output_images: 1 } }, costUsdc: 0n, tokenUsage,
-    });
+  it.each([302, 400, 500])('does not charge for HTTP %s', status => {
+    expect(computeFinalUnitBilling(imageModel, context, response({ data: [{ b64_json: 'image' }] }, status)).costUsdc).toBe(0n);
+  });
+  it('counts one accepted chat result, not its token count', () => {
+    const result = computeFinalUnitBilling(createUnitBillingModel('5000'), { ...context, serviceApiProtocol: 'openai-chat-completions', maxQuantity: 1 }, response({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 99, completion_tokens: 10 } }));
+    expect(result.usage).toEqual({ quantity: 1 });
+    expect(result.costUsdc).toBe(5000n);
+  });
+  it('does not treat an empty 2xx response as fulfilled', () => {
+    for (const serviceApiProtocol of ['openai-chat-completions', 'antseed-routing'] as const) expect(computeFinalUnitBilling(createUnitBillingModel('5000'), { ...context, serviceApiProtocol }, response({})).costUsdc).toBe(0n);
+  });
+  it('counts a routing response as one result', () => {
+    expect(computeFinalUnitBilling(createUnitBillingModel('5000'), { ...context, serviceApiProtocol: 'antseed-routing' }, response({ version: 1, recommendations: [{ serviceId: 'model' }] })).usage).toEqual({ quantity: 1 });
   });
 });

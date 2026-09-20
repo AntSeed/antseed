@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AntseedNode } from '../src/node.js';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 
 describe('parallel requests to one seller', () => {
   it.each(['classification', 'inference stream'])('finishes classification while another %s is still open', async (first) => {
@@ -18,7 +18,7 @@ describe('parallel requests to one seller', () => {
     }) as AntseedNode;
     const peer = { peerId: 'a'.repeat(40) as any, lastSeen: Date.now(), providers: ['openai'],
       providerPricing: { openai: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }, services: {} } },
-      providerServiceUnitBillingModels: { openai: { services: { classifier: { 'openai-chat-completions': createPerCallBillingModel('5000') } } } },
+      providerServiceUnitBillingModels: { openai: { services: { classifier: { 'openai-chat-completions': createUnitBillingModel('5000') } } } },
     };
     const request = { requestId: 'held', method: 'POST', path: '/v1/chat/completions',
       headers: { 'x-antseed-provider': 'openai' }, body: new TextEncoder().encode('{"model":"classifier"}') };

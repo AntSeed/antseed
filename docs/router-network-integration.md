@@ -26,8 +26,9 @@ antseed buyer router describe --json
 ```
 
 The output includes the target, signed routing metadata and effective preferences.
-Defaults live in the advertised schema. Numbers, booleans, arrays and nested objects
-stay typed. Offline saves check structure; the buyer validates the service schema
+Defaults live in the advertised schema. Preferences are a flat map of string enum
+values, with optional field descriptions; other types and nested objects are not
+supported. Offline saves check structure; the buyer validates the service schema
 before any routing request. Unknown fields, missing required values and wrong types
 are errors. This release provides CLI/config support, not generated desktop forms.
 
@@ -51,9 +52,9 @@ The hash is SHA-256 of deterministic JSON with recursively sorted object keys.
 Descriptors are included in binary metadata signing, decoding, validation and discovery,
 not attached as unsigned HTTP JSON. They arrive through existing authenticated
 `/metadata` discovery. Announcements containing routing descriptors or inference
-reasoning efforts use the same v14 extension. Other announcements
+reasoning efforts, or quantity billing models use the same v13 extension. Other announcements
 retain their previous version selection. Updated buyers accept supported older versions;
-buyers supporting only v13 or earlier cannot consume a v14 peer announcement, including
+buyers supporting only v12 or earlier cannot consume a v13 peer announcement, including
 its non-routing services.
 
 ## Router-selected reasoning
@@ -72,7 +73,7 @@ Each recommendation may include one allowlisted inference control:
 
 Inference sellers advertise accepted `reasoningEfforts` in their per-service
 capabilities, for example `["none", "low", "high"]`. These values are signed in
-metadata v14 and reach the router on each candidate; buyers supporting only v13 or
+metadata v13 and reach the router on each candidate; buyers supporting only v12 or
 earlier cannot consume such announcements. Sellers can upgrade without adding these
 optional capabilities. Missing effort labels, including a bare `reasoning: true`, allow
 best-effort router choices; they do not guarantee backend support. The backend may reject

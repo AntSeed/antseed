@@ -35,7 +35,7 @@ export function validateRouterCandidate(options: {
   if (recommendation.inference && !reasoningEfforts.includes(recommendation.inference.reasoningEffort)) return null
   const reasoningOverride: ReasoningEffort | null | undefined = offer.capabilities?.reasoning === false
     ? null : recommendation.inference?.reasoningEffort
-  if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_call') return null
+  if (targetProtocol && offer.billingByProtocol?.[targetProtocol]?.kind === 'per_quantity') return null
   const missing = plan.selection?.requiresTransform
     ? requiredParameters
     : findMissingRequiredParameters(peer, plan.provider, plan.serviceId, requiredParameters)

@@ -6,13 +6,18 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- Network routing preferences now use a flat string-enum schema with optional `description`, `default`, and root `required`; unsupported field types, nested settings, labels, and `title` are rejected. Schema discovery and validation remain network/CLI-only, with no VPR/frontend changes.
+- Non-token billing uses v2 fixed integer micro-USDC prices and generic quantity reports instead of `output_images` / `successful_requests` components or offer-level units. Protocol adapters measure delivered images or fulfilled requests, with independent buyer verification and request limits. Signed advertisements use metadata v13; legacy billing wire payloads are rejected. Compatible local seller configurations migrate before provider construction; ambiguous, conditional, or inexact prices require explicit reconfiguration. Token pricing, historical receipts, and database migrations are unchanged.
+
 ### Added
 
 - Buyer routing: select installed or network routers through CLI/config, inspect signed preference schemas, and execute ranked model/seller recommendations under buyer policy. Reuse eligible conversation decisions, collect bounded usage observations, and apply reasoning overrides across inference and continuations. Routing fees remain separate from inference attempts, with local-chain fixtures for same-seller concurrency and ranked fallback.
 
 - Buyer payments: add shared per-call accounting, request-scoped billing and attribution, synchronous response-acceptance hooks, cancellation cleanup, and serialized payment updates for concurrent requests to one seller. Preserve existing reserve top-up policy and the released database schema. This is slice 2 of the routing stack; buyer activation remains in slice 3, with no temporary standalone-execution guards.
 
-- Protocol/Discovery: define structured routing requests and ranked responses, schema-validated preferences, usage-observation and reasoning fields, and complete signed metadata v14 propagation. Add exact per-call price representation, a pure response parser, and provider conformance fixtures. This is the protocol slice of the routing stack; paid execution and buyer integration are separate follow-ups, and this slice is not intended for standalone deployment.
+- Protocol/Discovery: define structured routing requests and ranked responses, schema-validated preferences, usage-observation and reasoning fields, and complete signed metadata v13 propagation. Add exact per-call price representation, a pure response parser, and provider conformance fixtures. This is the protocol slice of the routing stack; paid execution and buyer integration are separate follow-ups, and this slice is not intended for standalone deployment.
 
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.

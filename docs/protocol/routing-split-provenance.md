@@ -23,7 +23,7 @@ source snapshots. Existing decision-service and verifier behavior is retained.
 - Subsequent split-specific compatibility tests, documentation, and catalog type
   adjustments are separate commits, not attributed to an original contributor
   who did not implement those changes.
-- The combined v14 conformance test exposed a source inconsistency: metadata
+- The combined v13 conformance test exposed a source inconsistency: metadata
   accepted per-call chat pricing but rejected the same representation for
   `antseed-routing`. A separate fix aligns discovery with the structured protocol.
   Execution-side usage-count and charge-tolerance checks remain in PR 2.
@@ -40,7 +40,7 @@ alone. It contains **no temporary per-call execution guards** and no associated
 intermediate-state guard tests. The three slices are separate reviews, not an
 assertion that this intermediate protocol state is ready for standalone deployment.
 This supersedes the guard requirement in the initial split plan. Payment execution
-belongs to PR 2 and buyer activation to PR 3; all signed v14 fields land in PR 1.
+belongs to PR 2 and buyer activation to PR 3; all signed v13 fields land in PR 1.
 
 ## PR 2 extraction
 
@@ -74,7 +74,7 @@ the second review limited to shared payments and request execution.
   of development databases containing extra columns. In-memory recovery and
   persisted cumulative authorizations are not an exactly-once restart guarantee.
 
-PR 2 changes no signed metadata bytes and introduces no v15 or temporary guards.
+PR 2 changes no signed metadata bytes and introduces no further metadata version or temporary guards.
 CLI/config activation, routing-schema dispatch, network selection, policy checks,
 ranked fallback, observation collection, reasoning overrides, and continuation
 reuse remain in PR 3. The original PR and PR 1 branches remain untouched.

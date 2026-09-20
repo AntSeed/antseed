@@ -11,7 +11,7 @@ import { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { ChannelsClient } from '../src/payments/evm/channels-client.js';
 import { PaymentMux } from '../src/p2p/payment-mux.js';
 import { areRouteRecommendationsEligible } from '../src/routing/route-recommendation.js';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 import { ConnectionState } from '../src/types/connection.js';
 import { toPeerId, type PeerInfo } from '../src/types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
@@ -73,7 +73,7 @@ describe('request billing recovery', () => {
       providerPricing: { openai: { defaults: pricing, services: {} } },
       providerServiceApiProtocols: { openai: { services: { classifier: ['openai-chat-completions'] } } },
       ...(kind === 'per_call' ? { providerServiceUnitBillingModels: { openai: { services: {
-        classifier: { 'openai-chat-completions': createPerCallBillingModel('5000') },
+        classifier: { 'openai-chat-completions': createUnitBillingModel('5000') },
       } } } } : {}),
     };
     const classification: SerializedHttpResponse = {
@@ -111,7 +111,7 @@ describe('request billing recovery', () => {
     const candidates = [{ serviceId: 'model-a', peerId: sellerPeerId }];
     state.peer.providerServiceApiProtocols = { openai: { services: { classifier: ['antseed-routing'] } } };
     state.peer.providerServiceUnitBillingModels = {
-      openai: { services: { classifier: { 'antseed-routing': createPerCallBillingModel('5000') } } },
+      openai: { services: { classifier: { 'antseed-routing': createUnitBillingModel('5000') } } },
     };
     state.request.path = '/v1/route';
     state.request.body = encoder.encode(JSON.stringify({ service: 'classifier' }));

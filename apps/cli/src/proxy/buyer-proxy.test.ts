@@ -16,7 +16,7 @@ import {
   computeTrustScore,
   createRoutingServiceMetadata,
   validateRoutingRequest,
-  createPerCallBillingModel,
+  createUnitBillingModel,
   type ModelRoutingPreferences,
   type PeerInfo,
   type SerializedHttpResponse,
@@ -290,8 +290,8 @@ test('continuations keep router reasoning until capability changes invalidate it
 
 test('one buyer discovers two preference schemas, persists typed values and invalidates reuse', async (t) => {
   const peer = routerPeer('a')
-  const schemaA = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'number', default: 0.5 } } })
-  const schemaB = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { options: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean' } }, required: ['enabled'] } }, required: ['options'] })
+  const schemaA = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'string', enum: ['balanced', 'quality'], default: 'balanced' } } })
+  const schemaB = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { options: { type: 'string', enum: ['enabled', 'disabled'] } }, required: ['options'] })
   peer.providerServiceRouting = { openai: { services: { 'selector-a': schemaA, 'selector-b': schemaB } } }
   peer.providerServiceCapabilities = { openai: { services: {} } }
   for (const service of ['selector-a', 'selector-b']) {
@@ -320,29 +320,29 @@ test('one buyer discovers two preference schemas, persists typed values and inva
   assert.equal((await select('selector-a')).statusCode, 200)
   const description = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/router/metadata' }))
   assert.equal(description.statusCode, 200)
-  assert.deepEqual(JSON.parse(description.body).preferences, { threshold: 0.5 })
+  assert.deepEqual(JSON.parse(description.body).preferences, { threshold: 'balanced' })
   assert.equal((await send()).statusCode, 200)
   assert.equal((await send()).statusCode, 200)
   assert.equal(routed.length, 1)
-  assert.deepEqual(routed[0].preferences, { threshold: 0.5 })
-  peer.providerServiceRouting.openai!.services['selector-a'] = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'number', default: 0.8 } } })
+  assert.deepEqual(routed[0].preferences, { threshold: 'balanced' })
+  peer.providerServiceRouting.openai!.services['selector-a'] = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { threshold: { type: 'string', enum: ['balanced', 'quality'], default: 'quality' } } })
   assert.equal((await send()).statusCode, 200)
   assert.equal(routed.length, 2)
-  assert.deepEqual(routed[1].preferences, { threshold: 0.8 })
-  assert.equal((await select('selector-b', { options: { enabled: false } })).statusCode, 200)
+  assert.deepEqual(routed[1].preferences, { threshold: 'quality' })
+  assert.equal((await select('selector-b', { options: 'disabled' })).statusCode, 200)
   assert.equal((await send()).statusCode, 200)
-  assert.deepEqual(routed[2].preferences, { options: { enabled: false } })
+  assert.deepEqual(routed[2].preferences, { options: 'disabled' })
   await (proxy as any)._stateWriteChain
   const persisted = JSON.parse(await readFile(join((proxy as any)._stateDir, 'buyer.state.json'), 'utf8'))
-  assert.deepEqual(persisted.selection.preferences, { options: { enabled: false } })
-  assert.equal((await select('selector-b', { options: { enabled: 'false' } })).statusCode, 200)
+  assert.deepEqual(persisted.selection.preferences, { options: 'disabled' })
+  assert.equal((await select('selector-b', { options: 'invalid' })).statusCode, 200)
   const invalidDescription = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/router/metadata' }))
   assert.equal(invalidDescription.statusCode, 200)
   assert.equal(JSON.parse(invalidDescription.body).metadata.preferencesSchemaHash, schemaB.preferencesSchemaHash)
-  assert.match(JSON.parse(invalidDescription.body).preferencesError, /preferences.options.enabled/)
+  assert.match(JSON.parse(invalidDescription.body).preferencesError, /preferences.options/)
   const invalid = await send()
   assert.equal(invalid.statusCode, 502)
-  assert.match(invalid.body, /preferences.options.enabled/)
+  assert.match(invalid.body, /preferences.options/)
   assert.equal(routed.length, 3)
 })
 
@@ -788,7 +788,7 @@ test(`network ranked routing preserves remaining choices on continuation (${bill
   second.providerServiceCapabilities = { openai: { services: { 'second-model': { reasoning: true, reasoningEfforts: ['medium'] } } } }
   third.providerServiceCapabilities = { openai: { services: { 'third-model': { reasoning: true, reasoningEfforts: ['none'] } } } }
   first.providerServiceRouting = { openai: { services: { selector: createRoutingServiceMetadata({ type: 'object', properties: {}, additionalProperties: false }) } } }
-  if (billing === 'per-call') first.providerServiceUnitBillingModels = { openai: { services: { selector: { 'antseed-routing': createPerCallBillingModel('5000') } } } }
+  if (billing === 'per-call') first.providerServiceUnitBillingModels = { openai: { services: { selector: { 'antseed-routing': createUnitBillingModel('5000') } } } }
   const proxy = makeBuyerProxyWithPeers(peers, peers, {
     ...permissiveRouter(), selectRoute: async () => { throw new Error('Unexpected local routing decision') },
   })
@@ -1099,7 +1099,7 @@ test('a fixed-fee service is not offered or accepted as zero-token-price inferen
   const fixedFee = routerPeer('b')
   fixedFee.providerPricing!.openai!.services!['test-model'] = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
   fixedFee.providerServiceUnitBillingModels = { openai: { services: {
-    'test-model': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+    'test-model': { 'openai-chat-completions': createUnitBillingModel('5000') },
   } } }
   let candidates: any[] = []
   const proxy = makeBuyerProxyWithPeers([allowed, fixedFee], [allowed, fixedFee], {

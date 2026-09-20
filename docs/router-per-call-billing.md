@@ -2,23 +2,48 @@
 
 This is PR 2 of the routing stack: the shared execution machinery used by node
 and browser buyers. PR 1 defines the routing contract and complete signed metadata
-v14; PR 3 now wires network selection and buyer policy into this machinery. Intermediate
+v13; PR 3 now wires network selection and buyer policy into this machinery. Intermediate
 slices are not intended for standalone deployment. There are no temporary
 execution guards, new metadata versions, or database migrations in this slice.
 
-## Per-call accounting
+## Quantity accounting
 
-`successful_requests` measures a successful HTTP response as one unit, capped by
-the captured request limit. A fixed per-call price is an integer number of
-micro-USDC. `captureUnitBillingContext` captures the selected seller, provider,
-service, protocol, and request limits before execution. `computeFinalUnitBilling`
-uses that context and the final response to calculate unit usage and cost.
+The billing model is `{ "version": 2, "priceMicroUsdc": "40000" }` and the usage
+report is `{ "version": 2, "quantity": "4" }`. This example costs 160,000 micro-USDC.
+There are no named units or conditional components. `captureUnitBillingContext`
+captures the selected seller, provider, service, protocol, and request limit before
+execution. `computeFinalUnitBilling` uses that context and the final response to
+calculate quantity and cost with integer arithmetic.
 
-The same helpers serve buyer accounting and seller reserve estimates. Existing
-image-unit billing remains supported. Token usage is recorded separately from
-per-call units, including fresh/cached input attribution. The generic payment
+The advertised service API protocol selects the adapter, rather than an offer's
+unit label. `openai-images` counts delivered, nonempty image outputs, at most the
+requested `n` (default 1). `antseed-routing` and non-streaming
+`openai-chat-completions` count a fulfilled response as 1, otherwise 0. An HTTP 2xx
+alone is not sufficient. Buyer and seller independently measure the response;
+claims above the request limit or buyer-observed quantity are rejected. Routing
+response acceptance also validates the complete recommendation list before payment.
+
+The same helpers serve buyer accounting and seller reserve estimates. Token usage
+is recorded separately, including fresh/cached input attribution. The generic payment
 runtime can combine token and unit charges; routing-specific pricing policy is
-the responsibility of the later integration slice.
+the responsibility of the integration slice.
+
+### Local configuration migration and compatibility
+
+Seller configuration loading and the shared provider config parser normalize old
+v1 models to v2 before provider construction. A single unconditional image component
+(`output_images`) maps to the image adapter; a single `successful_requests`
+component maps to a supported request-counting adapter. Empty models map to a zero
+price. Prices must be exactly representable as uint32 micro-USDC. Conditional,
+multiple-component, incompatible-unit, and inexact prices fail with a migration
+error instead of silently changing billing. Configure a fixed v2 price explicitly
+for those services. Migration does not automatically rewrite the config file.
+
+Only v2 models and usage reports are accepted on the network. The v2 billing
+discriminator prevents old component models/reports from being interpreted as the
+new quantity contract; it is separate from metadata v13 and routing request v1.
+There is no legacy runtime billing engine. Historical receipts and SQLite columns
+are left intact rather than rewritten.
 
 ## Execution options
 
@@ -36,7 +61,7 @@ the responsibility of the later integration slice.
 Acceptance is opt-in and applies to 2xx responses. It is not a built-in routing
 parser or buyer-policy engine. The integration slice supplies those decisions.
 For per-call work requiring acceptance, a rejected response does not earn the
-successful-request unit. This does not promise that all rejected token-priced
+quantity of 1. This does not promise that all rejected token-priced
 work is free: token authorization can already have occurred during execution.
 
 The contract-to-payment tests use PR 1's recommendation eligibility helper with
