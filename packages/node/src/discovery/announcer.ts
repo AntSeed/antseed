@@ -24,6 +24,7 @@ import {
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { isQuantityBillingProtocol, validateUnitBillingModelV2, type ServiceUnitBillingModelsV2 } from "../types/billing.js";
+import { validateQuantityBillingConditions } from '@antseed/api-adapter';
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
@@ -526,6 +527,7 @@ export class PeerAnnouncer {
       for (const [protocol, model] of entries) {
         if (!isQuantityBillingProtocol(protocol)) throw new Error(`Unsupported quantity billing adapter: ${service}.${protocol}`);
         const errors = validateUnitBillingModelV2(model);
+        if (errors.length === 0 && model) errors.push(...validateQuantityBillingConditions(protocol, model));
         if (errors.length > 0) throw new Error(`Invalid billing model for ${service}.${protocol}: ${errors.join('; ')}`);
       }
       if (entries.length === 0) {

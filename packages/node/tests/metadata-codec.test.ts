@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { UnitBillingModelV2 } from '@antseed/protocol/billing';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
@@ -32,6 +33,38 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('encodeMetadata / decodeMetadata', () => {
+  function withComponents(components: UnitBillingModelV2['components']): PeerMetadata {
+    return makeMetadata({ providers: [{ provider: 'openai', services: ['image'], defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      serviceApiProtocols: { image: ['openai-images'] }, serviceUnitBillingModels: { image: { 'openai-images': { version: 2, components } } }, maxConcurrency: 1, currentLoad: 0 }] });
+  }
+  it('round-trips additive conditions and signs canonical condition order', () => {
+    const original = withComponents([{ priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000', match: { size: '1536x1024', quality: 'hd' } }]);
+    const reordered = withComponents([{ priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000', match: { quality: 'hd', size: '1536x1024' } }]);
+    const encoded = encodeMetadata(original);
+    expect(decodeMetadata(encoded).providers[0]?.serviceUnitBillingModels).toEqual(original.providers[0]?.serviceUnitBillingModels);
+    expect(encodeMetadataForSigning(original)).toEqual(encodeMetadataForSigning(reordered));
+    expect(encodeMetadataForSigning(original)).not.toEqual(encodeMetadataForSigning(withComponents([{ priceMicroUsdc: '40000' }, { priceMicroUsdc: '20000', match: { quality: 'standard', size: '1536x1024' } }])));
+  });
+  it('rejects unsupported conditions, oversized models, and truncated component bytes', () => {
+    expect(() => encodeMetadata(withComponents([{ priceMicroUsdc: '1', match: { unsupported: 'x' } }]))).toThrow('unsupported');
+    expect(() => encodeMetadata(withComponents(Array.from({ length: 256 }, () => ({ priceMicroUsdc: '0' }))))).toThrow('255');
+    expect(() => encodeMetadata(withComponents([{ priceMicroUsdc: '1', match: { quality: 'é'.repeat(128) } }]))).toThrow('255');
+    const encoded = encodeMetadata(withComponents([{ priceMicroUsdc: '1', match: { quality: 'hd' } }]));
+    const keyOffset = Buffer.from(encoded).indexOf(Buffer.from('quality'));
+    expect(keyOffset).toBeGreaterThan(0);
+    expect(() => decodeMetadata(encoded.slice(0, keyOffset + 3))).toThrow('Truncated');
+  });
+  it('rejects duplicate condition keys on the wire', () => {
+    const encoded = encodeMetadata(withComponents([{ priceMicroUsdc: '1', match: { model: 'a', quality: 'b' } }]));
+    const keyOffset = Buffer.from(encoded).indexOf(Buffer.from('quality'));
+    const malformed = Buffer.concat([encoded.slice(0, keyOffset - 1), Buffer.from([5]), Buffer.from('model'), encoded.slice(keyOffset + 7)]);
+    expect(() => decodeMetadata(malformed)).toThrow('Duplicate billing condition key');
+  });
+  it('enforces the total metadata size for many valid components', () => {
+    const components = Array.from({ length: 255 }, () => ({ priceMicroUsdc: '1', match: { model: 'a'.repeat(255), quality: 'b'.repeat(255), size: 'c'.repeat(255), resolution: 'd'.repeat(255) } }));
+    expect(() => encodeMetadata(withComponents(components))).toThrow('exceeds max');
+    expect(() => decodeMetadata(new Uint8Array(128 * 1024 + 1))).toThrow('maximum encoded size');
+  });
   it('round-trips v12 catalogs with more than 255 service entries', () => {
     const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
     const servicePricing = Object.fromEntries(
@@ -43,7 +76,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     );
     const serviceUnitBillingModels = Object.fromEntries(
       services.map((service) => [service, {
-        'openai-images': { version: 2 as const, priceMicroUsdc: '40000' },
+        'openai-images': { version: 2 as const, components: [{ priceMicroUsdc: '40000' }] },
       }]),
     );
     const serviceCapabilities = Object.fromEntries(
@@ -206,7 +239,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': { version: 2, priceMicroUsdc: "40000" },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: "40000" }] },
             },
           },
           maxConcurrency: 3,
@@ -216,7 +249,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.version).toBe(2);
-    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.priceMicroUsdc).toBe('40000');
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components[0]?.priceMicroUsdc).toBe('40000');
 
     const changed = makeMetadata({
       ...original,
@@ -224,7 +257,7 @@ describe('encodeMetadata / decodeMetadata', () => {
         ...original.providers[0]!,
         serviceUnitBillingModels: {
           'gpt-image-1': {
-            'openai-images': { version: 2, priceMicroUsdc: "50000" },
+            'openai-images': { version: 2, components: [{ priceMicroUsdc: "50000" }] },
           },
         },
       }],
@@ -322,7 +355,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': { version: 2, priceMicroUsdc: "40000" },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: "40000" }] },
             },
           },
           maxConcurrency: 3,

@@ -144,7 +144,7 @@ describe('PeerAnnouncer metadata versions', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': { version: 2, priceMicroUsdc: '40000' },
+              'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
             },
           },
           serviceCapabilities: {
@@ -160,7 +160,7 @@ describe('PeerAnnouncer metadata versions', () => {
 
     const metadata = announcer.getLatestMetadata();
     expect(metadata?.version).toBe(METADATA_VERSION);
-    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: '40000' });
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, components: [{ priceMicroUsdc: '40000' }] });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
       'gpt-image-1': { inputs: ['text'] },

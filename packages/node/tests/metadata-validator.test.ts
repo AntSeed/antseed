@@ -271,7 +271,7 @@ describe('validateMetadata', () => {
       },
       serviceUnitBillingModels: {
         'gpt-image-1': {
-          'openai-images': { version: 2, priceMicroUsdc: "40000" },
+          'openai-images': { version: 2, components: [{ priceMicroUsdc: "40000" }] },
         },
       },
       maxConcurrency: 1,

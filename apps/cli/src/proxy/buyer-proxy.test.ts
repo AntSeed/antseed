@@ -643,6 +643,29 @@ test('model-only request routes to the highest-ranked canonical service match', 
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('conditional image pricing rejects an unmatched seller before dispatch', async () => {
+  const unmatched = makePeer('a', ['openai'])
+  const matched = makePeer('b', ['openai'])
+  for (const peer of [unmatched, matched]) {
+    peer.providerServiceApiProtocols = { openai: { services: { 'venice-sd35': ['openai-images'] } } }
+    peer.providerServiceCapabilities = { openai: { services: { 'venice-sd35': { outputs: ['image'] } } } }
+    peer.providerServiceUnitBillingModels = { openai: { services: { 'venice-sd35': { 'openai-images': {
+      version: 2, components: [{ priceMicroUsdc: '40000', match: { quality: peer === matched ? 'hd' : 'standard' } }],
+    } } } } }
+  }
+  unmatched.reputationScore = 99
+  matched.reputationScore = 70
+  const proxy = makeBuyerProxyWithPeers([unmatched, matched], [unmatched, matched], permissiveRouter())
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({ data: [{ b64_json: 'image' }] })) }
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/images/generations', body: { model: 'venice-sd35', prompt: 'landscape', quality: 'hd' } }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(selectedPeerId, matched.peerId)
+})
+
 test('required parameters filter automatic routes and are stripped before seller dispatch', async () => {
   const unsupported = makePeer('a', ['openai'])
   unsupported.reputationScore = 99

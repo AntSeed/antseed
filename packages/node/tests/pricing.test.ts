@@ -93,19 +93,19 @@ describe('pricing utilities', () => {
   });
 
   it('evaluates exact generic quantity billing', () => {
-    expect(evaluateUnitBilling({ version: 2, priceMicroUsdc: '40000' }, {
+    expect(evaluateUnitBilling({ version: 2, components: [{ priceMicroUsdc: '40000' }] }, {
       sellerPeerId: 'seller', provider: 'openai', service: 'image', serviceApiProtocol: 'openai-images', maxQuantity: 4,
     }, { quantity: 4 })).toBe(160000n);
   });
 
   it('validates quantity price shape', () => {
-    expect(validateUnitBillingModelV2({ version: 2, priceMicroUsdc: '-1' })).not.toEqual([]);
+    expect(validateUnitBillingModelV2({ version: 2, components: [{ priceMicroUsdc: '-1' }] })).not.toEqual([]);
     expect(validateUnitBillingModelV2({ version: 1, components: [] })).not.toEqual([]);
-    expect(validateUnitBillingModelV2({ version: 2, priceMicroUsdc: '40000' })).toEqual([]);
+    expect(validateUnitBillingModelV2({ version: 2, components: [{ priceMicroUsdc: '40000' }] })).toEqual([]);
   });
 
   it('treats non-zero image billing as paid even with free token fallback', () => {
-    expect(isFreeUnitBillingModel({ version: 2, priceMicroUsdc: "0" })).toBe(true);
-    expect(isFreeUnitBillingModel({ version: 2, priceMicroUsdc: "10000" })).toBe(false);
+    expect(isFreeUnitBillingModel({ version: 2, components: [{ priceMicroUsdc: "0" }] })).toBe(true);
+    expect(isFreeUnitBillingModel({ version: 2, components: [{ priceMicroUsdc: "10000" }] })).toBe(false);
   });
 });

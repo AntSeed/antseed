@@ -1,4 +1,4 @@
-import { unitPriceMicroUsdc, type UnitBillingModelV2 } from "../types/billing.js";
+import { unitPriceMicroUsdc, validateUnitBillingModelV2, type UnitBillingModelV2 } from "../types/billing.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { parseVerifierCapabilities } from './verifier-capabilities.js';
@@ -34,7 +34,7 @@ export type NetworkServiceCatalogPeer = {
   providerServiceUnitBillingModels?: Record<string, {
     services: Record<string, Partial<Record<string, {
       version: number;
-      priceMicroUsdc: string;
+      components: UnitBillingModelV2['components'];
     }>>>;
   }>;
   providerPricing?: Record<string, {
@@ -62,7 +62,10 @@ export type NetworkServiceCatalogPeer = {
 /** `decision`: System One models return typed answers, not text or images. */
 export type NetworkServiceOfferType = 'text' | 'image' | 'decision';
 
-export type CatalogServiceBilling = { kind: 'per_quantity'; amountMicroUsdc: string };
+export type CatalogServiceBilling = { kind: 'per_quantity'; model: UnitBillingModelV2 } & (
+  | { pricing: 'fixed'; amountMicroUsdc: string }
+  | { pricing: 'conditional'; amountMicroUsdc?: never }
+);
 
 export type NetworkServiceOffer = {
   billing?: CatalogServiceBilling;
@@ -185,8 +188,12 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const unitModels = peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId];
         const billingByProtocol: Partial<Record<string, CatalogServiceBilling>> = {};
         for (const billingProtocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
-          const quantityPrice = unitPriceMicroUsdc(unitModels?.[billingProtocol] as UnitBillingModelV2 | undefined);
-          if (quantityPrice !== null) billingByProtocol[billingProtocol] = { kind: 'per_quantity', amountMicroUsdc: quantityPrice.toString() };
+          const model = unitModels?.[billingProtocol] as UnitBillingModelV2 | undefined;
+          if (!model || validateUnitBillingModelV2(model).length > 0) continue;
+          const quantityPrice = unitPriceMicroUsdc(model);
+          billingByProtocol[billingProtocol] = quantityPrice === null
+            ? { kind: 'per_quantity', pricing: 'conditional', model }
+            : { kind: 'per_quantity', pricing: 'fixed', model, amountMicroUsdc: quantityPrice.toString() };
         }
         const billing = protocol ? billingByProtocol[protocol] : undefined;
         offers.push({

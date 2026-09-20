@@ -7,12 +7,26 @@ const response = (body: unknown, statusCode = 200) => ({ requestId: 'request', s
 const imageModel = createUnitBillingModel('40000');
 
 describe('adapter-defined quantity billing', () => {
-  it('captures image request limits without billing unit names or attributes', () => {
+  it('captures immutable request facts before upstream rewriting and prices partial delivery', () => {
+    const model = { version: 2 as const, components: [{ priceMicroUsdc: '40000', match: { model: 'public-alias', quality: 'hd' } }, { priceMicroUsdc: '20000', match: { size: '1536x1024' } }] };
+    const request = { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: {}, body: new TextEncoder().encode(JSON.stringify({ model: 'public-alias', quality: 'hd', size: '1536x1024', n: 3 })) };
+    const buyer = captureUnitBillingContext({ ...context, service: 'public-alias', unitModel: model, request });
+    const seller = captureUnitBillingContext({ ...context, service: 'public-alias', unitModel: model, request });
+    request.body = new TextEncoder().encode(JSON.stringify({ model: 'upstream-model', quality: 'standard' }));
+    expect(buyer).toEqual(seller);
+    expect(computeFinalUnitBilling(model, buyer.context, response({ data: [{ b64_json: 'one' }, { b64_json: 'two' }] })).costUsdc).toBe(120000n);
+  });
+  it('rejects unmatched and unsupported conditions before sending a request', () => {
+    const request = { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: {}, body: new TextEncoder().encode(JSON.stringify({ quality: 'standard' })) };
+    expect(() => captureUnitBillingContext({ ...context, request, unitModel: { version: 2, components: [{ priceMicroUsdc: '0', match: { quality: 'hd' } }] } })).toThrow('No billing component matched');
+    expect(() => captureUnitBillingContext({ ...context, request, unitModel: { version: 2, components: [{ priceMicroUsdc: '1', match: { arbitrary: 'standard' } }] } })).toThrow('unsupported');
+  });
+  it('captures image request limits and adapter attributes without billing unit names', () => {
     const captured = captureUnitBillingContext({ ...context, request: { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ n: 4, prompt: 'hello', quality: 'high' })) } });
     expect(captured.context.maxQuantity).toBe(4);
     expect(captured.requestUsage).toEqual({ quantity: 4 });
     expect(captured.context).not.toHaveProperty('unitLimits');
-    expect(captured.context).not.toHaveProperty('attributes');
+    expect(captured.context.attributes).toEqual({ quality: 'high', size: 'auto' });
   });
   it.each([0, -1, 0.5, 'invalid', Number.MAX_SAFE_INTEGER + 1, null, true, [4], { count: 4 }])('rejects invalid requested quantities %j', quantity => {
     expect(() => captureUnitBillingContext({ ...context, request: { requestId: 'request', method: 'POST', path: '/v1/images/generations', headers: {}, body: new TextEncoder().encode(JSON.stringify({ n: quantity })) } })).toThrow();

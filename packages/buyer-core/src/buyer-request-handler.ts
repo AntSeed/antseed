@@ -20,6 +20,7 @@ import type { ResponseAuthSampler } from './interfaces.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import { verifyResponseAuth } from './response-auth.js';
 import { isFreeUnitBillingModel } from '@antseed/protocol/billing';
+import { captureUnitBillingContext } from './unit-billing.js';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   detectRequestServiceApiProtocol,
@@ -129,6 +130,13 @@ export class BuyerRequestHandler {
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
+    if (billingRoute?.unitModel) {
+      try {
+        captureUnitBillingContext({ ...billingRoute, request: req });
+      } catch (error) {
+        throw buyerFault(error instanceof Error ? error.message : String(error), 'invalid-request');
+      }
+    }
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
     const isFreeService = requestedService

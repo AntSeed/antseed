@@ -851,7 +851,7 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = fakePeerId('seller-image-headroom-race');
     const service = 'qwen-image-3-pro';
     const requestId = 'req-image-headroom-race';
-    const unitModel = { version: 2 as const, priceMicroUsdc: '25000' };
+    const unitModel = { version: 2 as const, components: [{ priceMicroUsdc: '25000' }] };
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     manager.trackRequestBilling(requestId, {
       context: {
@@ -947,12 +947,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 2, priceMicroUsdc: '0' },
+        defaults: { version: 2, components: [{ priceMicroUsdc: '0' }] },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': { version: 2, priceMicroUsdc: '40000' },
+                'openai-images': { version: 2, components: [{ priceMicroUsdc: '40000' }] },
               },
             },
           },
@@ -968,7 +968,7 @@ describe('BuyerPaymentManager', () => {
 
       },
 
-      unitModel: { version: 2, priceMicroUsdc: '40000' },
+      unitModel: { version: 2, components: [{ priceMicroUsdc: '40000' }] },
     });
     mux.sentSpendingAuths.length = 0;
 
@@ -998,12 +998,12 @@ describe('BuyerPaymentManager', () => {
       undefined,
       undefined,
       {
-        defaults: { version: 2, priceMicroUsdc: "0" },
+        defaults: { version: 2, components: [{ priceMicroUsdc: "0" }] },
         providers: {
           openai: {
             services: {
               'gpt-image-2': {
-                'openai-images': { version: 2, priceMicroUsdc: "40000" },
+                'openai-images': { version: 2, components: [{ priceMicroUsdc: "40000" }] },
               },
             },
           },
@@ -1018,7 +1018,7 @@ describe('BuyerPaymentManager', () => {
         serviceApiProtocol: 'openai-images',
         maxQuantity: 0,
       },
-      unitModel: { version: 2, priceMicroUsdc: "40000" },
+      unitModel: { version: 2, components: [{ priceMicroUsdc: "40000" }] },
     });
     manager.recordObservedUnitUsage('req-image-tier-mismatch', { quantity: 2 });
     mux.sentSpendingAuths.length = 0;
@@ -1050,7 +1050,7 @@ describe('BuyerPaymentManager', () => {
       10_000n,
       TEST_PRICING,
     );
-    const imageModel = { version: 2 as const, priceMicroUsdc: '4000' };
+    const imageModel = { version: 2 as const, components: [{ priceMicroUsdc: '4000' }] };
     manager.trackRequestBilling('req-image-hybrid', {
       context: {
         sellerPeerId,
@@ -1109,7 +1109,7 @@ describe('BuyerPaymentManager', () => {
 
       },
 
-      unitModel: { version: 2, priceMicroUsdc: '40000' },
+      unitModel: { version: 2, components: [{ priceMicroUsdc: '40000' }] },
     });
     manager.recordObservedUnitUsage('req-image-observed', { quantity: 1 });
     mux.sentSpendingAuths.length = 0;

@@ -102,13 +102,13 @@ Receipts are the unit of billing. The seller generates a signed receipt after ea
 
 ### Non-Token Unit Usage
 
-Metadata v13 carries `UnitBillingModelV2`: `{ "version": 2, "priceMicroUsdc": "40000" }`. The corresponding report is `{ "version": 2, "quantity": "4" }`; cost is integer price multiplied by independently verified quantity. Prices are uint32 micro-USDC and quantities are nonnegative safe integers encoded as decimal strings. There are no unit labels or conditional price components.
+Metadata v13 carries `UnitBillingModelV2`: `{ "version": 2, "components": [{ "priceMicroUsdc": "40000" }] }`. The corresponding report is `{ "version": 2, "quantity": "4" }`; cost is the sum of matching component prices multiplied by independently verified quantity. Components support adapter-defined exact-match conditions; all matching components are additive. Each price is uint32 micro-USDC, while sums/products use integer arithmetic without uint32 truncation. Quantities are nonnegative safe integers encoded as decimal strings. There are no unit labels.
 
 The advertised service API protocol defines quantity. For `openai-images`, both peers count non-empty `b64_json` or `url` outputs, capped by the requested image count. For non-streaming `openai-chat-completions`, a fulfilled response counts as one. Invalid or failed responses count as zero. Unsupported quantity adapters and excessive claims are rejected.
 
 Token and unit costs are computed independently and then summed. The buyer verifies both portions before authorizing cumulative payment.
 
-Legacy billing wire payloads are rejected. Compatible local seller configurations are migrated before startup; ambiguous or conditional legacy prices require explicit reconfiguration. See [quantity accounting and migration](../../quantity-billing.md). Existing historical receipts and database columns are unchanged.
+Legacy billing wire payloads are rejected. Compatible local seller configurations are migrated before startup with conditions and additive components preserved; incompatible or inexact prices require explicit reconfiguration. See [quantity accounting and migration](../../quantity-billing.md). Existing historical receipts and database columns are unchanged.
 
 ### UsageReceipt Interface
 
