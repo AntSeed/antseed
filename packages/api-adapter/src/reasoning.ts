@@ -1,4 +1,4 @@
-import { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/protocol';
+import { isReasoningEffort, type ReasoningEffort } from '@antseed/protocol';
 import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
 import { encodeJson, parseJsonObject } from './utils.js';
 
@@ -8,9 +8,8 @@ function object(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function supportsReasoningEffort(protocol: ServiceApiProtocol | null, effort: ReasoningEffort): boolean {
-  if (!REASONING_EFFORTS.includes(effort)) return false;
-  if (protocol === 'anthropic-messages') return effort !== 'minimal';
-  return (protocol === 'openai-chat-completions' || protocol === 'openai-responses') && effort !== 'max';
+  return isReasoningEffort(effort) && (protocol === 'anthropic-messages'
+    || protocol === 'openai-chat-completions' || protocol === 'openai-responses');
 }
 
 export function readReasoningEffort(body: Record<string, unknown>, protocol: ServiceApiProtocol): ReasoningEffort | undefined {
@@ -18,7 +17,7 @@ export function readReasoningEffort(body: Record<string, unknown>, protocol: Ser
     : protocol === 'openai-responses' ? object(body.reasoning)?.effort
     : protocol === 'anthropic-messages' ? object(body.thinking)?.type === 'disabled'
       ? 'none' : object(body.output_config)?.effort : undefined;
-  return REASONING_EFFORTS.includes(value as ReasoningEffort) ? value as ReasoningEffort : undefined;
+  return isReasoningEffort(value) ? value : undefined;
 }
 
 export function withReasoningEffort(

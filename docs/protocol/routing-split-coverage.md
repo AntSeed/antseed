@@ -114,7 +114,7 @@ earlier conversation work remains in the inherited main history.
 | `apps/desktop/src/main/chat/service-catalog.ts` | Combines routing exclusion with current decision-service and verifier behavior. |
 | `apps/desktop/src/main/chat/streaming-run.ts` | Equivalent prevention is already in PR 1: the catalog filters routing offers and its type excludes antseed-routing. The extra source comparison is unreachable and fails typecheck; it is not copied. |
 | `docs/protocol/templates/routing-provider/README.md` | Adds split-specific contract and compatibility-checker documentation. |
-| `docs/protocol/templates/routing-provider/check-compatibility.mjs` | Identical to source. |
+| Routing provider conformance fixtures | Originally checked by a standalone script; the script is removed and the fixtures now run in the router-core test suite. |
 | `docs/protocol/templates/routing-provider/fixtures/invalid-response.json` | Identical to source. |
 | `docs/protocol/templates/routing-provider/fixtures/metadata.json` | Identical to source. |
 | `docs/protocol/templates/routing-provider/fixtures/request.json` | Identical to source. |

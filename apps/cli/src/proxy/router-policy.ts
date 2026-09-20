@@ -5,7 +5,7 @@ import { findAdvertisedServiceOffer, findMissingRequiredParameters, resolvePeerR
 import { overrideRoutedModelInBody } from './request-utils.js'
 import type { ServiceApiProtocol } from './service-api-adapter.js'
 import { supportsReasoningEffort } from '@antseed/api-adapter'
-import { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/node'
+import type { ReasoningEffort } from '@antseed/node'
 
 export interface ValidatedRouterCandidate extends Omit<ModelRouteCandidate, 'peerCooldownUntil' | 'peerFailureStreak'> {
   peer: PeerInfo
@@ -45,8 +45,8 @@ export function validateRouterCandidate(options: {
   if (!offer || offer.capabilities?.routing === true) return null
   const targetProtocol = plan.selection?.targetProtocol ?? protocol ?? offer.protocol
   const reasoningEfforts = (offer.capabilities?.reasoning === false
-    ? ['none' as const]
-    : offer.capabilities?.reasoningEfforts ?? REASONING_EFFORTS)
+    ? []
+    : offer.capabilities?.reasoningEfforts ?? [])
     .filter((effort) => supportsReasoningEffort(targetProtocol, effort))
   if (recommendation.inference && !reasoningEfforts.includes(recommendation.inference.reasoningEffort)) return null
   const reasoningOverride: ReasoningEffort | null | undefined = offer.capabilities?.reasoning === false

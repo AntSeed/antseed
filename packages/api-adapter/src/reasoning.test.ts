@@ -45,9 +45,19 @@ describe('router reasoning overrides', () => {
     const original = request({ thinking: { type: 'enabled', budget_tokens: 6000 }, output_config: { effort: 'low' } });
     expect(transformRequest(original, { from: 'anthropic-messages', to: 'anthropic-messages' })!.request).toEqual(original);
   });
-  it('rejects impossible mappings instead of dropping the choice', () => {
+  it.each(['openai-chat-completions', 'openai-responses', 'anthropic-messages'] as ServiceApiProtocol[])('preserves seller-defined effort labels over %s', (protocol) => {
+    const result = decode(withReasoningEffort(request({}), protocol, 'deep-analysis'));
+    const effort = protocol === 'openai-chat-completions' ? result.reasoning_effort
+      : protocol === 'openai-responses' ? result.reasoning.effort : result.output_config.effort;
+    expect(effort).toBe('deep-analysis');
+  });
+  it('preserves opaque effort labels when converting request formats', () => {
+    const converted = transformRequest(request({ reasoning_effort: 'adaptive' }), { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(decode(converted!.request).output_config.effort).toBe('adaptive');
+  });
+  it('rejects unsupported control fields and malformed labels instead of dropping the choice', () => {
     expect(() => withReasoningEffort(request({}), 'antseed-routing', 'high')).toThrow();
-    expect(() => withReasoningEffort(request({}), 'anthropic-messages', 'minimal')).toThrow();
-    expect(() => transformRequest(request({ reasoning_effort: 'minimal' }), { from: 'openai-chat-completions', to: 'anthropic-messages' })).toThrow();
+    expect(() => withReasoningEffort(request({}), 'anthropic-messages', '')).toThrow();
+    expect(() => withReasoningEffort(request({}), 'openai-responses', ' deep')).toThrow();
   });
 });

@@ -77,22 +77,21 @@ Each recommendation may include one allowlisted inference control:
 ```
 
 Inference sellers advertise accepted `reasoningEfforts` in their per-service
-capabilities, for example `["none", "low", "high"]`. These values are signed in
+capabilities, for example `["adaptive", "deep-analysis"]`. These values are signed in
 metadata v13 and reach the router on each candidate; buyers supporting only v12 or
 earlier cannot consume such announcements. Sellers can upgrade without adding these
-optional capabilities. Missing effort labels, including a bare `reasoning: true`, allow
-best-effort router choices; they do not guarantee backend support. The backend may reject
-or ignore the setting. The buyer does not automatically retry without reasoning.
-Valid labels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+optional capabilities. Missing or empty effort lists, including a bare `reasoning: true`,
+do not permit router-supplied overrides. Labels are seller-defined, not a fixed enum.
 Sellers must advertise only values their inference implementation actually accepts.
-Explicit effort lists remain restrictive, and `reasoning: false` permits only `none`.
-The buyer additionally filters labels that cannot be represented by the target protocol.
-Candidate snapshots contain the resulting buyer-permitted levels: for sellers without
-effort metadata, these are the protocol-representable levels, not advertised guarantees.
+`reasoning: false` permits no router-supplied override. Candidate snapshots contain
+only the advertised choices supported by the target API's control field; buyers do
+not invent defaults or apply a global list of reasoning levels. Matching is exact,
+including case. The buyer does not automatically retry without reasoning.
 
 - A router's explicit choice overrides client/app reasoning controls, including a
   conflicting client thinking budget. It cannot alter output limits, prices or buyer policy.
-- `none` explicitly disables reasoning. It is not omission and does not restore the
+- If explicitly advertised and selected, `none` uses the adapter's disabled-reasoning
+  mapping. It is not omission and does not restore the
   client's setting. A service advertising `reasoning: false` has client reasoning controls
   removed rather than receiving unsupported reasoning parameters.
 - Omission preserves the client's compatible settings. Numeric thinking budgets are
@@ -104,8 +103,9 @@ effort metadata, these are the protocol-representable levels, not advertised gua
 The shared adapter writes the choice in the actual inference protocol:
 `reasoning_effort` for chat, `reasoning.effort` for responses, or
 `output_config.effort` with adaptive thinking for messages. For messages, `none`
-uses disabled thinking without an effort field. Unsupported conversions fail instead
-of silently dropping the choice. Each ranked attempt is rebuilt from the original
+uses disabled thinking without an effort field. Other advertised labels are preserved
+verbatim in the corresponding effort field. APIs without a reasoning control field
+are rejected instead of silently dropping the choice. Each ranked attempt is rebuilt from the original
 client request with that recommendation's own effort.
 
 ### Existing continuation reuse
