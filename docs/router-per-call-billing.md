@@ -2,7 +2,7 @@
 
 This is PR 2 of the routing stack: the shared execution machinery used by node
 and browser buyers. PR 1 defines the routing contract and complete signed metadata
-v14; PR 3 wires network selection and buyer policy into this machinery. Intermediate
+v14; PR 3 now wires network selection and buyer policy into this machinery. Intermediate
 slices are not intended for standalone deployment. There are no temporary
 execution guards, new metadata versions, or database migrations in this slice.
 
@@ -64,10 +64,39 @@ in-memory request tracking do not guarantee exactly-once billing across process
 restarts. Obsolete source tests for removed SQLite recovery columns are documented in the
 [extraction ledger](protocol/routing-split-provenance.md).
 
-## Deferred integration
+## Routing integration
 
-PR 3 supplies CLI/config selection, the network adapter, routing request/schema
-dispatch, buyer-policy checks, ranked fallback, usage-observation collection,
-reasoning overrides, continuation reuse, and local-chain routing end-to-end
-fixtures. The optional result telemetry fields introduced here define the
-reporting contract; they do not activate those behaviors.
+The network adapter accepts free, token-priced, or fixed-per-call routing services.
+Per-call services must advertise zero token rates: the adapter rejects mixed
+per-call/token pricing even though the shared payment runtime supports hybrid
+accounting for other services. Routing uses existing authenticated dispatch and
+payment policies, not a separate wallet, grant, subscription, or seller lock.
+
+The buyer checks signed metadata, preferences, schema hash, candidate eligibility,
+usage context, and advertised prices before invocation. The seller validates the
+structured request before negotiation and provider execution. The adapter wires
+the complete ranked-list validator into per-call response acceptance; malformed,
+duplicate, or partially ineligible lists do not earn a successful-request charge.
+
+Identical routing attempts for one parent request share an operation. A schema
+mismatch or failed routing response does not trigger a second paid routing call.
+An eligible continuation reuses its decision. A ranked list incurs one routing
+fee, independent of the number of inference attempts; an inference failure does
+not undo that fee or other already-incurred charges. Each inference attempt gets
+a distinct billing request ID, even when models share a seller. Conversation
+spend and router result callbacks retain the originating user-request identity.
+
+## Local-chain scenarios
+
+After building the workspace, these fixtures deploy to an isolated local Anvil
+chain. They require Foundry (`anvil`, `forge`, `cast`) and the repository's pinned
+`forge-std` submodule; they do not use real funds.
+
+```sh
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call
+node e2e/scripts/local-chain-routing-flow.mjs --per-call --invalid-route
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call --concurrent
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --ranked-fallback
+node e2e/scripts/local-chain-routing-flow.mjs --same-peer --per-call --ranked-fallback
+```

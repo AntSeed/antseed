@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Buyer routing: select installed or network routers through CLI/config, inspect signed preference schemas, and execute ranked model/seller recommendations under buyer policy. Reuse eligible conversation decisions, collect bounded usage observations, and apply reasoning overrides across inference and continuations. Routing fees remain separate from inference attempts, with local-chain fixtures for same-seller concurrency and ranked fallback.
+
 - Buyer payments: add shared per-call accounting, request-scoped billing and attribution, synchronous response-acceptance hooks, cancellation cleanup, and serialized payment updates for concurrent requests to one seller. Preserve existing reserve top-up policy and the released database schema. This is slice 2 of the routing stack; buyer activation remains in slice 3, with no temporary standalone-execution guards.
 
 - Protocol/Discovery: define structured routing requests and ranked responses, schema-validated preferences, usage-observation and reasoning fields, and complete signed metadata v14 propagation. Add exact per-call price representation, a pure response parser, and provider conformance fixtures. This is the protocol slice of the routing stack; paid execution and buyer integration are separate follow-ups, and this slice is not intended for standalone deployment.

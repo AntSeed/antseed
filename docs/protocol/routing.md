@@ -1,10 +1,11 @@
 # Structured routing contract
 
 This document describes the protocol/discovery contract of the three-PR routing
-stack. The shared payments slice now supplies request execution and per-call
-accounting; automatic buyer routing remains in the buyer-integration slice.
-Intermediate slices are for review and testing, not standalone deployment; there
-are deliberately no temporary execution guards.
+stack. Shared payments supply request execution and per-call accounting; buyer
+integration now connects selection, policy, fallback, observations, and reasoning
+to this contract. See [buyer integration](../router-network-integration.md).
+The first two slices are review boundaries, not standalone deployments; the stack
+contains no temporary execution guards.
 
 ## Advertisement and compatibility
 
@@ -82,7 +83,7 @@ An explicit candidate effort list is restrictive; an empty list allows no overri
 Missing candidate effort metadata allows a valid best-effort choice, not a backend
 support guarantee. For model-only recommendations at least one eligible candidate
 must permit the chosen effort. Applying an override and retrying/continuing inference
-are intentionally outside this slice.
+are implemented by the buyer integration rather than the protocol validator.
 
 ## Preferences and observations
 
@@ -111,8 +112,8 @@ exactly as uint32 micro-USDC; existing image-unit bytes remain unchanged.
 Catalog `billingByProtocol` exposes advertised per-call prices without treating
 them as token prices. The shared payments slice adds response-acceptance hooks,
 request-scoped accounting, cancellation cleanup, and serialized channel updates;
-see [shared payment execution](../router-per-call-billing.md). Wiring these hooks
-to network-router selection and buyer policy remains in the integration slice.
+see [shared payment execution](../router-per-call-billing.md). Buyer integration
+wires these hooks to network-router selection and buyer policy.
 
 ## Conformance example
 

@@ -79,6 +79,33 @@ CLI/config activation, routing-schema dispatch, network selection, policy checks
 ranked fallback, observation collection, reasoning overrides, and continuation
 reuse remain in PR 3. The original PR and PR 1 branches remain untouched.
 
+## PR 3 extraction and complete-stack audit
+
+PR 3, `codex/routing-buyer-integration`, starts from PR #1035 at
+`90c826bd084d651ee39a4c5fa5ecdcb25db3449c`. It includes the remaining selection,
+CLI/config, plugin settings, network adapter, schema dispatch, buyer policy,
+ranked fallback, observations, reasoning, continuation, and end-to-end changes.
+All original source files are accounted for in the
+[complete-stack coverage audit](routing-split-coverage.md), including explicit
+explanations of adaptations and obsolete source assertions.
+
+`93100eb31` extracts the conversation identity type with Dawe000's original
+author/date and Claude co-author credit. `48dc8512a` retains alexanderludwig's
+authorship, Dawe000/Claude co-author credit, and references the 31 contributing
+source commits. Shahaf Antwarg's earlier conversation-pin contribution is already
+an ancestor of the stack's main base (`b347768a2`) and remains in its history.
+
+Compatibility adaptations retain main's shared trust-score helpers, decision
+service support, verifier metadata, and TEE shutdown. The network adapter imports
+PR 1's existing response parser rather than adding a second parser. The desktop
+catalog already excludes routing services at runtime and in its type, so the
+source's now-unreachable extra chat check is not copied. No temporary guard or
+metadata revision is introduced. All five deferred routing dispatch/schema tests
+from PR 2 are included here. Split-specific tests/documentation remain separate
+from the source-attributed extraction. The local-chain fixture's expected fallback
+candidate includes the supported reasoning-effort list emitted by the source
+policy, fixing an incomplete source assertion without relaxing eligibility checks.
+
 ## Complete source-file allocation
 
 This ledger covers all 118 files in the pinned source PR. Mixed files must be
@@ -120,7 +147,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `apps/cli/src/proxy/routing-usage.test.ts` | 3 |
 | `apps/cli/src/proxy/routing-usage.ts` | 3 |
 | `apps/desktop/src/main/chat/service-catalog.ts` | 1 |
-| `apps/desktop/src/main/chat/streaming-run.ts` | 3 |
+| `apps/desktop/src/main/chat/streaming-run.ts` | Covered by 1 — routing excluded by the catalog; redundant unreachable source check omitted |
 | `docs/protocol/templates/routing-provider/README.md` | 1 |
 | `docs/protocol/templates/routing-provider/check-compatibility.mjs` | 1 |
 | `docs/protocol/templates/routing-provider/fixtures/invalid-response.json` | 1 |
@@ -129,7 +156,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `docs/protocol/templates/routing-provider/fixtures/response.json` | 1 |
 | `docs/protocol/templates/routing-provider/src/index.ts` | 1 |
 | `docs/router-network-integration.md` | 1 / 3 — contract documented separately / buyer behavior deferred |
-| `docs/router-per-call-billing.md` | 2 |
+| `docs/router-per-call-billing.md` | 2 / 3 — shared execution / routing integration and local-chain scenarios |
 | `e2e/package.json` | 3 |
 | `e2e/scripts/local-chain-routing-flow.mjs` | 3 |
 | `packages/api-adapter/package.json` | 3 |
