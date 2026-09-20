@@ -18,14 +18,29 @@ describe('router recommendation validation', () => {
     }
     expect(areRouteRecommendationsEligible([{ ...route, inference: undefined }], offers)).toBe(true);
   });
-  it('allows valid efforts for model-only and exact offers without effort metadata', () => {
+  it('rejects reasoning overrides for model-only and exact offers without effort metadata', () => {
     for (const peerId of [undefined, 'seller-a']) {
       const route = { serviceId: 'model-x', peerId, inference: { reasoningEffort: 'high' } };
-      expect(areRouteRecommendationsEligible([route], candidates)).toBe(true);
+      expect(areRouteRecommendationsEligible([route], candidates)).toBe(false);
       for (const inference of [{ reasoningEffort: 'unknown' }, { reasoningEffort: 'high', max_tokens: 9000 }]) {
         expect(areRouteRecommendationsEligible([{ ...route, inference }], candidates)).toBe(false);
       }
     }
+  });
+  it('accepts seller-defined labels only on candidates advertising the exact choice', () => {
+    const offers = [
+      { serviceId: 'model', peerId: 'one', reasoningEfforts: ['adaptive', 'deep-analysis'] },
+      { serviceId: 'model', peerId: 'two', reasoningEfforts: ['high'] },
+      { serviceId: 'model', peerId: 'three' },
+    ];
+    const route = { serviceId: 'model', inference: { reasoningEffort: 'adaptive' } };
+    expect(isRouteRecommendation(route)).toBe(true);
+    expect(areRouteRecommendationsEligible([route], offers)).toBe(true);
+    expect(areRouteRecommendationsEligible([{ ...route, peerId: 'one' }], offers)).toBe(true);
+    for (const peerId of ['two', 'three']) {
+      expect(areRouteRecommendationsEligible([{ ...route, peerId }], offers)).toBe(false);
+    }
+    expect(areRouteRecommendationsEligible([{ ...route, inference: { reasoningEffort: 'Adaptive' } }], offers)).toBe(false);
   });
   it('accepts ordered model-only and exact recommendations across models', () => {
     expect(areRouteRecommendationsEligible([

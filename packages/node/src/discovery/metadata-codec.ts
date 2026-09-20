@@ -1,7 +1,7 @@
 import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
 import { assertQuantityBillingModel } from '../billing/unit.js';
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
-import { QUANTITY_BILLING_METADATA_VERSION, SERVICE_CAPABILITY_MODALITIES, SERVICE_REASONING_EFFORTS_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { QUANTITY_BILLING_METADATA_VERSION, SERVICE_CAPABILITY_MODALITIES, SERVICE_REASONING_EFFORTS_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -105,8 +105,8 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
         if (errors.length) throw new Error(errors.join('; '));
       }
       if (caps.routing === undefined) continue;
-      if (metadata.version < SERVICE_ROUTING_CAPABILITY_METADATA_VERSION) {
-        throw new Error(`Service routing capability requires metadata v${SERVICE_ROUTING_CAPABILITY_METADATA_VERSION} or newer`);
+      if (metadata.version < SERVICE_ROUTING_METADATA_VERSION) {
+        throw new Error(`Service routing capability requires metadata v${SERVICE_ROUTING_METADATA_VERSION} or newer`);
       }
       if (typeof caps.routing !== "boolean") {
         throw new Error("Service routing capability must be a boolean");
@@ -970,7 +970,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
-      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, version >= SERVICE_REASONING_EFFORTS_METADATA_VERSION)
+      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= SERVICE_ROUTING_METADATA_VERSION, version >= SERVICE_REASONING_EFFORTS_METADATA_VERSION)
       : undefined;
 
     let serviceRouting: import("./peer-metadata.js").ProviderAnnouncement['serviceRouting'];

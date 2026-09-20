@@ -10,9 +10,10 @@ entry; the compatibility fixtures demonstrate an exact seller followed by a diff
 model-only choice. Every entry must refer to an eligible candidate. Rank is preserved by
 the pure response parser; executing ranked fallback belongs to the buyer integration.
 
-A recommendation can include `inference: { reasoningEffort: "high" }`. An explicit
-`reasoningEfforts` list restricts accepted values; missing capability metadata allows a
-best-effort choice without guaranteeing backend support. Inference
+A recommendation can include `inference: { reasoningEffort: "adaptive" }` only when
+the selected candidate advertises that exact choice in its `reasoningEfforts` list.
+Labels are seller-defined, not a hardcoded protocol enum. Missing or empty effort
+metadata allows no override. Inference
 service capability advertisements carrying this list use the same signed metadata v13
 extension as routing descriptors.
 For model-only recommendations, at least one eligible seller must permit the effort.
@@ -28,12 +29,9 @@ without adding service-specific buyer code. IDs are router-scoped; deduplicate t
 maintaining server-side history, and honor `historyTruncated` and new conversation
 references. No additional reporting endpoint or buyer preference is required.
 
-Build protocol, node and router-core, then check the fixtures without contacting a service:
-
-```bash
-node docs/protocol/templates/routing-provider/check-compatibility.mjs
-```
-
-For captured data, pass descriptor, request and response JSON file paths in that order.
-The checker never sends a paid request. See `docs/protocol/routing.md` for the wire
-contract, schema subset, version compatibility, and implementation scope.
+Seller startup validates the advertised configuration and refuses invalid routing
+descriptors, capabilities, pricing, or concurrency before starting networking. No
+separate compatibility script is required. The normal router-core routing-response
+tests cover the example provider and the saved valid/invalid fixtures without sending
+a paid request. See `docs/protocol/routing.md` for the wire contract, schema subset,
+version compatibility, and implementation scope.

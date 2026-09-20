@@ -1,7 +1,7 @@
 import { validateQuantityBillingConditions } from '@antseed/api-adapter';
 import { validateRoutingServiceMetadata } from "@antseed/protocol";
-import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { QUANTITY_BILLING_METADATA_VERSION, METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_REASONING_EFFORTS_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import type { DomainVerificationMethod, PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
+import { QUANTITY_BILLING_METADATA_VERSION, METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_REASONING_EFFORTS_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata, MAX_ENCODED_METADATA_SIZE } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { isQuantityBillingProtocol, validateUnitBillingModelV2 } from "../billing/unit.js";
@@ -319,19 +319,77 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
+  errors.push(...validateProviderAnnouncements(metadata.providers, metadata.version));
+
+  // signature length (130 hex chars = 65 bytes, secp256k1 r+s+v)
+  if (!/^[0-9a-f]{130}$/.test(metadata.signature)) {
+    errors.push({
+      field: "signature",
+      message: "Signature must be exactly 130 lowercase hex characters (65 bytes)",
+    });
+  }
+
+  // encoded size. Skip when an earlier format error would cause encode to
+  // throw for reasons already reported (e.g. malformed sellerContract hex) —
+  // otherwise the generic "failed to encode" masks the real cause.
+  if (errors.length === 0) {
+    try {
+      const encoded = encodeMetadata(metadata);
+      if (encoded.length > MAX_METADATA_SIZE) {
+        errors.push({
+          field: "encoded",
+          message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
+        });
+      }
+    } catch (err) {
+      errors.push({
+        field: "encoded",
+        message: `Failed to encode metadata for size check: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  return errors;
+}
+
+export function validateProviderAnnouncements(providers: ProviderAnnouncement[], version = METADATA_VERSION): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  if (!Array.isArray(providers)) return [{ field: 'providers', message: 'Providers must be an array' }];
+
   // A health-checked seller may temporarily have zero available providers.
   // It remains discoverable so buyers can observe recovery, but advertises no
   // inference route until at least one service becomes healthy again.
-  if (metadata.providers.length > MAX_PROVIDERS) {
+  if (providers.length > MAX_PROVIDERS) {
     errors.push({
       field: "providers",
-      message: `Provider count ${metadata.providers.length} exceeds max ${MAX_PROVIDERS}`,
+      message: `Provider count ${providers.length} exceeds max ${MAX_PROVIDERS}`,
     });
   }
 
   // each provider
-  for (let i = 0; i < metadata.providers.length; i++) {
-    const p = metadata.providers[i]!;
+  for (let i = 0; i < providers.length; i++) {
+    const p = providers[i]!;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      errors.push({ field: `providers[${i}]`, message: 'Provider must be an object' });
+      continue;
+    }
+    if (typeof p.provider !== 'string' || !p.provider.trim() || new TextEncoder().encode(p.provider).length > 255) {
+      errors.push({ field: `providers[${i}].provider`, message: 'Provider name must be nonempty and at most 255 UTF-8 bytes' });
+    }
+    if (!Array.isArray(p.services) || Array.from(p.services).some((service) => typeof service !== 'string' || !service.trim())) {
+      errors.push({ field: `providers[${i}].services`, message: 'Services must be an array of nonempty names (or an empty array for wildcard services)' });
+      continue;
+    }
+    let invalidMap = false;
+    for (const key of ['servicePricing', 'serviceCategories', 'serviceApiProtocols', 'serviceUnitBillingModels', 'serviceCapabilities', 'serviceRouting'] as const) {
+      const value = p[key];
+      if (value !== undefined && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+        errors.push({ field: `providers[${i}].${key}`, message: `${key} must be an object` });
+        invalidMap = true;
+      }
+    }
+    if (invalidMap) continue;
     const hasWildcardServices = p.services.length === 0;
 
     // services count
@@ -366,6 +424,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         message: "Default output price must be a non-negative finite number",
       });
     }
+    if (p.defaultPricing?.cachedInputUsdPerMillion !== undefined
+      && (!Number.isFinite(p.defaultPricing.cachedInputUsdPerMillion) || p.defaultPricing.cachedInputUsdPerMillion < 0)) {
+      errors.push({ field: `providers[${i}].defaultPricing.cachedInputUsdPerMillion`, message: 'Default cached input price must be a non-negative finite number' });
+    }
 
     // service pricing (optional)
     if (p.servicePricing !== undefined) {
@@ -387,6 +449,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
             field: `providers[${i}].servicePricing.${serviceName}.outputUsdPerMillion`,
             message: "Service output price must be a non-negative finite number",
           });
+        }
+        if (servicePricing?.cachedInputUsdPerMillion !== undefined
+          && (!Number.isFinite(servicePricing.cachedInputUsdPerMillion) || servicePricing.cachedInputUsdPerMillion < 0)) {
+          errors.push({ field: `providers[${i}].servicePricing.${serviceName}.cachedInputUsdPerMillion`, message: 'Service cached input price must be a non-negative finite number' });
         }
       }
     }
@@ -508,7 +574,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceUnitBillingModels !== undefined) {
-      if (metadata.version < QUANTITY_BILLING_METADATA_VERSION) {
+      if (version < QUANTITY_BILLING_METADATA_VERSION) {
         errors.push({
           field: `providers[${i}].serviceUnitBillingModels`,
           message: `Quantity billing requires metadata version ${QUANTITY_BILLING_METADATA_VERSION}`,
@@ -575,7 +641,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
 
     if (p.serviceRouting !== undefined) {
       const field = `providers[${i}].serviceRouting`;
-      if (metadata.version < SERVICE_ROUTING_METADATA_VERSION || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
+      if (version < SERVICE_ROUTING_METADATA_VERSION || !p.serviceRouting || typeof p.serviceRouting !== "object" || Array.isArray(p.serviceRouting)) {
         errors.push({ field, message: "Routing descriptors require an object and metadata v13" });
       } else {
         for (const [service, descriptor] of Object.entries(p.serviceRouting)) {
@@ -587,7 +653,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       }
     }
     if (p.serviceCapabilities !== undefined) {
-      if (metadata.version < SERVICE_CAPABILITIES_METADATA_VERSION) {
+      if (version < SERVICE_CAPABILITIES_METADATA_VERSION) {
         errors.push({
           field: `providers[${i}].serviceCapabilities`,
           message: `Service capabilities require metadata version ${SERVICE_CAPABILITIES_METADATA_VERSION}`,
@@ -621,65 +687,37 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         for (const message of validateServiceCapabilityFields(caps)) {
           errors.push({ field, message });
         }
-        if (caps.reasoningEfforts !== undefined && metadata.version < SERVICE_REASONING_EFFORTS_METADATA_VERSION) {
+        if (caps.reasoningEfforts !== undefined && version < SERVICE_REASONING_EFFORTS_METADATA_VERSION) {
           errors.push({ field: `${field}.reasoningEfforts`, message: 'Reasoning efforts require metadata version 13' });
         }
-        if (caps.routing !== undefined && metadata.version < SERVICE_ROUTING_CAPABILITY_METADATA_VERSION) {
+        if (caps.routing !== undefined && version < SERVICE_ROUTING_METADATA_VERSION) {
           errors.push({
             field: `${field}.routing`,
-            message: `Service routing capability requires metadata version ${SERVICE_ROUTING_CAPABILITY_METADATA_VERSION}`,
+            message: `Service routing capability requires metadata version ${SERVICE_ROUTING_METADATA_VERSION}`,
           });
         }
       }
     }
 
     // concurrency
-    if (p.maxConcurrency < 1) {
+    if (!Number.isInteger(p.maxConcurrency) || p.maxConcurrency < 1 || p.maxConcurrency > 65535) {
       errors.push({
         field: `providers[${i}].maxConcurrency`,
-        message: "Max concurrency must be at least 1",
+        message: "Max concurrency must be an integer between 1 and 65535",
       });
     }
 
     // currentLoad
-    if (p.currentLoad < 0) {
+    if (!Number.isInteger(p.currentLoad) || p.currentLoad < 0) {
       errors.push({
         field: `providers[${i}].currentLoad`,
-        message: "Current load must be non-negative",
+        message: "Current load must be a non-negative integer",
       });
     }
     if (p.currentLoad > p.maxConcurrency) {
       errors.push({
         field: `providers[${i}].currentLoad`,
         message: "Current load must not exceed max concurrency",
-      });
-    }
-  }
-
-  // signature length (130 hex chars = 65 bytes, secp256k1 r+s+v)
-  if (!/^[0-9a-f]{130}$/.test(metadata.signature)) {
-    errors.push({
-      field: "signature",
-      message: "Signature must be exactly 130 lowercase hex characters (65 bytes)",
-    });
-  }
-
-  // encoded size. Skip when an earlier format error would cause encode to
-  // throw for reasons already reported (e.g. malformed sellerContract hex) —
-  // otherwise the generic "failed to encode" masks the real cause.
-  if (errors.length === 0) {
-    try {
-      const encoded = encodeMetadata(metadata);
-      if (encoded.length > MAX_METADATA_SIZE) {
-        errors.push({
-          field: "encoded",
-          message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
-        });
-      }
-    } catch (err) {
-      errors.push({
-        field: "encoded",
-        message: `Failed to encode metadata for size check: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }

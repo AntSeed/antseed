@@ -10,6 +10,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Routing recommendations require an exact seller-advertised reasoning choice; missing or empty capabilities do not permit an override. Seller startup rejects invalid provider advertisements before networking with field-specific errors. The standalone routing compatibility script is removed; its fixtures run in the normal test suite.
+
+- Reasoning capabilities advertise seller-defined labels rather than a fixed enum. Configuration and wire validation bound label size and count, while per-peer CLI and desktop catalogs preserve the advertised choices, including explicitly empty lists.
+
 - Quantity billing retains conditional and additive pricing components without named billing units. Image adapters support model, size, quality, and resolution conditions; buyers independently resolve request prices and verify delivered quantities. Legacy startup migration preserves compatible conditions. Catalogs expose conditional rules without misleading flat prices or ranges.
 
 - Non-token billing uses fixed integer micro-USDC prices and generic quantity reports (billing v2), replacing image/request unit components. API-protocol adapters measure fulfillment and buyers verify quantity and request limits independently. Compatible legacy seller configuration migrates before provider construction; ambiguous or inexact prices require explicit configuration. Legacy billing wire payloads are rejected; token pricing and historical storage remain unchanged. This is PR 1/5 of the unreleased routing stack; reasoning-effort announcements, routing protocol/discovery, shared execution, and buyer integration follow separately.

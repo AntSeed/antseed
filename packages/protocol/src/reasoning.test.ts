@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { REASONING_EFFORTS } from './reasoning.js';
-import { validateServiceCapabilityFields, type ServiceCapabilities } from './peer-metadata.js';
+import { isReasoningEffort, isReasoningEffortList } from './reasoning.js';
+import { validateServiceCapabilityFields } from './peer-metadata.js';
 
-describe('reasoning effort capabilities', () => {
-  it('accepts all supported labels and omission as unknown', () => {
-    expect(validateServiceCapabilityFields({ reasoningEfforts: [...REASONING_EFFORTS] })).toEqual([]);
-    expect(validateServiceCapabilityFields({})).toEqual([]);
-    expect(validateServiceCapabilityFields({ reasoning: false, reasoningEfforts: ['none'] })).toEqual([]);
+describe('seller-defined reasoning capabilities', () => {
+  it.each(['adaptive', 'deep-analysis', 'vendor.v2', '自動', 'x'.repeat(64)])('accepts opaque label %s', (effort) => {
+    expect(isReasoningEffort(effort)).toBe(true);
+    expect(validateServiceCapabilityFields({ reasoningEfforts: [effort] })).toEqual([]);
   });
 
-  it.each([[], ['high', 'high'], ['unknown'], 'high', ['high', 3], null])('rejects malformed effort lists %j', (reasoningEfforts) => {
-    expect(validateServiceCapabilityFields({ reasoningEfforts } as ServiceCapabilities)).not.toEqual([]);
+  it.each([null, undefined, 1, {}, '', ' ', ' high', 'high ', 'hi\nthere', '\ud800', 'x'.repeat(65), '深'.repeat(22)])('rejects malformed label %j', (effort) => {
+    expect(isReasoningEffort(effort)).toBe(false);
+    expect(isReasoningEffortList([effort])).toBe(false);
   });
 
-  it('rejects enabled reasoning when reasoning is false', () => {
-    expect(validateServiceCapabilityFields({ reasoning: false, reasoningEfforts: ['high'] })).toContain('reasoningEfforts cannot enable reasoning when reasoning is false');
+  it('bounds advertised choices without fixing their vocabulary', () => {
+    const efforts = Array.from({ length: 32 }, (_, index) => `custom-${index}`);
+    expect(isReasoningEffortList(efforts)).toBe(true);
+    expect(isReasoningEffortList([...efforts, 'extra'])).toBe(false);
+    expect(isReasoningEffortList(['adaptive', 'adaptive'])).toBe(false);
+    expect(isReasoningEffortList(Array(1))).toBe(false);
+    expect(isReasoningEffortList([])).toBe(true);
+    expect(validateServiceCapabilityFields({ reasoning: false, reasoningEfforts: [] })).toEqual([]);
+    expect(validateServiceCapabilityFields({ reasoning: false, reasoningEfforts: ['off'] })).not.toEqual([]);
   });
 });

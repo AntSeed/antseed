@@ -373,4 +373,4 @@ export { RoutingContextTracker, type RoutingRequestContext, type RoutingTrigger 
 
 export { isRoutingSelection, type RoutingSelection, type RoutingServiceTarget } from './routing/selection.js';
 export { RoutingObservationHistory } from './routing/usage-observations.js';
-export { REASONING_EFFORTS, type ReasoningEffort } from '@antseed/protocol';
+export type { ReasoningEffort } from '@antseed/protocol';

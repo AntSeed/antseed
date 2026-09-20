@@ -39,6 +39,20 @@ services. This does not change seller startup requirements or request matching.
 Health probes skip services marked `routing: true` or advertising `antseed-routing`
 anywhere in their protocol list, regardless of protocol order.
 
+Routing providers advertise their routing service names (for example, `selector`),
+not a list of inference models they know how to route. The descriptor defines their
+preferences, not model coverage. Buyers supply eligible inference models and sellers
+in each request's `candidates`; recommendations must stay within that list. This
+contract does not advertise model-specific routing expertise or coverage guarantees.
+
+Seller startup validates the configured provider announcements before starting
+networking. Invalid pricing, concurrency, capabilities, routing schemas or schema
+hashes, and descriptors for unadvertised services prevent startup with field-specific
+errors. Services advertising `antseed-routing` must provide a routing descriptor and
+the `routing: true` capability. Metadata encoding limits are checked before networking
+as well. Request and response validation still runs for each routing exchange; passing
+startup validation cannot guarantee that future requests or responses are valid.
+
 Updated discovery accepts supported older metadata versions. Announcements without
 new fields retain their existing version selection. An older buyer that only accepts
 v12 or earlier cannot consume a v13 announcement, including its non-routing services.
@@ -56,7 +70,7 @@ The request is JSON sent to `POST /v1/route`:
   "preferencesSchemaHash": "<hash from the signed descriptor>",
   "request": { "path": "/v1/chat/completions", "body": { "messages": [] } },
   "candidates": [
-    { "serviceId": "model-a", "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inputUsdPerMillion": 1, "outputUsdPerMillion": 2 }
+    { "serviceId": "model-a", "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inputUsdPerMillion": 1, "outputUsdPerMillion": 2, "reasoningEfforts": ["adaptive", "deep-analysis"] }
   ],
   "preferences": { "position": "first" }
 }
@@ -74,7 +88,7 @@ The response is a nonempty ranked list:
   "version": 1,
   "recommendations": [
     { "serviceId": "model-a", "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "serviceId": "model-a", "inference": { "reasoningEffort": "high" } }
+    { "serviceId": "model-a", "inference": { "reasoningEffort": "adaptive" } }
   ],
   "usage": { "input_tokens": 20, "output_tokens": 4 }
 }
@@ -86,12 +100,17 @@ rejected. `parseRoutingResponse` in `@antseed/router-core` validates the complet
 list and preserves rank without invoking a service. Optional usage counts are
 nonnegative safe integers, including `cached_input_tokens` when supplied.
 
-Reasoning labels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
-An explicit candidate effort list is restrictive; an empty list allows no override.
-Missing candidate effort metadata allows a valid best-effort choice, not a backend
-support guarantee. For model-only recommendations at least one eligible candidate
-must permit the chosen effort. Applying an override and retrying/continuing inference
-are implemented by the buyer integration rather than the protocol validator.
+Reasoning labels are opaque, seller-defined strings, not a protocol-wide enum. Sellers
+advertise their supported choices in `serviceCapabilities[serviceId].reasoningEfforts`;
+buyers carry those choices into routing candidates. Lists allow at most 32 unique
+labels, each nonempty and at most 64 UTF-8 bytes, without surrounding whitespace or
+control characters. An empty or missing list allows no routing-supplied override.
+When `reasoning` is explicitly false, its effort list must be empty or omitted.
+Recommendations must match an advertised choice exactly. For model-only recommendations,
+at least one eligible candidate must advertise that choice, and subsequent seller
+selection must preserve that restriction. Applying a supported setting to a backend
+API, and retrying/continuing inference, belong to buyer integration rather than this
+validator. An accepted label is not a universal backend parameter mapping.
 
 ## Preferences and observations
 
@@ -145,12 +164,7 @@ wires these hooks to network-router selection and buyer policy.
 ## Conformance example
 
 See `templates/routing-provider/` for a deterministic provider and valid/invalid
-fixtures. After building protocol, node, and router-core:
-
-```sh
-node docs/protocol/templates/routing-provider/check-compatibility.mjs
-```
-
-The checker validates captured data locally; it never contacts a provider or
-authorizes a payment. Pass metadata, request, and response JSON paths to validate
-another capture.
+fixtures. The router-core routing-response tests validate those fixtures and exercise
+the example provider without contacting an external service or authorizing payment.
+There is no separate compatibility script or manual validation step required to start
+a seller.
