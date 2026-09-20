@@ -1,6 +1,6 @@
 import { validateQuantityBillingConditions } from '@antseed/api-adapter';
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, QUANTITY_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_REASONING_EFFORTS_METADATA_VERSION, QUANTITY_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata, MAX_ENCODED_METADATA_SIZE } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { isQuantityBillingProtocol, validateUnitBillingModelV2 } from "../billing/unit.js";
@@ -606,6 +606,9 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         }
         for (const message of validateServiceCapabilityFields(caps)) {
           errors.push({ field, message });
+        }
+        if (caps.reasoningEfforts !== undefined && metadata.version < SERVICE_REASONING_EFFORTS_METADATA_VERSION) {
+          errors.push({ field: `${field}.reasoningEfforts`, message: 'Reasoning efforts require metadata version 13' });
         }
       }
     }

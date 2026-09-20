@@ -343,7 +343,9 @@ export class PeerAnnouncer {
 
     return this._signAndValidateMetadata({
       peerId: this.config.identity.peerId,
-      version: providers.some(provider => provider.serviceUnitBillingModels) ? METADATA_VERSION : SERVICE_CAPABILITIES_METADATA_VERSION,
+      version: providers.some(provider => provider.serviceUnitBillingModels
+        || Object.values(provider.serviceCapabilities ?? {}).some(caps => caps.reasoningEfforts !== undefined))
+        ? METADATA_VERSION : SERVICE_CAPABILITIES_METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,

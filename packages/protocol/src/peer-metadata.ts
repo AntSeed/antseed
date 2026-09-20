@@ -1,4 +1,5 @@
 import type { PeerId } from './peer-id.js';
+import { REASONING_EFFORTS, type ReasoningEffort } from './reasoning.js';
 import type { PeerOffering } from './capability.js';
 import type { ServiceUnitBillingModelsV2 } from './billing.js';
 import {
@@ -12,6 +13,7 @@ export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const QUANTITY_BILLING_METADATA_VERSION = 13;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+export const SERVICE_REASONING_EFFORTS_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -47,6 +49,7 @@ export interface ServiceCapabilities {
   outputs?: ServiceCapabilityModality[];
   /** Supports extended thinking / reasoning effort. */
   reasoning?: boolean;
+  reasoningEfforts?: ReasoningEffort[];
   /** Supports tool use / function calling. */
   toolUse?: boolean;
   /** Supports structured output / JSON schema responses. */
@@ -74,6 +77,16 @@ const SERVICE_CAPABILITY_MODALITY_SET = new Set<string>(SERVICE_CAPABILITY_MODAL
  */
 export function validateServiceCapabilityFields(caps: ServiceCapabilities): string[] {
   const errors: string[] = [];
+  if (caps.reasoningEfforts !== undefined) {
+    if (!Array.isArray(caps.reasoningEfforts) || caps.reasoningEfforts.length === 0
+      || caps.reasoningEfforts.length > REASONING_EFFORTS.length
+      || caps.reasoningEfforts.some((effort) => !REASONING_EFFORTS.includes(effort))
+      || new Set(caps.reasoningEfforts).size !== caps.reasoningEfforts.length) {
+      errors.push('reasoningEfforts must be a nonempty list of unique supported effort labels');
+    } else if (caps.reasoning === false && caps.reasoningEfforts.some((effort) => effort !== 'none')) {
+      errors.push('reasoningEfforts cannot enable reasoning when reasoning is false');
+    }
+  }
   for (const key of ["contextWindow", "maxOutputTokens"] as const) {
     const value = caps[key];
     if (value === undefined) continue;
