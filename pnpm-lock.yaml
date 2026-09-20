@@ -93,6 +93,9 @@ importers:
       '@antseed/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
+      '@antseed/router-core':
+        specifier: workspace:*
+        version: link:../../packages/router-core
       '@peculiar/x509':
         specifier: ^2.0.0
         version: 2.0.0
@@ -552,6 +555,9 @@ importers:
 
   packages/api-adapter:
     dependencies:
+      '@antseed/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       tokenx:
         specifier: ^1.3.0
         version: 1.3.0

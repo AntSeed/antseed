@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
 import { parseHostPort } from './public-address.js';
+import { isRoutingSelection, readRouterSettings } from '@antseed/node';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -296,6 +297,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   const routingPreferences = config.buyer.routingPreferences;
+  try { readRouterSettings(routingPreferences.routerSettings); }
+  catch (error) { errors.push(`buyer.routingPreferences.routerSettings: ${(error as Error).message}`); }
   if (typeof routingPreferences.preferFreePeers !== 'boolean') {
     errors.push('buyer.routingPreferences.preferFreePeers must be a boolean');
   }
@@ -326,6 +329,9 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isInteger(config.buyer.requestTimeoutMs) || config.buyer.requestTimeoutMs < 1) {
     errors.push('buyer.requestTimeoutMs must be an integer >= 1');
+  }
+  if (config.buyer.selection !== undefined && !isRoutingSelection(config.buyer.selection)) {
+    errors.push('buyer.selection must select a model or router with an optional network service');
   }
 
   if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS) {

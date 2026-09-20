@@ -13,6 +13,31 @@ import { loadConfig } from './loader.js';
 import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
 
+test('loads namespaced router settings without converting plugin vocabulary', async () => {
+  const routerSettings = { 'plugin:example': { policy: 'fast' }, 'instance:other': { threshold: '0.5' } };
+  await withTempConfig(JSON.stringify({ buyer: { routingPreferences: { routerSettings } } }), async (path) => {
+    assert.deepEqual((await loadConfig(path)).buyer.routingPreferences.routerSettings, routerSettings);
+  });
+});
+
+test('loads a single selection and keeps only existing global buyer price limits', async () => {
+  const selection = { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'openai', serviceId: 'classifier' } };
+  await withTempConfig(JSON.stringify({ buyer: { selection, maxPricing: { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 }, providers: { ignored: {} } } } }), async (path) => {
+    const config = await loadConfig(path);
+    assert.deepEqual(config.buyer.selection, selection);
+    assert.deepEqual(config.buyer.maxPricing, { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 3 } });
+  });
+});
+
+test('rejects malformed or conflicting selections', async () => {
+  for (const selection of [null, [], { kind: 'other' }, { kind: 'model' }, { kind: 'router', model: 'fallback' },
+    { kind: 'router', service: { peerId: 'invalid', provider: 'openai', serviceId: 'classifier' } }]) {
+    await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
+      await assert.rejects(loadConfig(path), /buyer.selection/);
+    });
+  }
+});
+
 async function withTempConfig(contents: string, fn: (configPath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-cli-config-'));
   const configPath = join(dir, 'config.json');
@@ -32,6 +57,14 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
   assert.notEqual(deriveDisplayNameFromPeerId(peerId), deriveDisplayNameFromPeerId('abcdef1234567890abcdef1234567890abcdef12'));
   assert.equal(shouldDeriveDisplayName('Antseed Node'), true);
   assert.equal(shouldDeriveDisplayName('custom seller'), false);
+});
+
+test('fixed model and local router selections round-trip without classifier settings', async () => {
+  for (const selection of [{ kind: 'model', model: 'test-model' }, { kind: 'router' }, { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'fixture', serviceId: 'selector' }, preferences: { options: { enabled: false }, count: 2, labels: ['a'] } }]) {
+    await withTempConfig(JSON.stringify({ buyer: { selection } }), async (path) => {
+      assert.deepEqual((await loadConfig(path)).buyer.selection, selection);
+    });
+  }
 });
 
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {

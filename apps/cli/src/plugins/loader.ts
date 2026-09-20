@@ -3,7 +3,7 @@ import { builtinModules } from 'node:module'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
-import { TRUSTED_PLUGINS } from './registry.js'
+import { TRUSTED_PLUGINS, resolvePluginPackage } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, PluginConfigKey } from '@antseed/node'
 
 const NODE_BUILTINS = new Set([
@@ -20,8 +20,7 @@ function isTruthyEnv(value: string | undefined): boolean {
 function resolvePackageName(nameOrPackage: string): string {
   const legacy = LEGACY_PACKAGE_MAP[nameOrPackage]
   if (legacy) return legacy
-  const trusted = TRUSTED_PLUGINS.find(p => p.name === nameOrPackage)
-  return trusted?.package ?? nameOrPackage
+  return resolvePluginPackage(nameOrPackage)
 }
 
 function pinnedVersion(pkgName: string): string | undefined {
@@ -34,10 +33,13 @@ async function loadPlugin<T>(
   nameOrPackage: string,
   kind: PluginKind,
   methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin | keyof AntseedVerifierPlugin | keyof Prover,
-  opts?: { install?: boolean }
+  opts?: { install?: boolean; pluginsDir?: string }
 ): Promise<T> {
   const pkgName = resolvePackageName(nameOrPackage)
-  const pluginsDir = getPluginsDir()
+  if (kind === 'router' && (nameOrPackage === 'classifier' || pkgName === '@antseed/router-classifier')) {
+    throw new Error('The classifier plugin has been retired. Configure buyer.selection with a network service and metadata-defined preferences.')
+  }
+  const pluginsDir = opts?.pluginsDir ?? getPluginsDir()
   const pluginPath = join(pluginsDir, 'node_modules', pkgName, 'dist', 'index.js')
   const resolved = path.resolve(pluginPath)
   if (!resolved.startsWith(path.resolve(pluginsDir))) {
@@ -184,8 +186,8 @@ export async function loadProviderPlugin(nameOrPackage: string): Promise<Antseed
   return loadPlugin<AntseedProviderPlugin>(nameOrPackage, 'provider', 'createProvider')
 }
 
-export async function loadRouterPlugin(nameOrPackage: string): Promise<AntseedRouterPlugin> {
-  return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter')
+export async function loadRouterPlugin(nameOrPackage: string, opts?: { pluginsDir?: string }): Promise<AntseedRouterPlugin> {
+  return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter', opts)
 }
 
 export async function loadVerifierPlugin(

@@ -3,7 +3,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { assertPinnedPluginVersion, selectPluginExport } from './loader.js'
+import { assertPinnedPluginVersion, loadRouterPlugin, selectPluginExport } from './loader.js'
+
+test('retired classifier reports migration guidance', async () => {
+  await assert.rejects(loadRouterPlugin('@antseed/router-classifier'), /Configure buyer.selection/)
+})
 
 const TEE_PACKAGE = '@antseed/antseed-verifier'
 

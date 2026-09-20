@@ -21,3 +21,4 @@ export {
   type ToolHint,
 } from './tool-hints.js'
 export { parseRoutingResponse } from './routing-response.js'
+export { selectNetworkRoute } from './network-router.js';

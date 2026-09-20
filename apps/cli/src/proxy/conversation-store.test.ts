@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,6 +8,81 @@ import { ConversationStore, CONVERSATIONS_FILE, conversationId } from './convers
 async function makeDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'antseed-conv-'))
 }
+
+test('spend bursts coalesce into a periodic write without postponing persistence forever', async (context) => {
+  const directory = await makeDir()
+  const store = new ConversationStore(directory)
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const internal = store as any
+  const enqueue = internal._enqueueWrite.bind(store)
+  let writes = 0
+  internal._enqueueWrite = () => { writes++; return enqueue() }
+  try {
+    const conversation = store.touch({ tool: 'test', sessionKey: 'debounced-spend' })
+    for (let index = 0; index < 20; index++) {
+      store.addSpend(conversation.id, { purpose: 'routing', amountUsdc: '5', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
+    }
+    assert.equal(store.get(conversation.id)?.spentUsdc, '100')
+    assert.equal(writes, 0)
+    context.mock.timers.tick(249)
+    store.addSpend(conversation.id, { amountUsdc: '10', inputTokens: '1', cachedInputTokens: '0', outputTokens: '2' })
+    context.mock.timers.tick(1)
+    await store.flush()
+    assert.equal(writes, 1)
+    const persisted = new ConversationStore(directory).get(conversation.id)!
+    assert.equal(persisted.spentUsdc, '110')
+    assert.equal(persisted.routingSpentUsdc, '100')
+    assert.equal(persisted.requestCount, 1)
+  } finally {
+    await store.flush()
+    context.mock.timers.reset()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('flush forces pending bookkeeping to disk and clears the delayed write', async (context) => {
+  const directory = await makeDir()
+  const store = new ConversationStore(directory)
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const conversation = store.touch({ tool: 'test', sessionKey: 'flush-pending' })
+    store.addSpend(conversation.id, { amountUsdc: '25', inputTokens: '1', cachedInputTokens: '0', outputTokens: '2' })
+    await store.flush()
+    assert.equal((store as any)._persistTimer, null)
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.spentUsdc, '25')
+    context.mock.timers.tick(250)
+    await store.flush()
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.requestCount, 1)
+  } finally {
+    await store.flush()
+    context.mock.timers.reset()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('routing-only spend persists without another request and old conversations default to zero routing spend', async () => {
+  const directory = await makeDir()
+  try {
+    const store = new ConversationStore(directory)
+    const conversation = store.touch({ tool: 'test', sessionKey: 'routing-only' })
+    await store.flush()
+    store.addSpend(conversation.id, { purpose: 'routing', amountUsdc: '5000', inputTokens: '100', cachedInputTokens: '20', outputTokens: '10' })
+    await store.flush()
+    const reloaded = new ConversationStore(directory).get(conversation.id)!
+    assert.equal(reloaded.spentUsdc, '5000')
+    assert.equal(reloaded.routingSpentUsdc, '5000')
+    assert.equal(reloaded.inputTokens, '0')
+    assert.equal(reloaded.cachedInputTokens, '0')
+    assert.equal(reloaded.outputTokens, '0')
+    assert.equal(reloaded.requestCount, 0)
+    const { routingSpentUsdc: _routingSpend, ...legacy } = reloaded
+    await writeFile(join(directory, CONVERSATIONS_FILE), JSON.stringify({ conversations: [legacy] }))
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.routingSpentUsdc, '0')
+    assert.equal(new ConversationStore(directory).get(conversation.id)?.spentUsdc, '5000')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('touch creates a conversation and keeps the original snippet', async () => {
   const dir = await makeDir()
@@ -28,7 +103,7 @@ test('touch creates a conversation and keeps the original snippet', async () => 
   }
 })
 
-test('first resolved model becomes the pin and later touches never replace it', async () => {
+test('touch never sets pinnedModel from a resolved model — only a genuine user pin does', async () => {
   const dir = await makeDir()
   try {
     const store = new ConversationStore(dir)
@@ -39,19 +114,47 @@ test('first resolved model becomes the pin and later touches never replace it', 
     const created = store.touch({ tool: 'codex', sessionKey: 's1' })
     assert.equal(created.pinnedModel, null)
 
-    // The first request that resolves a model pins the chat to it.
-    const pinned = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: firstModel })
-    assert.equal(pinned.pinnedModel, firstModel)
+    const touched1 = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: firstModel })
+    assert.equal(touched1.pinnedModel, null)
+    assert.equal(touched1.lastModel, firstModel)
 
-    // A later request served by a different route (default changed) keeps
-    // the original pin — the default only steers chats that haven't started.
-    const touched = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: laterModel })
-    assert.equal(touched.pinnedModel, firstModel)
-    assert.equal(touched.lastModel, laterModel)
+    const touched2 = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: laterModel })
+    assert.equal(touched2.pinnedModel, null)
+    assert.equal(touched2.lastModel, laterModel)
 
-    // A brand-new chat pins to its first model immediately.
+    // A brand-new chat never starts pinned either.
     const fresh = store.touch({ tool: 'codex', sessionKey: 's2', lastModel: laterModel })
-    assert.equal(fresh.pinnedModel, laterModel)
+    assert.equal(fresh.pinnedModel, null)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('recordRoutedModel never populates pinnedModel for an auto-routed chat, only lastModel', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(dir)
+    const id = conversationId('codex', 's1')
+    store.touch({ tool: 'codex', sessionKey: 's1' })
+
+    const firstRoute = 'a'.repeat(40) + '@gpt-5.4'
+    const routed1 = store.recordRoutedModel(id, firstRoute)
+    assert.equal(routed1?.pinnedModel, null)
+    assert.equal(routed1?.lastModel, firstRoute)
+    assert.equal(routed1?.peerSource, 'auto')
+
+    const secondRoute = 'b'.repeat(40) + '@glm-5'
+    const routed2 = store.recordRoutedModel(id, secondRoute)
+    assert.equal(routed2?.pinnedModel, null)
+    assert.equal(routed2?.lastModel, secondRoute)
+
+    // A genuine user pin is untouched by recordRoutedModel.
+    store.setPinnedModel(id, 'c'.repeat(40) + '@claude-opus-4-8', 'user')
+    const routedAfterPin = store.recordRoutedModel(id, 'd'.repeat(40) + '@gpt-5.4')
+    assert.equal(routedAfterPin?.pinnedModel, 'c'.repeat(40) + '@claude-opus-4-8')
+    assert.equal(routedAfterPin?.peerSource, 'user')
+    assert.equal(routedAfterPin?.lastModel, 'd'.repeat(40) + '@gpt-5.4')
     await store.flush()
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -65,6 +168,7 @@ test('persists to conversations.json and reloads across instances', async () => 
     store.touch({ tool: 'opencode', sessionKey: 'ses_a', snippet: 'hello there' })
     store.setLabel(conversationId('opencode', 'ses_a'), '  My   renamed chat  ')
     store.setPinnedModel(conversationId('opencode', 'ses_a'), 'b'.repeat(40) + '@glm-5')
+    store.recordRoutedModel(conversationId('opencode', 'ses_a'), 'b'.repeat(40) + '@glm-5')
     await store.flush()
 
     const raw = JSON.parse(await readFile(join(dir, CONVERSATIONS_FILE), 'utf8')) as { conversations: unknown[] }
@@ -150,7 +254,7 @@ test('peerSource marks user-chosen pins, resets on clear, survives reload', asyn
     const store = new ConversationStore(dir)
     const id = conversationId('codex', 's1')
 
-    // Auto-pinned on first request: source is 'auto'.
+    // A resolved first request never pins — source defaults to 'auto'.
     const pinned = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: 'a'.repeat(40) + '@gpt-5.4' })
     assert.equal(pinned.peerSource, 'auto')
 

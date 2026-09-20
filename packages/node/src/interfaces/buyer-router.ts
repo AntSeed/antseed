@@ -1,5 +1,7 @@
 import type { PeerInfo } from '../types/peer.js';
-import type { SerializedHttpRequest } from '../types/http.js';
+import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
+import type { ConversationIdentity } from '../routing/conversation-identity.js';
+import type { ModelRoutingPreferences } from '../routing/model-route-ranking.js';
 
 export type RouteCandidate = {
   inference?: import('@antseed/protocol').RoutingInference;
@@ -18,16 +20,24 @@ export type RouteCandidate = {
 
 export type RouteRecommendation = import('@antseed/protocol').RoutingRecommendation;
 
-/**
- * Interface that buyer nodes implement for peer selection.
- *
- * The SDK discovers available sellers via DHT. Your router decides
- * which seller to send each request to based on price, latency,
- * reputation, capacity, or any custom logic.
- *
- * If you don't provide a router, the SDK uses a default that selects
- * the cheapest peer with reputation above a minimum threshold.
- */
+export type RouteSelectionContext = {
+  usageContext?: import('@antseed/protocol').RoutingUsageContext;
+  routing?: import('../routing/routing-context.js').RoutingRequestContext;
+  settings?: Record<string, string>;
+  networkRouting?: {
+    serviceId: string;
+    metadata: import('@antseed/protocol').RoutingServiceMetadataV1;
+    preferences: import('@antseed/protocol').RoutingPreferences;
+  };
+  signal: AbortSignal;
+  deadlineMs: number;
+  candidates?: Array<Pick<RouteCandidate, 'peerId' | 'serviceId' | 'inputUsdPerMillion' | 'cachedInputUsdPerMillion' | 'outputUsdPerMillion' | 'reasoningEfforts'>>;
+  invokeService?: (
+    request: import('@antseed/protocol').RoutingRequestV1,
+    parseResponse?: (response: SerializedHttpResponse) => RouteRecommendation[],
+  ) => Promise<SerializedHttpResponse>;
+};
+
 export interface Router {
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null;
   onResult(peer: PeerInfo, result: {
@@ -40,4 +50,43 @@ export interface Router {
     estimatedCostUsd?: number | null;
     requestId?: string;
   }): void;
+
+  /**
+   * Optional, additive: pick a model and optionally an exact seller, ahead of
+   * usual fixed-model peer narrowing. Called on each explicitly auto-routed
+   * request, including later turns. Plugins can reuse context.routing.previousRoutes
+   * when shouldRoute is false rather than invoking a paid classifier again.
+   * Returning `null` declines selection; an explicitly selected router mode
+   * fails closed.
+   * An empty array means the router claimed the request but has no route;
+   * it must not be treated as a decline. Throw for execution failures.
+   * Hosts enforce the context deadline even if a plugin ignores its signal.
+   *
+   * `req` contains the client payload. The host reconstructs
+   * dispatch requests and validates all recommendations against buyer policy.
+   */
+  selectRoute?(
+    req: SerializedHttpRequest,
+    peers: PeerInfo[],
+    conversation: ConversationIdentity | null,
+    routingPreferences: ModelRoutingPreferences | null,
+    /**
+     * The pre-existing "antseed" alias's currently-resolved target
+     * (`buyer.state.json`'s `defaultRoutedModel`, `apps/cli/src/proxy/request-utils.ts`'s
+     * `ROUTED_MODEL_ALIAS`) -- host-owned state, passed in the same way
+     * `conversation` is, so a router never needs a direct dependency on
+     * `apps/cli`'s state file to read it. `null` when no default route is
+     * set, or for a host that doesn't have this concept at all. Optional
+     * param -- existing callers/implementers that don't pass or read a 5th
+     * argument are unaffected.
+     */
+    defaultRoutedModel?: string | null,
+    context?: RouteSelectionContext,
+  ): Promise<Array<RouteRecommendation & Partial<RouteCandidate>> | null>;
+
 }
+
+// Duck-typed, not formally part of `Router`, but probed for by buyer-proxy
+// when present (existing, unrelated to selectRoute):
+//   allowsPeerForPolicy?(req: SerializedHttpRequest, peer: PeerInfo): boolean;
+//   allowsPeerForPricing?(req: SerializedHttpRequest, peer: PeerInfo): boolean;

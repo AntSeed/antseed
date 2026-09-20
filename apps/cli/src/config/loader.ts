@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readRouterSettings } from '@antseed/node';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -8,6 +9,7 @@ import {
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
+  BuyerCLIConfig,
   DomainVerificationConfig,
   DomainVerificationMethod,
   GithubVerificationConfig,
@@ -82,7 +84,9 @@ function mergeHierarchicalPricing(
   if (!isRecord(value)) {
     return { defaults: clonePricing(defaults.defaults) };
   }
-  return { defaults: mergeTokenPricing(defaults.defaults, value['defaults']) };
+  return {
+    defaults: mergeTokenPricing(defaults.defaults, value['defaults']),
+  };
 }
 
 /* ── Seller provider + services merge ──────────────────────────────────── */
@@ -420,6 +424,7 @@ function mergeBuyerRoutingPreferences(
       : toFiniteOrNaN(minTrustScore),
     allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
     blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
+    ...(value['routerSettings'] !== undefined ? { routerSettings: readRouterSettings(value['routerSettings']) } : {}),
   };
 }
 
@@ -485,6 +490,7 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    ...(value['selection'] !== undefined ? { selection: value['selection'] as BuyerCLIConfig['selection'] } : {}),
     requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
       ? value['requestTimeoutMs']
       : defaults.requestTimeoutMs,

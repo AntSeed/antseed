@@ -2,6 +2,8 @@ import type {
   ServiceApiProtocol,
   ServiceCapabilities,
   UnitBillingModelV1,
+  RoutingSelection,
+  RoutingServiceTarget,
 } from '@antseed/node';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
@@ -183,6 +185,7 @@ export interface SellerCLIConfig {
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
+  selection?: RoutingSelection;
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */
@@ -211,6 +214,8 @@ export interface BuyerCLIConfig {
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
 }
+
+export type RoutingServiceConfig = RoutingServiceTarget;
 
 /**
  * Payment configuration within the Antseed config.

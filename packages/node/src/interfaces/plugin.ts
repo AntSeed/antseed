@@ -8,6 +8,9 @@ export interface ConfigField {
   required?: boolean
   default?: unknown
   description?: string
+  options?: string[]
+  min?: number
+  max?: number
 }
 
 /** @deprecated Use ConfigField instead */
@@ -30,6 +33,7 @@ export interface AntseedProviderPlugin extends AntseedPluginBase {
 
 export interface AntseedRouterPlugin extends AntseedPluginBase {
   type: 'router'
+  routingSettingsSchema?: import('../routing/router-settings.js').RouterSettingField[]
   createRouter(config: Record<string, string>): Router | Promise<Router>
 }
 

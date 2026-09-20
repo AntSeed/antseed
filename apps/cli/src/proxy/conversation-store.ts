@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isRoutingSelection, type RoutingSelection } from '@antseed/node'
 import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversation-identity.js'
 
 /**
@@ -14,6 +15,7 @@ import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversatio
  */
 
 export type StoredConversation = {
+  selection: RoutingSelection | null
   /** `${tool}:${sessionKey}` — unique per tool chat. */
   id: string
   tool: string
@@ -22,14 +24,14 @@ export type StoredConversation = {
   snippet: string
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
-  /** Per-chat route as `<peerId>@<service>`. Automatic routes are soft
-      affinity; user-selected routes are hard pins. Null only until the
-      chat's first resolved request. */
+  /** Per-chat route as `<peerId>@<service>`, only ever set for a genuine
+      user pin (via setPinnedModel(id, model, 'user')). Null for an
+      auto-routed chat -- lastModel is only soft peer affinity. */
   pinnedModel: string | null
-  /** How the route's peer was chosen. 'auto' means routing picked it (first
-      request affinity, or the desktop re-pointing chats when a seller is
-      pinned for the model); 'user' means the user chose this seller for this
-      specific chat, which nothing overrides until they clear it. */
+  /** How the route's peer was chosen. 'auto' means the chat has never been
+      explicitly pinned (the router may reconsider its model); 'user' means
+      the user chose this seller for this specific chat, which nothing
+      overrides until they clear it. */
   peerSource: 'auto' | 'user'
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
@@ -37,6 +39,7 @@ export type StoredConversation = {
       Subagent traffic rolls up into the parent chat, same as everything else
       here. This is what the chat has cost, not what has settled on-chain. */
   spentUsdc: string
+  routingSpentUsdc: string
   /** Cumulative tokens across this chat's requests (bigint as string).
       `cachedInputTokens` is the cached SUBSET of `inputTokens`, not a separate
       bucket — fresh input is `inputTokens - cachedInputTokens`. */
@@ -90,9 +93,11 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     snippet: sanitizeStoredSnippet(rawSnippet),
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
+    selection: isRoutingSelection(record.selection) ? record.selection : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
+    routingSpentUsdc: sanitizeCounter(record.routingSpentUsdc),
     inputTokens: sanitizeCounter(record.inputTokens),
     cachedInputTokens: sanitizeCounter(record.cachedInputTokens),
     outputTokens: sanitizeCounter(record.outputTokens),
@@ -131,6 +136,7 @@ export class ConversationStore {
   private readonly _file: string
   private readonly _byId = new Map<string, StoredConversation>()
   private _writeQueue: Promise<void> = Promise.resolve()
+  private _persistTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(dataDir: string) {
     this._dir = dataDir
@@ -173,8 +179,16 @@ export class ConversationStore {
     }
   }
 
-  /** Serialized atomic write; returns the queued write promise. */
-  private _persist(): Promise<void> {
+  private _persist(): void {
+    if (this._persistTimer) return
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null
+      void this._enqueueWrite()
+    }, 250)
+    this._persistTimer.unref()
+  }
+
+  private _enqueueWrite(): Promise<void> {
     this._writeQueue = this._writeQueue.then(async () => {
       const payload = JSON.stringify({ conversations: [...this._byId.values()] }, null, 2)
       await mkdir(this._dir, { recursive: true })
@@ -187,6 +201,11 @@ export class ConversationStore {
 
   /** Wait for pending writes (tests / shutdown). */
   flush(): Promise<void> {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer)
+      this._persistTimer = null
+      return this._enqueueWrite()
+    }
     return this._writeQueue
   }
 
@@ -194,9 +213,9 @@ export class ConversationStore {
    * Record activity for a conversation, creating it on first sight. The
    * snippet only sticks at creation — later turns keep the original label.
    *
-   * The first model that actually serves the chat becomes its pin: the
-   * session default only steers chats that haven't resolved a request yet,
-   * so changing the default never re-routes an existing conversation.
+   * `pinnedModel` is never seeded or touched here for an auto-routed chat --
+   * only `setPinnedModel(id, model, 'user')` may set it. The host uses
+   * lastModel for soft peer affinity without bypassing router selection.
    */
   touch(input: { tool: string; sessionKey: string; snippet?: string | null; lastModel?: string | null }): StoredConversation {
     const id = conversationId(input.tool, input.sessionKey)
@@ -208,7 +227,6 @@ export class ConversationStore {
         ...existing,
         lastActiveAt: now,
         lastModel: input.lastModel ?? existing.lastModel,
-        pinnedModel: existing.pinnedModel ?? input.lastModel ?? null,
         snippet: existing.snippet || (input.snippet ?? ''),
       }
     } else {
@@ -218,10 +236,12 @@ export class ConversationStore {
         sessionKey: input.sessionKey,
         snippet: input.snippet ?? '',
         label: null,
-        pinnedModel: input.lastModel ?? null,
+        pinnedModel: null,
+        selection: null,
         peerSource: 'auto',
         lastModel: input.lastModel ?? null,
         spentUsdc: '0',
+        routingSpentUsdc: '0',
         inputTokens: '0',
         cachedInputTokens: '0',
         outputTokens: '0',
@@ -244,14 +264,10 @@ export class ConversationStore {
    * A single request can produce several deltas (the buyer- and seller-driven
    * auth paths both advance the cumulative), so `countRequest` is the caller's
    * to decide: it knows which delta was the first for a given request id.
-   *
-   * Not persisted immediately: touch() already rewrites the file on every
-   * turn, so the counters ride along with the next write. At most the last
-   * request's cost is lost on a hard kill.
    */
   addSpend(
     id: string,
-    delta: { amountUsdc: string; inputTokens: string; cachedInputTokens: string; outputTokens: string },
+    delta: { amountUsdc: string; inputTokens: string; cachedInputTokens: string; outputTokens: string; purpose?: 'routing' },
     countRequest = true,
   ): void {
     const existing = this._byId.get(id)
@@ -272,14 +288,17 @@ export class ConversationStore {
     // tokens is malformed — clamp rather than let the subset exceed the whole.
     if (cachedInput > input) cachedInput = input
     if (amount <= 0n && input <= 0n && output <= 0n) return
+    const routing = delta.purpose === 'routing'
     this._byId.set(id, {
       ...existing,
       spentUsdc: (BigInt(existing.spentUsdc) + (amount > 0n ? amount : 0n)).toString(),
-      inputTokens: (BigInt(existing.inputTokens) + (input > 0n ? input : 0n)).toString(),
-      cachedInputTokens: (BigInt(existing.cachedInputTokens) + (cachedInput > 0n ? cachedInput : 0n)).toString(),
-      outputTokens: (BigInt(existing.outputTokens) + (output > 0n ? output : 0n)).toString(),
-      requestCount: existing.requestCount + (countRequest ? 1 : 0),
+      routingSpentUsdc: (BigInt(existing.routingSpentUsdc) + (routing && amount > 0n ? amount : 0n)).toString(),
+      inputTokens: (BigInt(existing.inputTokens) + (!routing && input > 0n ? input : 0n)).toString(),
+      cachedInputTokens: (BigInt(existing.cachedInputTokens) + (!routing && cachedInput > 0n ? cachedInput : 0n)).toString(),
+      outputTokens: (BigInt(existing.outputTokens) + (!routing && output > 0n ? output : 0n)).toString(),
+      requestCount: existing.requestCount + (!routing && countRequest ? 1 : 0),
     })
+    void this._persist()
   }
 
   /** Newest-activity first (stable sort over reversed insertion order keeps
@@ -296,14 +315,20 @@ export class ConversationStore {
     return this._byId.get(conversationId(tool, sessionKey))?.pinnedModel ?? null
   }
 
-  recordRoutedModel(id: string, routedModel: string): StoredConversation | null {
+  /**
+   * Records what actually served this chat, for display/history only.
+   * Never touches `pinnedModel` -- a genuine pin only ever comes from
+   * `setPinnedModel(id, model, 'user')`. The host reuses lastModel
+   * for later requests; only explicit user pins require the same peer.
+   */
+  recordRoutedModel(
+    id: string,
+    routedModel: string,
+  ): StoredConversation | null {
     const existing = this._byId.get(id)
     if (!existing) return null
     const record = {
       ...existing,
-      pinnedModel: existing.peerSource === 'user' && existing.pinnedModel
-        ? existing.pinnedModel
-        : routedModel,
       lastModel: routedModel,
       lastActiveAt: Date.now(),
     }
@@ -329,7 +354,22 @@ export class ConversationStore {
     const record = {
       ...existing,
       pinnedModel: pinnedModel || null,
+      selection: pinnedModel && peerSource === 'user' ? { kind: 'model' as const, model: pinnedModel } : null,
       peerSource: pinnedModel ? peerSource : 'auto' as const,
+    }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
+  }
+
+  setSelection(id: string, selection: RoutingSelection | null): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    const record = {
+      ...existing,
+      selection: selection ? structuredClone(selection) : null,
+      pinnedModel: selection?.kind === 'model' ? selection.model : null,
+      peerSource: selection ? 'user' as const : 'auto' as const,
     }
     this._byId.set(id, record)
     void this._persist()

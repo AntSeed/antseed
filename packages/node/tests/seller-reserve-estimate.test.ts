@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createRoutingServiceMetadata } from '@antseed/protocol';
 import { captureUnitBillingContext } from '../src/billing/unit.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
@@ -111,6 +112,29 @@ function makeHarness(model: UnitBillingModelV1, remainingReserve: bigint, images
 }
 
 describe('seller reserve estimates', () => {
+  it.each(['stale-schema', 'invalid-preferences', 'alternate-path', 'wrong-method', 'uppercase-path-stale-schema'])('rejects routing %s before billing or provider dispatch', async (reason) => {
+    const harness = makeHarness(perCallModel, 10000n);
+    const metadata = createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean' } } });
+    harness.provider.serviceApiProtocols = { 'test-model': ['antseed-routing'] };
+    harness.provider.serviceRouting = { 'test-model': metadata };
+    harness.request.path = reason === 'alternate-path' ? '/v1/chat/completions'
+      : reason === 'uppercase-path-stale-schema' ? '/V1/ROUTE' : '/v1/route';
+    if (reason === 'wrong-method') harness.request.method = 'GET';
+    harness.request.body = new TextEncoder().encode(JSON.stringify({
+      version: 1, service: 'test-model', preferencesSchemaHash: reason.includes('stale-schema') ? 'stale' : metadata.preferencesSchemaHash,
+      request: { path: '/v1/chat/completions', body: {} },
+      candidates: [{ serviceId: 'model-a', peerId: buyerPeerId, inputUsdPerMillion: 1, outputUsdPerMillion: 2 }],
+      preferences: reason === 'invalid-preferences' ? { enabled: 'true' } : {},
+    }));
+    const response = await harness.serve();
+    expect(response.statusCode).toBe(400);
+    expect(harness.handleRequest).not.toHaveBeenCalled();
+    expect(harness.sellerPaymentManager.beginBillableRequest).not.toHaveBeenCalled();
+    expect(harness.sellerPaymentManager.recordSpend).not.toHaveBeenCalled();
+    expect(harness.paymentMux.sendNeedAuth).not.toHaveBeenCalled();
+    expect(harness.paymentMux.sendPaymentRequired).not.toHaveBeenCalled();
+  });
+
   it('estimates one per-call fee from captured request usage', () => {
     const { handler, requestBilling } = makeHarness(perCallModel, 1_000n);
 

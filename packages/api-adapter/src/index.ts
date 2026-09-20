@@ -1,3 +1,5 @@
+export { readReasoningEffort, supportsReasoningEffort, withReasoningEffort } from './reasoning.js';
+
 export {
   transformRequest,
   type ServiceApiRequestTransformOptions,

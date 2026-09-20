@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
+import { BUNDLED_ROUTER_PLUGINS, TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
+
+test('the retired classifier is absent from bundled and trusted catalogs', () => {
+  assert.equal(resolvePluginPackage('@antseed/router-classifier'), '@antseed/router-classifier')
+  assert.equal(BUNDLED_ROUTER_PLUGINS.some((plugin) => plugin.name === 'classifier'), false)
+  assert.equal(TRUSTED_PLUGINS.some((plugin) => plugin.package === '@antseed/router-classifier'), false)
+})
 
 test('trusted plugin registry keeps typed lists and verifier invariants', () => {
   assert.deepEqual(TRUSTED_PLUGINS, [

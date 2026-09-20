@@ -61,6 +61,8 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   },
 ]
 
+export const BUNDLED_ROUTER_PLUGINS: TrustedPlugin[] = []
+
 export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'antseed-verifier',
@@ -78,6 +80,6 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
 ]
 
 export function resolvePluginPackage(nameOrPackage: string): string {
-  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage)
+  const trusted = [...TRUSTED_PLUGINS, ...BUNDLED_ROUTER_PLUGINS].find((plugin) => plugin.name === nameOrPackage)
   return trusted?.package ?? nameOrPackage
 }

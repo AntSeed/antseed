@@ -228,6 +228,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       let router
       let toolHints: Array<{ name: string; envVar: string }> = []
+      let routingSettingsSchema: import('@antseed/node').RouterSettingField[] | undefined
       const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
       if (options.instance) {
@@ -252,6 +253,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
+          routingSettingsSchema = plugin.routingSettingsSchema
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -268,6 +270,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           router = await plugin.createRouter(pluginConfig)
           spinner.succeed(chalk.green(`Router "${plugin.displayName}" loaded`))
           toolHints = (plugin as any).TOOL_HINTS ?? []
+          routingSettingsSchema = plugin.routingSettingsSchema
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
@@ -464,7 +467,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         routingPreferences: effectiveBuyerConfig.routingPreferences,
+        maxPricing: effectiveBuyerConfig.maxPricing,
+        minPeerReputation: effectiveBuyerConfig.minPeerReputation,
+        requestTimeoutMs: effectiveBuyerConfig.requestTimeoutMs,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
+        selection: effectiveBuyerConfig.selection,
+        routingSettingsSchema,
+        routerKey: options.instance ? `instance:${options.instance}` : `plugin:${routerName}`,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })
       let ownsProxyListener = false
