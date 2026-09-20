@@ -10,6 +10,7 @@ import { ChannelStore } from '../src/payments/channel-store.js';
 import { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { ChannelsClient } from '../src/payments/evm/channels-client.js';
 import { PaymentMux } from '../src/p2p/payment-mux.js';
+import { areRouteRecommendationsEligible } from '../src/routing/route-recommendation.js';
 import { createPerCallBillingModel } from '../src/types/billing.js';
 import { ConnectionState } from '../src/types/connection.js';
 import { toPeerId, type PeerInfo } from '../src/types/peer.js';
@@ -104,6 +105,31 @@ describe('request billing recovery', () => {
     return { manager, negotiator, connection, handler, peer, request, options, classification, paymentRequired,
       sendAuth, dispatchedAmounts, responses };
   }
+
+  it.each([true, false])('accounts structured responses only after the PR 1 contract accepts them (eligible=%s)', async (eligible) => {
+    const state = await setup('per_call');
+    const candidates = [{ serviceId: 'model-a', peerId: sellerPeerId }];
+    state.peer.providerServiceApiProtocols = { openai: { services: { classifier: ['antseed-routing'] } } };
+    state.peer.providerServiceUnitBillingModels = {
+      openai: { services: { classifier: { 'antseed-routing': createPerCallBillingModel('5000') } } },
+    };
+    state.request.path = '/v1/route';
+    state.request.body = encoder.encode(JSON.stringify({ service: 'classifier' }));
+    state.classification.body = encoder.encode(JSON.stringify({
+      version: 1, recommendations: [{ serviceId: eligible ? 'model-a' : 'unadvertised-model' }],
+    }));
+    const acceptResponse = vi.fn((response: SerializedHttpResponse) =>
+      areRouteRecommendationsEligible(JSON.parse(new TextDecoder().decode(response.body)).recommendations, candidates));
+    const finishRequestBilling = vi.spyOn(state.manager, 'finishRequestBilling');
+    const pending = state.handler.sendRequest(state.peer, state.request, undefined, { ...state.options, acceptResponse });
+    if (eligible) await expect(pending).resolves.toMatchObject({ statusCode: 200 });
+    else await expect(pending).rejects.toThrow('Service returned an unacceptable response');
+    expect(acceptResponse).toHaveBeenCalledOnce();
+    expect(state.manager.getCumulativeAmount(sellerPeerId)).toBe(eligible ? 5000n : 0n);
+    expect(finishRequestBilling).toHaveBeenCalledOnce();
+    expect(finishRequestBilling).toHaveBeenCalledWith(state.request.requestId);
+    if (!eligible) expect(state.sendAuth.mock.calls.every(([payload]) => payload.cumulativeAmount === '0')).toBe(true);
+  });
 
   it('keeps normal inference accounting separate from classification on the same seller', async () => {
     const state = await setup('tokens');

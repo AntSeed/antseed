@@ -40,7 +40,44 @@ alone. It contains **no temporary per-call execution guards** and no associated
 intermediate-state guard tests. The three slices are separate reviews, not an
 assertion that this intermediate protocol state is ready for standalone deployment.
 This supersedes the guard requirement in the initial split plan. Payment execution
-and buyer activation still belong to PRs 2 and 3; all signed v14 fields land here.
+belongs to PR 2 and buyer activation to PR 3; all signed v14 fields land in PR 1.
+
+## PR 2 extraction
+
+PR 2, `codex/routing-payments-execution`, starts from PR #1034's branch
+`codex/routing-protocol-discovery` at
+`83f8ea95f88dd55c2311b8e76ee116bdb0af50ae`, not a fresh main checkout. This keeps
+the second review limited to shared payments and request execution.
+
+- `52c032be3` extracts the request-attributed router result contract from
+  `88e003017798da58309ffb4133f13818e7839d2e`, preserving Dawe000's author identity
+  and date and Claude Sonnet 5's co-author trailer.
+- `21578d974` extracts the payment implementation and tests, preserving
+  alexanderludwig's author identity and source author date, applicable Dawe000 and
+  Claude co-author trailers, and fifteen `Source-commit` trailers. Those trailers
+  identify the incorporated billing, concurrency, acceptance, and recovery work.
+- Split-specific contract-to-payment tests and documentation are separate changes
+  attributed to their implementer rather than an original contributor.
+- Browser integration assertions wait for the required cumulative authorization
+  instead of assuming it is the first frame: post-response and NeedAuth paths can
+  emit additional authorizations. The test also checks monotonic amounts.
+- Current main's remaining-headroom top-up policy is retained: 35% of the initial
+  reserve for the first top-up, then $0.50. The older source policy is not restored.
+- Only billing-related seller-handler changes and reserve-estimation tests are
+  included. Five structured routing dispatch/schema tests from
+  `seller-reserve-estimate.test.ts` remain for PR 3 alongside that implementation.
+- `channel-store.reserve-fields.test.ts` is deliberately excluded. Its three
+  tests require recovery columns removed by source commit
+  `6d01ade8a3a6f28d0cd6fd996d075cd6bf31e576`; the pinned source accidentally retains
+  those obsolete assertions. PR 2 does not resurrect that migration. Tests retain
+  coverage of the released v5 schema, existing records/signatures, and readability
+  of development databases containing extra columns. In-memory recovery and
+  persisted cumulative authorizations are not an exactly-once restart guarantee.
+
+PR 2 changes no signed metadata bytes and introduces no v15 or temporary guards.
+CLI/config activation, routing-schema dispatch, network selection, policy checks,
+ranked fallback, observation collection, reasoning overrides, and continuation
+reuse remain in PR 3. The original PR and PR 1 branches remain untouched.
 
 ## Complete source-file allocation
 
@@ -120,7 +157,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `packages/node/src/interfaces/plugin.ts` | 3 |
 | `packages/node/src/interfaces/seller-provider.ts` | 1 |
 | `packages/node/src/node.ts` | 1 |
-| `packages/node/src/payments/channel-store.reserve-fields.test.ts` | 2 |
+| `packages/node/src/payments/channel-store.reserve-fields.test.ts` | Excluded — obsolete recovery-column assertions; see PR 2 extraction |
 | `packages/node/src/routing/conversation-identity.ts` | 3 |
 | `packages/node/src/routing/model-route-ranking.ts` | 3 |
 | `packages/node/src/routing/route-recommendation.ts` | 1 |
@@ -151,7 +188,7 @@ for those. The pure parser and its tests are renamed to `routing-response`.
 | `packages/node/tests/routing-metadata.test.ts` | 1 |
 | `packages/node/tests/routing-payment-recovery.test.ts` | 2 |
 | `packages/node/tests/routing-selection.test.ts` | 3 |
-| `packages/node/tests/seller-reserve-estimate.test.ts` | 2 |
+| `packages/node/tests/seller-reserve-estimate.test.ts` | 2 / 3 — billing estimates here; structured routing dispatch/schema checks in 3 |
 | `packages/node/tests/service-catalog.test.ts` | 1 |
 | `packages/node/tests/usage-observations.test.ts` | 3 |
 | `packages/protocol/src/billing.ts` | 1 / 2 — price representation / execution-side usage validation |

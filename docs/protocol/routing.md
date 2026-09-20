@@ -1,10 +1,10 @@
 # Structured routing contract
 
-This document describes the protocol/discovery slice of the three-PR routing stack.
-It does not enable automatic buyer routing or fixed-per-call execution. Those are
-implemented by the payments and buyer-integration slices. This intermediate slice
-is for review and testing, not standalone deployment; there are deliberately no
-temporary execution guards.
+This document describes the protocol/discovery contract of the three-PR routing
+stack. The shared payments slice now supplies request execution and per-call
+accounting; automatic buyer routing remains in the buyer-integration slice.
+Intermediate slices are for review and testing, not standalone deployment; there
+are deliberately no temporary execution guards.
 
 ## Advertisement and compatibility
 
@@ -109,9 +109,10 @@ produces one unconditional fixed-price component. Metadata encodes that price
 exactly as uint32 micro-USDC; existing image-unit bytes remain unchanged.
 
 Catalog `billingByProtocol` exposes advertised per-call prices without treating
-them as token prices. This does not implement response acceptance, charging,
-settlement, cancellation accounting, or payment-channel concurrency. Do not use
-per-call execution until the payments slice is included.
+them as token prices. The shared payments slice adds response-acceptance hooks,
+request-scoped accounting, cancellation cleanup, and serialized channel updates;
+see [shared payment execution](../router-per-call-billing.md). Wiring these hooks
+to network-router selection and buyer policy remains in the integration slice.
 
 ## Conformance example
 

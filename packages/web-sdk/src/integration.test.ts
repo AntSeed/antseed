@@ -248,8 +248,8 @@ describe('web-sdk ↔ unmodified seller stack', () => {
   }, 30_000);
 
   it('answers NeedAuth with a valid cumulative SpendingAuth', async () => {
-    await waitFor(() => sellerState.spendingAuths.length >= 1);
-    const auth = sellerState.spendingAuths[0]!;
+    await waitFor(() => sellerState.spendingAuths.some((auth) => auth.cumulativeAmount === '1200'));
+    const auth = sellerState.spendingAuths.find((auth) => auth.cumulativeAmount === '1200')!;
     expect(auth.channelId).toBe(sellerState.channelId);
     expect(auth.cumulativeAmount).toBe('1200');
     expect(keccak256(auth.metadata)).toBe(auth.metadataHash);
@@ -275,8 +275,10 @@ describe('web-sdk ↔ unmodified seller stack', () => {
     expect(sawDone).toBe(true);
     expect(chunks.join('')).toContain('data: {"delta":"hel"}');
     expect(chunks.join('')).toContain('[DONE]');
-    await waitFor(() => sellerState.spendingAuths.length >= 2);
-    expect(sellerState.spendingAuths[1]!.cumulativeAmount).toBe('2400');
+    await waitFor(() => sellerState.spendingAuths.some((auth) => auth.cumulativeAmount === '2400'));
+    expect(sellerState.spendingAuths.at(-1)!.cumulativeAmount).toBe('2400');
+    const amounts = sellerState.spendingAuths.map((auth) => BigInt(auth.cumulativeAmount));
+    expect(amounts.every((amount, index) => index === 0 || amount >= amounts[index - 1]!)).toBe(true);
   }, 30_000);
 
   it('delivers large bodies via chunked upload', async () => {
