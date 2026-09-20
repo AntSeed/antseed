@@ -1,7 +1,7 @@
 # Structured network routing
 
 This is PR 5/5 of the unreleased routing stack. It inherits quantity billing
-(#1039, 1/5), reasoning-effort announcements (2/5), routing protocol/discovery
+(#1039, 1/5), reasoning-effort announcements (#1040, 2/5), routing protocol/discovery
 (#1034, 3/5), and shared execution (#1035, 4/5). This slice applies advertised
 reasoning controls to buyer requests; it does not redefine the announcements.
 

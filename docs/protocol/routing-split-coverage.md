@@ -1,7 +1,7 @@
 # Current five-PR stack
 
 The current review order is #1039 (1/5, generic quantity billing),
-`codex/reasoning-effort-announcements` (2/5, signed reasoning-effort capabilities),
+#1040 (2/5, signed reasoning-effort capabilities),
 #1034 (3/5, routing protocol/discovery), #1035 (4/5, shared execution), and
 #1036 (5/5, buyer integration).
 The tables below audit the original three-slice extraction: their PR 1/2/3 labels
