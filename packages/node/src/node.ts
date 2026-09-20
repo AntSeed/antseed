@@ -2427,6 +2427,7 @@ export class AntseedNode extends EventEmitter {
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
     const providerServiceUnitBillingModelEntries: NonNullable<PeerInfo["providerServiceUnitBillingModels"]> = {};
     const providerServiceCapabilityEntries: NonNullable<PeerInfo["providerServiceCapabilities"]> = {};
+    const providerServiceRoutingEntries: NonNullable<PeerInfo["providerServiceRouting"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -2501,6 +2502,16 @@ export class AntseedNode extends EventEmitter {
           providerServiceCapabilityEntries[provName] = { services: newEntries };
         }
       }
+
+      if (providerAnnouncement.serviceRouting) {
+        const existingRouting = providerServiceRoutingEntries[provName];
+        const newEntries = structuredClone(providerAnnouncement.serviceRouting);
+        if (existingRouting) {
+          Object.assign(existingRouting.services, newEntries);
+        } else {
+          providerServiceRoutingEntries[provName] = { services: newEntries };
+        }
+      }
     }
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
@@ -2530,7 +2541,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       ...(hasProviderServiceUnitBillingModels ? { providerServiceUnitBillingModels: providerServiceUnitBillingModelEntries } : {}),
       ...(hasProviderServiceCapabilities ? { providerServiceCapabilities: providerServiceCapabilityEntries } : {}),
-      providerServiceRouting: Object.fromEntries(result.metadata.providers.filter((entry) => entry.serviceRouting).map((entry) => [entry.provider, { services: structuredClone(entry.serviceRouting!) }])),
+      providerServiceRouting: providerServiceRoutingEntries,
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

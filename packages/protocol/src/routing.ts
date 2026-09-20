@@ -65,8 +65,24 @@ export type RoutingResponseV1 = {
 };
 export const MAX_ROUTING_PREFERENCE_BYTES = 16 * 1024;
 export const MAX_ROUTING_PREFERENCE_DEPTH = 8;
+const MAX_ROUTING_VALIDATION_STEPS = 65_536;
+type RoutingValidationWork = { remainingSteps: number };
+type RoutingValueBudget = { remainingBytes: number; work: RoutingValidationWork };
 const forbiddenKeys = new Set(['__proto__', 'constructor', 'prototype']);
 const own = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
+
+function createRoutingValueBudget(work: RoutingValidationWork = { remainingSteps: MAX_ROUTING_VALIDATION_STEPS }): RoutingValueBudget {
+  return { remainingBytes: MAX_ROUTING_PREFERENCE_BYTES, work };
+}
+
+function consumeRoutingWork(work: RoutingValidationWork): void {
+  if (--work.remainingSteps < 0) throw new Error('Routing preferences/schema validation work limit exceeded');
+}
+
+function consumeRoutingBytes(budget: RoutingValueBudget, bytes: number): void {
+  budget.remainingBytes -= bytes;
+  if (budget.remainingBytes < 0) throw new Error('Expanded routing preferences/defaults exceed 16 KiB');
+}
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -102,7 +118,9 @@ export function assertRoutingPreferences(value: unknown, depth = 0): asserts val
 
 export function validateRoutingPreferenceSchema(value: unknown): asserts value is RoutingPreferenceSchema {
   bounded(value);
+  const work: RoutingValidationWork = { remainingSteps: MAX_ROUTING_VALIDATION_STEPS };
   const visit = (schema: unknown, path: string, depth: number): void => {
+    consumeRoutingWork(work);
     if (depth > MAX_ROUTING_PREFERENCE_DEPTH || !object(schema)) throw new Error(`${path}: invalid schema or nesting exceeds 8`);
     const common = ['type', 'title', 'description', 'default', 'enum'];
     const fields: Record<string, string[]> = {
@@ -129,30 +147,37 @@ export function validateRoutingPreferenceSchema(value: unknown): asserts value i
       if (!Array.isArray(schema.enum) || schema.enum.length === 0) throw new Error(`${path}.enum: expected nonempty array`);
       const encoded = schema.enum.map((entry) => canonicalRoutingJson(entry));
       if (new Set(encoded).size !== encoded.length) throw new Error(`${path}.enum: duplicate values`);
-      for (const entry of schema.enum) validateValue({ ...schema, enum: undefined } as RoutingPreferenceSchema, entry, path, depth);
+      for (const entry of schema.enum) validateValue({ ...schema, enum: undefined } as RoutingPreferenceSchema, entry, path, depth, createRoutingValueBudget(work));
     }
-    if (own(schema, 'default')) validateValue(schema as RoutingPreferenceSchema, schema.default, `${path}.default`, depth);
+    if (own(schema, 'default')) validateValue(schema as RoutingPreferenceSchema, schema.default, `${path}.default`, depth, createRoutingValueBudget(work));
   };
   visit(value, 'preferences', 0);
   if ((value as RoutingPreferenceSchema).type !== 'object') throw new Error('Routing preferences schema must be an object');
 }
 
-function validateValue(schema: RoutingPreferenceSchema, value: unknown, path: string, depth: number): RoutingJson {
+function validateValue(schema: RoutingPreferenceSchema, value: unknown, path: string, depth: number, budget: RoutingValueBudget): RoutingJson {
+  consumeRoutingWork(budget.work);
   if (depth > MAX_ROUTING_PREFERENCE_DEPTH) throw new Error(`${path}: nesting exceeds 8`);
   let result: RoutingJson;
   if (schema.type === 'object') {
     if (!object(value)) throw new Error(`${path}: expected object`);
     for (const key of Object.keys(value)) if (!own(schema.properties!, key)) throw new Error(`${path}.${key}: unknown preference`);
+    consumeRoutingBytes(budget, 2);
     const output: RoutingPreferences = {};
+    let propertyCount = 0;
     for (const [key, child] of Object.entries(schema.properties!)) {
-      if (own(value, key)) output[key] = validateValue(child, value[key], `${path}.${key}`, depth + 1);
-      else if (own(child, 'default')) output[key] = validateValue(child, child.default, `${path}.${key}`, depth + 1);
-      else if (schema.required?.includes(key)) throw new Error(`${path}.${key}: required preference`);
+      consumeRoutingWork(budget.work);
+      if (own(value, key) || own(child, 'default')) {
+        consumeRoutingBytes(budget, toUtf8Bytes(JSON.stringify(key)).length + 1 + (propertyCount > 0 ? 1 : 0));
+        output[key] = validateValue(child, own(value, key) ? value[key] : child.default, `${path}.${key}`, depth + 1, budget);
+        propertyCount++;
+      } else if (schema.required?.includes(key)) throw new Error(`${path}.${key}: required preference`);
     }
     result = output;
   } else if (schema.type === 'array') {
     if (!Array.isArray(value) || value.length < (schema.minItems ?? 0) || value.length > (schema.maxItems ?? Infinity)) throw new Error(`${path}: invalid array`);
-    result = value.map((entry, index) => validateValue(schema.items!, entry, `${path}[${index}]`, depth + 1));
+    consumeRoutingBytes(budget, 2 + Math.max(0, value.length - 1));
+    result = value.map((entry, index) => validateValue(schema.items!, entry, `${path}[${index}]`, depth + 1, budget));
   } else if (schema.type === 'string') {
     if (typeof value !== 'string' || [...value].length < (schema.minLength ?? 0) || [...value].length > (schema.maxLength ?? Infinity)) throw new Error(`${path}: invalid string`);
     result = value;
@@ -164,14 +189,21 @@ function validateValue(schema: RoutingPreferenceSchema, value: unknown, path: st
       || value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity)) throw new Error(`${path}: invalid ${schema.type}`);
     result = value;
   }
-  if (schema.enum && !schema.enum.some((entry) => canonicalRoutingJson(entry) === canonicalRoutingJson(result))) throw new Error(`${path}: value is not in enum`);
+  if (schema.type !== 'object' && schema.type !== 'array') consumeRoutingBytes(budget, toUtf8Bytes(JSON.stringify(result)).length);
+  if (schema.enum) {
+    const encodedResult = canonicalRoutingJson(result);
+    if (!schema.enum.some((entry) => {
+      consumeRoutingWork(budget.work);
+      return canonicalRoutingJson(entry) === encodedResult;
+    })) throw new Error(`${path}: value is not in enum`);
+  }
   return result;
 }
 
 export function resolveRoutingPreferences(schema: RoutingPreferenceSchema, values: unknown = {}): RoutingPreferences {
   validateRoutingPreferenceSchema(schema);
   assertRoutingPreferences(values);
-  const result = validateValue(schema, values, 'preferences', 0);
+  const result = validateValue(schema, values, 'preferences', 0, createRoutingValueBudget());
   assertRoutingPreferences(result);
   return result;
 }

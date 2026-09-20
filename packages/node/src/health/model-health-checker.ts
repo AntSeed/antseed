@@ -313,7 +313,9 @@ export class ModelHealthChecker {
 
 /** Pick the probe request shape from the service's advertised API protocol. */
 function resolveProbeProtocol(provider: Provider, service: string): ServiceApiProtocol {
-  return provider.serviceApiProtocols?.[service]?.[0] ?? 'openai-chat-completions';
+  const protocols = provider.serviceApiProtocols?.[service];
+  if (provider.serviceCapabilities?.[service]?.routing === true || protocols?.includes('antseed-routing')) return 'antseed-routing';
+  return protocols?.[0] ?? 'openai-chat-completions';
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
