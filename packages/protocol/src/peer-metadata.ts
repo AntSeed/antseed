@@ -1,5 +1,5 @@
 import type { PeerId } from './peer-id.js';
-import { REASONING_EFFORTS, type ReasoningEffort } from './routing.js';
+import { REASONING_EFFORTS, type ReasoningEffort } from './reasoning.js';
 import type { PeerOffering } from './capability.js';
 import type { ServiceUnitBillingModelsV2 } from './billing.js';
 import {
@@ -15,6 +15,7 @@ export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const QUANTITY_BILLING_METADATA_VERSION = 13;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
 export const SERVICE_ROUTING_CAPABILITY_METADATA_VERSION = SERVICE_ROUTING_METADATA_VERSION;
+export const SERVICE_REASONING_EFFORTS_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",

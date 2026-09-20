@@ -1,11 +1,17 @@
-# Current four-PR stack
+# Current five-PR stack
 
-The current review order is #1039 (1/4, generic quantity billing), #1034 (2/4,
-protocol/discovery), #1035 (3/4, shared execution), and #1036 (4/4, buyer integration).
+The current review order is #1039 (1/5, generic quantity billing),
+`codex/reasoning-effort-announcements` (2/5, signed reasoning-effort capabilities),
+#1034 (3/5, routing protocol/discovery), #1035 (4/5, shared execution), and
+#1036 (5/5, buyer integration).
 The tables below audit the original three-slice extraction: their PR 1/2/3 labels
-refer to the historical protocol/execution/buyer slices, now PR 2/3/4. Quantity
+refer to the historical protocol/execution/buyer slices, now PR 3/4/5. Quantity
 billing and its adapters, codecs, config migration, catalog prices, and regression
-tests have since been extracted into #1039. No original feature is dropped.
+tests have since been extracted into #1039. Reasoning-effort types, validation,
+provider configuration, signed encoding, and catalog propagation now belong to
+PR 2/5; routing recommendations and execution remain in PRs 3/5 and 5/5.
+No original feature is dropped. The validation figures below are historical,
+not fresh results for this restack; see the PR descriptions for current checks.
 
 # Complete routing-stack coverage audit
 

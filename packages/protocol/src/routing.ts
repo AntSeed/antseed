@@ -1,4 +1,5 @@
 import { sha256, toUtf8Bytes } from 'ethers';
+import { REASONING_EFFORTS, type ReasoningEffort } from './reasoning.js';
 
 export type RoutingJson = null | boolean | number | string | RoutingJson[] | { [key: string]: RoutingJson };
 export type RoutingPreferences = Record<string, string>;
@@ -19,8 +20,6 @@ export type RoutingServiceMetadataV1 = {
   preferencesSchema: RoutingPreferenceSchema;
   preferencesSchemaHash: string;
 };
-export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 export type RoutingInference = { reasoningEffort: ReasoningEffort };
 export type RoutingRecommendation = { serviceId: string; peerId?: string; inference?: RoutingInference };
 export type RoutingCandidate = Pick<RoutingRecommendation, 'serviceId'> & {

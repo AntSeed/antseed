@@ -1,8 +1,10 @@
 # Structured routing contract
 
-This document describes the protocol/discovery contract of the four-PR routing
-stack. Generic quantity billing is PR 1/4; this protocol/discovery slice is PR 2/4. Shared payments supply request execution and per-call accounting; buyer
-integration now connects selection, policy, fallback, observations, and reasoning
+This document describes the protocol/discovery contract of the five-PR routing
+stack. Generic quantity billing is PR 1/5; [reasoning-effort announcements](reasoning-efforts.md)
+are PR 2/5; this protocol/discovery slice is PR 3/5. Shared payments (PR 4/5)
+supply request execution and per-call accounting; buyer integration (PR 5/5)
+connects selection, policy, fallback, observations, and reasoning
 to this contract. See [buyer integration](../router-network-integration.md).
 The early slices are review boundaries, not standalone deployments; the stack
 contains no temporary execution guards.
@@ -132,7 +134,7 @@ for `antseed-routing` and non-streaming `openai-chat-completions`.
 Metadata v13 encodes the billing model version, components, uint32 prices, and conditions. Legacy network
 billing advertisements/reports are rejected, not reinterpreted. Older token-only
 announcements remain supported. Compatible legacy seller configuration is
-migrated before provider construction by PR 1/4.
+migrated before provider construction by [PR 1/5](../quantity-billing.md).
 
 Catalog `billingByProtocol` exposes fixed prices or conditional rules without treating
 them as token prices or inventing numeric summaries for conditional offers. The shared payments slice adds response-acceptance hooks,
