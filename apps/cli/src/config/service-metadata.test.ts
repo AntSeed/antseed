@@ -18,7 +18,7 @@ test('parseServiceCapabilitiesInput validates CLI capability JSON', () => {
 
 test('parseServiceUnitBillingModelsInput validates CLI billing JSON', () => {
   const models = parseServiceUnitBillingModelsInput(JSON.stringify({
-    'openai-images': { version: 2, priceMicroUsdc: "40000" },
+    'openai-images': { version: 2, priceMicroUsdc: '40000' },
   }));
   assert.equal(models['openai-images']?.priceMicroUsdc, '40000');
   assert.throws(

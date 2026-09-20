@@ -68,7 +68,7 @@ test('fixed model and local router selections round-trip without classifier sett
 });
 
 test('loadConfig migrates compatible legacy seller billing before provider construction', async () => {
-  for (const [protocol, unit] of [['openai-images', 'output_images'], ['antseed-routing', 'successful_requests']]) {
+  for (const [protocol, unit] of [['openai-images', 'output_images'], ['openai-chat-completions', 'successful_requests'], ['antseed-routing', 'successful_requests']]) {
     const config = { seller: { providers: { example: { plugin: 'openai', services: {
       example: { unitBillingModels: { [protocol!]: { version: 1, components: [{ unit, priceUsd: 0.04 }] } } },
     } } } } };

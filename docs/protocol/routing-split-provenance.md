@@ -1,3 +1,12 @@
+# Four-PR stack update
+
+The current stack is #1039 (1/4, generic quantity billing), #1034 (2/4,
+protocol/discovery), #1035 (3/4, shared execution), and #1036 (4/4, buyer integration).
+Billing is extracted onto current main; later branches merge their new parent,
+preserving the original contributor commits and review fixes without force-pushes.
+The numbered extraction history below records the earlier three-slice layout;
+its source commit IDs remain historical provenance, not current PR numbering.
+
 # Routing stack provenance and extraction ledger
 
 Source: [AntSeed/antseed#1014](https://github.com/AntSeed/antseed/pull/1014),

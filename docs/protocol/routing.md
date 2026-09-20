@@ -1,10 +1,10 @@
 # Structured routing contract
 
-This document describes the protocol/discovery contract of the three-PR routing
-stack. Shared payments supply request execution and per-call accounting; buyer
+This document describes the protocol/discovery contract of the four-PR routing
+stack. Generic quantity billing is PR 1/4; this protocol/discovery slice is PR 2/4. Shared payments supply request execution and per-call accounting; buyer
 integration now connects selection, policy, fallback, observations, and reasoning
 to this contract. See [buyer integration](../router-network-integration.md).
-The first two slices are review boundaries, not standalone deployments; the stack
+The early slices are review boundaries, not standalone deployments; the stack
 contains no temporary execution guards.
 
 ## Advertisement and compatibility
@@ -119,7 +119,7 @@ Missing cache counts mean unknown, not zero. The context is bounded to 64
 observations and 16 KiB; IDs must be unique within the snapshot. This slice defines
 and validates that shape; it does not collect or persist observations.
 
-## Price representation, not payment execution
+## Quantity billing dependency
 
 `createUnitBillingModel` accepts a canonical integer micro-USDC string from `0`
 through `4294967295` and produces `{ version: 2, priceMicroUsdc }`. A usage report
@@ -131,7 +131,7 @@ for `antseed-routing` and non-streaming `openai-chat-completions`.
 Metadata v13 encodes the billing model version and uint32 price. Legacy network
 billing advertisements/reports are rejected, not reinterpreted. Older token-only
 announcements remain supported. Compatible legacy seller configuration is
-migrated before provider construction; see the shared payment documentation.
+migrated before provider construction by [PR 1/4](../quantity-billing.md).
 
 Catalog `billingByProtocol` exposes advertised quantity prices without treating
 them as token prices. The shared payments slice adds response-acceptance hooks,

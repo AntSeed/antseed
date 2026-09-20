@@ -1,6 +1,6 @@
 import { canonicalRoutingJson, validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
-import { SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { QUANTITY_BILLING_METADATA_VERSION, SERVICE_CAPABILITY_MODALITIES, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, validateServiceCapabilityFields } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -110,9 +110,9 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
         throw new Error("Service routing capability must be a boolean");
       }
     }
-    if (metadata.version < SERVICE_ROUTING_METADATA_VERSION
+    if (metadata.version < QUANTITY_BILLING_METADATA_VERSION
       && Object.values(p.serviceUnitBillingModels ?? {}).some((models) => Object.keys(models).length > 0)) {
-      throw new Error(`Quantity billing requires metadata v${SERVICE_ROUTING_METADATA_VERSION} or newer`);
+      throw new Error(`Quantity billing requires metadata v${QUANTITY_BILLING_METADATA_VERSION} or newer`);
     }
     const providerNameBytes = new TextEncoder().encode(p.provider);
     parts.push(new Uint8Array([providerNameBytes.length]));
@@ -721,7 +721,7 @@ function decodeServiceUnitBillingModels(
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
   offset = nextOffset;
-  if (entryCount > 0 && metadataVersion < SERVICE_ROUTING_METADATA_VERSION) throw new Error('Legacy unit billing advertisement; seller upgrade required');
+  if (entryCount > 0 && metadataVersion < QUANTITY_BILLING_METADATA_VERSION) throw new Error('Legacy unit billing advertisement; seller upgrade required');
   const models: NonNullable<PeerMetadata["providers"][number]["serviceUnitBillingModels"]> = {};
   for (let index = 0; index < entryCount; index += 1) {
     const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);

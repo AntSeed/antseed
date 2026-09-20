@@ -187,8 +187,8 @@ const CONFIG_SNIPPET = `{
 }`;
 
 const WALLET_SNIPPET = `antseed seller status         # earnings, peers, wallet address
-antseed seller stake <amt>    # stake USDC to become discoverable
-antseed seller unstake        # withdraw your stake`;
+antseed seller register       # register on-chain; all you need to sell
+antseed seller stake <ants> --epochs <n>  # optional: stake ANTS for rewards`;
 
 /* ── MAIN PAGE ───────────────────────────────────────────────── */
 export default function Providers(): JSX.Element {

@@ -1,6 +1,6 @@
 import { validateRoutingServiceMetadata } from "@antseed/protocol";
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
+import { QUANTITY_BILLING_METADATA_VERSION, METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_ROUTING_CAPABILITY_METADATA_VERSION, SERVICE_ROUTING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { isQuantityBillingProtocol, validateUnitBillingModelV2 } from "../billing/unit.js";
@@ -507,10 +507,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceUnitBillingModels !== undefined) {
-      if (metadata.version < SERVICE_ROUTING_METADATA_VERSION) {
+      if (metadata.version < QUANTITY_BILLING_METADATA_VERSION) {
         errors.push({
           field: `providers[${i}].serviceUnitBillingModels`,
-          message: `Quantity billing requires metadata version ${SERVICE_ROUTING_METADATA_VERSION}`,
+          message: `Quantity billing requires metadata version ${QUANTITY_BILLING_METADATA_VERSION}`,
         });
       }
       let expandedBillingModelCount = 0;

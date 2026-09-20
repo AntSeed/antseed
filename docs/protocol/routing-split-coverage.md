@@ -1,3 +1,12 @@
+# Current four-PR stack
+
+The current review order is #1039 (1/4, generic quantity billing), #1034 (2/4,
+protocol/discovery), #1035 (3/4, shared execution), and #1036 (4/4, buyer integration).
+The tables below audit the original three-slice extraction: their PR 1/2/3 labels
+refer to the historical protocol/execution/buyer slices, now PR 2/3/4. Quantity
+billing and its adapters, codecs, config migration, catalog prices, and regression
+tests have since been extracted into #1039. No original feature is dropped.
+
 # Complete routing-stack coverage audit
 
 Audited September 20, 2026 against PR #1014 at `55109639c92302b17d9cec8272e23e690d2a9103`.

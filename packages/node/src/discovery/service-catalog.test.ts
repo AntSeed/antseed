@@ -38,9 +38,7 @@ describe('buildNetworkServiceOffers', () => {
         openai: {
           services: {
             'gpt-image-test': {
-              'openai-images': {
-                version: 2, priceMicroUsdc: '40000',
-              },
+              'openai-images': { version: 2, priceMicroUsdc: '40000' },
             },
           },
         },

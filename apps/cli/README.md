@@ -13,7 +13,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Providing** | |
 | `antseed seller start` | Start providing AI services on the P2P network |
 | `antseed seller register` | Register peer identity on-chain (ERC-8004) |
-| `antseed seller stake <ants> --epochs <n>` | Stake ANTS into your seller pool; never stakes USDC |
+| `antseed seller stake <ants> --epochs <n>` | Optional: stake ANTS into your seller pool; never stakes USDC |
 | `antseed seller legacy stake <amount>` | Stake USDC as a provider before cutover (min $10) |
 | `antseed seller legacy unstake` | Withdraw legacy USDC stake |
 | `antseed seller legacy claim-starter` | Claim the legacy-seller starter ANTS position after the recognized-usage upgrade |
@@ -402,19 +402,19 @@ dashboard tabs and how to read the pool table.
 # 1. Set your identity (secp256k1 private key)
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 2. Fund your wallet with ETH (for gas) and USDC (for staking) on Base Mainnet
+# 2. Fund your wallet with ETH (for gas) on Base Mainnet
 
 # 3. Register your identity on-chain
 antseed seller register
 
-# 4. Stake USDC (minimum $10)
+# 4. Optional: stake USDC (minimum $10 if you stake)
 antseed seller legacy stake 10
 
-# 6. Start providing
+# 5. Start providing
 antseed seller start
 ```
 
-After the M001 recognized-usage cutover, new seller stake moves from legacy USDC staking to ANTS seller pools:
+Staking is optional: the seller registry's minimum pool stake is currently 0, so a registered seller can start without staking. After the M001 recognized-usage cutover, new seller stake moves from legacy USDC staking to ANTS seller pools:
 
 ```bash
 antseed seller register
