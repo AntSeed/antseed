@@ -128,13 +128,13 @@ function buildKnownUnitBillingModel(service) {
   if (normalized.startsWith("grok-imagine-image-quality") || normalized.startsWith("grok-imagine-image-pro")) {
     return {
       version: 2,
-      priceMicroUsdc: "50000",
+      components: [{ priceMicroUsdc: "50000" }],
     };
   }
   if (normalized.startsWith("grok-imagine-image")) {
     return {
       version: 2,
-      priceMicroUsdc: "20000",
+      components: [{ priceMicroUsdc: "20000" }],
     };
   }
   return null;

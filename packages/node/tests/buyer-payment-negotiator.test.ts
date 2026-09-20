@@ -785,7 +785,7 @@ describe('BuyerPaymentNegotiator', () => {
           serviceApiProtocol: 'openai-images',
           maxQuantity: 0,
         },
-        unitModel: { version: 2, priceMicroUsdc: "40000" },
+        unitModel: { version: 2, components: [{ priceMicroUsdc: "40000" }] },
       });
       const response: SerializedHttpResponse = {
         requestId: 'req-image-unmatched',

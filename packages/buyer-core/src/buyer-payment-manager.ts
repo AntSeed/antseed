@@ -1820,6 +1820,8 @@ export class BuyerPaymentManager {
     this._requestService.track(requestId, entry.context.service);
     this._requestBillingEntries.set(requestId, {
       ...entry,
+      context: structuredClone(entry.context),
+      ...(entry.unitModel ? { unitModel: structuredClone(entry.unitModel) } : {}),
       createdAtMs: Date.now(),
     });
     this._trimRequestBillingCache();

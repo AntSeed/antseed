@@ -1,5 +1,5 @@
 import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV2, UnitBillingModelV2 } from '@antseed/node';
-import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, createUnitBillingModel, isQuantityBillingProtocol, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV2 } from '@antseed/node';
+import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, assertQuantityBillingModel, createUnitBillingModel, isQuantityBillingProtocol, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV2 } from '@antseed/node';
 
 export function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -93,23 +93,34 @@ export function parseServiceUnitBillingModelsJson(raw: string | undefined, key =
 
 function normalizeUnitBillingModel(raw: Record<string, unknown>, protocol: string, field: string): UnitBillingModelV2 {
   if (!isQuantityBillingProtocol(protocol)) throw new Error(field + ': unsupported quantity billing adapter');
-  if (raw.version === 2) {
-    const errors = validateUnitBillingModelV2(raw);
-    if (errors.length) throw new Error(field + ': ' + errors.join('; '));
-    return { version: 2, priceMicroUsdc: raw.priceMicroUsdc as string };
+  try {
+    let model: UnitBillingModelV2;
+    if (raw.version === 2) {
+      model = Object.keys(raw).every(key => ['version', 'priceMicroUsdc'].includes(key))
+        ? createUnitBillingModel(raw.priceMicroUsdc as string)
+        : raw as unknown as UnitBillingModelV2;
+    } else {
+      if (raw.version !== 1 || Object.keys(raw).some(key => !['version', 'components'].includes(key))
+        || !Array.isArray(raw.components) || raw.components.length > 255) throw new Error('invalid legacy billing model');
+      model = { version: 2, components: raw.components.map((component, index) => {
+        if (!component || typeof component !== 'object' || Array.isArray(component)
+          || Object.keys(component).some(key => !['unit', 'priceUsd', 'match'].includes(key))
+          || component.unit !== (protocol === 'openai-images' ? 'output_images' : 'successful_requests')
+          || typeof component.priceUsd !== 'number' || !Number.isFinite(component.priceUsd) || component.priceUsd < 0) {
+          throw new Error(`components[${index}]: incompatible legacy billing component`);
+        }
+        const micros = Math.round(component.priceUsd * 1_000_000);
+        if (!Number.isSafeInteger(micros) || micros / 1_000_000 !== component.priceUsd) {
+          throw new Error(`components[${index}]: price cannot be exactly represented in micro-USDC`);
+        }
+        return { priceMicroUsdc: String(micros), ...(component.match !== undefined ? { match: component.match } : {}) };
+      }) };
+    }
+    assertQuantityBillingModel(model, protocol);
+    return model;
+  } catch (error) {
+    throw new Error(`${field}: cannot safely migrate or validate billing: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const migrationError = () => new Error(field + ': cannot safely migrate legacy billing; configure one fixed priceMicroUsdc matching the service adapter');
-  if (raw.version !== 1 || Object.keys(raw).some(key => !['version', 'components'].includes(key)) || !Array.isArray(raw.components) || raw.components.length > 1) throw migrationError();
-  if (raw.components.length === 0) return createUnitBillingModel('0');
-  const component = raw.components[0];
-  if (!component || typeof component !== 'object' || Array.isArray(component)
-    || Object.keys(component).some(key => !['unit', 'priceUsd', 'match'].includes(key))
-    || (component.match !== undefined && (!component.match || typeof component.match !== 'object' || Array.isArray(component.match) || Object.keys(component.match).length > 0))
-    || component.unit !== (protocol === 'openai-images' ? 'output_images' : 'successful_requests')
-    || typeof component.priceUsd !== 'number' || !Number.isFinite(component.priceUsd) || component.priceUsd < 0) throw migrationError();
-  const micros = Math.round(component.priceUsd * 1_000_000);
-  if (!Number.isSafeInteger(micros) || micros / 1_000_000 !== component.priceUsd) throw migrationError();
-  try { return createUnitBillingModel(String(micros)); } catch { throw migrationError(); }
 }
 
 export function parseCsv(raw: string | undefined): string[] {

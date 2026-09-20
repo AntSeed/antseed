@@ -122,19 +122,20 @@ and validates that shape; it does not collect or persist observations.
 ## Quantity billing dependency
 
 `createUnitBillingModel` accepts a canonical integer micro-USDC string from `0`
-through `4294967295` and produces `{ version: 2, priceMicroUsdc }`. A usage report
-is `{ version: 2, quantity: '1' }`. Cost is exactly price times quantity; there is
-no offer-level unit or component list. The service API protocol selects the
+through `4294967295` and produces `{ version: 2, components: [{ priceMicroUsdc }] }`.
+A usage report is `{ version: 2, quantity: '1' }`. Cost is the sum of matching
+component prices times quantity, with no offer-level unit label. Image adapters
+support conditional components; routing and chat pricing is unconditional. The service API protocol selects the
 quantity adapter: delivered images for `openai-images`, or one fulfilled response
 for `antseed-routing` and non-streaming `openai-chat-completions`.
 
-Metadata v13 encodes the billing model version and uint32 price. Legacy network
+Metadata v13 encodes the billing model version, components, uint32 prices, and conditions. Legacy network
 billing advertisements/reports are rejected, not reinterpreted. Older token-only
 announcements remain supported. Compatible legacy seller configuration is
 migrated before provider construction by [PR 1/4](../quantity-billing.md).
 
-Catalog `billingByProtocol` exposes advertised quantity prices without treating
-them as token prices. The shared payments slice adds response-acceptance hooks,
+Catalog `billingByProtocol` exposes fixed prices or conditional rules without treating
+them as token prices or inventing numeric summaries for conditional offers. The shared payments slice adds response-acceptance hooks,
 request-scoped accounting, cancellation cleanup, and serialized channel updates;
 see [shared payment execution](../router-per-call-billing.md). Buyer integration
 wires these hooks to network-router selection and buyer policy.

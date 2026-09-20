@@ -272,6 +272,7 @@ export class BuyerPaymentNegotiator {
         provider: route.provider,
         service: route.service,
         serviceApiProtocol: route.serviceApiProtocol,
+        unitModel: route.unitModel,
         request,
       });
       this._bpm.trackRequestBilling(request.requestId, {
