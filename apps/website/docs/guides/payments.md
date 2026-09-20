@@ -121,6 +121,10 @@ lANTS staking-position NFTs; pool power activates in the following epoch.
 Eligible sellers can initialize a starter position, including contract sellers
 whose authorized operator initializes on their behalf.
 
+Staking is optional for selling: the seller registry's minimum pool stake is
+currently 0, so any registered seller can serve requests. Stake affects ANTS
+rewards, not eligibility.
+
 ```bash
 antseed seller legacy stake 10
 ```

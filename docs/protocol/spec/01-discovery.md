@@ -103,7 +103,7 @@ MIN_SUPPORTED_METADATA_VERSION = 10
 | servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, cachedInputUsdPerMillion?, outputUsdPerMillion } }` |
 | serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
 | serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
-| serviceUnitBillingModels | object | v11+. Optional map `{ [service]: { [protocol]: UnitBillingModelV1 } }` for non-token usage such as `output_images` |
+| serviceUnitBillingModels | object | v13+. Optional map `{ [service]: { [protocol]: UnitBillingModelV2 } }` with fixed integer micro-USDC pricing; the protocol adapter defines quantity. Legacy billing advertisements are rejected. |
 | serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input/output modalities, reasoning, tool-use, structured-output, and supported-parameter hints |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |

@@ -17,6 +17,7 @@ import type {
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
 import { assertValidConfig } from './validation.js';
+import { parseServiceUnitBillingModelsInput } from './service-metadata.js';
 
 /**
  * Resolve a config path, expanding ~ to the user's home directory.
@@ -114,7 +115,7 @@ function normalizeSellerService(value: unknown): SellerServiceConfig | null {
     out.capabilities = value['capabilities'] as SellerServiceConfig['capabilities'];
   }
   if (value['unitBillingModels'] !== undefined) {
-    out.unitBillingModels = value['unitBillingModels'] as SellerServiceConfig['unitBillingModels'];
+    out.unitBillingModels = parseServiceUnitBillingModelsInput(JSON.stringify(value['unitBillingModels']));
   }
   return out;
 }

@@ -181,10 +181,7 @@ describe('payment codec round-trips', () => {
       lastRequestCost: '80000',
       inputTokens: '0',
       outputTokens: '0',
-      billingUsage: {
-        version: 1 as const,
-        units: { output_images: '2' },
-      },
+      billingUsage: { version: 2, quantity: '2' },
     };
     expect(decodeNeedAuth(encodeNeedAuth(payload))).toEqual(payload);
   });
@@ -195,10 +192,7 @@ describe('payment codec round-trips', () => {
       requiredCumulativeAmount: '500000',
       currentAcceptedCumulative: '200000',
       deposit: '1000000',
-      billingUsage: {
-        version: 1,
-        units: { output_images: '-1' },
-      },
+      billingUsage: { version: 2, quantity: '-1' },
     }));
     expect(() => decodeNeedAuth(encoded)).toThrow(/billingUsage/);
   });

@@ -37,8 +37,7 @@ import {
   computeCostUsdc,
   type ServicePricing,
 } from './pricing.js';
-import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
-import type { ImageRequestFacts } from '@antseed/api-adapter';
+import type { UnitBillingContext, UnitBillingModelV2, UnitBillingUsage } from '@antseed/protocol/billing';
 import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { buyerFault, faultCodeOf } from './errors.js';
 
@@ -55,12 +54,12 @@ const MAX_REQUEST_BILLING_ENTRIES = 512;
  *  to record delivered unit usage before rejecting a positive claim. */
 const OBSERVED_UNIT_USAGE_WAIT_MS = 5_000;
 
-function countOutputImages(usage: UnitBillingUsage | undefined): bigint {
-  return BigInt(Math.max(0, Math.floor(usage?.units.output_images ?? 0)));
+function countOutputImages(usage: UnitBillingUsage | undefined, context?: UnitBillingContext): bigint {
+  return context?.serviceApiProtocol === 'openai-images' ? BigInt(usage?.quantity ?? 0) : 0n;
 }
 
 function validateUnitNormalizedCost(
-  model: UnitBillingModelV1,
+  model: UnitBillingModelV2,
   context: UnitBillingContext,
   usage: UnitBillingUsage,
 ): bigint {
@@ -99,8 +98,8 @@ export interface PerRequestAuthResult {
 
 export interface BuyerRequestBillingEntry {
   context: UnitBillingContext;
-  requestFacts: ImageRequestFacts;
-  unitModel?: UnitBillingModelV1;
+  estimatedPromptTokens?: number;
+  unitModel?: UnitBillingModelV2;
   tokenPricing?: ServicePricing;
   observedUnitUsage?: UnitBillingUsage;
 }
@@ -1267,7 +1266,7 @@ export class BuyerPaymentManager {
     // Image attribution (metadata/stats only — never cost). The count is the
     // buyer's own observation of the delivered response, so it survives a
     // headroom NeedAuth having already consumed the request-billing entry.
-    const estimatedOutputImages = countOutputImages(responseStats.unitUsage);
+    const estimatedOutputImages = countOutputImages(responseStats.unitUsage, requestBilling?.context);
     if (estimatedOutputImages > 0n) {
       if (byteEstimatedTokens) {
         // Byte estimates of an image response are base64 noise, not tokens.
@@ -1277,7 +1276,7 @@ export class BuyerPaymentManager {
       }
       estimatedOutputTokens += estimatedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
       if (estimatedInputTokens <= 0n) {
-        estimatedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+        estimatedInputTokens = BigInt(requestBilling?.estimatedPromptTokens ?? 0);
       }
     }
 
@@ -1483,7 +1482,7 @@ export class BuyerPaymentManager {
             this._costTolerance,
             observedUnitUsage,
           );
-          acceptedOutputImages = countOutputImages(unitUsageFromReport(payload.billingUsage));
+          acceptedOutputImages = countOutputImages(unitUsageFromReport(payload.billingUsage), requestBilling.context);
         }
 
         const buyerEstimate = tokenEstimate + acceptedUnitCost;
@@ -1505,7 +1504,7 @@ export class BuyerPaymentManager {
       }
     } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
-      if (sellerCost > 0n && unitBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+      if (sellerCost > 0n && unitBillingModel) {
         debugWarn(
           `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
         );
@@ -1621,7 +1620,7 @@ export class BuyerPaymentManager {
     if (acceptedOutputImages > 0n) {
       attributedOutputTokens += acceptedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
       if (attributedInputTokens <= 0n) {
-        attributedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+        attributedInputTokens = BigInt(requestBilling?.estimatedPromptTokens ?? 0);
       }
     }
     const newMeta = this._advanceUsageMetadata(
@@ -1669,7 +1668,7 @@ export class BuyerPaymentManager {
     if (needsTopUp || this._needsTopUp(sellerPeerId)) {
       await this._topUpAfterSpendAuthBestEffort(sellerPeerId, paymentMux, 'handleNeedAuth');
     }
-    if (payload.requestId) {
+    if (payload.requestId && (!requestBilling?.unitModel || payload.billingUsage)) {
       this.clearRequestBilling(payload.requestId);
     }
   }
@@ -1882,7 +1881,6 @@ export class BuyerPaymentManager {
   trackRequestBillingContext(requestId: string, context: UnitBillingContext): void {
     this.trackRequestBilling(requestId, {
       context,
-      requestFacts: {},
     });
   }
 

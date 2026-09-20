@@ -1,43 +1,19 @@
 import type { ServiceApiProtocol } from './service-api.js';
 
-export const UNIT_BILLING_UNITS_V1 = [
-  'output_images',
-  'successful_requests',
-] as const;
-
-export const UNIT_BILLING_MATCH_KEYS_V1 = [
-  'model',
-  'size',
-  'quality',
-  'resolution',
-] as const;
-
-export type UnitBillingUnitV1 = (typeof UNIT_BILLING_UNITS_V1)[number];
-export type UnitBillingMatchKeyV1 = (typeof UNIT_BILLING_MATCH_KEYS_V1)[number];
-
-export interface UnitBillingComponentV1 {
-  unit: UnitBillingUnitV1;
-  priceUsd: number;
-  match?: Partial<Record<UnitBillingMatchKeyV1, string>>;
+export interface UnitBillingModelV2 {
+  version: 2;
+  priceMicroUsdc: string;
 }
 
-export interface UnitBillingModelV1 {
-  version: 1;
-  components: UnitBillingComponentV1[];
-}
-
-export type ServiceUnitBillingModelsV1 = Record<
-  string,
-  Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>
->;
+export type ServiceUnitBillingModelsV2 = Record<string, Partial<Record<ServiceApiProtocol, UnitBillingModelV2>>>;
 
 export interface UnitBillingUsage {
-  units: Partial<Record<UnitBillingUnitV1, number>>;
+  quantity: number;
 }
 
-export interface UnitBillingUsageReportV1 {
-  version: 1;
-  units: Partial<Record<UnitBillingUnitV1, string>>;
+export interface UnitBillingUsageReportV2 {
+  version: 2;
+  quantity: string;
 }
 
 export interface UnitBillingContext {
@@ -45,202 +21,82 @@ export interface UnitBillingContext {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  attributes?: Partial<Record<UnitBillingMatchKeyV1, string>>;
-  unitLimits?: Partial<Record<UnitBillingUnitV1, number>>;
+  maxQuantity?: number;
 }
 
-export const GENERATED_IMAGE_OUTPUT_UNIT_V1 = 'output_images' satisfies UnitBillingUnitV1;
-export const PER_CALL_BILLING_UNIT_V1 = 'successful_requests' satisfies UnitBillingUnitV1;
+export const MAX_UNIT_PRICE_MICRO_USDC = 0xffff_ffffn;
+export const FREE_UNIT_BILLING_MODEL_V2: UnitBillingModelV2 = { version: 2, priceMicroUsdc: '0' };
 
-export function createPerCallBillingModel(amountMicroUsdc: string): UnitBillingModelV1 {
-  if (typeof amountMicroUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(amountMicroUsdc)
-    || BigInt(amountMicroUsdc) > 0xffff_ffffn) throw new Error('Per-call price must be a canonical uint32 micro-USDC amount');
-  return { version: 1, components: [{ unit: PER_CALL_BILLING_UNIT_V1, priceUsd: Number(amountMicroUsdc) / 1_000_000 }] };
+export function isQuantityBillingProtocol(protocol: string): boolean {
+  return protocol === 'openai-images' || protocol === 'openai-chat-completions' || protocol === 'antseed-routing';
 }
 
-export function perCallPriceMicroUsdc(model: UnitBillingModelV1 | undefined): bigint | null {
-  if (!model || validateUnitBillingModelV1(model).length > 0 || model.components.length !== 1
-    || model.components[0]!.unit !== PER_CALL_BILLING_UNIT_V1) return null;
-  return usdToMicroUsdc(model.components[0]!.priceUsd);
+export function createUnitBillingModel(priceMicroUsdc: string): UnitBillingModelV2 {
+  const model: UnitBillingModelV2 = { version: 2, priceMicroUsdc };
+  const errors = validateUnitBillingModelV2(model);
+  if (errors.length) throw new Error(errors.join('; '));
+  return model;
 }
 
-export const FREE_UNIT_BILLING_MODEL_V1: UnitBillingModelV1 = {
-  version: 1,
-  components: [],
-};
-
-export const UNIT_BILLING_UNIT_SET_V1 = new Set<string>(UNIT_BILLING_UNITS_V1);
-export const UNIT_BILLING_MATCH_KEY_SET_V1 = new Set<string>(UNIT_BILLING_MATCH_KEYS_V1);
-
-export function isUnitBillingUnitV1(value: string): value is UnitBillingUnitV1 {
-  return UNIT_BILLING_UNIT_SET_V1.has(value);
+export function unitPriceMicroUsdc(model: UnitBillingModelV2 | undefined): bigint | null {
+  return model && validateUnitBillingModelV2(model).length === 0 ? BigInt(model.priceMicroUsdc) : null;
 }
 
-export function isUnitBillingMatchKeyV1(value: string): value is UnitBillingMatchKeyV1 {
-  return UNIT_BILLING_MATCH_KEY_SET_V1.has(value);
+export function validateUnitBillingModelV2(model: unknown): string[] {
+  if (!isObject(model) || model.version !== 2) return ['Unit billing model must be version 2; migrate legacy seller configuration'];
+  if (Object.keys(model).some(key => !['version', 'priceMicroUsdc'].includes(key))) return ['Unsupported unit billing model field'];
+  if (!isCanonicalInteger(model.priceMicroUsdc) || model.priceMicroUsdc.length > 10
+    || BigInt(model.priceMicroUsdc) > MAX_UNIT_PRICE_MICRO_USDC) return ['priceMicroUsdc must be a canonical uint32 micro-USDC amount'];
+  return [];
 }
 
-export function isValidUnitBillingComponentV1(component: UnitBillingComponentV1): boolean {
-  return isUnitBillingUnitV1(component.unit);
+export function isFreeUnitBillingModel(model: UnitBillingModelV2): boolean {
+  return unitPriceMicroUsdc(model) === 0n;
 }
 
-export function unitUsageToBillingReport(usage: UnitBillingUsage): UnitBillingUsageReportV1 {
-  const units: Partial<Record<UnitBillingUnitV1, string>> = {};
-  for (const [unit, count] of Object.entries(usage.units)) {
-    if (!isUnitBillingUnitV1(unit) || count === undefined) continue;
-    units[unit] = String(count);
-  }
-  return {
-    version: 1,
-    units,
-  };
+export function unitUsageToBillingReport(usage: UnitBillingUsage): UnitBillingUsageReportV2 {
+  assertQuantity(usage.quantity);
+  return { version: 2, quantity: String(usage.quantity) };
 }
 
-export function validateUnitBillingModelV1(model: UnitBillingModelV1): string[] {
-  const errors: string[] = [];
-  if (!model || typeof model !== 'object' || model.version !== 1 || !Array.isArray(model.components)) {
-    return ['Unit billing model must be version 1 with a components array'];
-  }
-  model.components.forEach((component, index) => {
-    if (!component || typeof component !== 'object') {
-      errors.push(`components[${index}] must be an object`);
-      return;
-    }
-    if (!isUnitBillingUnitV1(component.unit)) {
-      errors.push(`components[${index}].unit is unsupported`);
-    }
-    if (!isValidUnitBillingComponentV1(component)) {
-      errors.push(`components[${index}] must use a supported unit`);
-    }
-    if (!Number.isFinite(component.priceUsd) || component.priceUsd < 0) {
-      errors.push(`components[${index}].priceUsd must be a non-negative finite number`);
-    }
-    if (component.unit === PER_CALL_BILLING_UNIT_V1) {
-      const micros = Math.round(component.priceUsd * 1_000_000);
-      if (!Number.isSafeInteger(micros) || micros < 0 || micros > 0xffff_ffff || micros / 1_000_000 !== component.priceUsd) {
-        errors.push(`components[${index}].priceUsd must be an exact uint32 micro-USDC price`);
-      }
-      if (model.components.length !== 1 || (component.match && Object.keys(component.match).length > 0)) {
-        errors.push('Per-call billing requires one unconditional successful_requests component');
-      }
-    }
-    if (component.match !== undefined) {
-      if (!component.match || typeof component.match !== 'object' || Array.isArray(component.match)) {
-        errors.push(`components[${index}].match must be an object`);
-      } else {
-        for (const [key, value] of Object.entries(component.match)) {
-          if (!isUnitBillingMatchKeyV1(key)) {
-            errors.push(`components[${index}].match.${key} is unsupported`);
-          }
-          if (typeof value !== 'string' || value.length === 0) {
-            errors.push(`components[${index}].match.${key} must be a non-empty string`);
-          }
-        }
-      }
-    }
-  });
-  return errors;
+export function validateUnitBillingUsageReportV2(report: unknown): string[] {
+  if (!isObject(report) || report.version !== 2) return ['Unit billing usage report must be version 2'];
+  if (Object.keys(report).some(key => !['version', 'quantity'].includes(key))) return ['Unsupported unit billing usage field'];
+  if (!isCanonicalInteger(report.quantity) || report.quantity.length > 16
+    || BigInt(report.quantity) > BigInt(Number.MAX_SAFE_INTEGER)) return ['quantity must be a canonical safe non-negative integer decimal string'];
+  return [];
 }
 
-export function isFreeUnitBillingModel(model: UnitBillingModelV1): boolean {
-  return model.components.length === 0
-    || model.components.every((component) => Number.isFinite(component.priceUsd) && component.priceUsd <= 0);
+export function unitUsageFromReport(report: UnitBillingUsageReportV2): UnitBillingUsage {
+  const errors = validateUnitBillingUsageReportV2(report);
+  if (errors.length) throw new Error(errors.join('; '));
+  return { quantity: Number(report.quantity) };
 }
 
-export function evaluateUnitBilling(
-  model: UnitBillingModelV1,
-  context: UnitBillingContext,
-  usage: UnitBillingUsage,
-): bigint {
-  const validationErrors = validateUnitBillingModelV1(model);
-  if (validationErrors.length > 0) {
-    throw new Error(`Invalid unit billing model: ${validationErrors.join('; ')}`);
-  }
-
-  let totalUsd = 0;
-  const matchedUnits = new Set<UnitBillingUnitV1>();
-  for (const component of model.components) {
-    const unitCount = normalizedUnitCount(usage, component.unit);
-    if (unitCount <= 0) continue;
-    if (!componentMatchesContext(component, context)) continue;
-
-    matchedUnits.add(component.unit);
-    totalUsd += unitCount * component.priceUsd;
-  }
-
-  if (model.components.length > 0) {
-    for (const unit of UNIT_BILLING_UNITS_V1) {
-      if (normalizedUnitCount(usage, unit) > 0 && !matchedUnits.has(unit)) {
-        throw new Error(`No billing component matched ${unit} for the request context`);
-      }
-    }
-  }
-
-  return usdToMicroUsdc(totalUsd);
-}
-
-export function validateUnitBillingUsageReportV1(report: UnitBillingUsageReportV1): string[] {
-  const errors: string[] = [];
-  if (!report || typeof report !== 'object' || report.version !== 1) {
-    return ['Unit billing usage report must be version 1'];
-  }
-  if (!report.units || typeof report.units !== 'object' || Array.isArray(report.units)) {
-    errors.push('units must be an object');
-  } else {
-    for (const [unit, value] of Object.entries(report.units)) {
-      if (!isUnitBillingUnitV1(unit)) errors.push(`Unsupported billing unit "${unit}"`);
-      if (typeof value !== 'string') {
-        errors.push(`Unit "${unit}" must be encoded as a string`);
-      } else {
-        try {
-          parseUnitCount(value, unit);
-        } catch (error) {
-          errors.push(error instanceof Error ? error.message : `Unit "${unit}" must be a safe non-negative integer decimal string`);
-        }
-      }
-    }
-  }
-  return errors;
-}
-
-export function unitUsageFromReport(report: UnitBillingUsageReportV1): UnitBillingUsage {
-  const units: Partial<Record<UnitBillingUnitV1, number>> = {};
-  for (const [unit, value] of Object.entries(report.units)) {
-    if (!isUnitBillingUnitV1(unit)) continue;
-    units[unit] = parseUnitCount(value, unit);
-  }
-  return { units };
+export function evaluateUnitBilling(model: UnitBillingModelV2, context: UnitBillingContext, usage: UnitBillingUsage): bigint {
+  const errors = validateUnitBillingModelV2(model);
+  if (errors.length) throw new Error(errors.join('; '));
+  validateQuantityWithinRequest(usage, context);
+  return BigInt(model.priceMicroUsdc) * BigInt(usage.quantity);
 }
 
 export function validateUnitBillingUsage(
-  model: UnitBillingModelV1,
+  model: UnitBillingModelV2,
   context: UnitBillingContext,
-  report: UnitBillingUsageReportV1,
+  report: UnitBillingUsageReportV2,
   sellerCost: bigint,
-  costToleranceMultiplier: number,
+  _costToleranceMultiplier: number,
   observedUsage?: UnitBillingUsage,
 ): bigint {
-  const errors = validateUnitBillingUsageReportV1(report);
-  if (errors.length > 0) {
-    throw new Error(errors.join('; '));
-  }
-
   const usage = unitUsageFromReport(report);
-  validateUsageWithinRequestLimits(usage, context);
-  if (observedUsage) {
-    validateUsageWithinObservedUsage(usage, observedUsage);
-  } else if (sellerCost > 0n) {
-    throw new Error('Positive unit billing cost claimed before the buyer observed the delivered response');
-  }
   const buyerEstimate = evaluateUnitBilling(model, context, usage);
-  if (sellerCost > 0n && buyerEstimate <= 0n) {
-    throw new Error('Positive unit billing cost recomputed to zero');
+  if (observedUsage) {
+    validateQuantityWithinRequest(observedUsage, context);
+    if (usage.quantity > observedUsage.quantity) throw new Error('Seller quantity exceeds the quantity observed in the response');
+  } else if (usage.quantity > 0 || sellerCost > 0n) {
+    throw new Error('Unit billing quantity claimed before the buyer observed the delivered response');
   }
-
-  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * costToleranceMultiplier));
-  if (sellerCost > maxAcceptable) {
-    throw new Error(`Seller unit billing cost ${sellerCost} exceeds buyer estimate ${buyerEstimate}`);
-  }
+  if (sellerCost < 0n || sellerCost > buyerEstimate) throw new Error('Seller unit billing cost exceeds buyer estimate or is negative');
   return buyerEstimate;
 }
 
@@ -248,47 +104,24 @@ export function usdToMicroUsdc(value: number): bigint {
   return BigInt(Math.max(0, Math.round(value * 1_000_000)));
 }
 
-function parseUnitCount(value: string, unit: string): number {
-  if (!/^(0|[1-9]\d*)$/.test(value)) {
-    throw new Error(`Unit "${unit}" must be a canonical non-negative integer decimal string`);
-  }
-  const parsed = BigInt(value);
-  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error(`Unit "${unit}" exceeds the maximum safe integer`);
-  }
-  return Number(parsed);
-}
-
-function normalizedUnitCount(usage: UnitBillingUsage, unit: UnitBillingUnitV1): number {
-  const value = usage.units[unit] ?? 0;
-  if (!Number.isFinite(value) || value < 0) return 0;
-  return value;
-}
-
-function componentMatchesContext(component: UnitBillingComponentV1, context: UnitBillingContext): boolean {
-  const match = component.match;
-  if (!match || Object.keys(match).length === 0) return true;
-  const requestAttributes = context.attributes ?? {};
-  for (const [key, expected] of Object.entries(match) as Array<[UnitBillingMatchKeyV1, string]>) {
-    if (requestAttributes[key] !== expected) return false;
-  }
-  return true;
-}
-
-function validateUsageWithinRequestLimits(usage: UnitBillingUsage, context: UnitBillingContext): void {
-  const outputImageLimit = context.unitLimits?.output_images;
-  const outputImages = usage.units.output_images;
-  if (outputImageLimit !== undefined && outputImages !== undefined && outputImages > outputImageLimit) {
-    throw new Error(`Seller reported output_images=${outputImages} but request allowed ${outputImageLimit}`);
+function validateQuantityWithinRequest(usage: UnitBillingUsage, context: UnitBillingContext): void {
+  if (!isQuantityBillingProtocol(context.serviceApiProtocol)) throw new Error('Unsupported quantity billing protocol');
+  assertQuantity(usage.quantity);
+  const maximum = context.serviceApiProtocol === 'openai-images' ? context.maxQuantity : Math.min(context.maxQuantity ?? 1, 1);
+  if (maximum !== undefined) {
+    assertQuantity(maximum);
+    if (usage.quantity > maximum) throw new Error('Seller quantity exceeds the request limit');
   }
 }
 
-function validateUsageWithinObservedUsage(usage: UnitBillingUsage, observed: UnitBillingUsage): void {
-  for (const [unit, claimed] of Object.entries(usage.units)) {
-    if (!isUnitBillingUnitV1(unit) || claimed === undefined || claimed <= 0) continue;
-    const observedCount = observed.units[unit] ?? 0;
-    if (claimed > observedCount) {
-      throw new Error(`Seller reported ${unit}=${claimed} but response delivered ${observedCount}`);
-    }
-  }
+function assertQuantity(quantity: number): void {
+  if (!Number.isSafeInteger(quantity) || quantity < 0) throw new Error('quantity must be a safe non-negative integer');
+}
+
+function isCanonicalInteger(value: unknown): value is string {
+  return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

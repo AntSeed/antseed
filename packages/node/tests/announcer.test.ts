@@ -20,7 +20,7 @@ import {
 import { SERVICE_CAPABILITIES_METADATA_VERSION } from '../src/discovery/peer-metadata.js';
 import { decodeMetadata, encodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { verifySignature } from '@antseed/protocol/signing';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -137,6 +137,21 @@ describe('PeerAnnouncer capabilities', () => {
 });
 
 describe('PeerAnnouncer metadata versions', () => {
+  it.each([
+    { version: 1, components: [] },
+    { version: 2, priceMicroUsdc: '01' },
+    { version: 2, priceMicroUsdc: '1', unit: 'image' },
+  ])('rejects invalid plugin billing instead of dropping its price: %j', async (model) => {
+    const config = makeBaseConfig();
+    config.providers[0]!.serviceApiProtocols = { 'gpt-4.1': ['openai-chat-completions'] };
+    config.providers[0]!.serviceUnitBillingModels = {
+      'gpt-4.1': { 'openai-chat-completions': model as ReturnType<typeof createUnitBillingModel> },
+    };
+    const announcer = new PeerAnnouncer(config);
+    await expect(announcer.announce()).rejects.toThrow('Invalid billing model');
+    expect(announcer.getLatestMetadata()).toBeNull();
+  });
+
   it('announces current-version metadata carrying configured billing models', async () => {
     const base = makeBaseConfig();
     const announcer = new PeerAnnouncer({
@@ -148,10 +163,7 @@ describe('PeerAnnouncer metadata versions', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [{ unit: 'output_images', priceUsd: 0.04 }],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: "40000" },
             },
           },
           serviceCapabilities: {
@@ -166,11 +178,8 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(SERVICE_CAPABILITIES_METADATA_VERSION);
-    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
-      version: 1,
-      components: [{ unit: 'output_images', priceUsd: 0.04 }],
-    });
+    expect(metadata?.version).toBe(13);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({ version: 2, priceMicroUsdc: "40000" });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
       'gpt-image-1': { inputs: ['text'] },
@@ -188,19 +197,19 @@ describe('PeerAnnouncer metadata versions', () => {
 });
 
 describe('PeerAnnouncer routing capabilities', () => {
-  it('uses signed v14 for effort choices without requiring routing descriptors', async () => {
+  it('uses signed v13 for effort choices without requiring routing descriptors', async () => {
     const config = makeBaseConfig();
     config.providers[0]!.serviceCapabilities = { 'gpt-4.1': { reasoning: true, reasoningEfforts: ['low', 'high'] } };
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
     const metadata = decodeMetadata(encodeMetadata(announcer.getLatestMetadata()!));
-    expect(metadata.version).toBe(14);
+    expect(metadata.version).toBe(13);
     expect(metadata.providers[0]!.serviceRouting).toBeUndefined();
     expect(validateMetadata(metadata)).toEqual([]);
     expect(metadata.providers[0]!.serviceCapabilities!['gpt-4.1']!.reasoningEfforts).toEqual(['high', 'low']);
     expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
   });
-  it.each([{ services: ['selector'] }, { services: [] }])('announces signed v14 routing descriptors with service list $services', async ({ services }) => {
+  it.each([{ services: ['selector'] }, { services: [] }])('announces signed v13 routing descriptors with service list $services', async ({ services }) => {
     const config = makeBaseConfig();
     config.providers = [{ provider: 'fixture', services, maxConcurrency: 1,
       serviceCapabilities: { selector: { routing: true } },
@@ -211,7 +220,7 @@ describe('PeerAnnouncer routing capabilities', () => {
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
     const metadata = decodeMetadata(encodeMetadata(announcer.getLatestMetadata()!));
-    expect(metadata.version).toBe(14);
+    expect(metadata.version).toBe(13);
     expect(metadata.providers[0]!.serviceRouting).toEqual(config.providers[0]!.serviceRouting);
     expect(validateMetadata(metadata)).toEqual([]);
     expect(verifySignature(metadata.peerId, Buffer.from(metadata.signature, 'hex'), encodeMetadataForSigning(metadata))).toBe(true);
@@ -236,7 +245,7 @@ describe('PeerAnnouncer routing capabilities', () => {
     config.providers[0]!.serviceCapabilities = { 'gpt-4.1': { routing } };
     config.providers[0]!.serviceApiProtocols = { 'gpt-4.1': ['openai-chat-completions'] };
     config.providers[0]!.serviceUnitBillingModels = {
-      'gpt-4.1': { 'openai-chat-completions': createPerCallBillingModel('5000') },
+      'gpt-4.1': { 'openai-chat-completions': createUnitBillingModel('5000') },
     };
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();

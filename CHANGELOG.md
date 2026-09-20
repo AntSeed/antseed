@@ -6,9 +6,15 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- Non-token billing uses fixed integer micro-USDC prices and generic quantity reports (billing v2), replacing image/request unit components. API-protocol adapters measure fulfillment and buyers verify quantity and request limits independently. Compatible legacy seller configuration migrates before provider construction; ambiguous or inexact prices require explicit configuration. Legacy billing wire payloads are rejected; token pricing and historical storage remain unchanged. This is PR 1/4 of the unreleased routing stack; protocol/discovery, shared execution, and buyer integration follow separately.
+
 ### Added
 
-- Protocol/Discovery: define structured routing requests and ranked responses, schema-validated preferences, usage-observation and reasoning fields, and complete signed metadata v14 propagation. Add exact per-call price representation, a pure response parser, and provider conformance fixtures. This is the protocol slice of the routing stack; paid execution and buyer integration are separate follow-ups, and this slice is not intended for standalone deployment.
+- Routing preferences use a flat string-enum schema with optional `description`, `default`, and required fields. Reject nested/default expansion and undeclared choices; signed routing discovery uses the unreleased metadata v13 format.
+
+- Protocol/Discovery: define structured routing requests and ranked responses, schema-validated preferences, usage-observation and reasoning fields, and complete signed metadata v13 propagation. Use the quantity-billing contract from PR 1/4 and add a pure response parser and provider conformance fixtures. This is PR 2/4 of the routing stack; paid execution and buyer integration are separate follow-ups, and this slice is not intended for standalone deployment.
 
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.
@@ -18,6 +24,8 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Fixed
 
 - Protocol/Discovery: bound routing preference/default expansion and validation work before oversized results are allocated. Preserve routing descriptors for wildcard service announcements and merge distinct services advertised under the same provider name. Exclude routing services from inference health probes regardless of protocol order or capability-only identification.
+
+- CLI/Node: seller readiness now follows the configured staking contract’s on-chain eligibility rule, allowing eligible zero-stake sellers to start while retaining gas and registration checks. Ineligible sellers are directed to `antseed seller status` to check agent binding and stake requirements. Docs and the `seller setup` next steps now describe staking as optional, since the seller registry's minimum pool stake is currently 0.
 
 - Desktop: Claude Desktop 2.2553 and later relabel the connected-app model picker from Anthropic's published model catalog, so "Antseed Auto" and the curated network models showed as the Claude models whose ids they borrow ("Fable 5", "Sonnet 4.6"). The Antseed profile now turns that catalog off so the gateway's own labels are shown. Reconnect Claude Desktop and relaunch it to apply.
 - Desktop: a system proxy that fails to come up (slow cold start at launch, unstable network during a model-route change) no longer disconnects every connected app and strips the Antseed provider from their configs. Config-patched apps (OpenCode, Claude Desktop, and similar) point at the buyer proxy, not at that process, so they now keep their configs and stay connected; only the proxy-routed rows drop until reconnected. Turning the buyer off (Home power button) or restarting it from Settings no longer disconnects apps either: they stay connected and resume when the buyer returns. App configs are removed only when the user disconnects the app itself, or on quit.

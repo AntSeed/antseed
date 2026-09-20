@@ -38,13 +38,7 @@ describe('buildNetworkServiceOffers', () => {
         openai: {
           services: {
             'gpt-image-test': {
-              'openai-images': {
-                version: 1,
-                components: [
-                  { unit: 'output_images', priceUsd: 0.04 },
-                  { unit: 'output_images', priceUsd: 0.08 },
-                ],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: '40000' },
             },
           },
         },
@@ -59,7 +53,7 @@ describe('buildNetworkServiceOffers', () => {
       inputUsdPerMillion: 1,
       outputUsdPerMillion: 2,
       minImageUsdPerImage: 0.04,
-      maxImageUsdPerImage: 0.08,
+      maxImageUsdPerImage: 0.04,
     });
     expect(offers.find((offer) => offer.serviceId === 'claude-test')).toMatchObject({
       provider: 'anthropic',

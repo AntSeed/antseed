@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { signData, verifySignature } from '@antseed/protocol/signing';
-import { createPerCallBillingModel, perCallPriceMicroUsdc } from '../src/types/billing.js';
+import { createUnitBillingModel, unitPriceMicroUsdc } from '../src/types/billing.js';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
@@ -38,14 +38,12 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 describe('encodeMetadata / decodeMetadata', () => {
   it.each([
     [10, '7fbaff7b6bf576f77b540c6451116131f9dc59a5c69c6bb7e6dbf57cf9d90192'],
-    [11, 'df3b03a4dd68378b40583606fe32f9a246ae3fd5ca18df23eb534a66b4eb58b0'],
-    [12, '2e7d69eb927b550484287475aad0ba6b0f295e2eadaba574ce60e2e5c0e8129a'],
   ] as const)('preserves the v%s wire baseline', (version, expectedHash) => {
     const metadata = makeMetadata({ version });
     const provider = metadata.providers[0]!;
     provider.serviceApiProtocols = { 'claude-3-opus': ['anthropic-messages'] };
     if (version >= 11) {
-      provider.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel('16777217') } };
+      provider.serviceUnitBillingModels = { 'claude-3-opus': { 'openai-chat-completions': createUnitBillingModel('16777217') } };
     }
     if (version >= 12) {
       provider.serviceCapabilities = {
@@ -85,8 +83,8 @@ describe('encodeMetadata / decodeMetadata', () => {
     };
     metadata.providers[0]!.serviceUnitBillingModels = {
       'claude-3-opus': {
-        'anthropic-messages': createPerCallBillingModel('16777217'),
-        'openai-chat-completions': createPerCallBillingModel('0'),
+        'openai-chat-completions': createUnitBillingModel('16777217'),
+        'antseed-routing': createUnitBillingModel('0'),
       },
     };
     metadata.signature = Buffer.from(signData(wallet, encodeMetadataForSigning(metadata))).toString('hex');
@@ -115,7 +113,7 @@ describe('encodeMetadata / decodeMetadata', () => {
   });
 
   it.each([
-    { presence: 0x0200, value: 0, message: 'Unknown service capability presence bits' },
+    { presence: 0x0400, value: 0, message: 'Unknown service capability presence bits' },
     { presence: 0x0100, value: 0x10, message: 'Unknown service capability value bits' },
     { presence: 0, value: 0x08, message: 'Service routing capability value requires presence bit' },
   ])('rejects malformed v13 capability flags $presence/$value', ({ presence, value, message }) => {
@@ -139,18 +137,18 @@ describe('encodeMetadata / decodeMetadata', () => {
 
   it.each([7, 8, 9, 10])('rejects a per-call advertisement downgraded to metadata v%s', (version) => {
     const metadata = makeMetadata({ version });
-    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel('5000') } };
-    expect(() => encodeMetadata(metadata)).toThrow('Service unit billing requires metadata v11 or newer');
-    expect(() => encodeMetadataForSigning(metadata)).toThrow('Service unit billing requires metadata v11 or newer');
+    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'openai-chat-completions': createUnitBillingModel('5000') } };
+    expect(() => encodeMetadata(metadata)).toThrow('Quantity billing requires metadata v13 or newer');
+    expect(() => encodeMetadataForSigning(metadata)).toThrow('Quantity billing requires metadata v13 or newer');
   });
   it.each(['0', '1', '5000', '16777217', '4294967295'])('round-trips per-call pricing without float32 rounding: %s', (amount) => {
     const original = makeMetadata();
-    original.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createPerCallBillingModel(amount) } };
+    original.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'openai-chat-completions': createUnitBillingModel(amount) } };
     const decoded = decodeMetadata(encodeMetadata(original));
-    expect(perCallPriceMicroUsdc(decoded.providers[0]!.serviceUnitBillingModels?.['claude-3-opus']?.['anthropic-messages'])).toBe(BigInt(amount));
+    expect(unitPriceMicroUsdc(decoded.providers[0]!.serviceUnitBillingModels?.['claude-3-opus']?.['openai-chat-completions'])).toBe(BigInt(amount));
     expect(encodeMetadataForSigning(decoded)).toEqual(encodeMetadataForSigning(original));
   });
-  it.each([12, 13])('round-trips v%s catalogs with more than 255 service entries', (version) => {
+  it.each([13])('round-trips v%s catalogs with more than 255 service entries', (version) => {
     const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
     const servicePricing = Object.fromEntries(
       services.map((service) => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]),
@@ -161,10 +159,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     );
     const serviceUnitBillingModels = Object.fromEntries(
       services.map((service) => [service, {
-        'openai-images': {
-          version: 1 as const,
-          components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
-        },
+        'openai-images': { version: 2 as const, priceMicroUsdc: "40000" },
       }]),
     );
     const serviceCapabilities = Object.fromEntries(
@@ -317,9 +312,9 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
   });
 
-  it('round-trips v11 service unit billing models and signs billing bytes', () => {
+  it('round-trips v13 quantity billing models and signs billing bytes', () => {
     const original = makeMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [
         {
           provider: 'openai',
@@ -328,12 +323,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [
-                  { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
-                ],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: "40000" },
             },
           },
           maxConcurrency: 3,
@@ -342,8 +332,8 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
     const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components).toHaveLength(1);
-    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components[0]?.priceUsd).toBeCloseTo(0.04, 5);
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.version).toBe(2);
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.priceMicroUsdc).toBe('40000');
 
     const changed = makeMetadata({
       ...original,
@@ -351,10 +341,7 @@ describe('encodeMetadata / decodeMetadata', () => {
         ...original.providers[0]!,
         serviceUnitBillingModels: {
           'gpt-image-1': {
-            'openai-images': {
-              version: 1,
-              components: [{ unit: 'output_images', priceUsd: 0.05 }],
-            },
+            'openai-images': { version: 2, priceMicroUsdc: "50000" },
           },
         },
       }],
@@ -452,10 +439,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
           serviceUnitBillingModels: {
             'gpt-image-1': {
-              'openai-images': {
-                version: 1,
-                components: [{ unit: 'output_images', priceUsd: 0.04 }],
-              },
+              'openai-images': { version: 2, priceMicroUsdc: "40000" },
             },
           },
           maxConcurrency: 3,
@@ -464,8 +448,8 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
 
-    expect(() => encodeMetadata(original)).toThrow('Service unit billing requires metadata v11 or newer');
-    expect(() => encodeMetadataForSigning(original)).toThrow('Service unit billing requires metadata v11 or newer');
+    expect(() => encodeMetadata(original)).toThrow('Quantity billing requires metadata v13 or newer');
+    expect(() => encodeMetadataForSigning(original)).toThrow('Quantity billing requires metadata v13 or newer');
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {

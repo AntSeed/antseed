@@ -3,7 +3,7 @@
 import { estimateTokenCount } from 'tokenx';
 import {
   isFreeUnitBillingModel,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
 } from '@antseed/protocol/billing';
 
 /** Token pricing for a service (USDC per million tokens). */
@@ -16,7 +16,7 @@ export interface ServicePricing {
 
 export {
   isFreeUnitBillingModel,
-  validateUnitBillingModelV1,
+  validateUnitBillingModelV2,
 };
 
 const textDecoder = new TextDecoder();

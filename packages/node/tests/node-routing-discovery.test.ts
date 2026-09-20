@@ -18,7 +18,7 @@ function routingProvider(service: string, provider = 'example-router'): Provider
     serviceRouting: {
       [service]: createRoutingServiceMetadata({
         type: 'object', additionalProperties: false,
-        properties: { preference: { type: 'string', default: service } },
+        properties: { preference: { type: 'string', enum: [service], default: service } },
       }),
     },
   };

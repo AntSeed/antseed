@@ -16,7 +16,7 @@ import {
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
 import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
-import { createPerCallBillingModel } from '../src/types/billing.js';
+import { createUnitBillingModel } from '../src/types/billing.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -74,20 +74,14 @@ describe('validateMetadata', () => {
     metadata.providers[0]!.defaultPricing = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
     metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': [protocol] };
     metadata.providers[0]!.serviceUnitBillingModels = {
-      'claude-3-opus': { [protocol]: createPerCallBillingModel('5000') },
+      'claude-3-opus': { [protocol]: createUnitBillingModel('5000') },
     };
     expect(validateMetadata(metadata)).toEqual([]);
   });
-  it('rejects image-unit pricing advertised for the routing protocol', () => {
+  it('rejects legacy unit pricing on the network', () => {
     const metadata = validMetadata();
-    metadata.providers[0]!.serviceApiProtocols = { 'claude-3-opus': ['antseed-routing'] };
-    metadata.providers[0]!.serviceUnitBillingModels = {
-      'claude-3-opus': { 'antseed-routing': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.01 }] } },
-    };
-    expect(validateMetadata(metadata)).toContainEqual({
-      field: 'providers[0].serviceUnitBillingModels.claude-3-opus.antseed-routing',
-      message: 'Service unit billing supports openai-images or per-call openai-chat-completions/antseed-routing',
-    });
+    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'antseed-routing': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] } as any } };
+    expect(validateMetadata(metadata)).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining('version 2') })]));
   });
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
@@ -317,12 +311,7 @@ describe('validateMetadata', () => {
       },
       serviceUnitBillingModels: {
         'gpt-image-1': {
-          'openai-images': {
-            version: 1,
-            components: [
-              { unit: 'output_images', priceUsd: 0.04 },
-            ],
-          },
+          'openai-images': { version: 2, priceMicroUsdc: "40000" },
         },
       },
       maxConcurrency: 1,
@@ -330,13 +319,13 @@ describe('validateMetadata', () => {
     } satisfies PeerMetadata['providers'][number];
 
     const unitOnlyErrors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [unitOnlyProvider],
     }));
     expect(unitOnlyErrors).toEqual([]);
 
     const bothErrors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: METADATA_VERSION,
       providers: [
         {
           ...unitOnlyProvider,
@@ -352,48 +341,10 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects image-unit billing on a chat protocol', () => {
-    const errors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
-      providers: [
-        {
-          provider: 'openai',
-          services: ['gpt-4.1'],
-          defaultPricing: {
-            inputUsdPerMillion: 0,
-            outputUsdPerMillion: 0,
-          },
-          serviceApiProtocols: {
-            'gpt-4.1': ['openai-chat-completions'],
-          },
-          serviceUnitBillingModels: {
-            'gpt-4.1': {
-              'openai-chat-completions': {
-                version: 1,
-                components: [
-                  { unit: 'requests', priceUsd: 1 } as any,
-                ],
-              },
-            },
-          },
-          maxConcurrency: 1,
-          currentLoad: 0,
-        },
-      ],
-    }));
-
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images or per-call openai-chat-completions'),
-        }),
-        expect.objectContaining({
-          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('components[0].unit is unsupported'),
-        }),
-      ]),
-    );
+  it('rejects quantity billing without a supported adapter', () => {
+    const metadata = validMetadata();
+    metadata.providers[0]!.serviceUnitBillingModels = { 'claude-3-opus': { 'anthropic-messages': createUnitBillingModel('40000') } };
+    expect(validateMetadata(metadata)).toEqual(expect.arrayContaining([expect.objectContaining({ message: 'Quantity billing requires a supported response adapter' })]));
   });
 
   it('accepts valid service capabilities and rejects malformed ones', () => {
@@ -473,7 +424,7 @@ describe('validateMetadata', () => {
 
   it('rejects service capabilities on pre-v12 metadata', () => {
     const errors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: 11,
       providers: [
         {
           provider: 'openai',

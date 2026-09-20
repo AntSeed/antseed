@@ -5,9 +5,6 @@ const schema: RoutingPreferenceSchema = {
   type: 'object', additionalProperties: false,
   properties: {
     policy: { type: 'string', enum: ['first', 'last'], default: 'first' },
-    count: { type: 'integer', minimum: 1, maximum: 3 },
-    settings: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean', default: true } } },
-    labels: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 2 },
   },
 };
 
@@ -46,35 +43,50 @@ describe('router-defined preferences', () => {
     expect(() => validateRoutingRequest(request, metadata)).not.toThrow();
     expect(() => validateRoutingRequest({ ...request, context: { ...context, usageObservations: [observation, observation] } }, metadata)).toThrow();
   });
-  it('preserves nested types and uses only advertised defaults', () => {
-    const values = { count: 2, settings: {}, labels: ['one'] };
-    expect(resolveRoutingPreferences(schema, values)).toEqual({ policy: 'first', count: 2, settings: { enabled: true }, labels: ['one'] });
-    expect(values).toEqual({ count: 2, settings: {}, labels: ['one'] });
+  it('applies enum defaults without mutating values', () => {
+    const values = {};
+    expect(resolveRoutingPreferences(schema, values)).toEqual({ policy: 'first' });
+    expect(values).toEqual({});
     expect(resolveRoutingPreferences(schema, { policy: 'last' })).toEqual({ policy: 'last' });
   });
-  it.each([{ count: '2' }, { count: 0 }, { count: 1.1 }, { policy: 'other' }, { unknown: true }, { settings: { enabled: 'true' } }, { labels: [''] }, { labels: ['a', 'b', 'c'] }])('rejects invalid values with field errors: %j', (values) => {
-    expect(() => resolveRoutingPreferences(schema, values)).toThrow(/preferences\./);
+  it.each([{ policy: 2 }, { policy: true }, { policy: 'other' }, { unknown: 'value' }, { policy: {} }, { policy: ['first'] }])('rejects invalid preferences %j', values => {
+    expect(() => resolveRoutingPreferences(schema, values)).toThrow();
   });
-  it('enforces required fields, but allows their declared defaults', () => {
-    expect(() => resolveRoutingPreferences({ ...schema, required: ['count'] }, {})).toThrow('preferences.count');
+  it('validates required fields and advertised defaults', () => {
+    const required = { ...schema, properties: { policy: { type: 'string' as const, enum: ['first', 'last'] } }, required: ['policy'] };
+    expect(() => resolveRoutingPreferences(required, {})).toThrow('Required');
     expect(resolveRoutingPreferences({ ...schema, required: ['policy'] }, {})).toEqual({ policy: 'first' });
   });
-  it.each(['$ref', '$schema', 'pattern', 'oneOf', 'allOf', 'format', 'execute'])('rejects unsupported schema keyword %s', (key) => {
-    expect(() => validateRoutingPreferenceSchema({ ...schema, [key]: 'untrusted' })).toThrow('unsupported schema keyword');
+  it.each([
+    { type: 'number', enum: [1, 3, 5] }, { type: 'boolean', enum: [true, false] },
+    { type: 'object', properties: {} }, { type: 'array', items: { type: 'string' } },
+    { type: 'string' }, { type: 'string', enum: [] }, { type: 'string', enum: ['first', 'first'] },
+    { type: 'string', enum: [''] }, { type: 'string', enum: [1] },
+    { type: 'string', enum: ['first'], default: 'last' }, { type: 'string', enum: ['first'], description: 1 },
+    { type: 'string', enum: ['first'], title: 'Policy' }, { type: 'string', enum: ['first'], enumLabels: ['First'] },
+  ])('rejects unsupported enum schemas %j', field => {
+    expect(() => validateRoutingPreferenceSchema({ ...schema, properties: { field } })).toThrow();
   });
-  it('rejects invalid defaults, enums, bounds and implicit additional properties', () => {
-    for (const properties of [{ value: { type: 'boolean', default: 'yes' } }, { value: { type: 'integer', minimum: 5, maximum: 2 } }, { value: { type: 'string', enum: ['x', 'x'] } }]) {
-      expect(() => validateRoutingPreferenceSchema({ type: 'object', additionalProperties: false, properties })).toThrow();
+  it('supports provider-owned Levanto and Morph string choices', () => {
+    for (const [key, choices] of [['costQuality', ['Cheapest', 'Cheaper', 'Balanced', 'Higher quality', 'Best quality']], ['policy', ['balanced', 'cost_efficient', 'capability_heavy', 'domain_skills']]] as const) {
+      const metadata = createRoutingServiceMetadata({ type: 'object', additionalProperties: false,
+        properties: { [key]: { type: 'string', description: 'Select a routing preference', enum: [...choices], default: choices[0] } } });
+      expect(resolveRoutingPreferences(metadata.preferencesSchema, {})).toEqual({ [key]: choices[0] });
+      expect(() => validateRoutingServiceMetadata(metadata)).not.toThrow();
     }
-    expect(() => validateRoutingPreferenceSchema({ type: 'object', properties: {} })).toThrow();
   });
-  it('bounds size and nesting and rejects non-JSON/prototype keys', () => {
+  it('bounds schemas and values and rejects prototype-related keys', () => {
     expect(() => assertRoutingPreferences({ text: 'x'.repeat(16384) })).toThrow('16 KiB');
     expect(() => assertRoutingPreferences({ number: Infinity })).toThrow();
-    expect(() => assertRoutingPreferences(JSON.parse('{"__proto__":{}}'))).toThrow();
-    let nested: Record<string, unknown> = {};
-    for (let depth = 0; depth < 10; depth++) nested = { nested };
-    expect(() => assertRoutingPreferences(nested)).toThrow('nesting');
+    expect(() => assertRoutingPreferences(JSON.parse('{"__proto__":"first"}'))).toThrow();
+    expect(() => validateRoutingPreferenceSchema({ ...schema, properties: { policy: { ...schema.properties.policy, description: 'x'.repeat(16384) } } })).toThrow();
+    expect(() => validateRoutingPreferenceSchema({ ...schema, required: ['missing'] })).toThrow();
+  });
+  it('leaves inference request bodies as arbitrary JSON', () => {
+    const metadata = createRoutingServiceMetadata(schema);
+    expect(() => validateRoutingRequest({ version: 1, service: 'selector', preferencesSchemaHash: metadata.preferencesSchemaHash,
+      request: { path: '/v1/chat/completions', body: { messages: [{ role: 'user', content: 'hello' }], temperature: 0.5, stream: true } },
+      candidates: [{ serviceId: 'model', peerId: 'a'.repeat(40), inputUsdPerMillion: 1, outputUsdPerMillion: 1 }], preferences: {} }, metadata)).not.toThrow();
   });
   it('hashes schemas independently of object key order and detects tampering', () => {
     const metadata = createRoutingServiceMetadata(schema);
@@ -94,8 +106,8 @@ describe('router-defined preferences', () => {
 });
 
 describe('routing preference expansion limits', () => {
-  function expandingSchema(): RoutingPreferenceSchema {
-    let child: RoutingPreferenceSchema = { type: 'string', default: 'x' };
+  function expandingSchema(): unknown {
+    let child: unknown = { type: 'string', default: 'x' };
     for (let depth = 0; depth < 3; depth++) {
       child = {
         type: 'array',
@@ -106,21 +118,21 @@ describe('routing preference expansion limits', () => {
     return { type: 'object', additionalProperties: false, properties: { child } };
   }
 
-  it('rejects compact schemas whose nested defaults expand beyond the byte limit', () => {
+  it('rejects compact nested defaults without expanding them', () => {
     const preferencesSchema = expandingSchema();
     expect(new TextEncoder().encode(JSON.stringify(preferencesSchema)).length).toBeLessThan(1024);
-    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('16 KiB');
-    expect(() => createRoutingServiceMetadata(preferencesSchema)).toThrow('16 KiB');
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('string choices');
+    expect(() => createRoutingServiceMetadata(preferencesSchema as RoutingPreferenceSchema)).toThrow('string choices');
   });
 
   it('rejects expanding defaults before checking an untrusted descriptor hash', () => {
     expect(() => validateRoutingServiceMetadata({
       version: 1, preferencesSchema: expandingSchema(), preferencesSchemaHash: 'untrusted',
-    })).toThrow('16 KiB');
+    })).toThrow('string choices');
   });
 
-  it('also bounds defaults expanded while validating enum values', () => {
-    const preferencesSchema: RoutingPreferenceSchema = {
+  it('rejects nested enum values without expanding defaults', () => {
+    const preferencesSchema = {
       type: 'object', additionalProperties: false,
       properties: {
         entries: {
@@ -131,59 +143,58 @@ describe('routing preference expansion limits', () => {
       },
     };
     expect(new TextEncoder().encode(JSON.stringify(preferencesSchema)).length).toBeLessThan(MAX_ROUTING_PREFERENCE_BYTES);
-    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('16 KiB');
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('string choices');
   });
 
-  it('shares the validation work limit across sibling defaults', () => {
-    const rows: RoutingPreferenceSchema = {
+  it('rejects sibling default fan-out instead of doing recursive validation work', () => {
+    const rows = {
       type: 'array',
       items: {
         type: 'object', additionalProperties: false,
-        properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`field${index}`, { type: 'boolean' as const }])),
+        properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => ['field' + index, { type: 'boolean' }])),
       },
       default: Array.from({ length: 400 }, () => ({})),
     };
-    const single: RoutingPreferenceSchema = { type: 'object', additionalProperties: false, properties: { first: rows } };
-    const combined: RoutingPreferenceSchema = { ...single, properties: { first: rows, second: structuredClone(rows) } };
+    const single = { type: 'object', additionalProperties: false, properties: { first: rows } };
+    const combined = { ...single, properties: { first: rows, second: structuredClone(rows) } };
     expect(new TextEncoder().encode(JSON.stringify(combined)).length).toBeLessThan(MAX_ROUTING_PREFERENCE_BYTES);
-    expect(() => validateRoutingPreferenceSchema(single)).not.toThrow();
-    expect(() => validateRoutingPreferenceSchema(combined)).toThrow('work limit');
+    expect(() => validateRoutingPreferenceSchema(single)).toThrow('string choices');
+    expect(() => validateRoutingPreferenceSchema(combined)).toThrow('string choices');
   });
 
-  it('also limits validation work when resolving supplied preferences', () => {
-    const preferencesSchema: RoutingPreferenceSchema = {
+  it('rejects supplied nested preferences before recursive resolution', () => {
+    const preferencesSchema = {
       type: 'object', additionalProperties: false,
       properties: {
         rows: {
           type: 'array',
           items: {
             type: 'object', additionalProperties: false,
-            properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`field${index}`, { type: 'boolean' as const }])),
+            properties: Object.fromEntries(Array.from({ length: 100 }, (_, index) => ['field' + index, { type: 'boolean' }])),
           },
         },
       },
     };
-    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).not.toThrow();
-    expect(() => resolveRoutingPreferences(preferencesSchema, { rows: Array.from({ length: 700 }, () => ({})) }))
-      .toThrow('work limit');
+    expect(() => resolveRoutingPreferences(preferencesSchema as unknown as RoutingPreferenceSchema, { rows: Array.from({ length: 700 }, () => ({})) }))
+      .toThrow('string choices');
+    expect(() => resolveRoutingPreferences(schema, { policy: Array.from({ length: 700 }, () => ({})) }))
+      .toThrow('flat object');
   });
 
-  it.each(['é🙂', '"\\\n'])('counts UTF-8 bytes, escapes and container punctuation during expansion: %j', (text) => {
+  it.each(['é🙂', '"\\\n'])('counts UTF-8 bytes, escapes and punctuation at the schema/value limits: %j', (text) => {
+    const field = { type: 'string' as const, enum: [text], default: text, description: '' };
     const preferencesSchema: RoutingPreferenceSchema = {
-      type: 'object', additionalProperties: false,
-      properties: {
-        groups: {
-          type: 'array',
-          items: { type: 'object', additionalProperties: false, properties: { 'quoted"key': { type: 'string', default: text } } },
-        },
-        padding: { type: 'string' },
-      },
+      type: 'object', additionalProperties: false, properties: { 'quoted"key': field },
     };
-    const expected = { groups: [{ 'quoted"key': text }, { 'quoted"key': text }], padding: '' };
-    expected.padding = 'x'.repeat(MAX_ROUTING_PREFERENCE_BYTES - new TextEncoder().encode(JSON.stringify(expected)).length);
-    const input = { groups: [{}, {}], padding: expected.padding };
-    expect(resolveRoutingPreferences(preferencesSchema, input)).toEqual(expected);
-    expect(() => resolveRoutingPreferences(preferencesSchema, { ...input, padding: `${input.padding}x` })).toThrow('16 KiB');
-    expect(input.groups).toEqual([{}, {}]);
+    field.description = 'x'.repeat(MAX_ROUTING_PREFERENCE_BYTES - new TextEncoder().encode(JSON.stringify(preferencesSchema)).length);
+    expect(() => createRoutingServiceMetadata(preferencesSchema)).not.toThrow();
+    expect(resolveRoutingPreferences(preferencesSchema, {})).toEqual({ 'quoted"key': text });
+    field.description += 'x';
+    expect(() => validateRoutingPreferenceSchema(preferencesSchema)).toThrow('16 KiB');
+
+    const input = { 'quoted"key': text, padding: '' };
+    input.padding = 'x'.repeat(MAX_ROUTING_PREFERENCE_BYTES - new TextEncoder().encode(JSON.stringify(input)).length);
+    expect(() => assertRoutingPreferences(input)).not.toThrow();
+    expect(() => assertRoutingPreferences({ ...input, padding: input.padding + 'x' })).toThrow('16 KiB');
   });
 });

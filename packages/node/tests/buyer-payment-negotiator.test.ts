@@ -776,36 +776,16 @@ describe('BuyerPaymentNegotiator', () => {
       );
     });
 
-    it('does not throw or authorize when delivered image usage matches no billing tier', () => {
+    it('does not throw or authorize when delivered quantity exceeds the request', () => {
       (bpm.getRequestBilling as ReturnType<typeof vi.fn>).mockReturnValue({
         context: {
           sellerPeerId: peer.peerId,
           provider: 'openai',
           service: 'gpt-image-1',
           serviceApiProtocol: 'openai-images',
-          attributes: {
-            model: 'gpt-image-1',
-            size: 'auto',
-            quality: 'auto',
-          },
-          unitLimits: { output_images: 1 },
+          maxQuantity: 0,
         },
-        requestFacts: {
-          model: 'gpt-image-1',
-          size: 'auto',
-          quality: 'auto',
-          requestedImages: 1,
-        },
-        unitModel: {
-          version: 1,
-          components: [
-            {
-              unit: 'output_images',
-              priceUsd: 0.04,
-              match: { size: '1024x1024' },
-            },
-          ],
-        },
+        unitModel: { version: 2, priceMicroUsdc: "40000" },
       });
       const response: SerializedHttpResponse = {
         requestId: 'req-image-unmatched',
@@ -827,7 +807,7 @@ describe('BuyerPaymentNegotiator', () => {
       ).not.toThrow();
       expect(bpm.recordObservedUnitUsage).toHaveBeenCalledWith(
         'req-image-unmatched',
-        { units: { output_images: 1 } },
+        { quantity: 0 },
       );
       expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(peer.peerId, 100, 200);
       expect((negotiator as any)._lastResponseCost.has(peer.peerId)).toBe(false);
