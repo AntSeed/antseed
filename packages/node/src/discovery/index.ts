@@ -19,7 +19,7 @@ export { encodeMetadata, encodeMetadataForSigning, decodeMetadata } from './meta
 export { validateMetadata, MAX_METADATA_SIZE, MAX_PROVIDERS, type ValidationError } from './metadata-validator.js';
 export {
   METADATA_VERSION,
-  SERVICE_ROUTING_CAPABILITY_METADATA_VERSION,
+  SERVICE_ROUTING_METADATA_VERSION,
   WELL_KNOWN_SERVICE_CATEGORIES,
   type DomainVerificationClaim,
   type DomainVerificationMethod,

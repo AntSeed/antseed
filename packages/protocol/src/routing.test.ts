@@ -14,10 +14,10 @@ describe('router-defined preferences', () => {
     const candidate = { serviceId: 'model', peerId: 'a'.repeat(40), inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
     const request = { version: 1, service: 'selector', preferencesSchemaHash: metadata.preferencesSchemaHash,
       request: { path: '/v1/chat/completions', body: {} }, candidates: [candidate], preferences: {} };
-    for (const reasoningEfforts of [undefined, [], ['none', 'high']]) {
+    for (const reasoningEfforts of [undefined, [], ['none', 'high'], ['adaptive', 'deep-analysis']]) {
       expect(() => validateRoutingRequest({ ...request, candidates: [{ ...candidate, reasoningEfforts }] }, metadata)).not.toThrow();
     }
-    for (const reasoningEfforts of [null, 'high', ['unknown'], [1], ['high', 'high']]) {
+    for (const reasoningEfforts of [null, 'high', [''], [' deep'], [1], ['high', 'high'], ['x'.repeat(65)], Array.from({ length: 33 }, (_, index) => `effort-${index}`)]) {
       expect(() => validateRoutingRequest({ ...request, candidates: [{ ...candidate, reasoningEfforts }] }, metadata)).toThrow('reasoning efforts');
     }
   });

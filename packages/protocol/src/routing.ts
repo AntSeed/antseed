@@ -1,5 +1,5 @@
 import { sha256, toUtf8Bytes } from 'ethers';
-import { REASONING_EFFORTS, type ReasoningEffort } from './reasoning.js';
+import { isReasoningEffortList, type ReasoningEffort } from './reasoning.js';
 
 export type RoutingJson = null | boolean | number | string | RoutingJson[] | { [key: string]: RoutingJson };
 export type RoutingPreferences = Record<string, string>;
@@ -141,10 +141,7 @@ export function validateRoutingRequest(value: unknown, metadata: RoutingServiceM
   if (value.context !== undefined) validateRoutingUsageContext(value.context);
   for (const candidate of value.candidates) {
     if (!object(candidate) || typeof candidate.serviceId !== 'string' || !candidate.serviceId.trim() || typeof candidate.peerId !== 'string' || !/^[0-9a-f]{40}$/i.test(candidate.peerId)) throw new Error('Invalid routing candidate');
-    if (candidate.reasoningEfforts !== undefined && (!Array.isArray(candidate.reasoningEfforts)
-      || candidate.reasoningEfforts.length > REASONING_EFFORTS.length
-      || candidate.reasoningEfforts.some((effort) => !REASONING_EFFORTS.includes(effort))
-      || new Set(candidate.reasoningEfforts).size !== candidate.reasoningEfforts.length)) throw new Error('Invalid routing candidate reasoning efforts');
+    if (candidate.reasoningEfforts !== undefined && !isReasoningEffortList(candidate.reasoningEfforts)) throw new Error('Invalid routing candidate reasoning efforts');
     for (const key of ['inputUsdPerMillion', 'outputUsdPerMillion', 'cachedInputUsdPerMillion']) {
       const rate = candidate[key];
       if (rate === undefined && key === 'cachedInputUsdPerMillion') continue;

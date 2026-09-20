@@ -58,11 +58,18 @@ describe('signed routing metadata', () => {
       field: 'providers[0].serviceCapabilities.selector.reasoningEfforts', message: 'Reasoning efforts require metadata version 13',
     });
   });
-  it.each([[], ['high', 'high'], ['unknown'], 'high', ['high', 3]])('rejects invalid advertised efforts %j', (efforts) => {
+  it.each([['high', 'high'], [''], ['x'.repeat(65)], 'high', ['high', 3]].map((efforts) => ({ efforts })))('rejects invalid advertised efforts $efforts', ({ efforts }) => {
     const source = metadata();
     source.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts = efforts as never;
     expect(validateMetadata(source).length).toBeGreaterThan(0);
     expect(() => encodeMetadata(source)).toThrow();
+  });
+  it.each([[], ['adaptive', 'deep-analysis'], Array.from({ length: 32 }, (_, index) => `vendor-${index}`)].map((efforts) => ({ efforts })))('round trips seller-defined effort labels $efforts', ({ efforts }) => {
+    const source = metadata();
+    source.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts = efforts;
+    expect(validateMetadata(source)).toEqual([]);
+    const decoded = decodeMetadata(encodeMetadata(source));
+    expect(decoded.providers[0]!.serviceCapabilities!.selector!.reasoningEfforts).toEqual([...efforts].sort());
   });
   it('rejects positive effort on a non-reasoning service', () => {
     const source = metadata();
