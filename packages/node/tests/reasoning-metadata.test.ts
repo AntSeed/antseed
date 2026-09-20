@@ -20,6 +20,15 @@ function metadata(capabilities: ServiceCapabilities = { reasoning: true, reasoni
 }
 
 describe('reasoning effort announcements', () => {
+  it.each([[], ['adaptive', 'deep-analysis'], Array.from({ length: 32 }, (_, index) => `vendor-${index}`)].map(efforts => ({ efforts })))('preserves seller-defined labels $efforts on the signed wire', ({ efforts }) => {
+    const source = metadata({ reasoningEfforts: efforts });
+    expect(validateMetadata(source)).toEqual([]);
+    const wallet = new Wallet(Wallet.createRandom().privateKey);
+    const signature = signData(wallet, encodeMetadataForSigning(source));
+    const decoded = decodeMetadata(encodeMetadata(source));
+    expect(decoded.providers[0]!.serviceCapabilities!.model!.reasoningEfforts).toEqual([...efforts].sort());
+    expect(verifySignature(wallet.address.slice(2), signature, encodeMetadataForSigning(decoded))).toBe(true);
+  });
   it('round trips signed efforts in canonical order and detects tampering', () => {
     const source = metadata();
     const wallet = new Wallet(Wallet.createRandom().privateKey);
@@ -39,24 +48,23 @@ describe('reasoning effort announcements', () => {
     expect(validateMetadata(source).length).toBeGreaterThan(0);
   });
 
-  it.each([[], ['high', 'high'], ['unknown'], 'high', ['high', 3]])('rejects invalid advertised efforts %j', (efforts) => {
+  it.each([[''], ['high', 'high'], ['x'.repeat(65)], 'high', ['high', 3]].map(efforts => ({ efforts })))('rejects invalid advertised efforts $efforts', ({ efforts }) => {
     const source = metadata({ reasoningEfforts: efforts as never });
     expect(validateMetadata(source).length).toBeGreaterThan(0);
     expect(() => encodeMetadata(source)).toThrow();
   });
 
-  it('rejects unknown, duplicate, empty, and truncated efforts on the wire', () => {
+  it('rejects malformed, duplicate, and truncated efforts on the wire', () => {
     const encoded = encodeMetadata(metadata({ reasoningEfforts: ['high', 'none'] }));
     const highOffset = Buffer.from(encoded).indexOf(Buffer.from('high'));
-    const noneOffset = Buffer.from(encoded).indexOf(Buffer.from('none'));
     expect(highOffset).toBeGreaterThan(1);
-    for (const replacement of ['oops', 'none']) {
+    for (const replacement of [' bad', 'none']) {
       const malformed = encoded.slice();
       malformed.set(Buffer.from(replacement), highOffset);
       expect(() => decodeMetadata(malformed)).toThrow('reasoningEfforts');
     }
-    const empty = Buffer.concat([encoded.slice(0, highOffset - 2), Buffer.from([0]), encoded.slice(noneOffset + 4)]);
-    expect(() => decodeMetadata(empty)).toThrow('reasoningEfforts');
+    const emptyLabel = Buffer.concat([encoded.slice(0, highOffset - 1), Buffer.from([0]), encoded.slice(highOffset + 4)]);
+    expect(() => decodeMetadata(emptyLabel)).toThrow('reasoningEfforts');
     expect(() => decodeMetadata(encoded.slice(0, highOffset + 2))).toThrow();
   });
 

@@ -65,10 +65,10 @@ describe('parseServiceUnitBillingModelsJson', () => {
 });
 
 describe('parseServiceCapabilitiesJson', () => {
-  it('preserves advertised effort choices and rejects unknown or contradictory values', () => {
-    const capabilities = { model: { reasoning: true, reasoningEfforts: ['none', 'high'] } };
+  it('preserves seller-defined effort choices and rejects malformed or contradictory values', () => {
+    const capabilities = { model: { reasoning: true, reasoningEfforts: ['adaptive', 'deep-analysis'] } };
     expect(parseServiceCapabilitiesJson(JSON.stringify(capabilities))).toEqual(capabilities);
-    for (const caps of [{ reasoningEfforts: [] }, { reasoningEfforts: ['unknown'] }, { reasoningEfforts: ['high', 'high'] }, { reasoning: false, reasoningEfforts: ['high'] }]) {
+    for (const caps of [{ reasoningEfforts: [''] }, { reasoningEfforts: ['high', 'high'] }, { reasoning: false, reasoningEfforts: ['high'] }]) {
       expect(() => parseServiceCapabilitiesJson(JSON.stringify({ model: caps }))).toThrow('reasoningEfforts');
     }
   });

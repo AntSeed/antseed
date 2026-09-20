@@ -1,5 +1,5 @@
 import type { PeerId } from './peer-id.js';
-import { REASONING_EFFORTS, type ReasoningEffort } from './reasoning.js';
+import { isReasoningEffortList, type ReasoningEffort } from './reasoning.js';
 import type { PeerOffering } from './capability.js';
 import type { ServiceUnitBillingModelsV2 } from './billing.js';
 import {
@@ -78,13 +78,10 @@ const SERVICE_CAPABILITY_MODALITY_SET = new Set<string>(SERVICE_CAPABILITY_MODAL
 export function validateServiceCapabilityFields(caps: ServiceCapabilities): string[] {
   const errors: string[] = [];
   if (caps.reasoningEfforts !== undefined) {
-    if (!Array.isArray(caps.reasoningEfforts) || caps.reasoningEfforts.length === 0
-      || caps.reasoningEfforts.length > REASONING_EFFORTS.length
-      || caps.reasoningEfforts.some((effort) => !REASONING_EFFORTS.includes(effort))
-      || new Set(caps.reasoningEfforts).size !== caps.reasoningEfforts.length) {
-      errors.push('reasoningEfforts must be a nonempty list of unique supported effort labels');
-    } else if (caps.reasoning === false && caps.reasoningEfforts.some((effort) => effort !== 'none')) {
-      errors.push('reasoningEfforts cannot enable reasoning when reasoning is false');
+    if (!isReasoningEffortList(caps.reasoningEfforts)) {
+      errors.push('reasoningEfforts must contain at most 32 unique nonempty labels of at most 64 UTF-8 bytes, without surrounding whitespace or control characters');
+    } else if (caps.reasoning === false && caps.reasoningEfforts.length > 0) {
+      errors.push('reasoningEfforts must be empty when reasoning is false');
     }
   }
   for (const key of ["contextWindow", "maxOutputTokens"] as const) {

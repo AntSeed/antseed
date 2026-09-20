@@ -181,9 +181,11 @@ test('projectRowsToChatServiceOptions preserves peer display name and cached inp
   assert.equal(option.peerIconUrl, null);
   assert.equal(option.cachedInputUsdPerMillion, 0.5);
 });
-test('normalizeDiscoverRow preserves only known advertised reasoning efforts', () => {
+test('normalizeDiscoverRow preserves seller-defined reasoning choices and rejects malformed lists', () => {
   const base = { peerId: 'abc', serviceId: 'model' };
-  const row = normalizeDiscoverRow({ ...base, capabilities: { reasoning: true, reasoningEfforts: ['high', 'none', 'high', 'unknown'] } });
-  assert.deepEqual(row?.capabilities?.reasoningEfforts, ['none', 'high']);
+  const row = normalizeDiscoverRow({ ...base, capabilities: { reasoning: true, reasoningEfforts: ['deep-analysis', 'adaptive'] } });
+  assert.deepEqual(row?.capabilities?.reasoningEfforts, ['deep-analysis', 'adaptive']);
+  assert.deepEqual(normalizeDiscoverRow({ ...base, capabilities: { reasoningEfforts: [] } })?.capabilities?.reasoningEfforts, []);
+  assert.equal(normalizeDiscoverRow({ ...base, capabilities: { reasoningEfforts: ['adaptive', 'adaptive'] } })?.capabilities?.reasoningEfforts, undefined);
   assert.equal(normalizeDiscoverRow({ ...base, capabilities: { reasoning: true } })?.capabilities?.reasoningEfforts, undefined);
 });
