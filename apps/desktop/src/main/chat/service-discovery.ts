@@ -8,7 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
-import { REASONING_EFFORTS } from '@antseed/protocol';
+import { isReasoningEffortList } from '@antseed/protocol';
 import { readPeerHealth, type RawPeerHealth } from '../runtime/peer-health.js';
 import {
   DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
@@ -123,14 +123,14 @@ function normalizeCatalogServiceCapabilities(raw: unknown): CatalogServiceCapabi
   const maxOutputTokens = positiveInteger(value.maxOutputTokens);
   const inputs = modalities(value.inputs);
   const outputs = modalities(value.outputs);
-  const reasoningEfforts = REASONING_EFFORTS.filter(effort => Array.isArray(value.reasoningEfforts) && value.reasoningEfforts.includes(effort));
+  const reasoningEfforts = isReasoningEffortList(value.reasoningEfforts) ? [...value.reasoningEfforts] : undefined;
   const normalized: CatalogServiceCapabilities = {
     ...(contextWindow ? { contextWindow } : {}),
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
     ...(inputs ? { inputs } : {}),
     ...(outputs ? { outputs } : {}),
     ...(typeof value.reasoning === 'boolean' ? { reasoning: value.reasoning } : {}),
-    ...(reasoningEfforts.length ? { reasoningEfforts } : {}),
+    ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
     ...(typeof value.toolUse === 'boolean' ? { toolUse: value.toolUse } : {}),
     ...(typeof value.structuredOutput === 'boolean' ? { structuredOutput: value.structuredOutput } : {}),
     ...(parameters?.length ? { supportedParameters: parameters } : {}),

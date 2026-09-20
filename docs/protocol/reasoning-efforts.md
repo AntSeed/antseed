@@ -1,24 +1,26 @@
 # Reasoning-effort announcements
 
-Sellers may advertise `serviceCapabilities[service].reasoningEfforts` with any
-nonempty, unique subset of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
-`max`. These labels describe the service's supported controls, not a guarantee
-that every API protocol can represent every label.
+Sellers may advertise `serviceCapabilities[service].reasoningEfforts` as a list of
+opaque, seller-defined labels. There is no protocol-wide enum. Lists contain at most
+32 unique labels of at most 64 UTF-8 bytes each, without empty strings, surrounding
+whitespace, or control characters. These labels describe the service's supported
+controls, not a guarantee that every API protocol can represent every label.
 
 ```json
 {
   "model": {
     "reasoning": true,
-    "reasoningEfforts": ["none", "low", "high"]
+    "reasoningEfforts": ["adaptive", "deep-analysis"]
   }
 }
 ```
 
 Use this shape in provider `serviceCapabilities` configuration or the existing
 `ANTSEED_SERVICE_CAPABILITIES_JSON` environment variable. Omission means unknown;
-it does not mean unsupported. Empty lists, duplicates, unknown labels, and enabled
-efforts alongside `reasoning: false` are rejected. `reasoning: false` may coexist
-with `reasoningEfforts: ["none"]`.
+it does not mean unsupported. An empty list explicitly advertises no supported
+reasoning choices. Duplicates and malformed labels are rejected. If `reasoning` is
+explicitly false, its effort list must be empty or omitted; no label is given a
+special hardcoded meaning such as disabled reasoning.
 
 The list is covered by the seller's metadata signature and sorted by code-unit
 order for binary encoding. Metadata v13 uses a two-byte capability presence mask;
