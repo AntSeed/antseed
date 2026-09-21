@@ -8,6 +8,12 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- ANTS dashboard: add a local Anvil wallet-flow fixture setup and testing guide, with optional authenticated test controls for epoch changes, transfer restrictions, and chain resets.
+
+- ANTS dashboard: open the connected wallet automatically for newly initiated transaction requests in the same tab. Keep explicit wallet approval, cross-tab request locking, manual recovery for resumed requests, and no automatic rebroadcasts or retries after rejection.
+
+- ANTS dashboard: use a shared, paginated Antscan snapshot for display-only network totals, wallet position records/history and max-lock badges, and historical pool yield inputs. Show indexed source/checkpoint and unavailable-data warnings, fetch participation counts from Antscan, and avoid historical RPC fan-out when the indexer fails. Balances, exact rewards, withdrawal checks, registration and transactions remain live on chain.
+
 - ANTS provider overview: use Antscan's seller/period model-usage API for the last completed epoch instead of a capped network-wide sample. Show the epoch label, settled/model-attributed/unattributed volume, and volume-ranked models without lengthy explanatory copy; keep catalog availability independent of usage failures.
 
 - ANTS provider overview: show observed model usage before the final advertised-model catalog, replacing the catalog pricing table with one list of model tags, with each model name shown once.
@@ -47,6 +53,24 @@ This project uses selective package publishing. Each release entry lists the pub
 - Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
 
 ### Fixed
+
+- ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
+
+- ANTS dashboard: separate buyer, staking, and seller rewards; show actual seller names and per-pool amounts when restaking; and animate reward amounts only after confirmed transactions while disabling stale actions. Preserve wallet prompts and displayed balances while approval is pending, and support retrying failed refreshes.
+
+- ANTS dashboard: simplify position tables and single-position withdrawal dialogs, use seller names instead of pool IDs where available, theme informational panels consistently, and remove redundant loading copy and bulk-selection controls.
+
+- ANTS dashboard: disable legacy seller claims routed into the locked pool and label them “Claim not available yet.” Keep direct-to-wallet claims and withdrawals of released rewards available.
+
+- ANTS dashboard: remove redundant confirmation-only screens for position actions, claims, seller actions, and staking. Keep required input dialogs, validation, wallet approvals, pending-submission guards, and early-withdrawal burn acknowledgements.
+
+- ANTS dashboard: group Move allocation, Extend, and Withdraw in each position's three-dot menu. Temporarily hide Split, Merge, and Max lock controls, including bulk Merge, and show existing perpetual locks as having no scheduled unlock without changing their terms.
+
+- ANTS dashboard: open position actions and transaction confirmations in centered, scrollable modal dialogs instead of inline panels. Preserve withdrawal previews and burn acknowledgements, keep confirmations within an existing action dialog, restore trigger focus on close, and prevent dismissal while submission is pending.
+
+- ANTS dashboard: recognize legacy-registered providers for staking by matching the pool contract's current-owner registration check. Verify indexed and directory-only providers with batched, same-block reads, use the same check before staking or moving, and report RPC verification failures separately from missing registration.
+
+- ANTS dashboard/Node: batch position and pool-configuration reads, share identical in-flight dashboard RPC reads, and prevent throttling or network failures from expanding into recursive multicall retries. Keep required-read failures explicit and transaction checks unchanged.
 
 - Desktop: the Antseed Pay card checkout opened to "This funding link is invalid or was altered". The desktop copy rename to "Antseed" also changed the header line of the signed funding link, so the pay page could no longer verify the wallet signature. The signed message is a wire-format constant and is restored to what the page verifies.
 - CLI/Node: seller readiness now follows the configured staking contract’s on-chain eligibility rule, allowing eligible zero-stake sellers to start while retaining gas and registration checks. Ineligible sellers are directed to `antseed seller status` to check agent binding and stake requirements. Docs and the `seller setup` next steps now describe staking as optional, since the seller registry's minimum pool stake is currently 0.

@@ -303,7 +303,13 @@ export class AntsContext {
     return Object.fromEntries(entries.filter((entry): entry is [string, string] => !!entry[1]));
   }
 
-  invalidate(): void { this.stackGeneration++; this.stackCache = null; this.stackInflight = null; }
+  invalidate(): void {
+    this.stackGeneration++;
+    this.stackCache = null;
+    this.stackInflight = null;
+    this.sharedProvider?.invalidateReads();
+    this.indexerClient?.invalidate?.();
+  }
 
   /** Determine which protocol phase the chain is in and where legacy claims live. */
   async stack(): Promise<ResolvedStack> {

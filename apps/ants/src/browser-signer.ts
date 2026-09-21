@@ -7,6 +7,7 @@ function isTimeout(err: unknown): boolean {
 
 export interface BrowserTransaction {
   id: string;
+  jobId?: string;
   from: string;
   to: string;
   data: string;

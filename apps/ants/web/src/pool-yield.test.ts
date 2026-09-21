@@ -76,9 +76,9 @@ describe('pool yield display', () => {
     }
   });
 
-  it('shows N/A strictly above 10,000%, before rounding, without changing calculations', () => {
+  it('shows >10.000% strictly above 10,000%, before rounding, without changing calculations', () => {
     expect(formatYieldPercent(10000)).toBe('10,000.00%');
-    for (const value of [10000.000001, 10000.01, 10001, 1e6, 5.78e35]) expect(formatYieldPercent(value)).toBe('N/A');
+    for (const value of [10000.000001, 10000.01, 10001, 1e6, 5.78e35]) expect(formatYieldPercent(value)).toBe('>10.000%');
     expect(poolApyRange(history).oneWeek.apy).toBeGreaterThan(10);
   });
 

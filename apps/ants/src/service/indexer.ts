@@ -6,10 +6,14 @@
  * data; amounts stay as decimal strings.
  */
 
+import { fetchDisplaySnapshot, type DisplaySnapshot } from './display-snapshot.js';
+
 const FETCH_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 15_000;
 
 export interface IndexedStakingEpoch {
+  snapshotBlock?: number;
+  lastBlockNumber?: number;
   complete?: boolean;
   epoch: number;
   totalPowerWeight: string;
@@ -23,6 +27,7 @@ export interface IndexedStakingEpoch {
 }
 
 export interface IndexedPool {
+  participationComplete?: boolean;
   agentId: number;
   seller: string | null;
   sellerName: string | null;
@@ -73,11 +78,12 @@ export interface IndexedPoolEpoch {
 export interface IndexedPoolDetail {
   pool: (IndexedPool & { firstStakeAt: number | null }) | null;
   epochs: IndexedPoolEpoch[];
-  openPositions: number;
+  openPositions: number | null;
   stakers: number | null;
 }
 
 export interface IndexedPosition {
+  lastBlockNumber?: number;
   id: number;
   owner: string;
   agentId: number;
@@ -105,6 +111,8 @@ export interface IndexedParticipant { address: string; currentEpoch: number; sel
 export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; requests: string; }
 
 export interface Indexer {
+  displaySnapshot?(epoch: number, owner: string): Promise<DisplaySnapshot>;
+  invalidate?(): void;
   readonly baseUrl: string;
   pools(): Promise<IndexedPools>;
   pool(agentId: number, epochs?: number): Promise<IndexedPoolDetail>;
@@ -136,7 +144,9 @@ const CLOSE_REASONS = ['split', 'merge', 'move', 'withdraw'] as const;
 function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoch | null {
   if (!row) return null;
   return {
-    complete: ['epoch', 'totalPowerWeight', 'stakerBudget', 'totalWeightedPoolPoints'].every(key => /^\d+$/.test(String(row[key] ?? ''))),
+    snapshotBlock: row['snapshotBlock'] == null ? undefined : num(row['snapshotBlock']),
+    lastBlockNumber: row['lastBlockNumber'] == null ? undefined : num(row['lastBlockNumber']),
+    complete: ['epoch', 'totalActiveStake', 'totalPowerWeight', 'stakerBudget', 'totalWeightedPoolPoints'].every(key => /^\d+$/.test(String(row[key] ?? ''))),
     epoch: num(row['epoch']),
     totalPowerWeight: str(row['totalPowerWeight']),
     totalActiveStake: str(row['totalActiveStake']),
@@ -151,6 +161,7 @@ function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoc
 
 function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: number | null } {
   return {
+    participationComplete: ['openPositions', 'totalPositions'].every(key => row[key] != null && Number.isSafeInteger(Number(row[key])) && Number(row[key]) >= 0),
     agentId: num(row['agentId']),
     seller: lower(row['seller']),
     sellerName: typeof row['sellerName'] === 'string' ? row['sellerName'] : null,
@@ -185,6 +196,7 @@ function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: num
 function toPosition(row: Record<string, unknown>): IndexedPosition {
   const closedBy = CLOSE_REASONS.find((reason) => reason === row['closedBy']) ?? null;
   return {
+    lastBlockNumber: row['lastBlockNumber'] == null ? undefined : num(row['lastBlockNumber']),
     id: num(row['id']),
     owner: lower(row['owner']) ?? '',
     agentId: num(row['agentId']),
@@ -232,6 +244,18 @@ export class AntscanIndexer implements Indexer {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
+  invalidate(): void { this.cache.clear(); }
+
+  displaySnapshot(epoch: number, owner: string): Promise<DisplaySnapshot> {
+    const key = `display:${epoch}:${owner.toLowerCase()}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<DisplaySnapshot>;
+    const value = fetchDisplaySnapshot(this.baseUrl, this.fetchImpl, epoch, owner.toLowerCase());
+    this.cache.set(key, { at: Date.now(), value });
+    value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    return value;
+  }
+
   private get<T>(path: string): Promise<T> {
     const hit = this.cache.get(path);
     if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
@@ -268,7 +292,7 @@ export class AntscanIndexer implements Indexer {
         epoch: num(row['epoch']), weight: str(row['weight']), activeStake: str(row['activeStake']), usagePoints: str(row['usagePoints']), weightedUsagePoints: str(row['weightedUsagePoints']),
         volumeUsdc: str(row['volumeUsdc']), requests: str(row['requests']), settledEmission: str(row['settledEmission']), settled: row['settled'] === true,
       })),
-      openPositions: num(raw.openPositions),
+      openPositions: raw.openPositions != null && Number.isSafeInteger(Number(raw.openPositions)) && Number(raw.openPositions) >= 0 ? Number(raw.openPositions) : null,
       stakers: raw.stakers != null && Number.isSafeInteger(Number(raw.stakers)) && Number(raw.stakers) >= 0 ? Number(raw.stakers) : null,
     };
   }

@@ -1,4 +1,4 @@
-import { poolApyRange, poolApyEstimates, formatYieldPercent as percent, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
+import { poolApyRange, poolApyEstimates, formatYieldPercent as percent, EXTREME_YIELD_LABEL, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
 import { usePageData } from '../data';
 import { api } from '../api';
 import { Button } from './ui';
@@ -6,7 +6,7 @@ import { Modal } from '@antseed/ui';
 import { useMemo, useState } from 'react';
 import { PoolActivity, SellerModels } from './PoolActivity';
 import type { PoolView, PoolsView } from '../../../src/api-types';
-import { cmpBig, formatAnts, formatBps, formatInt, formatUsdcCompact, formatUtc, shortAddress } from '../format';
+import { cmpBig, formatAnts, formatBps, formatInt, formatUsdcCompact, formatUtc } from '../format';
 import { AddressLink } from './AddressLink';
 import { Input } from './Field';
 import { Facts } from './Panel';
@@ -77,7 +77,6 @@ interface TableProps {
 export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: TableProps) {
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
-  const [stakeableOnly, setStakeableOnly] = useState(true);
   const [sortBy, setSortBy] = useState<PoolSortMetric>('apy');
   const [sortDirection, setSortDirection] = useState<SortDirection>('descending');
   const sortHeader = (metric: PoolSortMetric, label: string) => (
@@ -88,25 +87,18 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
     }}>{label} <span aria-hidden="true">{sortBy === metric ? sortDirection === 'descending' ? '↓' : '↑' : '↕'}</span></button>
   );
   const needle = filter.trim();
-  const filtered = useMemo(() => sortPoolsByMetric(pools.filter((p) => (!stakeableOnly || p.stakeable) && matchesFilter(p, needle)), sortBy, sortDirection, currentEpoch), [pools, needle, stakeableOnly, sortBy, sortDirection, currentEpoch]);
+  const stakeablePools = useMemo(() => pools.filter(pool => pool.stakeable), [pools]);
+  const filtered = useMemo(() => sortPoolsByMetric(stakeablePools.filter(pool => matchesFilter(pool, needle)), sortBy, sortDirection, currentEpoch), [stakeablePools, needle, sortBy, sortDirection, currentEpoch]);
   const capped = !showAll && filtered.length > POOL_ROW_CAP;
   const visible = capped ? filtered.slice(0, POOL_ROW_CAP) : filtered;
   const columns: Array<Column<PoolView>> = [
     {
-      key: 'pool',
-      label: 'Pool',
-      render: (p) => (
-        <span className="cell-stack">
-          <span>
-            <button type="button" className="pool-details-trigger" aria-label={`View ${poolName(p)} overview`} aria-haspopup="dialog" onClick={event => { event.stopPropagation(); onOpen(p); }}>{poolName(p)}</button>
-            {!p.stakeable ? <span className="dim small"> · not stakeable yet</span> : null}
-          </span>
-          <span className="cell-sub mono">
-            agent {p.agentId}
-            {p.profile?.name && p.seller ? ` · ${shortAddress(p.seller)}` : ''}
-          </span>
-        </span>
-      ),
+      key: 'seller',
+      label: 'Seller',
+      render: (p) => {
+        const name = p.profile?.name?.trim() || 'Unnamed seller';
+        return <button type="button" className="pool-details-trigger" aria-label={`View ${name} overview`} aria-haspopup="dialog" onClick={event => { event.stopPropagation(); onOpen(p); }}>{name}</button>;
+      },
     },
     {
       key: 'apy', label: sortHeader('apy', 'APY'),
@@ -134,24 +126,21 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
   return (
     <>
       <div className="pools-toolbar">
-        {pools.length > 5 ? (
+        {stakeablePools.length > 5 ? (
           <Input label="" mono={false} width="md" placeholder="Filter by name or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
         ) : null}
-        <label className="check"><input type="checkbox" checked={stakeableOnly} onChange={(event) => setStakeableOnly(event.target.checked)} /> Only show pools ready for staking</label>
-        {pools.length > 5 ? (
-          <span className="muted small">
-            {formatInt(filtered.length)} of {formatInt(pools.length)} sellers · {formatInt(pools.filter((p) => p.stakeable).length)} stakeable
-          </span>
-        ) : null}
+        <span className="muted small">
+          {needle ? `${formatInt(filtered.length)} of ` : ''}{formatInt(stakeablePools.length)} {stakeablePools.length === 1 ? 'seller' : 'sellers'}
+        </span>
       </div>
+      {stakeablePools.some(pool => pool.displaySource?.error) ? <p className="hint">Some Antscan statistics are unavailable or may lag. Missing historical yield is shown as —; open a provider for details.</p> : null}
       <Table
         columns={columns}
         rows={visible}
         rowKey={(p) => p.agentId}
         loading={loading}
         onRowClick={onOpen}
-        rowClass={(p) => (!p.stakeable ? 'row-muted' : undefined)}
-        empty={needle ? `No seller matches "${needle}" in this view.` : stakeableOnly ? 'No stakeable pools. Turn off the filter to see sellers awaiting binding.' : 'No pools have been staked yet.'}
+        empty={needle ? `No seller matches "${needle}" in this view.` : 'No sellers are ready for staking yet.'}
       />
       {filtered.length > POOL_ROW_CAP ? (
         <div className="pools-more">
@@ -183,6 +172,9 @@ export function PoolDrawer({ pool: initialPool, view, onClose }: { pool: PoolVie
       {explorerUrl ? <> · <a href={explorerUrl} target="_blank" rel="noreferrer">View on Antscan ↗</a></> : null}
     </>}>
       <div className="pool-overview-status"><Pill tone={pool.stakeable ? 'accent' : 'muted'}>{pool.hasPool ? 'Staking pool' : 'No pool yet'}</Pill><span>Provider activity &amp; pool analytics</span></div>
+      {pool.displaySource?.source === 'indexer' ? <p className="hint">Antscan snapshot indexed through block {pool.displaySource.indexedBlock}.</p> : null}
+      {pool.displaySource?.error ? <p className="hint">Antscan: {pool.displaySource.error}{pool.yield?.status === 'unavailable' ? ' Historical yield is unavailable.' : ''}</p> : null}
+      {pool.openPositions !== undefined ? <p className="hint">{pool.openPositions} open positions{pool.totalPositions !== undefined ? ` · ${pool.totalPositions} total positions` : ''}{pool.stakers != null ? ` · ${pool.stakers} stakers` : ''}</p> : null}
       <div className="pool-metrics">
         <div><span className="tile-label">Total active stake</span><strong>{formatAnts(pool.activeStake)} <small>ANTS</small></strong></div>
         <div><span className="tile-label">Last epoch volume</span><strong>{latest && history.volumeStatus === 'available' ? formatUsdcCompact(latest.usdc) : '—'} <small>USDC</small></strong></div>
@@ -226,7 +218,7 @@ function PoolApyEstimates({ pool }: { pool: PoolView }) {
     {poolApyEstimates(pool.yield).map(period => <div key={period.label} title={period.status === 'unsupported'
       ? `${period.label} is not supported by this pool's whole-epoch lock limits.`
       : period.apy === null ? 'APY is unavailable because reward or epoch data is missing.'
-        : `10,000 ANTS reference stake. ${period.epochs} epoch(s), ${period.actualDays} days. Annualized initial earning rate with hypothetical compounding; not the return over this lock. APY above 10,000% is shown as N/A. Source epoch ${pool.yield!.epoch}.${pool.yield?.status === 'estimated' ? ' Rewards are not yet settled.' : ''}`}>
+        : `10,000 ANTS reference stake. ${period.epochs} epoch(s), ${period.actualDays} days. Annualized initial earning rate with hypothetical compounding; not the return over this lock. APY above 10,000% is shown as ${EXTREME_YIELD_LABEL}. Source epoch ${pool.yield!.epoch}.${pool.yield?.status === 'estimated' ? ' Rewards are not yet settled.' : ''}`}>
       <dt>{period.label}</dt><dd>{period.status === 'unsupported' ? <span className="pool-apy-unavailable">Unsupported</span> : <>{percent(period.apy)}{period.apy !== null && period.apy <= YIELD_DISPLAY_LIMIT && pool.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}</>}</dd>
     </div>)}
   </dl>;
@@ -247,7 +239,7 @@ function PoolApy({ pool }: { pool: PoolView }) {
   const extreme = (oneWeek.apy ?? 0) > YIELD_DISPLAY_LIMIT || (twoYears.apy ?? 0) > YIELD_DISPLAY_LIMIT;
   const low = percent(oneWeek.apy), high = percent(twoYears.apy);
   return <span className="yield-percent" title={`${yieldDescription(pool)}${extreme ? ` ${EXTREME_YIELD_NOTE}` : ''}`}>
-    {extreme ? 'N/A' : available ? `${low} – ${high}` : '—'}
+    {extreme ? EXTREME_YIELD_LABEL : available ? `${low} – ${high}` : '—'}
     {available && !extreme && pool.yield?.status === 'estimated' ? <span className="dim small"> est.</span> : null}
   </span>;
 }

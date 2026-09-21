@@ -124,7 +124,7 @@ export function StakePage() {
       <PositionsCard pools={sortedPools} enabled={walletReady} />
 
       <Panel
-        title="Pools"
+        title="Sellers"
         className="pools-card"
         actions={
           <Button data-stake-trigger variant="primary" size="sm" onClick={(event) => { stakeTrigger.current = event.currentTarget; setStakeTarget(null); }} disabled={!pools.data}>
@@ -134,14 +134,12 @@ export function StakePage() {
       >
         {pools.error && !pools.data ? <ErrorBox error={pools.error} onRetry={pools.refresh} /> : null}
         {pools.error && pools.data ? <div className="status-line">Refresh failed: {pools.error}</div> : null}
-        {!pools.data && pools.loading ? <div className="muted small mb">Loading pool statistics from the explorer…</div> : null}
         {pools.data?.source === 'chain' ? (
           <div className="status-line">
             Pool statistics are unavailable{pools.data.sourceError ? ` (${pools.data.sourceError})` : ' (no explorer configured)'}; only pools you stake in are listed, read live from the chain.
           </div>
         ) : null}
         <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={(pool) => { poolTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setOpenPoolId(pool.agentId); }} onStake={stakeInto} />
-        <div className="hint">Compare projected initial yields for the same amount and lock. APY assumes compounding; actual returns vary. Click a seller for activity and volume history.</div>
       </Panel>
 
       {stakeTarget !== undefined && pools.data ? (

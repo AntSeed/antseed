@@ -137,11 +137,6 @@ function SellerBody({ data }: { data: SellerView }) {
                 body={{}}
                 disabled={starter.initialized || !starter.claimable}
                 disabledReason={starter.initialized ? 'This starter grant has already been claimed.' : starter.expired ? 'The starter grant window has expired.' : 'The starter grant is not claimable for this wallet.'}
-                summary={[
-                  ['Wallet', <span className="mono">{data.address}</span>],
-                  ['Amount', <span className="mono">{formatAnts(starter.amount, 4)} ANTS</span>],
-                  ['Contract', <span className="mono">{starter.contract ?? '—'}</span>],
-                ]}
               />
             </div>
             <Details summary="Details" className="mt">
@@ -178,14 +173,8 @@ function RegisterAction({ data }: { data: SellerView }) {
         path="/api/seller/register"
         body={body}
         validate={() => (agentId.trim() && !isPositiveInt(agentId) ? 'Agent id must be a positive integer.' : null)}
-        summary={[
-          ['Wallet', <span className="mono">{data.address}</span>],
-          ['Agent id', <span className="mono">{agentId.trim() || 'Detect existing identity or create one'}</span>],
-          ['Currently bound', data.registryBound ? 'yes' : 'no'],
-        ]}
-      >
-        <p className="hint mt">Binds this wallet to its agent id in the seller registry. Without an id, it reuses a known identity or creates one if this wallet has none. Creating and binding can require separate transactions.</p>
-      </ActionButton>
+      />
+      <p className="hint mt">Binds this wallet to its agent id in the seller registry. Without an id, it reuses a known identity or creates one if this wallet has none. Creating and binding can require separate transactions.</p>
     </div>
   );
 }

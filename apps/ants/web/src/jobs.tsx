@@ -32,6 +32,7 @@ export interface Toast {
 export interface JobsValue {
   /** This session's jobs, newest first. */
   jobs: JobView[];
+  locallyStartedJobIds: ReadonlySet<string>;
   /** Number of jobs still running (the server allows one at a time). */
   pending: number;
   running: boolean;
@@ -88,6 +89,7 @@ function sortNewestFirst(jobs: JobView[]): JobView[] {
 
 export function JobsProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<JobView[]>([]);
+  const [locallyStartedJobIds, setLocallyStartedJobIds] = useState<ReadonlySet<string>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -134,6 +136,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const ingest = useCallback(
     (list: JobView[], silent: boolean) => {
       let finished = false;
+      let confirmed = false;
       for (const job of list) {
         let seen = seenRef.current.get(job.id);
         if (!seen) {
@@ -149,6 +152,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         if (job.status !== 'running' && !seen.terminal) {
           seen.terminal = true;
           finished = true;
+          confirmed ||= job.steps.some(step => !!step.hash);
           if (job.status === 'failed') {
             pushToast({ tone: 'danger', title: `${jobTitle(job.kind)} failed`, body: job.error ?? 'The transaction did not complete.', sticky: true });
           } else if (!silent) {
@@ -157,7 +161,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         }
       }
       setJobs(sortNewestFirst(list));
-      if (finished && !silent) invalidateAll();
+      if (finished && !silent) invalidateAll({ confirmed });
     },
     [pushToast],
   );
@@ -204,6 +208,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
 
   const start = useCallback(async (path: string, body: unknown) => {
     const job = await api.startJob(path, body);
+    setLocallyStartedJobIds(ids => new Set([...ids, job.id]));
     // A freshly started job is never silent: every hashed step it reports from here on is toasted.
     silentRef.current = false;
     if (!seenRef.current.has(job.id)) seenRef.current.set(job.id, { hashes: new Set(), terminal: false });
@@ -213,8 +218,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<JobsValue>(
-    () => ({ jobs, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, start }),
-    [jobs, pending, running, drawerOpen, pollError, toasts, dismissToast, start],
+    () => ({ jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, start }),
+    [jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, dismissToast, start],
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

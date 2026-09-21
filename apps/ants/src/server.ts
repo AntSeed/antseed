@@ -172,7 +172,11 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
       try { browserSigning.begin(request.body.id); return { ok: true, data: {} }; }
       catch (error) { return reply.code(409).send({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
     });
-    app.get('/api/wallet/request', async () => ({ ok: true, data: browserSigning.request }));
+    app.get('/api/wallet/request', async () => {
+      const transaction = browserSigning.request;
+      const job = transaction ? jobs.list(transaction.from).find(job => job.status === 'running') : undefined;
+      return { ok: true, data: transaction ? { ...transaction, ...(job ? { jobId: job.id } : {}) } : null };
+    });
     app.post<{ Body: { id: string; hash?: string; error?: string } }>('/api/wallet/result', async (request, reply) => {
       try { await browserSigning.complete(request.body.id, request.body.hash, request.body.error); return { ok: true, data: {} }; }
       catch (error) { return reply.code(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) }); }

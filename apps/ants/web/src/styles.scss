@@ -579,7 +579,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 .table td.num, .table td.mono { font-size: 12.5px; }
 .table tbody tr:hover td { background: var(--pc-panel); }
 .table tr.clickable { cursor: pointer; }
-.table tr.selected td { background: var(--pc-panel); }
 .table tfoot td { border-top: 1px solid var(--pc-line); border-bottom: 0; font-weight: 650; }
 .table .empty { color: var(--pc-sub); text-align: center; padding: 28px 16px; white-space: normal; }
 .table .btn--sm { min-height: 26px; padding: 2px 10px; }
@@ -791,7 +790,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   .stake-form .hint { margin-top: 20px; }
   .stake-form-actions { display: flex; gap: 12px; margin-top: 24px; }
   .stake-form-actions > .btn:first-child { flex: 1; }
-  .stake-review:focus { outline: none; }
   .confirm { margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
   .confirm-actions { margin-top: 24px; }
   .confirm-actions > .btn:first-child { flex: 1; }
@@ -805,6 +803,18 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
     .as-modal__header { padding: 16px 20px; }
     .as-modal__body { padding: 20px; }
   }
+}
+
+.ants-action-overlay {
+  .as-modal__scroll-lock { width: min(760px, 100%); }
+  .form-row { flex-direction: column; align-items: stretch; }
+  .field { max-width: 100%; }
+  .action { min-width: 0; }
+  .action > .confirm { margin-top: 16px; }
+  .action > .confirm:first-child { margin-top: 0; }
+  .confirm-actions { flex-wrap: wrap; }
+  .confirm-actions .btn { height: auto; min-height: 40px; white-space: normal; }
+  .table-wrap { max-width: 100%; overflow-x: auto; }
 }
 
 .ants-pool-overlay {
@@ -941,6 +951,16 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   .unit { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--pc-sub); }
 }
 .hero-sub { font-size: 13px; color: var(--pc-sub); }
+.reward-refresh-state {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500; line-height: 18px; letter-spacing: 0;
+  color: var(--pc-sub); white-space: nowrap;
+}
+.reward-amount-loading {
+  display: inline-block; vertical-align: baseline;
+  > span { visibility: hidden; }
+}
+@media (prefers-reduced-motion: reduce) { .reward-amount-loading::after { animation: none; } }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; margin-top: 10px; }
 /* Let each action's button and its confirm panel be flex items so the panel drops under both buttons at full width. */
 .hero-actions .action { display: contents; }
@@ -1119,43 +1139,11 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 .cell-sub { font-size: 11px; color: var(--pc-faint); font-family: var(--font-mono); }
 .table td { vertical-align: middle; }
 
-/* ── Table extras: action columns, expanded row detail, muted rows, bulk bar ── */
-
 .table th.col-actions, .table td.col-actions { text-align: right; width: 1%; }
-.table .col-select { width: 1%; padding-right: 0; }
-.table tr.expanded td { border-bottom: 0; background: var(--pc-panel); }
-.table tr.detail-row td { background: var(--pc-panel); padding: 0 16px 12px; white-space: normal; }
-.table tr.detail-row:hover td { background: var(--pc-panel); }
-.table tr.row-muted td { color: var(--pc-faint); }
-.table tr.row-muted td .mono, .table tr.row-muted td .muted { color: var(--pc-faint); }
-.row-detail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 22px;
-  font-size: 12px;
-  color: var(--pc-sub);
-  line-height: 17px;
-  .mono { color: var(--pc-ink); }
-  .danger { color: var(--pc-danger); }
-}
-.bulk-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  border: 1px solid var(--pc-line);
-  border-radius: 12px;
-  background: var(--pc-panel);
-}
 .pools-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; .field__label:empty { display: none; } }
 .pools-more { display: flex; align-items: center; gap: 12px; padding: 10px 2px 0; }
 .status-line--muted { color: var(--pc-sub); background: var(--pc-panel); border-color: var(--pc-line); }
 .stake-form .form-row { align-items: flex-start; }
-.stake-form > .row .action { display: contents; }
-.stake-form > .row .confirm, .stake-form > .row .error-text { flex: 0 0 100%; order: 10; max-width: 100%; }
-.stake-form > .row .confirm .facts, .stake-form > .row .confirm .hint { max-width: 640px; }
 
 /* ── Responsive ── */
 
@@ -1176,7 +1164,15 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 }
 
 .browser-wallet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wallet-approval { position: fixed; z-index: 10000; bottom: 24px; right: 24px; width: min(400px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--border, #d8ded9); border-radius: 16px; background: var(--panel, #fff); color: #17231c; box-shadow: 0 12px 48px #0003; display: grid; gap: 12px; }
+.wallet-approval {
+  position: fixed; z-index: 10000; bottom: 24px; right: 24px;
+  width: min(400px, calc(100vw - 48px)); padding: 20px;
+  border: 1px solid var(--pc-line); border-radius: 14px;
+  background: var(--pc-bg); color: var(--pc-ink); box-shadow: var(--pc-shadow-float);
+  display: grid; gap: 12px;
+  > strong { font-size: 13px; font-weight: 650; line-height: 18px; }
+  > span { font-size: 12px; color: var(--pc-sub); line-height: 17px; overflow-wrap: anywhere; }
+}
 
 .volume-bars { display: grid; gap: 10px; margin: 16px 0; }
 .volume-bar-row { display: grid; grid-template-columns: 70px 1fr 120px; gap: 10px; align-items: center; font-size: 12px; }
@@ -1230,4 +1226,3 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 
 /* Full decimal APYs can be long in seeded test pools; keep them within the layout. */
 .yield-percent { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
-.stake-review .facts dd { min-width: 0; overflow-wrap: anywhere; }

@@ -1,13 +1,39 @@
 import { Button, Card } from './ui';
-import { useState, type ReactNode } from 'react';
+import { Modal } from '@antseed/ui';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../app-context';
 import { describeError } from '../format';
 import { useJobs } from '../jobs';
 
 export type Summary = Array<[string, ReactNode]>;
 
+const ActionDialogContext = createContext<{ current: boolean } | null>(null);
+const useDialogLayoutEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect;
+
+export function ActionDialog({ title, children, onClose, busy = false }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean }) {
+  const childBusy = useRef(false);
+  const ownBusy = useRef(busy);
+  useDialogLayoutEffect(() => { ownBusy.current = busy; }, [busy]);
+  const [trigger] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  useEffect(() => () => {
+    queueMicrotask(() => {
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    });
+  }, [trigger]);
+  const dialog = (
+    <Modal isOpen title={title} size="lg" overlayClassName="ants-stake-overlay ants-action-overlay" onClose={() => {
+      if (!ownBusy.current && !childBusy.current) onClose();
+    }}>
+      <ActionDialogContext.Provider value={childBusy}>{children}</ActionDialogContext.Provider>
+    </Modal>
+  );
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
+}
+
 interface ConfirmProps {
   title: string;
+  hideTitle?: boolean;
   summary?: Summary;
   children?: ReactNode;
   confirmLabel?: string;
@@ -21,11 +47,16 @@ interface ConfirmProps {
   cancelLabel?: string;
 }
 
-/** Inline confirmation panel: summarises exactly what will be sent before a signing job starts. */
-export function Confirm({ title, summary, children, confirmLabel = 'Confirm', danger, disabled, busy, error, onConfirm, onCancel, embedded, cancelLabel = 'Cancel' }: ConfirmProps) {
-  return (
-    <Card className="confirm" tone={danger ? 'danger' : 'surface'} role={embedded ? 'region' : 'dialog'} aria-label={title}>
-      <div className="confirm-title">{title}</div>
+export function Confirm({ title, hideTitle = false, summary, children, confirmLabel = 'Confirm', danger, disabled, busy, error, onConfirm, onCancel, embedded, cancelLabel = 'Cancel' }: ConfirmProps) {
+  const parentBusy = useContext(ActionDialogContext);
+  const inline = embedded || parentBusy !== null;
+  useDialogLayoutEffect(() => {
+    if (parentBusy) parentBusy.current = busy === true;
+    return () => { if (parentBusy) parentBusy.current = false; };
+  }, [busy, parentBusy]);
+  const content = (
+    <Card className="confirm" tone={danger ? 'danger' : 'surface'} role="region" aria-label={title}>
+      {inline && !hideTitle ? <div className="confirm-title">{title}</div> : null}
       {summary && summary.length > 0 ? (
         <dl className="facts">
           {summary.map(([label, value], index) => (
@@ -45,6 +76,7 @@ export function Confirm({ title, summary, children, confirmLabel = 'Confirm', da
       </div>
     </Card>
   );
+  return inline ? content : <ActionDialog title={title} onClose={onCancel} busy={busy}>{content}</ActionDialog>;
 }
 
 function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
@@ -59,7 +91,7 @@ function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
 export interface ActionButtonProps {
   label: string;
   title?: string;
-  summary: Summary;
+  summary?: Summary;
   path: string;
   body: unknown;
   /** Return an error message to block opening the confirm panel. */
@@ -86,24 +118,34 @@ export function useActionBlock(): { blocked: boolean; reason: string | undefined
   return { blocked: false, reason: undefined };
 }
 
-/** Button that opens an inline confirm panel and starts a job on confirm. */
 export function ActionButton(props: ActionButtonProps) {
   const jobs = useJobs();
   const block = useActionBlock();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const parentBusy = useContext(ActionDialogContext);
 
+  const skipConfirmation = !props.children;
   const blocked = block.blocked || props.disabled === true;
   const reason = block.reason ?? (props.disabled ? props.disabledReason : undefined);
 
-  const onClick = () => {
+  const onClick = async () => {
+    if (blocked || submitting.current || (skipConfirmation && props.confirmDisabled)) return;
     const problem = props.validate?.() ?? null;
     setError(problem);
-    setOpen(problem === null);
+    if (problem !== null) return;
+    if (skipConfirmation) await onConfirm();
+    else setOpen(true);
   };
 
   const onConfirm = async () => {
+    if (blocked || props.confirmDisabled || submitting.current) return;
+    const problem = props.validate?.() ?? null;
+    if (problem !== null) { setError(problem); return; }
+    submitting.current = true;
+    if (skipConfirmation && parentBusy) parentBusy.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -113,6 +155,8 @@ export function ActionButton(props: ActionButtonProps) {
     } catch (err) {
       setError(describeError(err));
     } finally {
+      submitting.current = false;
+      if (skipConfirmation && parentBusy) parentBusy.current = false;
       setBusy(false);
     }
   };
@@ -121,17 +165,17 @@ export function ActionButton(props: ActionButtonProps) {
 
   return (
     <div className="action">
-      <span className="btn-wrap" title={reason}>
-        <Button variant={variant} size={props.size === 'sm' ? 'sm' : 'md'} onClick={onClick} disabled={blocked}>
-          {props.label}
+      {!open ? <span className="btn-wrap" title={reason}>
+        <Button variant={variant} size={props.size === 'sm' ? 'sm' : 'md'} onClick={onClick} disabled={blocked || busy || (skipConfirmation && props.confirmDisabled)}>
+          {busy && skipConfirmation ? 'Sending…' : props.label}
         </Button>
-      </span>
+      </span> : null}
       {error && !open ? <div className="error-text">{error}</div> : null}
       {open ? (
         <Confirm
           title={props.title ?? props.label}
           summary={props.summary}
-          confirmLabel={props.confirmLabel}
+          confirmLabel={props.confirmLabel ?? props.label}
           danger={props.variant === 'danger'}
           disabled={blocked || props.confirmDisabled}
           busy={busy}

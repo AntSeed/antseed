@@ -8,6 +8,7 @@ const provider = { getBalance: vi.fn(async () => 99n) };
 const ctx = {
   address, chain: { sellerPoolsAddress: address, sellerRegistryAddress: address, emissionsGateAddress: address, sellerPoolsRewardsAddress: address, usageRewardsAddress: address },
   antsToken: () => ({ contractAddress: address }), provider: () => provider,
+  indexer: () => null,
 } as unknown as AntsContext;
 const stack = { currentEpoch: 22, legacyStaking: address } as ResolvedStack;
 beforeEach(() => {

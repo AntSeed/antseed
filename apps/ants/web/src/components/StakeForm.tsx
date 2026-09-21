@@ -1,13 +1,12 @@
 import { EarlyExitHelp } from './EarlyExitHelp';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PoolConfigView, PoolView, RewardsView } from '../../../src/api-types';
 import { describeError, formatAnts, formatBps, isPositiveDecimal, parseUnits } from '../format';
-import { Confirm, useActionBlock } from './Confirm';
+import { useActionBlock } from './Confirm';
 import { Button } from './ui';
 import { useJobs } from '../jobs';
 import { Field, Input, Select } from './Field';
 import { LockSlider } from './LockSlider';
-import { EpochCell } from './Epoch';
 import { poolLabel } from './Pools';
 import { useApp } from '../app-context';
 import { stakeSources, stakeSourceRequest } from '../stake-sources';
@@ -31,15 +30,9 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
   const { overview, config: dashboardConfig } = useApp();
   const block = useActionBlock();
   const jobs = useJobs();
-  const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
-  const reviewRef = useRef<HTMLDivElement>(null);
-  const reviewButtonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (reviewing) reviewRef.current?.focus();
-  }, [reviewing]);
   const [agentId, setAgentId] = useState(() => String(defaultAgentId ?? pools[0]?.agentId ?? ''));
   const [walletAmount, setAmount] = useState('');
   const [sourceId, setSourceId] = useState<string | null>(null);
@@ -103,14 +96,6 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
   const blocked = block.blocked || noPools || !!readinessError;
   const blockedReason = readinessError ?? block.reason ?? (noPools ? 'No stakeable pools yet.' : null);
 
-  const review = (event: FormEvent) => {
-    event.preventDefault();
-    if (blocked) return;
-    const problem = validate();
-    setError(problem);
-    if (!problem) { setSourceId(source.id); setReviewing(true); }
-  };
-
   const submit = async () => {
     if (submitting.current || blocked) return;
     const problem = validate();
@@ -132,44 +117,11 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
     }
   };
 
-  if (reviewing) return (
-    <div ref={reviewRef} tabIndex={-1} className="stake-review">
-      <Confirm
-        embedded
-        title="Review stake"
-        confirmLabel={isWallet ? 'Confirm stake' : 'Stake rewards'}
-        cancelLabel="Back"
-        busy={busy}
-        disabled={blocked}
-        error={error ?? blockedReason}
-        onConfirm={() => { void submit(); }}
-        onCancel={() => {
-          setReviewing(false);
-          setError(null);
-          requestAnimationFrame(() => reviewButtonRef.current?.focus());
-        }}
-        summary={[
-          ['Source', source.label],
-          ...(source.kind === 'buyer' ? [['Buyer account', dashboardConfig.buyerAddress] as [string, string]] : []),
-          ['Position owner', dashboardConfig.address],
-          ['Pool', <span className="mono">{pool ? poolLabel(pool) : `Agent ${selectedAgentId}`}</span>],
-          ['Amount', <span className="mono">{amount} ANTS</span>],
-          ['Lock', <span className="mono">{epochs} {epochs === 1 ? 'epoch' : 'epochs'}</span>],
-          ['Activates', <EpochCell epoch={activationEpoch} dateOnly />],
-          ['Unlocks', <EpochCell epoch={activationEpoch === null ? null : activationEpoch + epochs} dateOnly />],
-          ['Early exit slash', <span>{config ? `${formatBps(config.minEarlyExitSlashBps)} – ${formatBps(config.maxSlashBps)}` : '—'}<EarlyExitHelp /></span>],
-        ]}
-      >
-        <p className="hint mt">{isWallet ? 'Approves ANTS for the pool contract if needed, then stakes.' : 'Stakes all eligible rewards from this source directly, without claiming to your wallet. Usage rewards may require an approval per epoch; staking rewards may require indexing before restaking. The final amount is checked on chain and may change before confirmation.'} Dates assume confirmation in the current epoch; a later confirmation shifts activation and unlock accordingly.</p>
-      </Confirm>
-    </div>
-  );
-
   return (
-    <form className="stake-form" onSubmit={review}>
+    <form className="stake-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {blockedReason ? <div className="status-line" role="status">{blockedReason}</div> : null}
       <Field label="Stake from" width="lg">
-        <Select value={source.id} onChange={e => { setSourceId(e.target.value); setError(null); }}>
+        <Select value={source.id} disabled={busy} onChange={e => { setSourceId(e.target.value); setError(null); }}>
           {sources.map(s => <option key={s.id} value={s.id} disabled={s.kind === 'wallet' && !s.available}>
             {s.label} · {formatAnts(s.amount, 4)} ANTS{s.kind === 'wallet' && !s.available ? ' (transfers restricted)' : ''}
           </option>)}
@@ -181,7 +133,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
       {source.agentId !== undefined ? <p className="hint">These rewards stake into their source pool. You can move the allocation afterward, subject to position rules.</p> : null}
       <div className="form-row">
         <Field label="Pool" width="lg">
-          <Select value={String(selectedAgentId || '')} onChange={(e) => setAgentId(e.target.value)} disabled={noPools || source.agentId !== undefined}>
+          <Select value={String(selectedAgentId || '')} onChange={(e) => setAgentId(e.target.value)} disabled={busy || noPools || source.agentId !== undefined}>
             {source.agentId !== undefined && !pool ? <option value={source.agentId}>Agent {source.agentId}</option> : null}
             {noPools ? <option value="">No stakeable pools</option> : null}
             {pools.map((p) => (
@@ -197,7 +149,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
             isWallet && balance !== undefined ? (
               <>
                 Balance <span className="mono">{formatAnts(balance, 4)}</span> ·{' '}
-                <button type="button" className="link-button" onClick={fillMax}>
+                <button type="button" className="link-button" onClick={fillMax} disabled={busy}>
                   Max
                 </button>
               </>
@@ -207,18 +159,19 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           placeholder="0.0"
-          disabled={noPools || !isWallet}
+          disabled={busy || noPools || !isWallet}
         />
         <div className="stake-lock-settings">
-          <LockSlider value={epochs} min={minEpochs} max={maxEpochs} startEpoch={activationEpoch} onChange={setEpochs} disabled={!config || noPools} />
+          <LockSlider value={epochs} min={minEpochs} max={maxEpochs} startEpoch={activationEpoch} onChange={setEpochs} disabled={busy || !config || noPools} />
         </div>
       </div>
       {config ? <p className="hint">Longer locks increase staking power. Withdrawing early burns {formatBps(config.minEarlyExitSlashBps)}–{formatBps(config.maxSlashBps)} of principal; review the withdrawal estimate before proceeding.<EarlyExitHelp /></p> : null}
+      <p className="hint">{isWallet ? 'Approves ANTS for the pool contract if needed, then stakes.' : 'Stakes all eligible rewards from this source. Usage rewards may require an approval per epoch; the final amount is checked on chain.'} Dates assume confirmation in the current epoch.</p>
       {error ? <div className="error-text" role="alert">{error}</div> : null}
       <div className="stake-form-actions">
-        <button ref={reviewButtonRef} type="submit" className="btn btn--primary btn--md" disabled={blocked}>{isWallet ? 'Review stake' : 'Review reward stake'}</button>
+        <button type="submit" className="btn btn--primary btn--md" disabled={blocked || busy}>{busy ? 'Sending…' : isWallet ? 'Stake' : 'Stake rewards'}</button>
         {onClose ? (
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
         ) : null}
       </div>
     </form>
