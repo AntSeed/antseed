@@ -1,5 +1,6 @@
 import { ZeroAddress } from 'ethers';
 import { claimEpochRewards, pendingEpochRewards, previewPoolRewards, type SellerPoolsClient, type SellerPoolsRewardsClient } from '@antseed/node/payments/browser';
+import { indexedWalletRewards } from './indexed-wallet.js';
 import type { AbstractSigner } from 'ethers';
 import type { AntsContext } from './context.js';
 import { closedPositionIds } from './positions.js';
@@ -65,12 +66,28 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   const walletConnected = !sameAddress(ctx.address, ZeroAddress);
   const agentId = walletConnected ? await agentIdOf(ctx) : 0;
 
-  // An unreachable indexer degrades to chain reads plus verified local history;
-  // `historySource` tells the UI that closed-position rewards may be missing.
-  const closed = walletConnected ? await closedPositionIds(ctx) : { ids: [], source: undefined };
-  const stakerPositions = walletConnected && pools && poolRewards
-    ? await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })
-    : [];
+  // Indexed reward failures stay unavailable; the no-indexer path retains live previews.
+  let historySource: RewardsView['historySource'];
+  let stakerSource: RewardsView['staker']['source'];
+  let stakerPositions: Array<{ id: number; agentId: number; amount: bigint; closedAtEpoch: number }> = [];
+  let stakerAvailable = true;
+  if (walletConnected && pools && poolRewards) {
+    if (ctx.indexer()?.rewardPositions) {
+      try {
+        const snapshot = await indexedWalletRewards(ctx, stack.currentEpoch, true);
+        historySource = 'indexer';
+        stakerSource = { indexedBlock: snapshot.source.indexedBlock, indexedAt: snapshot.source.indexedAt };
+        stakerPositions = snapshot.positions.map(row => ({ id: row.id, agentId: row.agentId, amount: BigInt(row.rewards.pending!), closedAtEpoch: row.closedAtEpoch }));
+      } catch (error) {
+        stakerAvailable = false;
+        stakerSource = { error: error instanceof Error ? error.message : String(error) };
+      }
+    } else {
+      const closed = await closedPositionIds(ctx);
+      historySource = closed.source;
+      stakerPositions = await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids });
+    }
+  }
   const stakerTotal = stakerPositions.reduce((sum, position) => sum + position.amount, 0n);
 
   const sellerEpochs: EpochAmount[] = [];
@@ -133,10 +150,11 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   return toJson({
     scope: walletConnected ? 'all' : 'buyer',
     currentEpoch: stack.currentEpoch,
-    historySource: closed.source,
+    historySource,
     firstRewardedEpoch: stack.effectiveEpoch,
     staker: {
-      total: stakerTotal.toString(),
+      total: stakerAvailable ? stakerTotal.toString() : null,
+      ...(stakerSource ? { source: stakerSource } : {}),
       positions: stakerPositions.filter((position) => position.amount > 0n).map((position) => ({ id: position.id, agentId: position.agentId, amount: position.amount.toString(), closed: position.closedAtEpoch !== 0 })),
     },
     sellerUsage: { total: sellerTotal.toString(), agentId, epochs: sellerEpochs, claimable: stack.phase === 'active' && agentId !== 0 },
@@ -149,8 +167,19 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
       locked: lockedInfo.locked.toString(), claimable: lockedInfo.claimable.toString(),
       policy: sameAddress(lockedInfo.policy, ZeroAddress) ? null : lockedInfo.policy, pool: stack.lockedRewardsPool,
     },
-    total: total.toString(),
+    total: stakerAvailable ? total.toString() : null,
   });
+}
+
+async function rewardCandidateIds(ctx: AntsContext): Promise<number[]> {
+  if (ctx.indexer()?.rewardPositions) {
+    try {
+      const snapshot = await indexedWalletRewards(ctx, (await ctx.stack()).currentEpoch, true);
+      const local = [...ctx.localPositionIds].filter(([, owner]) => owner.toLowerCase() === ctx.address.toLowerCase()).map(([id]) => id);
+      return [...new Set([...snapshot.positions.map(row => row.id), ...local])];
+    } catch {}
+  }
+  return (await closedPositionIds(ctx)).ids;
 }
 
 /** Bring every pool's reward index up to the epoch the given positions need before claiming or restaking. */
@@ -211,8 +240,8 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
     const pools = ctx.pools();
     const poolRewards = ctx.poolRewards();
     if (pools && poolRewards) {
-      const closed = await closedPositionIds(ctx);
-      const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds: closed.ids })).filter((position) => position.amount > 0n);
+      const includeIds = await rewardCandidateIds(ctx);
+      const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds })).filter((position) => position.amount > 0n);
       if (pending.length > 0) {
         await preparePoolIndexes(pools, poolRewards, signer, pending, report);
         const ids: number[] = [];
@@ -292,7 +321,7 @@ export async function restake(ctx: AntsContext, request: RestakeRequest, report:
   const config = await pools.poolConfig();
   const epochs = assertEpochs(request.epochs, config.minStakeEpochs, config.maxStakeEpochs);
   const requested = request.positionIds && request.positionIds.length > 0 ? assertPositiveIds(request.positionIds) : null;
-  const includeIds = requested ?? (await closedPositionIds(ctx)).ids;
+  const includeIds = requested ?? await rewardCandidateIds(ctx);
   const pending = (await previewPoolRewards(pools, poolRewards, ctx.address, undefined, { includeIds }))
     .filter((position) => position.amount > 0n && (!requested || requested.includes(position.id)));
   if (pending.length === 0) throw new Error('No staker rewards to restake.');

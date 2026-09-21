@@ -14,6 +14,7 @@ import { registerRoutes } from './routes.js';
 import { BrowserSigning } from './browser-signer.js';
 import { getAddress, ZeroAddress, id as eventId } from 'ethers';
 import { ViewCache } from './view-cache.js';
+import { mergePositionBarrier, parsePositionBarrier } from './service/position-barrier.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +118,11 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
 
   const views = new ViewCache();
   const historyPath = path.join(dataDir, 'ants-activity', `${chain.evmChainId}-positions.json`);
+  const barrierPath = path.join(dataDir, 'ants-activity', `${chain.evmChainId}-position-checkpoints.json`);
+  try {
+    const saved = JSON.parse(await readFile(barrierPath, 'utf8')) as Array<[string, unknown]>;
+    for (const [wallet, barrier] of saved) context.positionReadBarriers.set(getAddress(wallet).toLowerCase(), parsePositionBarrier(barrier));
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Could not read local position checkpoints.', { cause: error }); }
   try {
     const saved = JSON.parse(await readFile(historyPath, 'utf8')) as Array<[number, string]>;
     for (const [positionId, owner] of saved) if (Number.isSafeInteger(positionId) && positionId > 0 && /^0x[0-9a-fA-F]{40}$/.test(owner)) context.localPositionIds.set(positionId, owner);
@@ -124,6 +130,12 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   const rememberTransaction = async (hash: string) => {
     const receipt = await context.provider().getTransactionReceipt(hash);
     if (!receipt || receipt.status !== 1) return;
+    const wallet = receipt.from.toLowerCase();
+    context.positionReadBarriers.set(wallet, mergePositionBarrier(context.positionReadBarriers.get(wallet), receipt.blockNumber));
+    await mkdir(path.dirname(barrierPath), { recursive: true, mode: 0o700 });
+    const checkpointTemporary = `${barrierPath}.${randomBytes(8).toString('hex')}.tmp`;
+    await writeFile(checkpointTemporary, JSON.stringify([...context.positionReadBarriers]), { mode: 0o600 });
+    await rename(checkpointTemporary, barrierPath);
     const ids = receipt.logs.filter(log => log.address.toLowerCase() === chain.sellerPoolsAddress?.toLowerCase() && log.topics.length === 4 && log.topics[0] === eventId('Transfer(address,address,uint256)')).map(log => Number(BigInt(log.topics[3]!)));
     if (!ids.length) return;
     const positions = await context.requirePools().positionsBatch([...new Set(ids)]);

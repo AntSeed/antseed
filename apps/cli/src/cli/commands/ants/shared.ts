@@ -29,7 +29,7 @@ export function printJson(value: unknown): void {
   console.log(JSON.stringify(value, jsonReplacer, 2));
 }
 
-export function ants(baseUnits: string | bigint, digits = 4): string {
+export function ants(baseUnits: string | bigint | null, digits = 4): string {
   return `${formatAnts(baseUnits, digits)} ANTS`;
 }
 

@@ -12,6 +12,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- ANTS dashboard and CLI: consume Antscan's paginated indexed staking rewards and live position status/summary feeds (Antscan PRs #8/#9). Both local and standalone dashboards show checkpoint freshness and unavailable reward data explicitly, while claim/restake/withdraw checks remain live. Confirmed transaction checkpoints persist across reloads to reject older indexed balances.
+
 - Payments: add a small Disconnect button beside the connected wallet in the authorization dialog. Disconnecting leaves on-chain authorization unchanged and is disabled while authorization is in progress.
 
 - ANTS dashboard: add a standalone, static-hostable build with browser-wallet signing, saved buyer-account selection, live operator checks, and cross-tab transaction recovery. The desktop and CLI continue opening the existing local dashboard; initial buyer authorization remains in the local app.

@@ -4,6 +4,7 @@ import { JobRunner } from '../../../src/job-runner';
 import { AntsContext, type AntsChainConfig } from '../../../src/service/context';
 import * as service from '../../../src/service/index';
 import { sellerModels } from '../../../src/service/seller-models';
+import { mergePositionBarrier } from '../../../src/service/position-barrier';
 import type { ClaimRequest, CompoundRequest, ExtendRequest, JobView, MaxLockRequest, MergeRequest, MoveRequest, RestakeRequest, SplitRequest, StakeRequest, StakeUsageRequest, SubmitProofRequest, WithdrawRequest } from '../../../src/api-types';
 import type { StepReporter } from '../../../src/service/steps';
 import type { DashboardConfig } from '../api';
@@ -156,6 +157,8 @@ export class HostedRuntime implements DashboardTransport {
           if (hash) try {
             const receipt = await ctx.provider().getTransactionReceipt(hash);
             if (receipt?.status === 1) {
+              ctx.positionReadBarriers.set(wallet.toLowerCase(), mergePositionBarrier(ctx.positionReadBarriers.get(wallet.toLowerCase()), receipt.blockNumber));
+              this.activity.confirmPositionRead(wallet, receipt.blockNumber);
               const ids = receipt.logs.filter(log => log.address.toLowerCase() === this.chain.sellerPoolsAddress?.toLowerCase() && log.topics.length === 4 && log.topics[0] === eventId('Transfer(address,address,uint256)')).map(log => Number(BigInt(log.topics[3]!)));
               if (ids.length) {
                 const positions = await ctx.requirePools().positionsBatch([...new Set(ids)]);
@@ -173,6 +176,12 @@ export class HostedRuntime implements DashboardTransport {
   }
 
   async request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+    if (this.wallet) {
+      try {
+        const barrier = this.activity.positionBarrier(this.wallet);
+        if (barrier) this.context.positionReadBarriers.set(this.wallet.toLowerCase(), barrier);
+      } catch { this.writeError = 'Browser activity storage is unavailable. Wallet actions are disabled.'; }
+    }
     const generation = this.contextGeneration;
     const result = await this.dispatch(path, init);
     if (!init?.method && generation !== this.contextGeneration) throw new Error('Account changed while loading. Refresh this view.');

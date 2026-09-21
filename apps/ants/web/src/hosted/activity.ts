@@ -1,5 +1,6 @@
 import { getAddress, type Provider } from 'ethers';
 import type { BrowserTransaction } from '../../../src/browser-signer';
+import { mergePositionBarrier, parsePositionBarrier } from '../../../src/service/position-barrier';
 
 export interface TransactionRecord extends BrowserTransaction {
   buyer: string | null;
@@ -35,12 +36,22 @@ export class ActivityStore {
   resolve(wallet: string, id: string): void {
     this.write(wallet, 'transactions', this.transactions(wallet).map(record => record.id === id ? { ...record, resolved: true } : record));
   }
+  positionBarrier(wallet: string) {
+    const saved = this.read<unknown>(wallet, 'position-checkpoint', null);
+    return saved === null ? undefined : parsePositionBarrier(saved);
+  }
+  confirmPositionRead(wallet: string, block: number) {
+    const barrier = mergePositionBarrier(this.positionBarrier(wallet), block);
+    this.write(wallet, 'position-checkpoint', barrier);
+    return barrier;
+  }
   async track(provider: Provider, record: TransactionRecord): Promise<'pending' | 'confirmed' | 'reverted'> {
     if (!record.submittedHash) throw new Error('This approval has no recorded hash. Check the original wallet before clearing it.');
     const receipt = await provider.getTransactionReceipt(record.submittedHash);
     if (!receipt) return 'pending';
     const transaction = await provider.getTransaction(record.submittedHash);
     if (!transaction || transaction.chainId !== BigInt(this.chainId) || getAddress(transaction.from) !== getAddress(record.from) || !transaction.to || getAddress(transaction.to) !== getAddress(record.to) || transaction.data.toLowerCase() !== record.data.toLowerCase() || transaction.value !== BigInt(record.value) || transaction.nonce < (record.nonceFloor ?? 0)) throw new Error('Transaction does not match the saved approval.');
+    if (receipt.status === 1) this.confirmPositionRead(record.from, receipt.blockNumber);
     this.resolve(record.from, record.id);
     return receipt.status === 1 ? 'confirmed' : 'reverted';
   }

@@ -49,6 +49,39 @@ endpoints. A dedicated public RPC endpoint with origin restrictions and quotas
 is recommended for sustained traffic. The build rejects Node/native modules in
 the standalone dependency graph.
 
+## Antscan position and reward feeds
+
+Both dashboard modes use the API contracts from Antscan PRs #8 and #9:
+
+- `GET /api/staking/positions?owner=…&include=live&includeClosed=1` provides
+  position status, current/next power, withdrawal epoch, pending max-lock
+  changes, per-pool summaries and whole-wallet totals. Stale or incomplete live
+  data falls back to the existing reads with an explicit warning.
+- A separate `include=rewards&includeClosed=1&limit=100` request reads indexed
+  staking rewards without request-time indexer RPC. Rewards discovery adds
+  `rewardStatus=outstanding`, retaining closed positions with unclaimed rewards.
+  Every cursor page is read; a snapshot-conflict response restarts once.
+- Rewards require schema version 1, matching chain/contracts/epoch, complete
+  inventory/history, and a fresh checkpoint. Missing, stale or unsupported
+  reward snapshots show **unavailable**, never zero or an unbounded historical
+  RPC scan. Other reward buckets remain independent.
+- Successful transactions persist a per-wallet checkpoint. Older snapshots
+  cannot overwrite the post-transaction display, including after reload and
+  transaction recovery. Staking rewards may be unavailable until the next
+  indexer checkpoint catches up; retrying does not rebroadcast transactions.
+- Claims, restaking, ownership, operator authorization and withdrawal previews
+  still use live contract checks. Buyer, seller and legacy rewards are not
+  covered by the indexed staking-reward feed and retain their existing reads.
+
+The configured Antscan deployment must include PR #8's reward snapshot worker
+and complete its history backfill, as well as PR #9's live fields. A dashboard
+deployment does not deploy Antscan. PR #8 remained open when this integration
+was verified on September 21, 2026; PR #9 was merged. Verify the configured
+endpoint before rollout rather than assuming merged code is deployed.
+At that check, `https://antscan.co` still returned the older response without
+reward checkpoint metadata for `include=rewards`; indexed staking rewards
+therefore remain unavailable against that deployment until it is upgraded.
+
 ## Accounts and rewards
 
 - Anyone can browse pools and network information without connecting a wallet.
@@ -103,9 +136,9 @@ private buyer identity, or server-session token is stored by the standalone runt
 - Verify CORS from the actual hosting origin for RPC, all `/api/staking/*`,
   display-snapshot GraphQL, seller catalog/model usage, and network endpoints
   used by Antscan. GraphQL POSTs require working OPTIONS/preflight handling.
-- Keep missing/stale indexer warnings visible. Exact rewards and transaction
-  validation remain live; unavailable history is not replaced with unbounded
-  historical RPC scans.
+- Keep missing/stale indexer warnings visible. Displayed staking rewards are
+  checkpointed estimates; exact transaction validation remains live. Unavailable
+  history is not replaced with unbounded historical RPC scans.
 - Run tests, typecheck, both builds, and the static-browser smoke test before
   rollout. Observe failed RPC/indexer requests, wallet rejections, and receipt
   timeouts using browser diagnostics; this build adds no private account telemetry.

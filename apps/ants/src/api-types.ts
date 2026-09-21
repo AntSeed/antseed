@@ -87,7 +87,9 @@ export interface PositionView {
   projectedSlashBps: number;
   slashedAmount: string;
   returnedAmount: string;
-  pendingReward: string;
+  pendingReward: string | null;
+  power?: string | null;
+  nextPower?: string | null;
   epochsRemaining: number;
 }
 
@@ -104,12 +106,13 @@ export interface PoolConfigView {
 export type DataSource = 'indexer' | 'chain' | 'local';
 
 export interface PositionsView {
+  rewardSource?: { indexedBlock?: number; indexedAt?: number; error?: string };
   displaySource?: DisplaySource;
   currentEpoch: number;
   config: PoolConfigView;
-  /** Indexed position records when fresh, otherwise chain records; rewards and withdrawal checks remain live. */
+  /** Fresh Antscan live position data or a labelled fallback; transaction checks remain live. */
   positions: PositionView[];
-  totals: { activeStake: string; pendingStake: string; pendingRewards: string; open: number };
+  totals: { activeStake: string; pendingStake: string; pendingRewards: string | null; open: number };
   /** Where closed positions came from; 'chain' means only open positions are listed. */
   historySource: DataSource;
 }
@@ -127,12 +130,12 @@ export interface RewardsView {
   historySource?: DataSource;
   currentEpoch: number;
   firstRewardedEpoch: number | null;
-  staker: { total: string; positions: Array<{ id: number; agentId: number; amount: string; closed: boolean }>; };
+  staker: { total: string | null; positions: Array<{ id: number; agentId: number; amount: string; closed: boolean }>; source?: { indexedBlock?: number; indexedAt?: number; error?: string }; };
   sellerUsage: { total: string; agentId: number; epochs: EpochAmount[]; claimable: boolean };
   buyerUsage: { total: string; epochs: EpochAmount[]; operator: string | null; claimable: boolean; recipient: string | null };
   legacy: { seller: string; buyer: string; contract: string | null; buyerClaimable: boolean; sellerPayout?: LegacySellerPayout };
   locked: { locked: string; claimable: string; policy: string | null; pool: string | null };
-  total: string;
+  total: string | null;
 }
 
 /** One epoch's settled USDC volume for a seller (6 decimals). */

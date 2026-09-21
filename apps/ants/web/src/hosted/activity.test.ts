@@ -13,6 +13,15 @@ function fixture() {
 }
 
 describe('hosted recovery', () => {
+  it('persists monotonic indexer checkpoints scoped by wallet and chain', () => {
+    const { store, storage } = fixture();
+    store.confirmPositionRead(wallet, 100);
+    store.confirmPositionRead(wallet, 90);
+    expect(new ActivityStore(storage, 8453).positionBarrier(wallet)?.block).toBe(100);
+    expect(store.positionBarrier(target)).toBeUndefined();
+    expect(new ActivityStore(storage, 1).positionBarrier(wallet)).toBeUndefined();
+    expect(() => store.confirmPositionRead(wallet, -1)).toThrow('Invalid');
+  });
   it('persists intent, approval state and broadcast hash across reloads', () => {
     const { store, storage } = fixture();
     store.record(intent, target);
@@ -23,9 +32,10 @@ describe('hosted recovery', () => {
   it.each([1, 0])('tracks confirmed/reverted receipts without resubmitting: %s', async status => {
     const { store } = fixture();
     store.record({ ...intent, submittedHash: hash }, target);
-    const provider = { getTransactionReceipt: async () => ({ status }), getTransaction: async () => ({ ...intent, chainId: 8453n, value: 0n, nonce: 5 }) } as unknown as Provider;
+    const provider = { getTransactionReceipt: async () => ({ status, blockNumber: 123 }), getTransaction: async () => ({ ...intent, chainId: 8453n, value: 0n, nonce: 5 }) } as unknown as Provider;
     expect(await store.track(provider, store.transactions(wallet)[0]!)).toBe(status ? 'confirmed' : 'reverted');
     expect(store.transactions(wallet)[0]!.resolved).toBe(true);
+    expect(store.positionBarrier(wallet)?.block).toBe(status ? 123 : undefined);
   });
   it('retains pending and uncertain approvals', async () => {
     const { store } = fixture();

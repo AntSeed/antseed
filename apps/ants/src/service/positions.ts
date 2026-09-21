@@ -8,6 +8,8 @@ import { IndexerError, type IndexedPosition } from './indexer.js';
 import { stakeEligibility } from './stake-eligibility.js';
 import { assertAgentId, assertEpochs, assertPositiveIds, silentReporter, type StepReporter } from './steps.js';
 import { displayData, indexedPositions } from './display-snapshot.js';
+import { liveWalletPositions, indexedWalletRewards } from './indexed-wallet.js';
+import type { LivePositions } from './position-feed.js';
 
 
 export interface PositionDetail extends PositionView { raw: SellerPoolPosition; }
@@ -26,7 +28,7 @@ async function indexedStatuses(ctx: AntsContext, positions: SellerPoolPosition[]
     return requests.length - 1;
   };
   const reads = positions.map(position => {
-    const open = !position.withdrawn && position.closedAtEpoch === 0;
+    const open = !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > epoch);
     return {
       id: position.id, withdrawable: add('positionWithdrawableEpoch', [position.id]),
       max: open && !maxLocks.has(position.id) ? add('positionMaxLockPowerAtEpoch', [position.id, Math.max(epoch, position.stakeStartEpoch)]) : null,
@@ -49,21 +51,25 @@ async function indexedStatuses(ctx: AntsContext, positions: SellerPoolPosition[]
   });
 }
 
-async function describePositions(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, config: SellerPoolConfig, maxLocks?: Map<number, boolean>): Promise<PositionDetail[]> {
+async function describePositions(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, config: SellerPoolConfig, maxLocks?: Map<number, boolean>, live?: LivePositions, indexedRewards?: Map<number, string> | null): Promise<PositionDetail[]> {
   const pools = ctx.requirePools();
   const poolRewards = ctx.poolRewards();
-  // Closed positions keep the reward earned up to their close epoch, so every id is previewed.
+  // Closed positions retain earned rewards; exact previews are used only without the indexed reward feed.
   const rewardIds = positions.map((position) => position.id);
   const rewards = new Map<number, bigint>();
-  if (poolRewards && rewardIds.length > 0) {
+  if (indexedRewards === undefined && poolRewards && rewardIds.length > 0) {
     const amounts = await poolRewards.previewStakerRewards(rewardIds);
     rewardIds.forEach((id, index) => rewards.set(id, amounts[index] ?? 0n));
   }
-  const statuses = maxLocks ? await indexedStatuses(ctx, positions, currentEpoch, maxLocks) : await pools.positionStatusesBatch(positions, currentEpoch);
+  const liveById = new Map(live?.positions.map(row => [row.id, row]));
+  const statuses = live ? positions.map(position => {
+    const row = liveById.get(position.id)!;
+    return { withdrawableEpoch: row.withdrawableEpoch!, maxLocked: row.maxLocked, maxLockedNext: row.maxLockedNext!, slashBps: null };
+  }) : maxLocks ? await indexedStatuses(ctx, positions, currentEpoch, maxLocks) : await pools.positionStatusesBatch(positions, currentEpoch);
   const details = positions.map((position, index): PositionDetail => {
-    const open = !position.withdrawn && position.closedAtEpoch === 0;
+    const open = !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > currentEpoch);
     const { withdrawableEpoch, maxLocked, maxLockedNext, slashBps } = statuses[index]!;
-    const changePending = currentEpoch < withdrawableEpoch;
+    const changePending = liveById.get(position.id)?.changePending ?? currentEpoch < withdrawableEpoch;
     const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
     const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
     return {
@@ -76,7 +82,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
       stakeEndEpoch: position.stakeEndEpoch,
       closedAtEpoch: position.closedAtEpoch,
       withdrawn: position.withdrawn,
-      state: positionState(position, currentEpoch),
+      state: liveById.get(position.id)?.state ?? positionState(position, currentEpoch),
       withdrawableEpoch,
       changePending,
       maxLocked,
@@ -85,7 +91,8 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
       projectedSlashBps,
       slashedAmount: open ? estimate.slashedAmount.toString() : '0',
       returnedAmount: open ? estimate.returnedAmount.toString() : '0',
-      pendingReward: (rewards.get(position.id) ?? 0n).toString(),
+      pendingReward: indexedRewards === undefined ? (rewards.get(position.id) ?? 0n).toString() : indexedRewards?.get(position.id) ?? null,
+      ...(live ? { power: liveById.get(position.id)?.power, nextPower: liveById.get(position.id)?.nextPower } : {}),
       epochsRemaining: open ? Math.max(0, position.stakeEndEpoch - Math.max(currentEpoch, position.stakeStartEpoch)) : 0,
       raw: position,
     };
@@ -114,19 +121,38 @@ export async function closedPositionIds(ctx: AntsContext): Promise<{ ids: number
 }
 
 /**
- * The wallet's open positions from the on-chain `stakerPositionIds`
- * enumeration, plus its closed positions from the indexer (with the reward
- * still pending on them read live). The chain is never scanned for history.
+ * Antscan live positions and separately checkpointed indexed rewards. Without
+ * the feeds, retain the local-chain read path. Never scan chain history.
  */
 export async function positions(ctx: AntsContext): Promise<PositionsView> {
   const stack = await ctx.stack();
   const pools = ctx.requirePools();
   const config = await pools.poolConfig();
-  const display = await displayData(ctx, stack);
+  let live: LivePositions | undefined;
+  let liveError: string | undefined;
+  if (ctx.indexer()?.livePositions) {
+    try { live = await liveWalletPositions(ctx, stack.currentEpoch); }
+    catch (error) { liveError = error instanceof Error ? error.message : String(error); }
+  }
+  const display = live ? { snapshot: null, source: { source: 'indexer' as const, indexedAt: live.liveSource.fetchedAt } } : await displayData(ctx, stack);
+  if (liveError) display.source = { ...display.source, error: liveError };
+  let indexedRewards: Map<number, string> | null | undefined;
+  let rewardSource: PositionsView['rewardSource'];
+  if (ctx.indexer()?.rewardPositions) {
+    indexedRewards = null;
+    try {
+      const snapshot = await indexedWalletRewards(ctx, stack.currentEpoch);
+      indexedRewards = new Map(snapshot.positions.map(row => [row.id, row.rewards.pending!]));
+      rewardSource = { indexedBlock: snapshot.source.indexedBlock, indexedAt: snapshot.source.indexedAt };
+    } catch (error) { rewardSource = { error: error instanceof Error ? error.message : String(error) }; }
+  }
   let list: SellerPoolPosition[];
   let maxLocks: Map<number, boolean> | undefined;
   let closed: { source: PositionsView['historySource']; rows: IndexedPosition[] };
-  if (display.snapshot) {
+  if (live) {
+    list = live.positions.map(row => ({ ...row, amount: BigInt(row.amount), weightAmount: BigInt(row.weightAmount) }));
+    closed = { source: 'indexer', rows: live.positions };
+  } else if (display.snapshot) {
     const loaded = await indexedPositions(ctx, display.snapshot);
     list = loaded.positions;
     maxLocks = loaded.maxLocks;
@@ -136,11 +162,12 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
     list = await pools.positionsBatch([...new Set([...openIds, ...history.ids])]);
     closed = history;
   }
-  const details = await describePositions(ctx, list, stack.currentEpoch, config, maxLocks);
+  const details = await describePositions(ctx, list, stack.currentEpoch, config, maxLocks, live, indexedRewards);
+  if (indexedRewards && details.some(position => position.pendingReward === null)) rewardSource = { ...rewardSource, error: 'Antscan rewards have not indexed every position yet' };
   const closedById = new Map(closed.rows.map((row) => [row.id, row]));
-  const activeStake = details.filter((position) => position.state === 'active' || position.state === 'matured').reduce((sum, position) => sum + BigInt(position.amount), 0n);
-  const pendingStake = details.filter((position) => position.state === 'pending').reduce((sum, position) => sum + BigInt(position.amount), 0n);
-  const pendingRewards = details.reduce((sum, position) => sum + BigInt(position.pendingReward), 0n);
+  const activeStake = live ? BigInt(live.totals.activeStake) : details.filter((position) => position.state === 'active' || position.state === 'matured').reduce((sum, position) => sum + BigInt(position.amount), 0n);
+  const pendingStake = live ? BigInt(live.totals.pendingStake) : details.filter((position) => position.state === 'pending').reduce((sum, position) => sum + BigInt(position.amount), 0n);
+  const pendingRewards = indexedRewards === null || details.some(position => position.pendingReward === null) ? null : details.reduce((sum, position) => sum + BigInt(position.pendingReward!), 0n);
   return toJson({
     currentEpoch: stack.currentEpoch,
     config,
@@ -149,7 +176,8 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
       return meta && meta.closedAtEpoch === view.closedAtEpoch && meta.withdrawn === view.withdrawn
         ? { ...view, closedBy: meta.closedBy, replacementIds: meta.replacementIds } : view;
     }),
-    totals: { activeStake: activeStake.toString(), pendingStake: pendingStake.toString(), pendingRewards: pendingRewards.toString(), open: details.filter((position) => !position.withdrawn && position.closedAtEpoch === 0).length },
+    totals: { activeStake: activeStake.toString(), pendingStake: pendingStake.toString(), pendingRewards: pendingRewards?.toString() ?? null, open: details.filter((position) => !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > stack.currentEpoch)).length },
+    ...(rewardSource ? { rewardSource } : {}),
     historySource: closed.source,
     displaySource: display.source,
   });

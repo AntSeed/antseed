@@ -54,6 +54,12 @@ function pool(name: string | null): PoolView {
 beforeEach(() => { vi.clearAllMocks(); mocks.epoch.mockReturnValue(null); });
 
 describe('position summary', () => {
+  it('shows live power rather than the original weight and exposes next-epoch power', () => {
+    const html = renderPosition({ power: '9000000000000000000', nextPower: '8000000000000000000' });
+    expect(html).toContain('power 9');
+    expect(html).not.toContain('power 125');
+    expect(html).toContain('Next epoch power: 8');
+  });
   it('shows the pending lock duration, activation date and unchanged unlock date', () => {
     mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ state: 'pending', stakeStartEpoch: 28, stakeEndEpoch: 40, epochsRemaining: 12 }), pools: [pool('Anvil Seller Beta')] }));
