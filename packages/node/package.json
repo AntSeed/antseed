@@ -29,6 +29,10 @@
       "import": "./dist/metering/index.js",
       "types": "./dist/metering/index.d.ts"
     },
+    "./payments/browser": {
+      "types": "./dist/payments/browser.d.ts",
+      "import": "./dist/payments/browser.js"
+    },
     "./payments": {
       "import": "./dist/payments/index.js",
       "types": "./dist/payments/index.d.ts"

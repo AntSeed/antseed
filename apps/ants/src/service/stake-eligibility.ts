@@ -1,5 +1,5 @@
 import { Interface, isAddress, ZeroAddress } from 'ethers';
-import { multicallRead } from '@antseed/node/payments';
+import { multicallRead } from '@antseed/node/payments/browser';
 import type { AntsContext } from './context.js';
 
 const ABI = new Interface([

@@ -14,6 +14,7 @@ import { StatTile, Tiles } from '../components/StatTile';
 import { OwnSellerStatus, ProofLookup, ProofSubmit, SellerLookup } from '../components/Verification';
 import { usePageData } from '../data';
 import { formatAnts, formatUsdc, formatInt, isPositiveInt } from '../format';
+import { BuyerWalletAction } from '../wallet';
 
 export function SellerPage() {
   const config = useConfig();
@@ -25,8 +26,9 @@ export function SellerPage() {
     return (
       <Panel title="Open your seller dashboard">
         <p className="muted">
-          Open this dashboard from your seller’s CLI with <code>antseed ants</code>, then connect the wallet registered to your seller.
+          {config.mode === 'hosted' ? 'Connect the wallet registered to your seller to view its dashboard.' : <>Open this dashboard from your seller’s CLI with <code>antseed ants</code>, then connect the wallet registered to your seller.</>}
         </p>
+        {config.mode === 'hosted' && <BuyerWalletAction />}
       </Panel>
     );
   }

@@ -8,18 +8,23 @@ import { StatTile, Tiles } from '../components/StatTile';
 import { usePageData } from '../data';
 import { formatAnts, formatBps, formatInt, toBigInt } from '../format';
 import { href } from '../router';
+import { BuyerWalletAction } from '../wallet';
+import { Panel } from '../components/Panel';
 
 /** Your wallet: stake, power and rewards at a glance, then every position with its actions. */
 export function PositionsPage() {
   const config = useConfig();
+  const disconnected = config.mode === 'hosted' && /^0x0{40}$/i.test(config.address);
   const walletReady = !config.browserWallet || !config.readOnly;
-  const overview = usePageData('overview', api.overview);
-  const rewards = usePageData('rewards', api.rewards, 5 * 60_000);
-  const pools = usePageData('pools', api.pools, 5 * 60_000);
+  const overview = usePageData(disconnected ? null : 'overview', api.overview);
+  const rewards = usePageData(disconnected ? null : 'rewards', api.rewards, 5 * 60_000);
+  const pools = usePageData(disconnected ? null : 'pools', api.pools, 5 * 60_000);
   const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
   const data = overview.data;
   const canTransfer = data?.wallet.canTransfer ?? false;
   const pending = toBigInt(pools.data?.yourPendingStake ?? null) ?? 0n;
+
+  if (disconnected) return <Panel title="My positions"><p>Connect your wallet to view and manage your staking positions. Adding a buyer account is optional.</p><BuyerWalletAction /></Panel>;
 
   return (
     <>

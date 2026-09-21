@@ -1,5 +1,5 @@
 import { Interface } from 'ethers';
-import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, multicallRead, type MulticallRequest, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments';
+import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, multicallRead, type MulticallRequest, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments/browser';
 import type { AntsContext } from './context.js';
 import type { PositionView, PositionsView, StakeRequest, MoveRequest, SplitRequest, MergeRequest, ExtendRequest, MaxLockRequest, WithdrawRequest } from '../api-types.js';
 import { parseAnts, formatAnts } from './format.js';

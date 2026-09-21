@@ -40,6 +40,9 @@ jobs:
         run: pnpm run build:tier3
 
       # CLI test script builds itself; desktop has no tests — skip tier4
+      - name: Build standalone ANTS dashboard
+        run: pnpm --filter=@antseed/ants run build:hosted
+
       - name: Test
         run: pnpm -r run test
 

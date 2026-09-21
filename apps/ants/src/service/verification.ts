@@ -1,5 +1,5 @@
 import { ZeroAddress } from 'ethers';
-import { validateSellerProofArtifact, sellerProofId, type SellerProofSubmissionStep } from '@antseed/node/payments';
+import { validateSellerProofArtifact, sellerProofId, type SellerProofSubmissionStep } from '@antseed/node/payments/browser';
 import type { AntsContext } from './context.js';
 import type { VerificationView, ProofStatusView } from '../api-types.js';
 import { toJson } from './json.js';

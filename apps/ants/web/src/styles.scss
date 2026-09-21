@@ -1543,3 +1543,50 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   white-space: normal;
   pointer-events: auto;
 }
+
+/* Full decimal APYs can be long in seeded test pools; keep them within the layout. */
+.yield-percent { display: inline-block; max-width: 15rem; white-space: normal; overflow-wrap: anywhere; }
+.hosted-account {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hosted-account-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  z-index: 80;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(680px, calc(100dvh - 100px));
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--pc-line);
+  border-radius: 12px;
+  background: var(--pc-bg);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 16%);
+}
+
+.hosted-buyer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  > .btn { flex: 1; display: grid; text-align: left; }
+  [aria-pressed='true'] { outline: 2px solid currentColor; outline-offset: -2px; }
+}
+
+.hosted-hash { overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .hosted-account-menu {
+    position: fixed;
+    top: 72px;
+    bottom: auto;
+    left: auto;
+    right: 16px;
+  }
+}

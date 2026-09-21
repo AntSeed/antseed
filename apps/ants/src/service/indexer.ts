@@ -251,7 +251,7 @@ export class AntscanIndexer implements Indexer {
   readonly baseUrl: string;
   private readonly cache = new Map<string, { at: number; value: Promise<unknown> }>();
 
-  constructor(baseUrl: string, private readonly fetchImpl: typeof fetch = fetch, private readonly ttlMs = CACHE_TTL_MS) {
+  constructor(baseUrl: string, private readonly fetchImpl: typeof fetch = (...args) => fetch(...args), private readonly ttlMs = CACHE_TTL_MS) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
@@ -338,6 +338,6 @@ export class AntscanIndexer implements Indexer {
 }
 
 /** The indexer for a chain config; null when no explorer is configured (`explorerApiUrl: ''`). */
-export function createIndexer(baseUrl: string | undefined, fetchImpl: typeof fetch = fetch): Indexer | null {
+export function createIndexer(baseUrl: string | undefined, fetchImpl: typeof fetch = (...args) => fetch(...args)): Indexer | null {
   return baseUrl ? new AntscanIndexer(baseUrl, fetchImpl) : null;
 }

@@ -35,6 +35,17 @@ function render(child: ReturnType<typeof createElement>): string {
 }
 
 describe('staking dashboard displays', () => {
+  it('shows a wallet prompt instead of personal reads on hosted positions while disconnected', () => {
+    const previous = context.config;
+    context.config = { ...previous, mode: 'hosted', browserWallet: true, address: '0x0000000000000000000000000000000000000000', buyerAddress: null };
+    state.keys.length = 0;
+    try {
+      const html = render(createElement(PositionsPage));
+      expect(html).toContain('Connect your wallet to view and manage your staking positions');
+      expect(html).not.toContain('Your total staked');
+      expect(state.keys).toEqual([null, null, null]);
+    } finally { context.config = previous; }
+  });
   it('omits the explorer loading message while seller statistics load', () => {
     const previousPools = state.data.pools;
     state.data.pools = null;

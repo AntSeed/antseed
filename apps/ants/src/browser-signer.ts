@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { AbstractSigner, getAddress, isError, resolveProperties, type Provider, type TransactionReceipt, type TransactionRequest, type TransactionResponse, type TypedDataDomain, type TypedDataField } from 'ethers';
 
 function isTimeout(err: unknown): boolean {
@@ -15,6 +14,7 @@ export interface BrowserTransaction {
   chainId: number;
   submittedHash?: string;
   approvalStarted?: boolean;
+  nonceFloor?: number;
 }
 interface Pending {
   request: BrowserTransaction;
@@ -41,7 +41,11 @@ const sleep = (ms: number) => new Promise<void>((resolve) => { const t = setTime
 export class BrowserSigning {
   private pending: Pending | null = null;
   private generation = 0;
-  constructor(private readonly chainId: number) {}
+  constructor(private readonly chainId: number, private readonly options: {
+    createId?: () => string;
+    beforeSend?: () => Promise<void>;
+    persist?: (request: BrowserTransaction) => void;
+  } = {}) {}
   get request(): BrowserTransaction | null { return this.pending?.request ?? null; }
   signer(address: string, provider: Provider): AbstractSigner {
     return new BrowserSigner(getAddress(address), provider, this, this.generation);
@@ -58,17 +62,20 @@ export class BrowserSigning {
   }
   async send(address: string, provider: Provider, generation: number, tx: TransactionRequest): Promise<TransactionResponse> {
     if (generation !== this.generation) throw new Error('The signing wallet changed. Reopen the action.');
+    await this.options.beforeSend?.();
     if (this.pending) throw new Error('Another wallet approval is pending.');
     const resolved = await resolveProperties(tx);
     if (!resolved.to || typeof resolved.to !== 'string') throw new Error('Contract creation is not supported.');
     if (resolved.from && getAddress(String(resolved.from)) !== address) throw new Error('Transaction sender does not match the connected wallet.');
     if (resolved.chainId != null && BigInt(resolved.chainId) !== BigInt(this.chainId)) throw new Error('Transaction network mismatch.');
     if ((await provider.getNetwork()).chainId !== BigInt(this.chainId)) throw new Error('RPC network mismatch.');
-    const request: BrowserTransaction = { id: randomUUID(), from: address, to: getAddress(resolved.to), data: resolved.data ?? '0x', value: BigInt(resolved.value ?? 0).toString(), chainId: this.chainId };
+    const request: BrowserTransaction = { id: (this.options.createId ?? (() => globalThis.crypto.randomUUID()))(), from: address, to: getAddress(resolved.to), data: resolved.data ?? '0x', value: BigInt(resolved.value ?? 0).toString(), chainId: this.chainId };
     const nonceFloor = await provider.getTransactionCount(address, 'latest');
+    request.nonceFloor = nonceFloor;
     // Simulate using the actual external sender before asking for approval.
     await provider.call({ from: address, to: request.to, data: request.data, value: BigInt(request.value) });
     if (generation !== this.generation) throw new Error('The signing wallet changed.');
+    this.options.persist?.(request);
     return new Promise((resolve, reject) => {
       this.pending = { request, provider, nonceFloor, resolve, reject, timer: this.expiry(request.id, APPROVAL_IDLE_MS) };
     });
@@ -82,7 +89,7 @@ export class BrowserSigning {
         ? 'Wallet approval expired. If you confirmed this transaction in your wallet, check it there before retrying; nothing was automatically resubmitted.'
         : 'Wallet approval expired. No transaction was automatically retried.'));
     }, ms);
-    timer.unref();
+    timer.unref?.();
     return timer;
   }
   begin(id: string): void {
@@ -90,6 +97,7 @@ export class BrowserSigning {
     const request = pending?.request;
     if (!pending || !request || request.id !== id) throw new Error('This wallet request is no longer active.');
     if (request.approvalStarted || request.submittedHash) throw new Error('This request is already being approved. Check the original wallet window.');
+    this.options.persist?.({ ...request, approvalStarted: true });
     request.approvalStarted = true;
     // The wallet prompt is open now; give the user the full window to act on it.
     clearTimeout(pending.timer);
@@ -99,7 +107,7 @@ export class BrowserSigning {
     const pending = this.pending;
     if (!pending || pending.request.id !== id) throw new Error('This wallet request is no longer active.');
     if (pending.request.submittedHash) {
-      if (pending.request.submittedHash === hash) return;
+      if (pending.request.submittedHash === hash) { this.options.persist?.(pending.request); return; }
       throw new Error('A transaction has already been submitted for this request.');
     }
     if (error) {
@@ -109,6 +117,8 @@ export class BrowserSigning {
     }
     if (!hash || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Invalid transaction hash.');
     pending.request.submittedHash = hash;
+    let persistenceError: unknown;
+    try { this.options.persist?.(pending.request); } catch (error) { persistenceError = error; }
     clearTimeout(pending.timer);
     // Keep HTTP acknowledgment short; the job continues only after chain verification.
     void (async () => {
@@ -126,6 +136,7 @@ export class BrowserSigning {
       } catch (err) { pending.reject(err instanceof Error ? err : new Error(String(err))); }
       finally { if (this.pending === pending) this.pending = null; }
     })();
+    if (persistenceError) throw persistenceError;
   }
   /** ethers 6 rejects with TIMEOUT rather than resolving null; keep polling in slices while the transaction may still land. */
   private async awaitReceipt(provider: Provider, hash: string): Promise<TransactionReceipt | null> {

@@ -12,12 +12,16 @@ import { LockSlider } from '../components/LockSlider';
 import { poolLabel, poolName } from '../components/Pools';
 import { usePageData } from '../data';
 import { formatAnts, isZero, sumBig, toBigInt } from '../format';
+import { BuyerStatus } from '../hosted/AccountMenu';
 
 const RewardRefreshContext = createContext({ updating: false, stale: false });
 
 export function RewardsPage() {
-  const page = usePageData('rewards', api.rewards, 5 * 60_000);
+  const config = useConfig();
+  const disconnected = config.mode === 'hosted' && config.address === '0x0000000000000000000000000000000000000000';
+  const page = usePageData(disconnected ? null : 'rewards', api.rewards, 5 * 60_000);
   const data = page.data;
+  if (disconnected) return <Card><h2>Your rewards</h2><p>Connect your wallet to view staking and seller rewards, then select a saved buyer account for buyer rewards.</p><BuyerWalletAction /></Card>;
   const updating = !!data && page.loading && page.reconciling;
   const stale = !!data && (page.reconciling || !!page.error);
   return (
@@ -31,7 +35,7 @@ export function RewardsPage() {
         </>
       ) : null}
       {data ? <RewardRefreshContext.Provider value={{ updating, stale }}>
-        <BuyerRewardsCard data={data} />
+        {config.mode === 'hosted' && !config.buyerAddress ? <Card><h2>Buyer rewards</h2><p>Add a buyer account using the wallet menu. Your staking and seller rewards do not require a buyer account.</p></Card> : <BuyerRewardsCard data={data} />}
         {data.scope !== 'buyer' ? <RewardsBody onRefresh={page.refresh} data={data} /> : null}
       </RewardRefreshContext.Provider> : null}
     </>
@@ -74,6 +78,7 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
   return <Card className="hero">
     <div className="tile-label">Buyer rewards</div>
     <p className="hint">Earned by buyer account <AddressLink value={dashboard.buyerAddress ?? dashboard.address} />.</p>
+    {dashboard.mode === 'hosted' && dashboard.buyerAddress && <>{dashboard.buyerLabel && <p>{dashboard.buyerLabel}</p>}<BuyerStatus address={dashboard.buyerAddress} /></>}
     <div className="hero-value"><RewardAmount>{formatAnts(amount, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>
     {isZero(amount) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : null}
     {!operator ? <p className="hint">Authorize a wallet to claim or stake this buyer’s rewards.</p> : !authorized ? <p className="hint">Connect the authorized wallet <AddressLink value={operator} /> on {dashboard.chainId} to claim or stake.</p> : null}

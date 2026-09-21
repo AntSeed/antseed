@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { multicallRead, type MulticallRequest } from '@antseed/node/payments';
+import { multicallRead, type MulticallRequest } from '@antseed/node/payments/browser';
 import type { AntsContext } from './context.js';
 import type { DisplaySnapshot } from './display-snapshot.js';
 import { IndexerError, type IndexedPools } from './indexer.js';
@@ -8,7 +8,7 @@ import { positions, move } from './positions.js';
 import { poolsView, singlePool } from './pools.js';
 import { poolYield } from './yield.js';
 
-vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
+vi.mock('@antseed/node/payments/browser', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
 vi.mock('./explorer.js', () => ({ explorerSellers: async () => ({ byAddress: new Map(), byAgent: new Map() }) }));
 vi.mock('./stake-eligibility.js', () => ({ stakeEligibility: async (_ctx: unknown, ids: number[]) => new Map(ids.map(id => [id, { owner, stakeable: true }])) }));
 const owner = '0x0000000000000000000000000000000000000001';

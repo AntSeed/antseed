@@ -1,5 +1,5 @@
 import { ZeroAddress } from 'ethers';
-import type { SellerPoolPosition } from '@antseed/node/payments';
+import type { SellerPoolPosition } from '@antseed/node/payments/browser';
 import type { DisplaySource } from '../api-types.js';
 import type { AntsContext, ResolvedStack } from './context.js';
 import { IndexerError, type IndexedPosition, type IndexedStakingEpoch } from './indexer.js';

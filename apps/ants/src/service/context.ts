@@ -19,7 +19,7 @@ import {
   UsageRewardsClient,
   WashTradingRegistryClient,
   resolveLegacyContractAddresses,
-} from '@antseed/node/payments';
+} from '@antseed/node/payments/browser';
 import type { ProtocolPhase } from '../api-types.js';
 
 /** Resolved chain configuration (the CLI's `requireCryptoConfig` output or a `resolveChainConfig` result). */
@@ -72,7 +72,7 @@ export interface ResolvedStack {
 }
 
 export interface AntsContextOptions {
-  buyerAddress?: string;
+  buyerAddress?: string | null;
   chain: AntsChainConfig;
   address: string;
   signer?: AbstractSigner;
@@ -101,7 +101,7 @@ export class MissingContractError extends Error {
 export class AntsContext {
   chain: AntsChainConfig;
   address: string;
-  readonly buyerAddress: string;
+  readonly buyerAddress: string | null;
   readonly localPositionIds = new Map<number, string>();
   signer: AbstractSigner | undefined;
   private readonly stackTtlMs: number;
@@ -118,7 +118,7 @@ export class AntsContext {
   constructor(options: AntsContextOptions) {
     this.chain = options.chain;
     this.address = options.address;
-    this.buyerAddress = options.buyerAddress ?? options.address;
+    this.buyerAddress = options.buyerAddress === undefined ? options.address : options.buyerAddress;
     this.signer = options.signer;
     this.stackTtlMs = options.stackTtlMs ?? 15_000;
     this.probeRpc = options.probeRpc ?? probeRpcEndpoint;

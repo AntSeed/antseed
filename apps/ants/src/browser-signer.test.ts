@@ -11,6 +11,31 @@ function fixture(overrides: object = {}) {
   return { bridge, signer: bridge.signer(from, provider), provider, tx };
 }
 describe('browser signer', () => {
+  it('checks live authorization and persists intent before opening approval', async () => {
+    const { provider } = fixture();
+    const beforeSend = vi.fn(async () => { throw new Error('Operator transferred'); });
+    const persist = vi.fn();
+    const bridge = new BrowserSigning(31337, { beforeSend, persist });
+    await expect(bridge.signer(from, provider).sendTransaction({ to })).rejects.toThrow('Operator transferred');
+    expect(persist).not.toHaveBeenCalled();
+    expect(bridge.request).toBeNull();
+  });
+
+  it('does not create an approval when transaction intent cannot be persisted', async () => {
+    const { provider } = fixture();
+    const bridge = new BrowserSigning(31337, { persist: () => { throw new Error('Storage unavailable'); } });
+    await expect(bridge.signer(from, provider).sendTransaction({ to })).rejects.toThrow('Storage unavailable');
+    expect(bridge.request).toBeNull();
+  });
+
+  it('still verifies a broadcast if saving its hash fails', async () => {
+    const { provider, tx } = fixture();
+    const bridge = new BrowserSigning(31337, { persist: request => { if (request.submittedHash) throw new Error('Storage full'); } });
+    const sent = bridge.signer(from, provider).sendTransaction({ to, data: '0x1234', value: 2n });
+    await vi.waitFor(() => expect(bridge.request).not.toBeNull());
+    await expect(bridge.complete(bridge.request!.id, hash)).rejects.toThrow('Storage full');
+    expect(await sent).toBe(tx);
+  });
   it('waits for the browser and verifies the transaction before resolving', async () => {
     const { bridge, signer, tx } = fixture();
     const sent = signer.sendTransaction({ to, data: '0x1234', value: 2n });

@@ -1,4 +1,4 @@
-import { Contract, id as keccak256, type AbstractSigner } from 'ethers';
+import { Contract, getBytes, id as keccak256, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface IdentityClientConfig {
@@ -81,7 +81,7 @@ export class IdentityClient extends BaseEvmClient {
   async getMetadata(agentId: number, key: string): Promise<Uint8Array> {
     const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, this._provider);
     const result = await contract.getFunction('getMetadata')(agentId, key);
-    return new Uint8Array(Buffer.from(result.slice(2), 'hex'));
+    return getBytes(result);
   }
 
 }

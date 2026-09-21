@@ -1,5 +1,5 @@
 import { ZeroAddress } from 'ethers';
-import { claimEpochRewards, pendingEpochRewards, previewPoolRewards, type SellerPoolsClient, type SellerPoolsRewardsClient } from '@antseed/node/payments';
+import { claimEpochRewards, pendingEpochRewards, previewPoolRewards, type SellerPoolsClient, type SellerPoolsRewardsClient } from '@antseed/node/payments/browser';
 import type { AbstractSigner } from 'ethers';
 import type { AntsContext } from './context.js';
 import { closedPositionIds } from './positions.js';
@@ -34,7 +34,7 @@ async function usageEpochsOf(ctx: AntsContext, recognized: number[]): Promise<nu
     const participant = sameAddress(ctx.address, ZeroAddress)
       ? { seller: [], buyer: [] }
       : await indexer.participant(ctx.address, recognized.length);
-    const buyer = ctx.address.toLowerCase() === ctx.buyerAddress.toLowerCase() ? participant : await indexer.participant(ctx.buyerAddress, recognized.length);
+    const buyer = !ctx.buyerAddress ? { seller: [], buyer: [] } : ctx.address.toLowerCase() === ctx.buyerAddress.toLowerCase() ? participant : await indexer.participant(ctx.buyerAddress, recognized.length);
     const active = new Set([...participant.seller.map((row) => row.epoch), ...buyer.buyer.map((row) => row.epoch)]);
     return recognized.filter((epoch) => active.has(epoch));
   } catch (error) {
@@ -45,12 +45,13 @@ async function usageEpochsOf(ctx: AntsContext, recognized: number[]): Promise<nu
 
 async function buyerOperator(ctx: AntsContext): Promise<string | null> {
   const deposits = ctx.deposits();
-  if (!deposits) return null;
+  if (!deposits || !ctx.buyerAddress) return null;
   const operator = await deposits.getOperator(ctx.buyerAddress);
   return sameAddress(operator, ZeroAddress) ? null : operator;
 }
 
 export async function rewards(ctx: AntsContext): Promise<RewardsView> {
+  const buyerAddress = ctx.buyerAddress;
   const stack = await ctx.stack();
   const epochs = await ctx.claimableEpochs();
   const pools = ctx.pools();
@@ -88,22 +89,22 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
       const breakdown = await Promise.all(candidates.map(async (epoch) => {
         const [sellerClaimed, buyerClaimed] = await Promise.all([
           agentId ? usageRewards.agentEpochClaimed(agentId, epoch) : Promise.resolve(false),
-          usageRewards.buyerEpochClaimed(ctx.buyerAddress, epoch),
+          buyerAddress ? usageRewards.buyerEpochClaimed(buyerAddress, epoch) : Promise.resolve(true),
         ]);
         const [sellerAmount, buyerAmount] = await Promise.all([
           agentId && !sellerClaimed ? usageRewards.pendingAgentReward(agentId, epoch) : Promise.resolve(0n),
-          buyerClaimed ? Promise.resolve(0n) : usageRewards.pendingBuyerReward(ctx.buyerAddress, epoch),
+          !buyerAddress || buyerClaimed ? Promise.resolve(0n) : usageRewards.pendingBuyerReward(buyerAddress, epoch),
         ]);
         return { epoch, sellerAmount, sellerClaimed, buyerAmount, buyerClaimed };
       }));
       for (const row of breakdown) {
         if (row.sellerAmount > 0n || row.sellerClaimed) sellerEpochs.push({ epoch: row.epoch, amount: row.sellerAmount.toString(), claimed: row.sellerClaimed });
-        if (row.buyerAmount > 0n || row.buyerClaimed) buyerEpochs.push({ epoch: row.epoch, amount: row.buyerAmount.toString(), claimed: row.buyerClaimed });
+        if (buyerAddress && (row.buyerAmount > 0n || row.buyerClaimed)) buyerEpochs.push({ epoch: row.epoch, amount: row.buyerAmount.toString(), claimed: row.buyerClaimed });
         buyerTotal += row.buyerAmount;
       }
     } else if (usageRewards) {
-      for (const epoch of candidates) {
-        if (await usageRewards.buyerEpochClaimed(ctx.buyerAddress, epoch)) continue;
+      for (const epoch of buyerAddress ? candidates : []) {
+        if (!ctx.buyerAddress || await usageRewards.buyerEpochClaimed(ctx.buyerAddress, epoch)) continue;
         buyerTotal += await usageRewards.pendingBuyerReward(ctx.buyerAddress, epoch);
       }
     }
@@ -115,11 +116,11 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   if (legacy && epochs.legacy.length > 0) {
     const pending = await pendingEpochRewards(epochs.legacy, async (batch) => {
       if (!walletConnected) {
-        legacyBuyer += (await legacy.pendingEmissions(ctx.buyerAddress, batch)).buyer;
+        if (buyerAddress) legacyBuyer += (await legacy.pendingEmissions(buyerAddress, batch)).buyer;
         return 0n;
       }
       const result = await legacy.pendingEmissions(ctx.address, batch);
-      legacyBuyer += ctx.buyerAddress.toLowerCase() === ctx.address.toLowerCase() ? result.buyer : (await legacy.pendingEmissions(ctx.buyerAddress, batch)).buyer;
+      if (buyerAddress) legacyBuyer += buyerAddress.toLowerCase() === ctx.address.toLowerCase() ? result.buyer : (await legacy.pendingEmissions(buyerAddress, batch)).buyer;
       return result.seller;
     });
     legacySeller = pending;
@@ -179,6 +180,7 @@ async function preparePoolIndexes(
 export interface ClaimResult { claimed: string; transactions: string[]; buckets: RewardBucket[]; }
 
 export async function claim(ctx: AntsContext, request: ClaimRequest, report: StepReporter = silentReporter): Promise<ClaimResult> {
+  const buyerAddress = ctx.buyerAddress;
   const signer = ctx.requireSigner();
   const stack = await ctx.stack();
   const epochs = await ctx.claimableEpochs();
@@ -234,7 +236,7 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
     }
   }
 
-  if (buckets.includes('buyer') && stack.phase === 'active') {
+  if (ctx.buyerAddress && buckets.includes('buyer') && stack.phase === 'active') {
     const usageRewards = ctx.usageRewards();
     if (usageRewards) {
       const operator = await buyerOperator(ctx);
@@ -259,9 +261,9 @@ export async function claim(ctx: AntsContext, request: ClaimRequest, report: Ste
         async (batch) => (await legacy.pendingEmissions(ctx.address, batch)).seller,
         async (batch) => { await report(`Claiming legacy seller emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimSellerEmissions(signer, batch); },
         async (hash) => record(hash, 'Legacy seller emissions claimed'));
-      if (request.scope !== 'wallet' && sameAddress(await buyerOperator(ctx), ctx.address)) await claimEpochRewards(epochs.legacy,
-        async (batch) => (await legacy.pendingEmissions(ctx.buyerAddress, batch)).buyer,
-        async (batch) => { await report(`Claiming legacy buyer emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimBuyerEmissions(signer, ctx.buyerAddress, batch); },
+      if (buyerAddress && request.scope !== 'wallet' && sameAddress(await buyerOperator(ctx), ctx.address)) await claimEpochRewards(epochs.legacy,
+        async (batch) => (await legacy.pendingEmissions(buyerAddress, batch)).buyer,
+        async (batch) => { await report(`Claiming legacy buyer emissions for epochs ${batch[0]}…${batch[batch.length - 1]}`); return legacy.claimBuyerEmissions(signer, buyerAddress, batch); },
         async (hash) => record(hash, 'Legacy buyer emissions claimed'));
     }
   }
@@ -337,6 +339,7 @@ export async function stakeUsageRewards(ctx: AntsContext, request: StakeUsageReq
       await report('Reward staked', hash);
     }
   } else {
+    if (!ctx.buyerAddress) throw new Error('Select a buyer account first.');
     const stakeAgentId = assertAgentId(request.stakeAgentId);
     const operator = await buyerOperator(ctx);
     if (!sameAddress(operator, ctx.address)) throw new Error(`Buyer usage rewards belong to the deposits operator ${operator}; stake them from that wallet.`);

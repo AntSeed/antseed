@@ -1,5 +1,5 @@
 import { Interface, ZeroAddress } from 'ethers';
-import { multicallRead, type MulticallRequest } from '@antseed/node/payments';
+import { multicallRead, type MulticallRequest } from '@antseed/node/payments/browser';
 import type { AntsContext, ResolvedStack } from './context.js';
 import { displayData } from './display-snapshot.js';
 

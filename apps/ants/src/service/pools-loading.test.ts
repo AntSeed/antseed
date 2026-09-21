@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ZeroAddress } from 'ethers';
-import { multicallRead } from '@antseed/node/payments';
+import { multicallRead } from '@antseed/node/payments/browser';
 import { poolsView, singlePool } from './pools.js';
 import { poolYield } from './yield.js';
 import { explorerSellers } from './explorer.js';
 import type { AntsContext } from './context.js';
 import type { IndexedPools, IndexedSellerEpoch } from './indexer.js';
-vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
+vi.mock('@antseed/node/payments/browser', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
 vi.mock('./explorer.js', () => ({ explorerSellers: vi.fn() }));
 
 function setup(indexedEpoch = 2, historical = true, currentEpoch = 2) {

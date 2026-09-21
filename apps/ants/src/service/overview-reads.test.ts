@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { multicallRead } from '@antseed/node/payments';
+import { multicallRead } from '@antseed/node/payments/browser';
 import { overviewReads } from './overview-reads.js';
 import type { AntsContext, ResolvedStack } from './context.js';
-vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
+vi.mock('@antseed/node/payments/browser', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
 const address = '0x0000000000000000000000000000000000000001';
 const provider = { getBalance: vi.fn(async () => 99n) };
 const ctx = {

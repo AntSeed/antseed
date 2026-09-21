@@ -1,7 +1,7 @@
 import { closedPositionIds } from './positions.js';
 import { poolYield } from './yield.js';
 import { Interface, ZeroAddress } from 'ethers';
-import { multicallRead, type MulticallRequest, type SellerPoolPosition } from '@antseed/node/payments';
+import { multicallRead, type MulticallRequest, type SellerPoolPosition } from '@antseed/node/payments/browser';
 import type { AntsContext, ResolvedStack } from './context.js';
 import type { PoolsView, PoolView, PoolEpochPoint, EpochVolume, SellerProfile } from '../api-types.js';
 import { toJson } from './json.js';

@@ -14,6 +14,7 @@ import { RewardsPage } from './pages/Rewards';
 import { SellerPage } from './pages/Seller';
 import { StakePage } from './pages/Stake';
 import { useRoute, type Page } from './router';
+import { isHosted } from './runtime';
 
 const THEME_KEY = 'ants.dashboard.theme';
 /** The shell re-reads the overview on this cadence so the footer "updated" time and the tiles stay fresh. */
@@ -35,7 +36,7 @@ function readTheme(): Theme {
 }
 
 export function App() {
-  const [unauthorized, setUnauthorized] = useState(() => getToken() === null);
+  const [unauthorized, setUnauthorized] = useState(() => !isHosted() && getToken() === null);
   useEffect(() => onUnauthorized(() => setUnauthorized(true)), []);
 
   const [theme, setTheme] = useState<Theme>(readTheme);
@@ -97,7 +98,7 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
     return (
       <div className="full-page">
         <Card className="full-page-inner">
-          {config.error ? <ErrorBox error={config.error} onRetry={config.refresh} title="Could not load dashboard config" /> : <span className="muted">Connecting to the local server…</span>}
+          {config.error ? <ErrorBox error={config.error} onRetry={config.refresh} title="Could not load dashboard config" /> : <span className="muted">{isHosted() ? 'Loading dashboard…' : 'Connecting to the local server…'}</span>}
         </Card>
       </div>
     );
@@ -105,7 +106,7 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
 
   return (
     <WalletProvider config={value.config}><AppContext.Provider value={value}>
-      <JobsProvider>
+      <JobsProvider key={value.config.mode === 'hosted' ? `${value.config.evmChainId}:${value.config.address}` : 'local'}>
         <Layout page={route.page} updatedAt={overview.updatedAt} loading={overview.loading}>
           <PageView page={route.page} />
         </Layout>

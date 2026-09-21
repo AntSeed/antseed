@@ -46,6 +46,15 @@ function fixture(indexed = true) {
 }
 
 describe('closed-position rewards', () => {
+  it('keeps wallet rewards available without a selected buyer', async () => {
+    const { ctx } = fixture();
+    Object.assign(ctx, { buyerAddress: null });
+    const result = await rewards(ctx);
+    expect(result.buyerUsage.total).toBe('0');
+    expect(result.buyerUsage.operator).toBeNull();
+    expect(result.buyerUsage.claimable).toBe(false);
+    expect(result.scope).toBe('all');
+  });
   it('preserves known rewards with an incomplete-history marker when the indexer is unreachable', async () => {
     const { ctx, pools } = fixture();
     pools.allStakerPositionIds = async () => [7];

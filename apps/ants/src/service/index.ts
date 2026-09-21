@@ -15,6 +15,6 @@ export { formatAnts, formatAntsExact, parseAnts, formatUsdc, formatBps, shortAdd
 export { toJson, jsonReplacer } from './json.js';
 export { silentReporter } from './steps.js';
 export type { StepReporter } from './steps.js';
-export { validateSellerProofArtifact, sellerProofId } from '@antseed/node/payments';
-export type { SellerProofArtifact } from '@antseed/node/payments';
+export { validateSellerProofArtifact, sellerProofId } from '@antseed/node/payments/browser';
+export type { SellerProofArtifact } from '@antseed/node/payments/browser';
 export * from '../api-types.js';

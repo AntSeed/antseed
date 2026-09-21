@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AntscanIndexer, IndexerError } from './indexer.js';
 
 function fakeFetch(routes: Record<string, unknown>, calls: string[] = []): typeof fetch {
@@ -13,6 +13,14 @@ function fakeFetch(routes: Record<string, unknown>, calls: string[] = []): typeo
 }
 
 describe('AntscanIndexer', () => {
+  it('does not bind the native browser fetch to the indexer instance', async () => {
+    const nativeFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(function (this: unknown) {
+      if (this instanceof AntscanIndexer) throw new TypeError('Illegal invocation');
+      return Promise.resolve(new Response(JSON.stringify({ pools: [], network: {}, currentEpoch: 1 })));
+    });
+    try { expect((await new AntscanIndexer('https://scan').pools()).pools).toEqual([]); }
+    finally { nativeFetch.mockRestore(); }
+  });
   it('normalises pool rows, keeping amounts as strings and ids as numbers', async () => {
     const indexer = new AntscanIndexer('https://scan/', fakeFetch({
       '/api/staking/pools': {

@@ -11,14 +11,16 @@ import { StakeForm } from '../components/StakeForm';
 import { usePageData } from '../data';
 import { epochStartAt, formatAnts, formatDuration, formatInt, formatUsdcCompact, formatUtc, shortAddress } from '../format';
 import { useNow } from '../hooks';
+import { BuyerWalletAction } from '../wallet';
 
 export function StakePage() {
   const config = useConfig();
   const walletReady = !config.browserWallet || !config.readOnly;
+  const hostedDisconnected = config.mode === 'hosted' && /^0x0{40}$/i.test(config.address);
   // Buyer rewards are readable before connection; wallet positions are not.
   const overview = usePageData('overview', api.overview);
   const positions = usePageData(walletReady ? 'positions:current' : null, api.positions);
-  const rewards = usePageData('rewards', api.rewards, 5 * 60_000);
+  const rewards = usePageData(hostedDisconnected ? null : 'rewards', api.rewards, 5 * 60_000);
   const pools = usePageData('pools', api.pools, 5 * 60_000);
   const data = overview.data;
   const buyerOperator = rewards.data?.buyerUsage.operator;
@@ -65,7 +67,7 @@ export function StakePage() {
     <>
       {config.browserWallet && wrongBuyerWallet ? (
         <Alert tone="info" title="Connect your authorized wallet">
-          To stake buyer rewards, use the wallet button above to switch to <span className="mono" title={buyerOperator!}>{shortAddress(buyerOperator!)}</span>, the authorized wallet for your buyer account.
+          To stake buyer rewards, use the wallet menu to switch to <span className="mono" title={buyerOperator!}>{shortAddress(buyerOperator!)}</span>, the authorized wallet for your buyer account.
         </Alert>
       ) : null}
       {overview.error && !data ? <ErrorBox error={overview.error} onRetry={overview.refresh} /> : null}
@@ -82,6 +84,7 @@ export function StakePage() {
         </Alert>
       ) : null}
 
+      {hostedDisconnected ? <Panel title="Your staking dashboard"><p className="muted">Browse sellers below. Connect your wallet to view positions and rewards or stake ANTS.</p><BuyerWalletAction /></Panel> : null}
       {pools.data ? <NetworkTicker view={pools.data} /> : null}
 
       <Panel

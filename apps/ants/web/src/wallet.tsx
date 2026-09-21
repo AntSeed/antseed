@@ -9,6 +9,7 @@ import { useJobs } from './jobs';
 import { WalletPromptGate } from './wallet-prompt';
 import type { BrowserTransaction } from '../../src/browser-signer';
 import '@rainbow-me/rainbowkit/styles.css';
+import { HostedAccountMenu } from './hosted/AccountMenu';
 
 const queries = new QueryClient();
 /** Match the dashboard's signal colour; the connect button sits on the dark top bar in both themes. */
@@ -17,11 +18,11 @@ const walletTheme = darkTheme({ accentColor: '#1fd87a', accentColorForeground: '
 const WalletRoot = WagmiProvider as unknown as ComponentType<{ config: ReturnType<typeof getDefaultConfig>; children: ReactNode }>;
 export function WalletProvider({ config, children }: { config: DashboardConfig; children: ReactNode }) {
   const wagmi = useMemo(() => getDefaultConfig({
-    appName: 'AntSeed Staking', projectId: '9a1851410cb5589bc351a6dabf17140e',
+    appName: 'AntSeed Staking', projectId: config.walletConnectProjectId ?? '9a1851410cb5589bc351a6dabf17140e',
     chains: [defineChain({ id: config.evmChainId, name: config.chainId, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
       rpcUrls: { default: { http: [config.walletRpcUrl ?? (config.evmChainId === 8453 ? 'https://mainnet.base.org' : config.evmChainId === 84532 ? 'https://sepolia.base.org' : 'http://127.0.0.1:8545')] } } })],
     transports: { [config.evmChainId]: http() },
-  }), [config.chainId, config.evmChainId, config.walletRpcUrl]);
+  }), [config.chainId, config.evmChainId, config.walletRpcUrl, config.walletConnectProjectId]);
   if (!config.browserWallet) return <>{children}</>;
   return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider theme={walletTheme}>{children}</RainbowKitProvider></QueryClientProvider></WalletRoot>;
 }
@@ -38,6 +39,8 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
   const processing = useRef(false);
   const promptGate = useRef(new WalletPromptGate());
   const syncedIdentity = useRef<string | null>(null);
+  const currentIdentity = useRef({ address: account.address, chainId: account.chainId });
+  currentIdentity.current = { address: account.address, chainId: account.chainId };
   const syncQueue = useRef<Promise<void>>(Promise.resolve());
   const submitted = useRef(new Map<string, string>());
   const transactionActive = useRef(false);
@@ -103,6 +106,7 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
       if (!hash) {
         await request('/api/wallet/begin', { method: 'POST', body: { id: pending.id } });
         startedHere = true;
+        if (currentIdentity.current.address?.toLowerCase() !== pending.from.toLowerCase() || currentIdentity.current.chainId !== pending.chainId) throw new Error('Wallet or network changed before approval.');
         hash = await wallet.sendTransaction({ account: wallet.account, chain: wallet.chain, to: pending.to as `0x${string}`, data: pending.data as `0x${string}`, value: BigInt(pending.value) });
         submitted.current.set(pending.id, hash);
       }
@@ -121,7 +125,8 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
     if (promptGate.current.claim(promptContext)) void approve();
   }, [promptContext, approve]);
   return <div className="browser-wallet">
-    <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+    {config.mode === 'hosted' ? <HostedAccountMenu /> : <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />}
+    {config.writeUnavailableReason && <span className="hint" role="status">{config.writeUnavailableReason}</span>}
     {wrongChain && <span className="hint">Switch to {config.chainId} to continue.</span>}
     {error && <div role="alert" className="hint">{error}</div>}
     {pending && <div className="wallet-approval" role="status">

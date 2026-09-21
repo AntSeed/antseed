@@ -6,8 +6,15 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Fixed
+
+- Desktop development startup now builds the payments portal frontend as well as its server, so wallet authorization opens a working page in a fresh worktree instead of returning 404.
+
 ### Added
 
+- Payments: add a small Disconnect button beside the connected wallet in the authorization dialog. Disconnecting leaves on-chain authorization unchanged and is disabled while authorization is in progress.
+
+- ANTS dashboard: add an independent static-hosted build with browser-wallet signing, saved buyer-account selection, live operator checks, and cross-tab transaction recovery. The desktop and CLI continue opening the existing local dashboard; initial buyer authorization remains in the local app.
 - ANTS dashboard: left sidebar navigation (Sellers · My positions · Rewards · Seller · Network · Addresses) replaces the top tabs; the epoch clock, theme toggle and wallet sit at the bottom of the rail and the rail collapses into a top strip on narrow screens. Your wallet tiles and the positions table moved off the sellers page onto a dedicated `#/positions` page.
 - ANTS dashboard: every chart has a hover readout. Hovering the volume/network-share chart, the stake/power and staker-reward bar charts, or a row sparkline shows a crosshair and a tooltip with the epoch and each series' exact value (estimates are marked); keyboard focus on a mark shows the same readout.
 - ANTS dashboard: pending stake is shown everywhere it was previously invisible. Pools list and seller sheet show stake waiting for its activation epoch next to TVL; "Your stake" and "Your position" split active from pending; the positions page totals include pending stake. `GET /api/pools` gains `pendingStake` and `yourPendingStake` per pool (and `yourPendingStake` overall) and `GET /api/positions` totals gain `pendingStake`.

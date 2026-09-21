@@ -13,11 +13,17 @@ import type {
   VerificationView,
 } from '../../src/api-types';
 
+import { dashboardTransport } from './runtime';
+
 const TOKEN_KEY = 'ants.dashboard.token';
 
 export interface DashboardConfig {
   address: string;
-  buyerAddress: string;
+  buyerAddress: string | null;
+  mode?: 'local' | 'hosted';
+  buyerLabel?: string;
+  walletConnectProjectId?: string;
+  writeUnavailableReason?: string;
   browserWallet?: boolean;
   canAuthorize?: boolean;
   chainId: string;
@@ -83,6 +89,8 @@ export function onUnauthorized(listener: () => void): () => void {
 type Envelope<T> = { ok: true; data: T } | { ok: false; error: string };
 
 export async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const transport = dashboardTransport();
+  if (transport) return transport.request<T>(path, init);
   const headers: Record<string, string> = { Authorization: `Bearer ${getToken() ?? ''}` };
   let body: string | undefined;
   if (init?.body !== undefined) {

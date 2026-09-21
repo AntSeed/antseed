@@ -109,9 +109,9 @@ export interface ActionButtonProps {
 
 /** Hook describing why actions are blocked (read-only wallet or a job already running). */
 export function useActionBlock(): { blocked: boolean; reason: string | undefined } {
-  const { config: { readOnly }, overview, overviewError } = useApp();
+  const { config: { readOnly, writeUnavailableReason }, overview, overviewError } = useApp();
   const { running } = useJobs();
-  if (readOnly) return { blocked: true, reason: 'Read-only mode: no wallet is available to sign.' };
+  if (readOnly) return { blocked: true, reason: writeUnavailableReason ?? 'Read-only mode: no wallet is available to sign.' };
   if (!overview || overviewError) return { blocked: true, reason: 'Wallet information is unavailable. Refresh before sending a transaction.' };
   if (BigInt(overview.wallet.eth) === 0n) return { blocked: true, reason: 'This wallet needs ETH on the selected network for transaction fees.' };
   if (running) return { blocked: true, reason: 'Another action is still running.' };

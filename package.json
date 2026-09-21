@@ -30,7 +30,7 @@
     "build:tier2": "pnpm --filter \"./plugins/*\" run build",
     "build:tier3": "pnpm --filter=@antseed/payments run build && pnpm --filter=@antseed/ants run build",
     "build:tier4": "pnpm --filter=@antseed/cli run build && pnpm --filter=@antseed/desktop run build",
-    "build:standalone": "pnpm --filter=@antseed/website run build && pnpm --filter=@antseed/diem-staking run build",
+    "build:standalone": "pnpm --filter=@antseed/website run build && pnpm --filter=@antseed/diem-staking run build && pnpm --filter=@antseed/ants run build:hosted",
     "build:diem-staking": "pnpm --filter=@antseed/diem-staking run build",
     "dev:diem-staking": "pnpm --filter=@antseed/diem-staking run dev",
     "typecheck:diem-staking": "pnpm --filter=@antseed/diem-staking run typecheck",
