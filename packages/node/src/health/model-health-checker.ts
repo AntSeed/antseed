@@ -169,6 +169,7 @@ export class ModelHealthChecker {
       }
 
       for (const service of services) {
+        if (provider.fixedFeeServices?.some(offer => offer.service === service)) continue;
         if (this._stopped) return;
         await this._probeService(target, service);
       }

@@ -6,9 +6,124 @@ import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-code
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
+import { FIXED_FEE_CAPABILITY, FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER } from '@antseed/protocol/fixed-fee';
 
 const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
+
+describe('fixed-fee seller payments', () => {
+  const body = { service: 'levanto-route', v: 1, cqt: 5, inputMessage: 'Help with code', promptTokens: 3, expectedCachedTokens: [], constraints: {} };
+  const result = { v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: 'a'.repeat(40), estimate: { costUsd: 0.01, inputTokens: 3, cachedInputTokens: 0, outputTokens: 30 }, price: { inUsdPerM: 1, outUsdPerM: 3, cachedInUsdPerM: 0 } }] };
+  function setup(overrides: Record<string, unknown> = {}, capable = true) {
+    let spend = 0n;
+    const provider = makeProvider(10, 10, { name: 'levanto', services: ['levanto-route', 'image'] });
+    provider.fixedFeeServices = [{ service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000', path: '/_antseed/route' }];
+    provider.handleRequest = vi.fn(async request => ({ requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(result)) }));
+    provider.handleRequestStream = vi.fn();
+    const spm = makeSpmMock({
+      recordSpend: vi.fn((_channel: string, amount: bigint) => { spend += amount; }),
+      getCumulativeSpend: () => spend, getAcceptedCumulative: () => spend, ...overrides,
+    });
+    const frames: Uint8Array[] = [];
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() };
+    const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: spm, sessionTracker: null, channelsClient: {} as any, announcer: null, emit: () => false });
+    const { mux } = handler.handleConnection({ ...makeConn(frames), hasRemoteCapability: (capability: string) => capable && capability === FIXED_FEE_CAPABILITY }, 'b'.repeat(40), paymentMux as any);
+    const send = async (requestId = 'fixed', patch: Partial<SerializedHttpRequest> = {}) => {
+      await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({
+        requestId, method: 'POST', path: '/_antseed/route',
+        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto', [FIXED_FEE_CONTRACT_HEADER]: 'levanto-routing-v1', [FIXED_FEE_PRICE_HEADER]: '1000' },
+        body: new TextEncoder().encode(JSON.stringify(body)), ...patch,
+      }) });
+      return decodeHttpResponse(decodeFrame(frames.at(-1)!).message!.payload);
+    };
+    return { provider, spm, paymentMux, send };
+  }
+  it('charges exactly the fee with zero tokens, without invoking streaming', async () => {
+    const harness = setup();
+    expect((await harness.send()).statusCode).toBe(200);
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '1000', inputTokens: '0', outputTokens: '0', billingUsage: undefined }));
+    expect(harness.provider.handleRequestStream).not.toHaveBeenCalled();
+  });
+  it('rejects legacy buyers and mismatched offers before execution', async () => {
+    const legacy = setup({}, false);
+    expect((await legacy.send()).statusCode).toBe(400);
+    expect(legacy.provider.handleRequest).not.toHaveBeenCalled();
+    const harness = setup();
+    expect((await harness.send('wrong', { headers: {} })).statusCode).toBe(400);
+    expect(harness.provider.handleRequest).not.toHaveBeenCalled();
+  });
+  it('negotiates once before execution and allows retrying that request ID', async () => {
+    let hasSession = false;
+    const harness = setup({ hasSession: () => hasSession });
+    expect((await harness.send()).statusCode).toBe(402);
+    expect(harness.provider.handleRequest).not.toHaveBeenCalled();
+    expect(harness.paymentMux.sendPaymentRequired).toHaveBeenCalledWith(expect.objectContaining({ minBudgetPerRequest: '1000' }));
+    hasSession = true;
+    expect((await harness.send()).statusCode).toBe(200);
+    expect((await harness.send()).statusCode).toBe(400);
+    expect(harness.provider.handleRequest).toHaveBeenCalledOnce();
+  });
+  it('never executes beyond the confirmed reserve, including concurrent calls', async () => {
+    const harness = setup({ getReserveMax: () => 1000n });
+    await Promise.all([harness.send('first'), harness.send('second')]);
+    expect(harness.provider.handleRequest).toHaveBeenCalledOnce();
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
+  });
+  it('does not charge responses rejected by the provider validator', async () => {
+    const harness = setup();
+    vi.mocked(harness.provider.handleRequest).mockRejectedValue(new Error('Invalid service response'));
+    expect((await harness.send()).statusCode).toBe(500);
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 0n);
+  });
+  it('keeps ordinary services discoverable to legacy model-list clients', async () => {
+    const harness = setup({}, false);
+    const response = await harness.send('models', { method: 'GET', path: '/v1/models', headers: {}, body: new Uint8Array() });
+    expect(JSON.parse(new TextDecoder().decode(response.body)).data.map((model: { id: string }) => model.id)).toEqual(['image']);
+  });
+  it('preserves concurrent inference for buyers that never opt into fixed fees', async () => {
+    const harness = setup({}, false);
+    expect((await harness.send('legacy-route-attempt')).statusCode).toBe(400);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const handleRequestStream = vi.fn(async (request: SerializedHttpRequest) => {
+      await gate;
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode('{}') };
+    });
+    harness.provider.handleRequestStream = handleRequestStream;
+    const request = { path: '/v1/chat/completions', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'image' })) };
+    const first = harness.send('first', request);
+    const second = harness.send('second', request);
+    try {
+      await vi.waitFor(() => expect(handleRequestStream).toHaveBeenCalledTimes(2));
+    } finally {
+      release();
+      await Promise.all([first, second]);
+    }
+  });
+  it('keeps legacy image charges and v1 reports unchanged on a mixed seller', async () => {
+    const harness = setup({}, false);
+    harness.provider.pricing = { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
+    harness.provider.serviceApiProtocols = { image: ['openai-images'] };
+    harness.provider.serviceUnitBillingModels = { image: { 'openai-images': {
+      version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }],
+    } } };
+    harness.provider.handleRequestStream = undefined;
+    vi.mocked(harness.provider.handleRequest).mockImplementation(async request => ({
+      requestId: request.requestId, statusCode: 200, headers: {},
+      body: new TextEncoder().encode(JSON.stringify({ data: [{ b64_json: 'aGVsbG8=' }, { b64_json: 'd29ybGQ=' }] })),
+    }));
+    const response = await harness.send('legacy-image', {
+      path: '/v1/images/generations', headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'image', prompt: 'A tree', n: 2 })),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 80_000n);
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      lastRequestCost: '80000', billingUsage: { version: 1, units: { output_images: '2' } },
+    }));
+  });
+});
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;

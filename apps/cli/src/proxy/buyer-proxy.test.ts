@@ -14,6 +14,8 @@ import {
   buyerFault,
   computeTrustScore,
   type ModelRoutingPreferences,
+  type Router,
+  type SerializedHttpRequest,
   type PeerInfo,
   type SerializedHttpResponse,
 } from '@antseed/node'
@@ -46,6 +48,49 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
     providers,
   }
 }
+
+test('selected router hands auto requests to normal inference and bypasses concrete models and pins', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.reputationScore = 90
+  peer.providerPricing = { openai: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'gpt-4o': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } }
+  peer.providerServiceApiProtocols = { openai: { services: { 'gpt-4o': ['openai-chat-completions'] } } }
+  let routingCalls = 0
+  const router: Router = {
+    ...permissiveRouter(), selectPeer: () => peer, autoRouteServiceId: 'levanto-auto',
+    async selectRoute(_request, _peers, context) {
+      routingCalls += 1
+      const routes = [{ serviceId: 'gpt-4o', peerId: peer.peerId }]
+      assert.equal(context.acceptRecommendations(routes), true)
+      return routes
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  const dispatched: SerializedHttpRequest[] = []
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: SerializedHttpRequest) => {
+    dispatched.push(request)
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"choices":[]}') }
+  }
+  for (const model of ['levanto-auto', 'antseed', 'gpt-4o', `${peer.peerId}@gpt-4o`]) {
+    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model, messages: [{ role: 'user', content: 'Hello' }] } }))
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(JSON.parse(Buffer.from(dispatched.at(-1)!.body).toString()).model, 'gpt-4o')
+  }
+  assert.equal(routingCalls, 2)
+  assert.equal(dispatched.length, 4)
+})
+
+test('selected router failure never silently uses an inference seller', async () => {
+  const peer = makePeer('a', ['openai'])
+  const router: Router = {
+    ...permissiveRouter(), selectPeer: () => peer, autoRouteServiceId: 'levanto-auto',
+    async selectRoute() { throw new Error('Routing service unavailable') },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  ;(proxy as any)._node.sendRequest = () => { throw new Error('inference must not execute') }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 502)
+  assert.match(response.body, /Routing service unavailable/)
+})
 
 test('existing required CLI verification rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {
   const rejected = makePeer('a', ['openai'])

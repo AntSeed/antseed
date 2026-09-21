@@ -17,6 +17,9 @@ import {
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
 import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
+import { FIXED_FEE_CAPABILITY, fixedFeeOffering, resolveFixedFeeOffer } from '@antseed/protocol/fixed-fee';
+import { decodeMetadata, encodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
+import { verifySignature, hexToBytes } from '../src/p2p/identity.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -133,6 +136,27 @@ describe('PeerAnnouncer capabilities', () => {
 });
 
 describe('PeerAnnouncer metadata versions', () => {
+  it('signs fixed-fee offerings in legacy v12 alongside unchanged image billing v1', async () => {
+    const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+    const announcer = new PeerAnnouncer({
+      ...makeBaseConfig(), capabilities: [FIXED_FEE_CAPABILITY], offerings: [fixedFeeOffering(offer)],
+      providers: [{ provider: 'images', services: ['image'], maxConcurrency: 5,
+        serviceApiProtocols: { image: ['openai-images'] },
+        serviceUnitBillingModels: { image: { 'openai-images': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] } } },
+      }],
+    });
+    await announcer.announce();
+    const metadata = announcer.getLatestMetadata()!;
+    const decoded = decodeMetadata(encodeMetadata(metadata));
+    expect(decoded.version).toBe(12);
+    expect(decoded.capabilities).toContain(FIXED_FEE_CAPABILITY);
+    expect(decoded.providers[0]?.services).toEqual(['image']);
+    expect(decoded.providers[0]?.serviceUnitBillingModels?.image?.['openai-images']?.version).toBe(1);
+    expect(resolveFixedFeeOffer(decoded.offerings, offer.provider, offer.service)).toEqual(offer);
+    expect(await verifySignature(decoded.peerId, hexToBytes(decoded.signature), encodeMetadataForSigning(decoded))).toBe(true);
+    decoded.offerings![0]!.pricing.pricePerUnit = 1;
+    expect(await verifySignature(decoded.peerId, hexToBytes(decoded.signature), encodeMetadataForSigning(decoded))).toBe(false);
+  });
   it('announces current-version metadata carrying configured billing models', async () => {
     const base = makeBaseConfig();
     const announcer = new PeerAnnouncer({

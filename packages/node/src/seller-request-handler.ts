@@ -35,6 +35,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
+import { FIXED_FEE_CAPABILITY, FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER, parseMicroUsdc } from '@antseed/protocol/fixed-fee';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -84,6 +85,10 @@ export class SellerRequestHandler {
   private readonly _providerLoadCounts = new Map<string, number>();
   private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly _requestQueues = new Map<string, Promise<void>>();
+  private readonly _requestQueueSizes = new Map<string, number>();
+  private readonly _fixedFeeBuyers = new Set<string>();
+  private readonly _fixedFeeExecuted = new Map<string, number>();
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
@@ -123,7 +128,7 @@ export class SellerRequestHandler {
       maxUploadBodyBytes: this._deps.maxUploadBodyBytes,
     });
 
-    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
+    const handleRequest = async (request: SerializedHttpRequest): Promise<void> => {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
       // Handle /v1/models locally — free metadata endpoint, no payment required.
@@ -230,12 +235,31 @@ export class SellerRequestHandler {
         return;
       }
 
-      const requestPricing = this.resolveProviderPricing(provider, request);
-      const requestBilling = this._captureSellerBillingContext(provider, request);
+      const fixedFee = provider.fixedFeeServices?.find(offer => offer.service === this._extractRequestedService(request));
+      const fixedFeeKey = `${buyerPeerId}:${request.requestId}`;
+      try {
+        if (fixedFee) {
+          if (!conn.hasRemoteCapability(FIXED_FEE_CAPABILITY) || request.method !== 'POST'
+            || this._extractRequestedProvider(request) !== provider.name.toLowerCase()
+            || request.path !== fixedFee.path
+            || request.headers[FIXED_FEE_CONTRACT_HEADER] !== fixedFee.contract
+            || request.headers[FIXED_FEE_PRICE_HEADER] !== fixedFee.priceMicroUsdc) throw new Error('Fixed-fee capability and matching offer required');
+          if (this._fixedFeeExecuted.has(fixedFeeKey)) throw new Error('Fixed-fee request ID already executed');
+          if (parseMicroUsdc(fixedFee.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
+        } else if (request.headers[FIXED_FEE_CONTRACT_HEADER] !== undefined || request.headers[FIXED_FEE_PRICE_HEADER] !== undefined) {
+          throw new Error('Service does not support fixed-fee billing');
+        }
+      } catch (error) {
+        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({ error: { message: String(error), type: 'invalid_request_error' } })) });
+        return;
+      }
+      const requestPricing = fixedFee ? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } : this.resolveProviderPricing(provider, request);
+      const requestBilling = fixedFee ? null : this._captureSellerBillingContext(provider, request);
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
         : undefined;
-      const isFreeService = isZeroTokenPricing(requestPricing)
+      const isFreeService = fixedFee ? parseMicroUsdc(fixedFee.priceMicroUsdc) === 0n : isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
       // Reject with 402 if no active payment session and channels client is configured.
@@ -251,6 +275,10 @@ export class SellerRequestHandler {
             request.requestId, buyerPeerId, requestPricing,
           );
           if (requirements) {
+            if (fixedFee) {
+              requirements.minBudgetPerRequest = fixedFee.priceMicroUsdc;
+              if (BigInt(requirements.suggestedAmount) < parseMicroUsdc(fixedFee.priceMicroUsdc)) requirements.suggestedAmount = fixedFee.priceMicroUsdc;
+            }
             debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
             const paymentBody = JSON.stringify({
               error: 'payment_required',
@@ -339,7 +367,7 @@ export class SellerRequestHandler {
           }
           let requestCostEstimate: ReturnType<SellerRequestHandler['_estimateRequestCostUsdc']> = null;
           try {
-            requestCostEstimate = requestBilling
+            requestCostEstimate = fixedFee ? { cost: parseMicroUsdc(fixedFee.priceMicroUsdc), inputTokens: 0, maxOutputTokens: 0 } : requestBilling
               ? this._estimateRequestCostUsdc(request, requestBilling, requestPricing, unitBillingModel)
               : null;
           } catch (err) {
@@ -365,7 +393,7 @@ export class SellerRequestHandler {
           const effectiveEstimateLimit = reserveEstimateOverdraft != null
             ? remainingLockedReserve + reserveEstimateOverdraft
             : null;
-          const estimatedCostExceedsLockedReserve = effectiveEstimateLimit != null
+          const estimatedCostExceedsLockedReserve = fixedFee ? estimatedRequestCost > remainingLockedReserve : effectiveEstimateLimit != null
             && reserveMax > 0n
             && estimatedRequestCost > 0n
             && estimatedRequestCost > effectiveEstimateLimit;
@@ -458,6 +486,15 @@ export class SellerRequestHandler {
         ...request,
         headers: { ...request.headers },
       };
+      if (fixedFee) {
+        for (const [key, timestamp] of this._fixedFeeExecuted) {
+          if (Date.now() - timestamp > 24 * 60 * 60_000) this._fixedFeeExecuted.delete(key);
+        }
+        if (this._fixedFeeExecuted.size >= 10_000) {
+          mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Fixed-fee request limit reached') });
+          return;
+        }
+      }
 
       // Track active seller session at request start
       this._deps.sessionTracker?.getOrCreateSession(buyerPeerId, provider.name);
@@ -495,10 +532,11 @@ export class SellerRequestHandler {
         return;
       }
       if (isBillable) spm!.beginBillableRequest(buyerPeerId);
+      if (fixedFee) this._fixedFeeExecuted.set(fixedFeeKey, Date.now());
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
-          const response = await this._executeRequest(provider, request, {
+          const response = await this._executeRequest(provider, request, fixedFee ? undefined : {
             onResponseStart: (streamResponseStart) => {
               streamedResponseStarted = true;
               responseStartedAt = Date.now();
@@ -526,7 +564,11 @@ export class SellerRequestHandler {
           } else {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
-          if (requestBilling && unitBillingModel) {
+          if (fixedFee) {
+            if (statusCode >= 200 && statusCode < 300) {
+              unitCostUsdc = parseMicroUsdc(fixedFee.priceMicroUsdc);
+            }
+          } else if (requestBilling && unitBillingModel) {
             const unitBilling = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response, requestBilling.requestFacts);
             responseUsage = unitBilling.tokenUsage;
             billingUsageReport = unitBilling.billingUsage;
@@ -548,6 +590,7 @@ export class SellerRequestHandler {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Internal error";
+          if (fixedFee) unitCostUsdc = 0n;
           debugWarn(`[SellerHandler] Provider exception: provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) ${message}`);
           responseBody = new TextEncoder().encode(message);
           if (streamedResponseStarted) {
@@ -678,6 +721,36 @@ export class SellerRequestHandler {
         this.adjustProviderLoad(provider.name, -1);
         if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
+    };
+    mux.onProxyRequest(async request => {
+      if (!this._deps.providers.some(provider => provider.fixedFeeServices?.length)) return handleRequest(request);
+      if (conn.hasRemoteCapability(FIXED_FEE_CAPABILITY)
+        && this.matchProvider(request)?.fixedFeeServices?.some(offer => offer.service === this._extractRequestedService(request)
+          && request.method === 'POST' && request.path === offer.path
+          && request.headers[FIXED_FEE_CONTRACT_HEADER] === offer.contract
+          && request.headers[FIXED_FEE_PRICE_HEADER] === offer.priceMicroUsdc)) {
+        this._fixedFeeBuyers.add(buyerPeerId);
+      }
+      const count = this._requestQueueSizes.get(buyerPeerId) ?? 0;
+      if (this._fixedFeeBuyers.has(buyerPeerId) && count >= 32) {
+        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Payment request queue full') });
+        return;
+      }
+      this._requestQueueSizes.set(buyerPeerId, count + 1);
+      const previous = this._requestQueues.get(buyerPeerId) ?? Promise.resolve();
+      const next = this._fixedFeeBuyers.has(buyerPeerId) ? previous.catch(() => undefined).then(() => handleRequest(request)) : handleRequest(request);
+      const pending = Promise.allSettled([previous, next]).then(() => undefined);
+      this._requestQueues.set(buyerPeerId, pending);
+      try { await next; } finally {
+        const remaining = (this._requestQueueSizes.get(buyerPeerId) ?? 1) - 1;
+        if (remaining === 0) this._requestQueueSizes.delete(buyerPeerId);
+        else this._requestQueueSizes.set(buyerPeerId, remaining);
+        if (this._requestQueues.get(buyerPeerId) === pending) {
+          void pending.then(() => {
+            if (this._requestQueues.get(buyerPeerId) === pending) this._requestQueues.delete(buyerPeerId);
+          });
+        }
+      }
     });
 
     return { mux };
@@ -686,7 +759,7 @@ export class SellerRequestHandler {
   // -- Local /v1/models handler --
 
   private _handleModelsRequest(request: SerializedHttpRequest): SerializedHttpResponse {
-    const allServices = this._deps.providers.flatMap((p) => p.services);
+    const allServices = this._deps.providers.flatMap(provider => provider.services.filter(service => !provider.fixedFeeServices?.some(offer => offer.service === service)));
     const now = Math.floor(Date.now() / 1000);
 
     // GET /v1/models/:id — single model lookup

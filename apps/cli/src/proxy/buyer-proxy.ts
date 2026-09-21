@@ -89,6 +89,7 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
+import { eligibleRouterCandidates, executeRouterSelection } from './router-execution.js'
 import type { DepositWatcher } from './deposit-watcher.js'
 import {
   recordPeerFailureEntry,
@@ -2298,6 +2299,43 @@ export class BuyerProxy {
     const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
     let trackedConversationId: string | null = storedConversation?.id ?? null
 
+    const clientAbortController = new AbortController()
+    const onClientAbort = (): void => {
+      if (!clientAbortController.signal.aborted) clientAbortController.abort()
+    }
+    req.once('close', () => {
+      if (!req.complete && !res.writableEnded) onClientAbort()
+    })
+    res.once('close', () => {
+      if (!res.writableEnded) onClientAbort()
+    })
+    const selectedRouter = this._node.router
+    let routerSelected = false
+    const rawService = extractRequestedService(serializedReq)
+    const autoRequested = selectedRouter?.selectRoute && (rawService === selectedRouter.autoRouteServiceId || rawService === ROUTED_MODEL_ALIAS)
+    if (autoRequested && storedConversation?.peerSource === 'user' && chatPinnedModel) {
+      serializedReq = withRoutedModel(serializedReq, chatPinnedModel)
+    } else if (autoRequested && !getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)) {
+      try {
+        const routingPeers = await this._getPeers({ forceRefresh: true })
+        const candidates = eligibleRouterCandidates(serializedReq, routingPeers, requiredParameters, this._routingPreferences,
+          (request, peer) => peerAllowedByPolicy(selectedRouter as BuyerPolicyRouter, request, peer)
+            && !isCoolingDown(this._peerHealth.get(peer.peerId), this._now()))
+        serializedReq = await executeRouterSelection({
+          node: this._node, router: selectedRouter, request: serializedReq, peers: routingPeers, candidates,
+          conversationKey: conversationIdentity && trackedConversationKey ? `${conversationIdentity.tool}:${trackedConversationKey}` : null,
+          signal: AbortSignal.any([clientAbortController.signal, AbortSignal.timeout(120_000)]),
+        })
+        routerSelected = true
+      } catch (error) {
+        if (!res.destroyed) {
+          res.writeHead(502, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: { type: 'routing_error', message: error instanceof Error ? error.message : String(error) } }))
+        }
+        return
+      }
+    }
+
     // Resolve the `antseed` model alias to the session's default route first,
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
     // substituted value. Tool configs written by the desktop carry the alias
@@ -2394,25 +2432,6 @@ export class BuyerProxy {
         log(`Model peer pin applied: peer=${bodyPinnedPeer.slice(0, 12)}...`)
       }
     }
-
-    const clientAbortController = new AbortController()
-    const onClientAbort = (): void => {
-      if (clientAbortController.signal.aborted) {
-        return
-      }
-      clientAbortController.abort()
-      log(`Client disconnected; aborting upstream request reqId=${serializedReq.requestId.slice(0, 8)}`)
-    }
-    req.once('close', () => {
-      if (!req.complete && !res.writableEnded) {
-        onClientAbort()
-      }
-    })
-    res.once('close', () => {
-      if (!res.writableEnded) {
-        onClientAbort()
-      }
-    })
 
     const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
     const requestedService = extractRequestedService(serializedReq)
@@ -2813,6 +2832,14 @@ export class BuyerProxy {
       return
     }
     const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
+    if (routerSelected && !eligibleRouterCandidates(pinnedRequest, [selectedPeer], requiredParameters, this._routingPreferences,
+      (request, peer) => peerAllowedByPolicy(policyRouter, request, peer)
+        && !isCoolingDown(this._peerHealth.get(peer.peerId), this._now()))
+      .some(candidate => candidate.serviceId === pinnedServiceId && candidate.provider === selectedPlan?.provider)) {
+      res.writeHead(502, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { type: 'routing_error', message: 'Recommended destination is no longer eligible' } }))
+      return
+    }
     if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })

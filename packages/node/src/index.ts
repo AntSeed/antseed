@@ -33,7 +33,7 @@ export {
 // Re-exported so CLI callers can format/parse gas balances without depending
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
-export type { Router } from './interfaces/buyer-router.js';
+export type { Router, RouteRecommendation, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
@@ -363,3 +363,4 @@ export {
   type LoadedProvider,
   type LoadedRouter,
 } from './config/plugin-loader.js'
+export * from '@antseed/protocol/fixed-fee';

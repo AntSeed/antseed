@@ -2,6 +2,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpRespo
 import type { ServiceApiProtocol } from '../types/service-api.js';
 import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
 import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
+import type { FixedFeeService } from '@antseed/protocol/fixed-fee';
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -23,6 +24,7 @@ export interface ProviderPricing {
  * You just handle the HTTP request → response conversion.
  */
 export interface Provider {
+  fixedFeeServices?: Array<FixedFeeService & { path: string }>;
   /** Unique name for this provider (e.g., 'anthropic', 'openai', 'my-local-llm') */
   name: string;
 

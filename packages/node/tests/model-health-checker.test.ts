@@ -111,6 +111,18 @@ describe('buildHealthProbeRequest', () => {
 });
 
 describe('ModelHealthChecker', () => {
+  it('does not probe fixed-fee services as inference models', async () => {
+    const onRequest = vi.fn(async request => jsonResponse(request.requestId, 200));
+    const provider = makeProvider({
+      services: ['levanto-route', 'model-a'], onRequest,
+      fixedFeeServices: [{ service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000', path: '/_antseed/route' }],
+    });
+    const checker = new ModelHealthChecker({ targets: [{ provider }] });
+    await checker.runSweep();
+    expect(onRequest).toHaveBeenCalledOnce();
+    expect(JSON.parse(new TextDecoder().decode(onRequest.mock.calls[0]![0].body)).model).toBe('model-a');
+    expect(provider.services).toEqual(['levanto-route', 'model-a']);
+  });
   it('unadvertises a service after the failure threshold and emits an event', async () => {
     const provider = makeProvider({
       onRequest: statusSequence({ 'model-a': [500, 500, 500], 'model-b': [200, 200, 200] }),

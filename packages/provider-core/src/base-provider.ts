@@ -10,6 +10,7 @@ import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
 import { HttpRelay, type RelayConfig } from './http-relay.js';
 
 export interface BaseProviderConfig {
+  fixedFeeServices?: Provider['fixedFeeServices'];
   name: string;
   services: string[];
   pricing: Provider['pricing'];
@@ -24,6 +25,7 @@ export interface BaseProviderConfig {
  * Pattern adapted from provider-anthropic's AnthropicProvider.
  */
 export class BaseProvider implements Provider {
+  readonly fixedFeeServices?: Provider['fixedFeeServices'];
   readonly name: string;
   readonly services: string[];
   readonly pricing: Provider['pricing'];
@@ -38,6 +40,7 @@ export class BaseProvider implements Provider {
   private readonly _pending = new Map<string, PendingRequestEntry>();
 
   constructor(config: BaseProviderConfig) {
+    this.fixedFeeServices = config.fixedFeeServices;
     this.name = config.name;
     this.services = config.services;
     this.pricing = config.pricing;

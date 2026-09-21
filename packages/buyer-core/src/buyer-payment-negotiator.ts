@@ -703,6 +703,12 @@ export class BuyerPaymentNegotiator {
     }
   }
 
+  async negotiateFixedFeePayment(peer: BuyerPeerView, conn: BuyerConnection): Promise<boolean> {
+    if (this._bpm.getActiveSession(peer.peerId)) return false;
+    await this._negotiatePayment(peer, conn);
+    return true;
+  }
+
   estimateCostFromResponse(
     peer: BuyerPeerView,
     response: SerializedHttpResponse,
