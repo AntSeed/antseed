@@ -3,9 +3,11 @@ import { ZeroAddress } from 'ethers';
 import { multicallRead } from '@antseed/node/payments';
 import { poolsView, singlePool } from './pools.js';
 import { poolYield } from './yield.js';
+import { explorerSellers } from './explorer.js';
 import type { AntsContext } from './context.js';
 import type { IndexedPools, IndexedSellerEpoch } from './indexer.js';
 vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
+vi.mock('./explorer.js', () => ({ explorerSellers: vi.fn() }));
 
 function setup(indexedEpoch = 2, historical = true, currentEpoch = 2) {
   const address = '0x0000000000000000000000000000000000000001';
@@ -16,28 +18,75 @@ function setup(indexedEpoch = 2, historical = true, currentEpoch = 2) {
   } as IndexedPools;
   const indexer = { pools: vi.fn(async () => indexed), pool: vi.fn(), sellerEpochs: vi.fn(async () => new Map<string, IndexedSellerEpoch[]>()), epochMetrics: async () => [] };
   const live = vi.fn(async () => 100n);
+  const explorer = { byAddress: new Map(), byAgent: new Map<number, string>() };
+  vi.mocked(explorerSellers).mockResolvedValue(explorer);
+  const ineligible = new Set<number>();
   const ctx = {
     address: ZeroAddress,
     chain: { sellerPoolsAddress: address, sellerPoolsRewardsAddress: address, usageAccountingAddress: address },
     stack: async () => ({ currentEpoch, effectiveEpoch: 0, epochDuration: 604800, genesis: 0 }),
     indexer: () => indexer,
-    requirePools: () => ({ provider: {}, totalPowerWeightAtEpoch: live }),
+    requirePools: () => ({ contractAddress: address, provider: { getBlockNumber: async () => 123 }, totalPowerWeightAtEpoch: live }),
     poolRewards: () => ({ stakerEpochBudget: live }),
     usageAccounting: () => ({ totalWeightedPoolPointsByEpoch: live }),
   } as unknown as AntsContext;
   const methods: string[] = [];
   vi.mocked(multicallRead).mockImplementation(async (_provider, requests) => requests.map(r => {
     methods.push(r.method);
+    if (r.method === 'identityRegistry' || r.method === 'stakingSource') return [address];
+    if (r.method === 'ownerOf') return [`0x${(1000n + BigInt(r.args![0] as number)).toString(16).padStart(40, '0')}`];
+    if (r.method === 'getAgentId') {
+      const agentId = Number(BigInt(r.args![0] as string) - 1000n);
+      return [ineligible.has(agentId) ? 0n : BigInt(agentId)];
+    }
     if (r.method === 'poolEpochEmissions') return [true, 7n];
     if (r.method === 'agentEpochUsage') return [{ weightedPoints: 1n }];
     if (r.method === 'minStakeEpochs') return [1n];
     if (r.method === 'MAX_STAKE_EPOCHS') return [104n];
     return [100n];
   }));
-  return { ctx, indexer, indexed, live, methods };
+  return { ctx, indexer, indexed, live, methods, explorer, ineligible };
 }
 
 describe('pool loading', () => {
+  it('allows legacy providers even when the indexer reports them unregistered, without hiding their yield', async () => {
+    const { ctx, indexed, methods } = setup();
+    indexed.pools[0]!.registered = false;
+    const list = await poolsView(ctx);
+    const detail = await singlePool(ctx, 1);
+    expect(list.pools[0]).toMatchObject({ stakeable: true, hasPool: true, yield: { status: 'settled', reward: '5' } });
+    expect(detail.stakeable).toBe(true);
+    expect(detail.yield).toEqual(list.pools[0]!.yield);
+    expect(methods).not.toContain('agentSeller');
+  });
+
+  it('allows the first stake into registered directory providers missing from the pool index', async () => {
+    const { ctx, explorer } = setup();
+    explorer.byAgent.set(2, '0x0000000000000000000000000000000000000002');
+    const list = await poolsView(ctx);
+    const provider = list.pools.find(pool => pool.agentId === 2)!;
+    expect(provider).toMatchObject({ stakeable: true, hasPool: false });
+    expect(provider.yield).toBeUndefined();
+    const detail = await singlePool(ctx, 2);
+    expect(detail.stakeable).toBe(true);
+    expect(detail.yield).toBeUndefined();
+  });
+
+  it('overrides stale indexed eligibility and sorts newly eligible providers first', async () => {
+    const { ctx, explorer, ineligible } = setup();
+    ineligible.add(1);
+    explorer.byAgent.set(2, '0x0000000000000000000000000000000000000002');
+    const list = await poolsView(ctx);
+    expect(list.pools.map(pool => [pool.agentId, pool.stakeable])).toEqual([[2, true], [1, false]]);
+  });
+
+  it('uses the same legacy-compatible check for live pool fallback', async () => {
+    const { ctx, methods } = setup();
+    Object.assign(ctx, { indexer: () => null });
+    expect(await singlePool(ctx, 1)).toMatchObject({ agentId: 1, stakeable: true });
+    expect(methods).not.toContain('agentSeller');
+  });
+
   it('uses matching indexed global/history data without per-seller detail requests or disconnected-wallet scans', async () => {
     const { ctx, indexer, live, methods } = setup();
     const result = await poolsView(ctx);

@@ -90,6 +90,15 @@ describe('AntsContext.stack', () => {
     expect(await ctx.stack()).not.toBe(first);
   });
 
+  it('invalidates in-flight RPC sharing when the wallet or action state changes', () => {
+    const ctx = new AntsContext({ chain, address: '0x0' });
+    const provider = ctx.provider();
+    const invalidate = vi.spyOn(provider, 'invalidateReads');
+    ctx.invalidate();
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    provider.destroy();
+  });
+
   it('shares stack resolution across independent simultaneous page loads', async () => {
     const ctx = new FakeContext(chain, { emissions: chain.emissionsContractAddress!, staking: chain.stakingContractAddress! });
     const registry = vi.spyOn(ctx, 'registry');

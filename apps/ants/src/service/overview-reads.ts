@@ -1,6 +1,7 @@
 import { Interface, ZeroAddress } from 'ethers';
 import { multicallRead, type MulticallRequest } from '@antseed/node/payments';
 import type { AntsContext, ResolvedStack } from './context.js';
+import { displayData } from './display-snapshot.js';
 
 const ABI = new Interface([
   'function balanceOf(address) view returns (uint256)',
@@ -20,6 +21,8 @@ const ABI = new Interface([
 
 /** One Multicall for overview contract state; missing configured reads must not become zero balances. */
 export async function overviewReads(ctx: AntsContext, stack: ResolvedStack) {
+  const display = await displayData(ctx, stack);
+  const network = display.snapshot?.epochs.find(row => row.epoch === stack.currentEpoch);
   const requests: MulticallRequest[] = [];
   const add = (target: string | undefined | null, method: string, args: unknown[] = []) => {
     if (!target || target.toLowerCase() === ZeroAddress) return -1;
@@ -32,8 +35,8 @@ export async function overviewReads(ctx: AntsContext, stack: ResolvedStack) {
     supply: add(token, 'totalSupply'), maxSupply: add(token, 'MAX_SUPPLY'),
     stake: add(c.sellerPoolsAddress, 'stakerTotalActiveStake', [address]), count: add(c.sellerPoolsAddress, 'stakerPositionCount', [address]),
     agent: add(c.sellerRegistryAddress, 'getAgentId', [address]), legacyAgent: add(stack.legacyStaking, 'getAgentId', [address]),
-    networkStake: add(c.sellerPoolsAddress, 'totalActiveStakeAtEpoch', [epoch]), networkWeight: add(c.sellerPoolsAddress, 'totalPowerWeightAtEpoch', [epoch]),
-    emission: add(c.emissionsGateAddress, 'getEpochEmission', [epoch]), budget: add(c.sellerPoolsRewardsAddress, 'stakerEpochBudget', [epoch]),
+    networkStake: network ? -1 : add(c.sellerPoolsAddress, 'totalActiveStakeAtEpoch', [epoch]), networkWeight: network ? -1 : add(c.sellerPoolsAddress, 'totalPowerWeightAtEpoch', [epoch]),
+    emission: add(c.emissionsGateAddress, 'getEpochEmission', [epoch]), budget: network ? -1 : add(c.sellerPoolsRewardsAddress, 'stakerEpochBudget', [epoch]),
     usage: add(c.usageRewardsAddress, 'usageEpochBudgets', [epoch]),
   };
   const [values, eth] = await Promise.all([multicallRead(ctx.provider(), requests), ctx.provider().getBalance(address)]);
@@ -47,7 +50,8 @@ export async function overviewReads(ctx: AntsContext, stack: ResolvedStack) {
   return {
     ants: big(ids.ants), eth, transfersEnabled: read(ids.transfers) === true, whitelisted: read(ids.whitelist) === true,
     totalActiveStake: big(ids.stake), positionCount: Number(big(ids.count)), registryAgentId: Number(big(ids.agent)), legacyAgentId: Number(big(ids.legacyAgent)),
-    totalSupply: big(ids.supply), maxSupply: big(ids.maxSupply), networkStake: big(ids.networkStake), networkWeight: big(ids.networkWeight),
-    epochEmission: big(ids.emission), stakerBudget: big(ids.budget), usageBudgets: { buyer: big(ids.usage), seller: big(ids.usage, 1) },
+    totalSupply: big(ids.supply), maxSupply: big(ids.maxSupply), networkStake: network ? BigInt(network.totalActiveStake) : big(ids.networkStake), networkWeight: network ? BigInt(network.totalPowerWeight) : big(ids.networkWeight),
+    epochEmission: big(ids.emission), stakerBudget: network ? BigInt(network.stakerBudget) : big(ids.budget), usageBudgets: { buyer: big(ids.usage), seller: big(ids.usage, 1) },
+    networkSource: display.source,
   };
 }

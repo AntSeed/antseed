@@ -1,16 +1,51 @@
 import { Interface } from 'ethers';
-import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments';
+import { estimateEarlyExit, positionState, projectedEarlyExitSlashBps, multicallRead, type MulticallRequest, type SellerPoolPosition, type SellerPoolConfig } from '@antseed/node/payments';
 import type { AntsContext } from './context.js';
 import type { PositionView, PositionsView, StakeRequest, MoveRequest, SplitRequest, MergeRequest, ExtendRequest, MaxLockRequest, WithdrawRequest } from '../api-types.js';
 import { parseAnts, formatAnts } from './format.js';
 import { toJson } from './json.js';
 import { IndexerError, type IndexedPosition } from './indexer.js';
+import { stakeEligibility } from './stake-eligibility.js';
 import { assertAgentId, assertEpochs, assertPositiveIds, silentReporter, type StepReporter } from './steps.js';
+import { displayData, indexedPositions } from './display-snapshot.js';
 
 
 export interface PositionDetail extends PositionView { raw: SellerPoolPosition; }
 
-async function describePositions(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, config: SellerPoolConfig): Promise<PositionDetail[]> {
+const STATUS_ABI = new Interface([
+  'function positionWithdrawableEpoch(uint256) view returns (uint64)',
+  'function positionMaxLockPowerAtEpoch(uint256,uint256) view returns (uint256)',
+  'function earlyExitSlashBps(uint256) view returns (uint256)',
+]);
+
+async function indexedStatuses(ctx: AntsContext, positions: SellerPoolPosition[], epoch: number, maxLocks: Map<number, boolean>) {
+  const pools = ctx.requirePools();
+  const requests: MulticallRequest[] = [];
+  const add = (method: string, args: number[]) => {
+    requests.push({ target: pools.contractAddress, iface: STATUS_ABI, method, args });
+    return requests.length - 1;
+  };
+  const reads = positions.map(position => {
+    const open = !position.withdrawn && position.closedAtEpoch === 0;
+    return {
+      id: position.id, withdrawable: add('positionWithdrawableEpoch', [position.id]),
+      max: open && !maxLocks.has(position.id) ? add('positionMaxLockPowerAtEpoch', [position.id, Math.max(epoch, position.stakeStartEpoch)]) : null,
+      slash: open ? add('earlyExitSlashBps', [position.id]) : null,
+    };
+  });
+  const values = await multicallRead(pools.provider, requests);
+  const read = (index: number): bigint => {
+    const value = values[index]?.[0];
+    if (typeof value !== 'bigint') throw new Error(`Position status read failed: ${requests[index]!.method}`);
+    return value;
+  };
+  return reads.map(({ id, withdrawable, max, slash }) => {
+    const withdrawableEpoch = Number(read(withdrawable));
+    return { withdrawableEpoch, maxLocked: slash !== null && (max !== null ? read(max) !== 0n : maxLocks.get(id) ?? false), slashBps: slash !== null && epoch >= withdrawableEpoch ? Number(read(slash)) : null };
+  });
+}
+
+async function describePositions(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, config: SellerPoolConfig, maxLocks?: Map<number, boolean>): Promise<PositionDetail[]> {
   const pools = ctx.requirePools();
   const poolRewards = ctx.poolRewards();
   // Closed positions keep the reward earned up to their close epoch, so every id is previewed.
@@ -20,42 +55,36 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
     const amounts = await poolRewards.previewStakerRewards(rewardIds);
     rewardIds.forEach((id, index) => rewards.set(id, amounts[index] ?? 0n));
   }
-  const details: PositionDetail[] = [];
-  for (let offset = 0; offset < positions.length; offset += 8) {
-    details.push(...await Promise.all(positions.slice(offset, offset + 8).map(async (position): Promise<PositionDetail> => {
-      const open = !position.withdrawn && position.closedAtEpoch === 0;
-      const [withdrawableEpoch, maxLocked] = await Promise.all([
-        pools.positionWithdrawableEpoch(position.id),
-        open ? pools.isMaxLocked(position.id, Math.max(currentEpoch, position.stakeStartEpoch)) : Promise.resolve(false),
-      ]);
-      const changePending = currentEpoch < withdrawableEpoch;
-      const slashBps = open && !changePending ? await pools.earlyExitSlashBps(position.id) : null;
-      const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
-      const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
-      return {
-        id: position.id,
-        agentId: position.agentId,
-        owner: position.owner,
-        amount: position.amount.toString(),
-        weightAmount: position.weightAmount.toString(),
-        stakeStartEpoch: position.stakeStartEpoch,
-        stakeEndEpoch: position.stakeEndEpoch,
-        closedAtEpoch: position.closedAtEpoch,
-        withdrawn: position.withdrawn,
-        state: positionState(position, currentEpoch),
-        withdrawableEpoch,
-        changePending,
-        maxLocked,
-        slashBps,
-        projectedSlashBps,
-        slashedAmount: open ? estimate.slashedAmount.toString() : '0',
-        returnedAmount: open ? estimate.returnedAmount.toString() : '0',
-        pendingReward: (rewards.get(position.id) ?? 0n).toString(),
-        epochsRemaining: open ? Math.max(0, position.stakeEndEpoch - Math.max(currentEpoch, position.stakeStartEpoch)) : 0,
-        raw: position,
-      };
-    })));
-  }
+  const statuses = maxLocks ? await indexedStatuses(ctx, positions, currentEpoch, maxLocks) : await pools.positionStatusesBatch(positions, currentEpoch);
+  const details = positions.map((position, index): PositionDetail => {
+    const open = !position.withdrawn && position.closedAtEpoch === 0;
+    const { withdrawableEpoch, maxLocked, slashBps } = statuses[index]!;
+    const changePending = currentEpoch < withdrawableEpoch;
+    const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
+    const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
+    return {
+      id: position.id,
+      agentId: position.agentId,
+      owner: position.owner,
+      amount: position.amount.toString(),
+      weightAmount: position.weightAmount.toString(),
+      stakeStartEpoch: position.stakeStartEpoch,
+      stakeEndEpoch: position.stakeEndEpoch,
+      closedAtEpoch: position.closedAtEpoch,
+      withdrawn: position.withdrawn,
+      state: positionState(position, currentEpoch),
+      withdrawableEpoch,
+      changePending,
+      maxLocked,
+      slashBps,
+      projectedSlashBps,
+      slashedAmount: open ? estimate.slashedAmount.toString() : '0',
+      returnedAmount: open ? estimate.returnedAmount.toString() : '0',
+      pendingReward: (rewards.get(position.id) ?? 0n).toString(),
+      epochsRemaining: open ? Math.max(0, position.stakeEndEpoch - Math.max(currentEpoch, position.stakeStartEpoch)) : 0,
+      raw: position,
+    };
+  });
   return details.sort((a, b) => b.id - a.id);
 }
 
@@ -88,9 +117,21 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
   const stack = await ctx.stack();
   const pools = ctx.requirePools();
   const config = await pools.poolConfig();
-  const [openIds, closed] = await Promise.all([pools.allStakerPositionIds(ctx.address), closedPositionIds(ctx)]);
-  const list = await pools.positionsBatch([...new Set([...openIds, ...closed.ids])]);
-  const details = await describePositions(ctx, list, stack.currentEpoch, config);
+  const display = await displayData(ctx, stack);
+  let list: SellerPoolPosition[];
+  let maxLocks: Map<number, boolean> | undefined;
+  let closed: { source: PositionsView['historySource']; rows: IndexedPosition[] };
+  if (display.snapshot) {
+    const loaded = await indexedPositions(ctx, display.snapshot);
+    list = loaded.positions;
+    maxLocks = loaded.maxLocks;
+    closed = { source: 'indexer', rows: display.snapshot.positions };
+  } else {
+    const [openIds, history] = await Promise.all([pools.allStakerPositionIds(ctx.address), closedPositionIds(ctx)]);
+    list = await pools.positionsBatch([...new Set([...openIds, ...history.ids])]);
+    closed = history;
+  }
+  const details = await describePositions(ctx, list, stack.currentEpoch, config, maxLocks);
   const closedById = new Map(closed.rows.map((row) => [row.id, row]));
   const activeStake = details.filter((position) => position.state === 'active' || position.state === 'matured').reduce((sum, position) => sum + BigInt(position.amount), 0n);
   const pendingRewards = details.reduce((sum, position) => sum + BigInt(position.pendingReward), 0n);
@@ -99,10 +140,12 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
     config,
     positions: details.map(({ raw: _raw, ...view }) => {
       const meta = closedById.get(view.id);
-      return meta ? { ...view, closedBy: meta.closedBy, replacementIds: meta.replacementIds } : view;
+      return meta && meta.closedAtEpoch === view.closedAtEpoch && meta.withdrawn === view.withdrawn
+        ? { ...view, closedBy: meta.closedBy, replacementIds: meta.replacementIds } : view;
     }),
     totals: { activeStake: activeStake.toString(), pendingRewards: pendingRewards.toString(), open: details.filter((position) => !position.withdrawn && position.closedAtEpoch === 0).length },
     historySource: closed.source,
+    displaySource: display.source,
   });
 }
 
@@ -127,11 +170,9 @@ async function requireNoPendingChange(ctx: AntsContext, list: SellerPoolPosition
 }
 
 async function requireStakeableAgent(ctx: AntsContext, agentId: number): Promise<void> {
-  const registry = ctx.sellerRegistry();
-  if (!registry) return;
-  const seller = await registry.agentSeller(agentId).catch(() => null);
-  if (!seller || /^0x0{40}$/.test(seller)) {
-    throw new Error(`Agent ${agentId} has no seller bound in the seller registry, so it has no stakeable pool. The seller must run \`antseed seller register\` first.`);
+  const eligibility = await stakeEligibility(ctx, [agentId]);
+  if (!eligibility.get(agentId)?.stakeable) {
+    throw new Error(`Agent ${agentId} is not registered to its current owner in the pool's staking source.`);
   }
 }
 

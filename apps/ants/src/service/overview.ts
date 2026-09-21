@@ -21,7 +21,7 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
   const pools = ctx.pools();
   const sellerRegistry = ctx.sellerRegistry();
   const { ants, eth, transfersEnabled, whitelisted, totalActiveStake, positionCount, registryAgentId, legacyAgentId,
-    totalSupply, maxSupply, networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets } = await overviewReads(ctx, stack);
+    totalSupply, maxSupply, networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets, networkSource } = await overviewReads(ctx, stack);
 
   let network: OverviewView['network'] = null;
   if (pools) {
@@ -38,6 +38,7 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
   }
 
   const notices: string[] = [];
+  if (networkSource.error) notices.push(`Antscan display data is unavailable: ${networkSource.error}. Network statistics are read live.`);
   const sellerBound = !!sellerRegistry && registryAgentId !== 0 &&
     (await sellerRegistry.agentSeller(registryAgentId)).toLowerCase() === ctx.address.toLowerCase();
   const epoch = epochInfo(stack);
@@ -71,6 +72,7 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
       sellerBound,
     },
     network,
+    networkSource,
     notices,
   });
 }

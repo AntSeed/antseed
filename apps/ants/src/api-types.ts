@@ -7,6 +7,13 @@
 
 export type ProtocolPhase = 'legacy' | 'deployed' | 'active';
 
+export interface DisplaySource {
+  source: 'indexer' | 'chain';
+  indexedBlock?: number;
+  indexedAt?: number;
+  error?: string;
+}
+
 export interface EpochInfo {
   current: number;
   /** First recognized-usage epoch (gate `effectiveEpoch`), null before the stack is deployed. */
@@ -42,6 +49,7 @@ export interface NetworkSummary {
 }
 
 export interface OverviewView {
+  networkSource?: DisplaySource;
   phase: ProtocolPhase;
   chainId: string;
   evmChainId: number;
@@ -94,9 +102,10 @@ export interface PoolConfigView {
 export type DataSource = 'indexer' | 'chain' | 'local';
 
 export interface PositionsView {
+  displaySource?: DisplaySource;
   currentEpoch: number;
   config: PoolConfigView;
-  /** Open positions from the chain; closed ones (split, merge, move sources) from the indexer when available. */
+  /** Indexed position records when fresh, otherwise chain records; rewards and withdrawal checks remain live. */
   positions: PositionView[];
   totals: { activeStake: string; pendingRewards: string; open: number };
   /** Where closed positions came from; 'chain' means only open positions are listed. */
@@ -166,6 +175,10 @@ export interface PoolYield {
   status: 'settled' | 'estimated' | 'unavailable';
 }
 export interface PoolView {
+  displaySource?: DisplaySource;
+  openPositions?: number;
+  totalPositions?: number;
+  stakers?: number | null;
   yield?: PoolYield;
   statsUpdatedAt?: number;
   volumeStatus?: 'available' | 'unavailable' | 'stale';
@@ -202,6 +215,7 @@ export interface PoolView {
 }
 
 export interface PoolsView {
+  displaySource?: DisplaySource;
   currentEpoch: number;
   firstRewardedEpoch: number | null;
   totalActiveStake: string;

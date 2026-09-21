@@ -16,7 +16,7 @@ const apps: ReturnType<typeof Fastify>[] = [];
 function setup(readOnly = false, chainOverrides: Partial<AntsContext['chain']> = {}) {
   const app = Fastify();
   apps.push(app);
-  const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337, ...chainOverrides } } as unknown as AntsContext;
+  const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337, ...chainOverrides }, invalidate: vi.fn() } as unknown as AntsContext;
   registerRoutes(app, { ctx, jobs: new JobRunner(), views: new ViewCache(), readOnly, dataDir: null });
   return app;
 }
@@ -76,6 +76,21 @@ describe('dashboard API', () => {
       });
     });
     expect(service.registerBinding).toHaveBeenCalledWith(expect.anything(), undefined, expect.any(Function));
+  });
+
+  it('invalidates shared reads before actions, after confirmed steps, and on failure', async () => {
+    service.registerBinding.mockImplementation(async (ctx, _agentId, report) => {
+      expect(ctx.invalidate).toHaveBeenCalledTimes(1);
+      await report('Confirmed registration', '0x1234');
+      expect(ctx.invalidate).toHaveBeenCalledTimes(2);
+      throw new Error('subsequent step failed');
+    });
+    const app = setup();
+    const started = await app.inject({ method: 'POST', url: '/api/seller/register', payload: {} });
+    await vi.waitFor(async () => {
+      expect((await app.inject(`/api/jobs/${started.json().data.id}`)).json().data).toMatchObject({ status: 'failed', error: 'subsequent step failed' });
+    });
+    expect(service.registerBinding.mock.calls[0]![0].invalidate).toHaveBeenCalledTimes(3);
   });
 
   it('returns a read error rather than a successful zero rewards response', async () => {

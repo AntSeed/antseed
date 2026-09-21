@@ -72,15 +72,23 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
     app.post(path, async (request, reply) => {
       if (!ctx.signer) return reply.status(403).send({ ok: false, error: 'The dashboard is running in read-only mode (no wallet available).' });
       try {
-        const job = jobs.start(kind, (report) => run((request.body ?? {}) as Body, async (label, hash) => {
-          await report(label, hash);
-          // Local position history is best-effort bookkeeping: an RPC hiccup or a
-          // full disk must not abort a multi-transaction action whose step already confirmed.
-          if (hash) {
-            try { await context.rememberTransaction?.(hash); }
-            catch (error) { console.warn(`[ants] could not record transaction ${hash}: ${describeError(error)}`); }
+        const job = jobs.start(kind, async (report) => {
+          ctx.invalidate();
+          try {
+            return await run((request.body ?? {}) as Body, async (label, hash) => {
+              if (hash) ctx.invalidate();
+              await report(label, hash);
+              // Local position history is best-effort bookkeeping: an RPC hiccup or a
+              // full disk must not abort a multi-transaction action whose step already confirmed.
+              if (hash) {
+                try { await context.rememberTransaction?.(hash); }
+                catch (error) { console.warn(`[ants] could not record transaction ${hash}: ${describeError(error)}`); }
+              }
+            });
+          } finally {
+            ctx.invalidate();
           }
-        }), ctx.address);
+        }, ctx.address);
         return { ok: true, data: job };
       } catch (error) {
         return reply.status(409).send({ ok: false, error: describeError(error) });

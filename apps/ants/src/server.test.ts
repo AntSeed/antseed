@@ -5,6 +5,8 @@ import path from 'node:path';
 import { Wallet } from 'ethers';
 import { AntsContext } from './service/context.js';
 import { createAntsServer, type AntsServer } from './server.js';
+import { BrowserSigning } from './browser-signer.js';
+import { JobRunner } from './jobs.js';
 
 const directories: string[] = [];
 const servers: AntsServer[] = [];
@@ -12,6 +14,22 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   vi.restoreAllMocks();
+});
+
+it.each([true, false])('correlates a wallet request only with its running owner job (active=%s)', async active => {
+  vi.spyOn(AntsContext.prototype, 'selectRpc').mockResolvedValue();
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ants-wallet-job-test-'));
+  directories.push(dataDir);
+  const address = Wallet.createRandom().address;
+  const transaction = { id: 'request-1', from: address, to: address, data: '0x', value: '0', chainId: 31337 };
+  vi.spyOn(BrowserSigning.prototype, 'request', 'get').mockReturnValue(transaction);
+  const list = vi.spyOn(JobRunner.prototype, 'list').mockReturnValue([{ id: 'job-1', kind: 'move', owner: address, status: active ? 'running' : 'done', steps: [], startedAt: Date.now() }]);
+  const server = await createAntsServer({ port: 0, dataDir, address, chain: { chainId: 'base-local', evmChainId: 31337, rpcUrl: 'http://127.0.0.1:1', fallbackRpcUrls: [] } });
+  servers.push(server);
+  const response = await server.app.inject({ method: 'GET', url: '/api/wallet/request', headers: { authorization: `Bearer ${server.token}` } });
+  expect(response.json()).toEqual({ ok: true, data: { ...transaction, ...(active ? { jobId: 'job-1' } : {}) } });
+  expect(list).toHaveBeenCalledWith(address);
+  expect(transaction).not.toHaveProperty('jobId');
 });
 
 describe('explicit local service harness', () => {
