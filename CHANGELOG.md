@@ -38,6 +38,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Payments: sellers acknowledge verified authorizations when buyers reconnect to retained channels, restoring request access without increasing the signed bill or resetting earned spend. Reject stale or unsafe channel reactivation and preserve zero-spend closure without buyer withdrawal or ghost penalties. This independent recovery change and its storage regressions are reviewed last, in PR 6/6, rather than as routing prerequisites.
+
 - Protocol/Discovery: bound routing preference/default expansion and validation work before oversized results are allocated. Preserve routing descriptors for wildcard service announcements and merge distinct services advertised under the same provider name. Exclude routing services from inference health probes regardless of protocol order or capability-only identification.
 
 - CLI/Node: seller readiness now follows the configured staking contract’s on-chain eligibility rule, allowing eligible zero-stake sellers to start while retaining gas and registration checks. Ineligible sellers are directed to `antseed seller status` to check agent binding and stake requirements. Docs and the `seller setup` next steps now describe staking as optional, since the seller registry's minimum pool stake is currently 0.

@@ -311,7 +311,7 @@ describe('Full Payment Flow Integration', () => {
     expect(initialAuth.cumulativeAmount).toBe('0');
   });
 
-  it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
+  it('seller acknowledges both the reserve and accepted SpendingAuth updates', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
 
@@ -323,7 +323,8 @@ describe('Full Payment Flow Integration', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
     );
     expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
-    expect(sellerMux.sentAuthAcks).toHaveLength(1);
+    expect(sellerMux.sentAuthAcks).toHaveLength(2);
+    expect(sellerMux.sentAuthAcks[1]).toEqual({ channelId: auth1.channelId });
   });
 
   it('seller hasSession returns true for active buyer, false after settle', async () => {

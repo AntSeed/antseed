@@ -8,7 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs",
-    "flow:local-chain-routing": "node ./scripts/local-chain-routing-flow.mjs"
+    "flow:local-chain-routing": "node ./scripts/local-chain-routing-flow.mjs",
+    "flow:local-chain-payment-reconnect": "node ./scripts/local-chain-payment-reconnect.mjs"
   },
   "dependencies": {
     "@antseed/node": "workspace:*",

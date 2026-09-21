@@ -9,7 +9,7 @@ not a separate routing payment engine. The review order is:
 3. #1034: [routing protocol/discovery](protocol/routing.md).
 4. #1035: routing-critical paid execution, attribution, and contract acceptance tests.
 5. #1036: buyer routing integration.
-6. A new generic payment follow-up, based on updated #1036 (PR number not yet assigned).
+6. [Generic payment recovery](payment-recovery.md), reviewed after #1036.
 
 These are review boundaries, not separate releases or standalone deployments.
 There are no temporary execution guards, new metadata versions, or database

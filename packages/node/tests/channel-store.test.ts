@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
 import { ChannelStore, CHANNEL_KIND, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel, type StoredReceipt } from '../src/payments/channel-store.js';
 
 function makeTempDir(): string {
@@ -68,6 +69,34 @@ describe('ChannelStore', () => {
     expect(loaded!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(loaded!.settledAt).toBeNull();
     expect(loaded!.settledAmount).toBeNull();
+  });
+
+  it('opens a development database with extra recovery columns without removing its data', () => {
+    const channel = makeChannel();
+    store.upsertChannel(channel);
+    store.close();
+    const db = new Database(join(tempDir, 'sessions.db'));
+    try {
+      db.exec(`
+        ALTER TABLE payment_channels ADD COLUMN reserve_salt TEXT;
+        ALTER TABLE payment_channels ADD COLUMN initial_reserve_amount TEXT;
+        ALTER TABLE payment_channels ADD COLUMN reserve_max_amount TEXT;
+        ALTER TABLE payment_channels ADD COLUMN latest_reserve_auth_sig TEXT;
+        ALTER TABLE payment_channels ADD COLUMN latest_reserve_deadline INTEGER;
+        ALTER TABLE payment_channels ADD COLUMN reserve_auth_pending INTEGER;
+        ALTER TABLE payment_channels ADD COLUMN confirmed_reserve_amount TEXT;
+        INSERT INTO schema_version (version, name, applied_at)
+          VALUES (6, 'add_reserve_recovery_columns', 1);
+        UPDATE payment_channels SET reserve_salt = 'existing-salt';
+      `);
+      store = new ChannelStore(tempDir);
+      store.upsertChannel({ ...channel, authMax: '2000000' });
+      expect(store.getChannel(channel.sessionId)?.authMax).toBe('2000000');
+      expect(db.prepare('SELECT reserve_salt FROM payment_channels').get()).toEqual({ reserve_salt: 'existing-salt' });
+      expect(db.prepare('SELECT version FROM schema_version WHERE version = 6').get()).toEqual({ version: 6 });
+    } finally {
+      db.close();
+    }
   });
 
   it('test_updateStatus: update to settled, verify', () => {
