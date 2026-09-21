@@ -687,6 +687,7 @@ test('exposes peer capabilities and conservative model-level guarantees', () => 
             inputs: ['text', 'image'],
             outputs: ['text'],
             reasoning: true,
+            reasoningEfforts: ['none', 'high'],
             toolUse: true,
             structuredOutput: true,
             supportedParameters: ['temperature', 'tools', 'response_format'],
@@ -726,6 +727,7 @@ test('exposes peer capabilities and conservative model-level guarantees', () => 
   assert.deepEqual(model.supported_protocols, ['openai-chat-completions', 'openai-responses'])
   assert.equal(model.context_length, 128_000)
   assert.equal(model.max_output_tokens, 32_000)
+  assert.deepEqual(model.peers[0]?.capabilities?.reasoningEfforts, ['none', 'high'])
   assert.deepEqual(model.architecture, {
     input_modalities: ['text'],
     output_modalities: ['text'],

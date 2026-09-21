@@ -2,6 +2,7 @@ import type { ChatServiceOptionEntry, DiscoverRow, ServiceCapabilitiesView, Trus
 import type { DiscoverVerificationLink } from '../../core/state';
 import { isTextCapableRow } from './model-capabilities';
 import { normalizeAdvertisedVerifierIds } from '@antseed/node/verifier-capabilities';
+import { isReasoningEffortList } from '@antseed/protocol';
 
 const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
 
@@ -114,12 +115,14 @@ function normalizeCapabilities(value: unknown): ServiceCapabilitiesView | null {
     const result = [...new Set(candidate.filter((item): item is string => typeof item === 'string' && item.length > 0))];
     return result.length > 0 ? result : undefined;
   };
+  const reasoningEfforts = isReasoningEffortList(raw.reasoningEfforts) ? [...raw.reasoningEfforts] : undefined;
   const normalized: ServiceCapabilitiesView = {
     ...(positiveInteger(raw.contextWindow) ? { contextWindow: positiveInteger(raw.contextWindow) } : {}),
     ...(positiveInteger(raw.maxOutputTokens) ? { maxOutputTokens: positiveInteger(raw.maxOutputTokens) } : {}),
     ...(stringList(raw.inputs) ? { inputs: stringList(raw.inputs) } : {}),
     ...(stringList(raw.outputs) ? { outputs: stringList(raw.outputs) } : {}),
     ...(typeof raw.reasoning === 'boolean' ? { reasoning: raw.reasoning } : {}),
+    ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
     ...(typeof raw.toolUse === 'boolean' ? { toolUse: raw.toolUse } : {}),
     ...(typeof raw.structuredOutput === 'boolean' ? { structuredOutput: raw.structuredOutput } : {}),
     ...(stringList(raw.supportedParameters) ? { supportedParameters: stringList(raw.supportedParameters) } : {}),

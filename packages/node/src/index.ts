@@ -363,3 +363,4 @@ export {
   type LoadedProvider,
   type LoadedRouter,
 } from './config/plugin-loader.js'
+export type { ReasoningEffort } from '@antseed/protocol';

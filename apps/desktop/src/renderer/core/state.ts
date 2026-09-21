@@ -71,6 +71,7 @@ export type ServiceCapabilitiesView = {
   inputs?: string[];
   outputs?: string[];
   reasoning?: boolean;
+  reasoningEfforts?: import('@antseed/protocol').ReasoningEffort[];
   toolUse?: boolean;
   structuredOutput?: boolean;
   supportedParameters?: string[];
