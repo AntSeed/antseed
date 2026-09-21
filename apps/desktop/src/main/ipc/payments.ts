@@ -172,12 +172,15 @@ export function registerPaymentsIpc(): void {
       // canonical message below, proving the params came from this wallet.
       // The signed message carries the LOWERCASED address (the URL param stays
       // checksummed) — verified against the reference sig their page accepts.
+      // The header line is a wire-format constant that must match the page's
+      // `buildFundingMessage` byte for byte ("AntSeed Pay", capital S); it is
+      // not display copy and must not follow product-name renames.
       const payPage = payPageProvider(provider.id);
       if (payPage) {
         const cur = 'USD';
         const amountStr = hasAmount ? String(amount) : '';
         const message = [
-          'Antseed Pay',
+          'AntSeed Pay',
           `address: ${identity.wallet.address.toLowerCase()}`,
           `currency: ${cur}`,
           `amount: ${amountStr}`,

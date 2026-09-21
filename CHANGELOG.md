@@ -15,6 +15,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop: the Antseed Pay card checkout opened to "This funding link is invalid or was altered". The desktop copy rename to "Antseed" also changed the header line of the signed funding link, so the pay page could no longer verify the wallet signature. The signed message is a wire-format constant and is restored to what the page verifies.
 - CLI/Node: seller readiness now follows the configured staking contract’s on-chain eligibility rule, allowing eligible zero-stake sellers to start while retaining gas and registration checks. Ineligible sellers are directed to `antseed seller status` to check agent binding and stake requirements. Docs and the `seller setup` next steps now describe staking as optional, since the seller registry's minimum pool stake is currently 0.
 
 - Desktop: Claude Desktop 2.2553 and later relabel the connected-app model picker from Anthropic's published model catalog, so "Antseed Auto" and the curated network models showed as the Claude models whose ids they borrow ("Fable 5", "Sonnet 4.6"). The Antseed profile now turns that catalog off so the gateway's own labels are shown. Reconnect Claude Desktop and relaunch it to apply.
