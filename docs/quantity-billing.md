@@ -1,11 +1,14 @@
 # Generic quantity billing
 
-This is PR 1/5 of the unreleased routing stack. It defines the billing contract,
+This is PR 1/6 (#1039) of the unreleased routing stack. It defines the billing contract,
 quantity adapters, buyer verification, seller estimates, discovery pricing, and
 local configuration migration. Router selection, preference schemas, conversation
 behavior, reasoning controls, and shared request-lifecycle changes are separate PRs.
-Reasoning-effort announcements are PR 2/5, routing protocol/discovery is PR 3/5,
-shared execution is PR 4/5, and buyer routing integration is PR 5/5.
+[Reasoning-effort announcements](protocol/reasoning-efforts.md) are PR 2/6 (#1040),
+[routing protocol/discovery](protocol/routing.md) is PR 3/6 (#1034), and
+[routing-critical paid execution](router-per-call-billing.md) is PR 4/6 (#1035).
+Buyer routing integration follows in PR 5/6 (#1036); independent generic payment
+fixes follow that integration in PR 6/6, not as its prerequisite.
 
 ## Contract
 
@@ -51,14 +54,16 @@ delivered images, bounded by requested `n` (default 1). Non-streaming
 `openai-chat-completions` and `antseed-routing` count a fulfilled response as one,
 otherwise zero. Registering the routing protocol identifier and its quantity
 adapter here does not activate a router endpoint or buyer routing. Full routing
-response validation and acceptance are provided by the following PRs.
+response validation belongs to the protocol contract; paid acceptance and its
+buyer integration follow in #1035 and #1036 respectively.
 
 Buyer and seller independently measure fulfillment. Buyer validation rejects
 positive claims without observed output, quantities above the captured request
 limit or observation, and unit costs above exact price times quantity. Token
 charges remain separate. Payment authorization and execution ordering are not
-redesigned here; the shared-execution PR supplies request-scoped acceptance,
-concurrent-accounting, and cancellation semantics.
+redesigned here; [routing-critical paid execution](router-per-call-billing.md)
+supplies request-scoped acceptance, concurrent accounting, and cancellation
+semantics required by buyer integration.
 
 ## Migration and compatibility
 
@@ -81,8 +86,8 @@ wire layout is not retained as a second decoder.
 Signed quantity offers use metadata v13. Legacy billing advertisements and usage
 reports are rejected rather than reinterpreted; supported token-only older metadata
 continues to work. Metadata v13 is an unreleased stack format whose complete routing
-descriptor extension is finalized in PR 3/5, after reasoning-effort announcements
-in PR 2/5. These are review boundaries, not
+descriptor extension is finalized in PR 3/6 (#1034), after reasoning-effort announcements
+in PR 2/6 (#1040). These are review boundaries, not
 separate protocol releases: deploy the completed stack together. Historical
 receipts, SQLite columns, and released database migrations are not rewritten.
 

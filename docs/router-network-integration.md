@@ -1,9 +1,10 @@
 # Structured network routing
 
-This is PR 5/5 of the unreleased routing stack. It inherits quantity billing
-(#1039, 1/5), reasoning-effort announcements (#1040, 2/5), routing protocol/discovery
-(#1034, 3/5), and shared execution (#1035, 4/5). This slice applies advertised
-reasoning controls to buyer requests; it does not redefine the announcements.
+This is PR 5/6 of the unreleased routing stack. It inherits quantity billing
+(#1039, 1/6), reasoning-effort announcements (#1040, 2/6), routing protocol/discovery
+(#1034, 3/6), and routing-critical paid execution (#1035, 4/6). This slice applies
+advertised reasoning controls to buyer requests; it does not redefine the
+announcements. Independent payment recovery and storage regressions follow in 6/6.
 
 ## Selection and CLI
 
@@ -133,7 +134,7 @@ Defaults fill absent fields only. Preferences never override buyer spending or t
 
 ## Quantity pricing
 
-Quantity billing is inherited from PR 1/5: v2 models carry additive integer
+Quantity billing is inherited from PR 1/6: v2 models carry additive integer
 micro-USDC components, and reports carry only quantity. Image conditions are
 resolved from adapter-captured request attributes. Catalogs expose the rules
 without a flat price or range when pricing is conditional; request-specific

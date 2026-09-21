@@ -1,15 +1,17 @@
-# Current five-PR stack
+# Current six-PR stack
 
-The current review order is #1039 (1/5, generic quantity billing),
-#1040 (2/5, signed reasoning-effort capabilities),
-#1034 (3/5, routing protocol/discovery), #1035 (4/5, shared execution), and
-#1036 (5/5, buyer integration).
+The current review order is #1039 (1/6, generic quantity billing),
+#1040 (2/6, signed reasoning-effort capabilities),
+#1034 (3/6, routing protocol/discovery), #1035 (4/6, routing-critical paid execution),
+#1036 (5/6, buyer integration), then the independent generic payment follow-up (6/6).
 The tables below audit the original three-slice extraction: their PR 1/2/3 labels
 refer to the historical protocol/execution/buyer slices, now PR 3/4/5. Quantity
 billing and its adapters, codecs, config migration, catalog prices, and regression
 tests have since been extracted into #1039. Reasoning-effort types, validation,
 provider configuration, signed encoding, and catalog propagation now belong to
-PR 2/5; routing recommendations and execution remain in PRs 3/5 and 5/5.
+PR 2/6; routing recommendations and execution remain in PRs 3/6 and 5/6.
+Retained-channel reconnect, its local-chain fixture, SQLite schema regressions,
+and seller billing type cleanup move out of #1035 into the final follow-up.
 No original feature is dropped. The validation figures below are historical,
 not fresh results for this restack; see the PR descriptions for current checks.
 
