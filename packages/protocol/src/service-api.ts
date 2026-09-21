@@ -8,7 +8,8 @@ export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'openai-responses',
   'openai-images',
   'typesafe-systemone',
-  'antseed-video-jobs-v1',
+  'runway-video',
+  'veo-video',
 ] as const;
 
 export type ServiceApiProtocol = (typeof WELL_KNOWN_SERVICE_API_PROTOCOLS)[number];

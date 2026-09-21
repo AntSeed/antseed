@@ -132,6 +132,14 @@ describe('BuyerPaymentNegotiator', () => {
   });
 
   describe('preparePreRequestAuth', () => {
+    it('rejects video pricing above the buyer cap before any request is sent', () => {
+      const request: SerializedHttpRequest = { requestId: 'video-cap', method: 'POST', path: '/v1/text_to_video', headers: { 'content-type': 'application/json' }, body: enc.encode(JSON.stringify({ model: 'gen4.5', duration: 8 })) };
+      expect(() => negotiator.trackRequestBillingContext(request, 'gen4.5', {
+        sellerPeerId: SELLER_PEER_ID, provider: 'runway', service: 'gen4.5', serviceApiProtocol: 'runway-video',
+        unitModel: { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1 }] },
+      })).toThrow('maxPerRequestUsdc');
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
     it('no-ops when peer is not locked', async () => {
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();

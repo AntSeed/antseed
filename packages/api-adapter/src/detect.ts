@@ -1,4 +1,5 @@
 import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
+import { nativeVideoRoute } from './native-video.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
 const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
@@ -19,6 +20,8 @@ export function detectRequestServiceApiProtocol(
   request: Pick<SerializedHttpRequest, 'path' | 'headers'>,
 ): ServiceApiProtocol | null {
   const normalizedPath = request.path.toLowerCase();
+  const video = nativeVideoRoute({ path: request.path, method: 'POST' }) ?? nativeVideoRoute({ path: request.path, method: 'GET' });
+  if (video) return video.protocol;
   if (normalizedPath.startsWith('/v1/messages') || normalizedPath.startsWith('/v1/complete')) {
     return 'anthropic-messages';
   }
@@ -40,9 +43,6 @@ export function detectRequestServiceApiProtocol(
   if (normalizedPath.startsWith('/v1/systemone')) {
     return 'typesafe-systemone';
   }
-  if (normalizedPath.startsWith('/v1/video/generations')) {
-    return 'antseed-video-jobs-v1';
-  }
 
   const hasAnthropicVersionHeader = Object.keys(request.headers)
     .some((key) => key.toLowerCase() === 'anthropic-version');
@@ -62,6 +62,8 @@ export function inferProviderDefaultServiceApiProtocols(providerName: string): S
   if (OPENAI_CHAT_PROVIDER_NAMES.has(normalized)) return ['openai-chat-completions'];
   if (OPENAI_RESPONSES_PROVIDER_NAMES.has(normalized)) return ['openai-responses'];
   if (TYPESAFE_PROVIDER_NAMES.has(normalized)) return ['typesafe-systemone'];
+  if (normalized === 'runway') return ['runway-video'];
+  if (normalized === 'veo') return ['veo-video'];
   return [];
 }
 

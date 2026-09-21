@@ -81,44 +81,6 @@ test('loadConfig merges partial model routing preferences with defaults', async 
   );
 });
 
-test('loadConfig preserves buyer video approval overrides and default caps', async () => {
-  await withTempConfig(
-    JSON.stringify({ buyer: { video: { maxTotalUsdc: '2500000' } } }),
-    async (configPath) => {
-      const config = await loadConfig(configPath);
-      assert.deepEqual(config.buyer.video, {
-        autoApprove: true,
-        maxTotalUsdc: '2500000',
-        maxDurationSeconds: 10,
-      });
-    },
-  );
-});
-
-test('loadConfig rejects invalid buyer video approval limits', async () => {
-  await withTempConfig(
-    JSON.stringify({ buyer: { video: { maxTotalUsdc: '-1', maxDurationSeconds: 0 } } }),
-    async (configPath) => {
-      await assert.rejects(() => loadConfig(configPath), /buyer\.video\.maxTotalUsdc/);
-    },
-  );
-});
-
-test('loadConfig requires explicit removal of legacy video split limits', async () => {
-  await withTempConfig(
-    JSON.stringify({ buyer: { video: { maxUpfrontBps: 5000 } } }),
-    async (configPath) => {
-      await assert.rejects(() => loadConfig(configPath), /maxUpfrontBps is no longer supported/);
-    },
-  );
-  await withTempConfig(
-    JSON.stringify({ seller: { providers: { runway: { plugin: 'runway', services: {}, videoPayment: { upfrontBps: 5000 } } } } }),
-    async (configPath) => {
-      await assert.rejects(() => loadConfig(configPath), /videoPayment is no longer supported/);
-    },
-  );
-});
-
 test('loadConfig rejects invalid model routing peer ids', async () => {
   await withTempConfig(
     JSON.stringify({ buyer: { routingPreferences: { blockedPeerIds: ['not-a-peer'] } } }),

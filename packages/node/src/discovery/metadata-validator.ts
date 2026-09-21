@@ -544,10 +544,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
-          } else if (protocol !== "openai-images" && protocol !== "antseed-video-jobs-v1") {
+          } else if (!['openai-images', 'runway-video', 'veo-video'].includes(protocol)) {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing models currently support openai-images and antseed-video-jobs-v1 only",
+              message: "Service unit billing models support openai-images, runway-video and veo-video only",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({

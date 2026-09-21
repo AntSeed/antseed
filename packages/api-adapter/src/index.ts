@@ -1,3 +1,5 @@
+export { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, requestService, type NativeVideoRoute, type NativeVideoProtocol, type NativeVideoFacts } from './native-video.js';
+
 export {
   transformRequest,
   type ServiceApiRequestTransformOptions,

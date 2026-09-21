@@ -149,15 +149,6 @@ function parseSseEvents(sseText: string): Array<{ event: string | null; data: st
 }
 
 describe('detectRequestServiceApiProtocol', () => {
-  it.each([
-    ['/v1/systemone', 'typesafe-systemone'],
-    ['/v1/video/generations', 'antseed-video-jobs-v1'],
-  ] as const)('detects %s without mixing decision and video protocols', (path, protocol) => {
-    expect(detectRequestServiceApiProtocol(makeRequest({ path }))).toBe(protocol);
-    expect(selectTargetProtocolForRequest(protocol, [protocol])).toEqual({ targetProtocol: protocol, requiresTransform: false });
-    expect(selectTargetProtocolForRequest(protocol, ['openai-chat-completions'])).toBeNull();
-  });
-
   it('detects anthropic messages from path', () => {
     expect(detectRequestServiceApiProtocol(makeRequest())).toBe('anthropic-messages');
   });

@@ -129,9 +129,6 @@ function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
   if (typeof value['apiKeyEnv'] === 'string' && value['apiKeyEnv'].trim().length > 0) {
     out.apiKeyEnv = value['apiKeyEnv'].trim();
   }
-  if (value['videoPayment'] !== undefined) {
-    throw new Error('videoPayment is no longer supported; remove it to accept full-price video billing at upstream acceptance');
-  }
   if (isRecord(value['pathRewrite'])) {
     const pr: Record<string, string> = {};
     for (const [k, v] of Object.entries(value['pathRewrite'])) {
@@ -452,32 +449,6 @@ function normalizeBuyerVerification(
   };
 }
 
-function cloneBuyerVideo(
-  value: AntseedConfig['buyer']['video'],
-): AntseedConfig['buyer']['video'] {
-  return value ? { ...value } : undefined;
-}
-
-function normalizeBuyerVideo(
-  value: unknown,
-  fallback?: AntseedConfig['buyer']['video'],
-): { video: NonNullable<AntseedConfig['buyer']['video']> } | Record<string, never> {
-  if (!isRecord(value)) {
-    const cloned = cloneBuyerVideo(fallback);
-    return cloned ? { video: cloned } : {};
-  }
-  if (value['maxUpfrontBps'] !== undefined) {
-    throw new Error('buyer.video.maxUpfrontBps is no longer supported; remove it to accept full-price video billing at upstream acceptance');
-  }
-  return {
-    video: {
-      autoApprove: (value['autoApprove'] ?? fallback?.autoApprove) as boolean,
-      maxTotalUsdc: (value['maxTotalUsdc'] ?? fallback?.maxTotalUsdc) as string,
-      maxDurationSeconds: (value['maxDurationSeconds'] ?? fallback?.maxDurationSeconds) as number,
-    },
-  };
-}
-
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -496,7 +467,6 @@ function mergeBuyerConfig(
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
-      ...(normalizeBuyerVideo(undefined, defaults.video)),
     };
   }
   return {
@@ -532,7 +502,6 @@ function mergeBuyerConfig(
       'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
-    ...(normalizeBuyerVideo(value['video'], defaults.video)),
   };
 }
 

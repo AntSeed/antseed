@@ -1,3 +1,5 @@
+import { nativeVideoRoute, nativeVideoAcceptance } from '@antseed/api-adapter'
+import { ResourceRoutes } from './resource-routes.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
@@ -161,13 +163,6 @@ export interface BuyerProxyConfig {
   verifier?: VerifierPolicy
 }
 
-interface VideoRouteAffinity {
-  sellerPeerId: string
-  provider: string
-  service: string
-  expiresAt: number
-}
-
 // 401/403 are included: sellers relay upstream auth failures (revoked or
 // expired key, region/WAF block) that are specific to that seller's upstream
 // account, so another peer serving the same model can usually complete the
@@ -215,18 +210,9 @@ function isValidRoutedModelTarget(value: string): boolean {
   return !value.includes('@') || parsePeerPinnedService(value) !== null
 }
 
-function videoResourceIdFromPath(path: string): string | null {
-  const pathname = path.split('?')[0] ?? path
-  const match = /^\/v1\/video\/generations\/([^/]+)(?:\/|$)/i.exec(pathname)
-  return match?.[1] ?? null
-}
-
-function isVideoFollowUpPath(path: string): boolean {
-  return videoResourceIdFromPath(path) !== null
-}
-
 /** Returns `request` with its body's model field rewritten to `serviceId`, or unchanged if nothing rewrote. */
 function withRoutedModel(request: SerializedHttpRequest, serviceId: string): SerializedHttpRequest {
+  if (nativeVideoRoute(request)) return request;
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, serviceId)
   return rewritten.overridden
     ? { ...request, body: rewritten.body, headers: rewritten.headers }
@@ -818,6 +804,7 @@ export class BuyerProxy {
   private _routingPreferences: ModelRoutingPreferences | null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
+  private readonly _resourceRoutes = new ResourceRoutes()
 
   private _cachedPeers: PeerInfo[] = []
   private _cacheLastUpdatedAtMs = 0
@@ -860,7 +847,6 @@ export class BuyerProxy {
    * deltas (buyer- and seller-initiated auth both advance the cumulative).
    */
   private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
-  private readonly _videoAffinities = new Map<string, VideoRouteAffinity>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -984,6 +970,10 @@ export class BuyerProxy {
     // startup route from the warm cache without blocking on DHT discovery.
     // The background refresh still runs to pick up fresh peers and IP changes.
     await this._hydratePeersFromStateFile()
+    try {
+      const state = JSON.parse(await readFile(this._stateFile, 'utf8'))
+      this._resourceRoutes.hydrate(state.resourceRoutes)
+    } catch {}
     // Adopt persisted session overrides (peer pin, default routed model) so
     // they survive daemon restart. A --peer CLI flag beats the persisted pin
     // at startup; runtime `connection set` writes still take over via the
@@ -1019,7 +1009,6 @@ export class BuyerProxy {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
-      this._hydrateVideoAffinities(parsed)
       // Cooldowns survive a restart — a peer that died ten seconds before we
       // exited is still dead — but the parser clamps anything expired or
       // impossibly distant, so a restart can never extend one. Nothing new can
@@ -1104,7 +1093,6 @@ export class BuyerProxy {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
-      this._hydrateVideoAffinities(parsed)
       if (!opts.preservePeerPin) {
         const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
           ? parsed.pinnedPeerId.trim().toLowerCase()
@@ -1175,6 +1163,12 @@ export class BuyerProxy {
     return this._stateWriteChain
   }
 
+  private async _persistResourceRoutes(): Promise<void> {
+    const write = this._stateWriteChain.then(() => mergeJsonStateFile(this._stateDir, this._stateFile, { resourceRoutes: this._resourceRoutes.snapshot() }))
+    this._stateWriteChain = write.catch(() => {})
+    return write
+  }
+
   private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
     // When stopping, preserve whatever session overrides are already
     // in the file — the debounce may have been cancelled before
@@ -1188,85 +1182,6 @@ export class BuyerProxy {
       port: this._port,
       ...sessionOverrides,
     })
-  }
-
-  private _hydrateVideoAffinities(value: unknown): void {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return
-    const raw = (value as Record<string, unknown>)['videoAffinities']
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
-    const now = Date.now()
-    this._videoAffinities.clear()
-    for (const [id, candidate] of Object.entries(raw as Record<string, unknown>)) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
-      const affinity = candidate as Record<string, unknown>
-      const sellerPeerId = typeof affinity['sellerPeerId'] === 'string' ? affinity['sellerPeerId'].toLowerCase() : ''
-      const provider = typeof affinity['provider'] === 'string' ? affinity['provider'] : ''
-      const service = typeof affinity['service'] === 'string' ? affinity['service'] : ''
-      const expiresAt = typeof affinity['expiresAt'] === 'number' ? affinity['expiresAt'] : 0
-      if (/^[0-9a-f]{40}$/.test(sellerPeerId) && provider && service && expiresAt > now) {
-        this._videoAffinities.set(id, { sellerPeerId, provider, service, expiresAt })
-      }
-    }
-  }
-
-  private _videoAffinityForRequest(request: SerializedHttpRequest): VideoRouteAffinity | null {
-    const pathId = videoResourceIdFromPath(request.path)
-    if (pathId) return this._videoAffinities.get(pathId) ?? null
-    if (request.method !== 'POST' || !request.path.toLowerCase().startsWith('/v1/video/generations')) return null
-    const idempotencyKey = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'idempotency-key')?.[1]
-    if (idempotencyKey) {
-      const affinity = this._videoAffinities.get(`idem:${idempotencyKey}`)
-      if (affinity) return affinity
-    }
-    const body = parseRequestBodyObject(request.body, request.headers)
-    const inputAssets = Array.isArray(body?.['input_assets']) ? body['input_assets'] : []
-    for (const input of inputAssets) {
-      if (!input || typeof input !== 'object' || Array.isArray(input)) continue
-      const assetId = typeof (input as Record<string, unknown>)['asset_id'] === 'string'
-        ? (input as Record<string, unknown>)['asset_id'] as string
-        : ''
-      const affinity = this._videoAffinities.get(assetId)
-      if (affinity) return affinity
-    }
-    return null
-  }
-
-  private async _recordVideoAffinity(
-    request: SerializedHttpRequest,
-    response: SerializedHttpResponse,
-    peer: PeerInfo,
-    provider: string,
-    service: string | null,
-  ): Promise<void> {
-    if (!service || (response.statusCode !== 402 && (response.statusCode < 200 || response.statusCode >= 300))) return
-    const normalizedPath = request.path.split('?')[0]?.toLowerCase() ?? ''
-    if (normalizedPath !== '/v1/video/assets' && normalizedPath !== '/v1/video/generations') return
-    let body: Record<string, unknown>
-    try {
-      const parsed = JSON.parse(new TextDecoder().decode(response.body)) as unknown
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
-      body = parsed as Record<string, unknown>
-    } catch {
-      return
-    }
-    const id = typeof body['id'] === 'string'
-      ? body['id']
-      : typeof body['generation_id'] === 'string'
-        ? body['generation_id']
-        : ''
-    if (!id) return
-    const expiresSeconds = typeof body['expires_at'] === 'number' ? body['expires_at'] : null
-    const artifacts = Array.isArray(body['artifacts']) ? body['artifacts'] : []
-    const artifactExpiry = artifacts.reduce<number | null>((latest, artifact) => {
-      if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) return latest
-      const expiry = (artifact as Record<string, unknown>)['expires_at']
-      return typeof expiry === 'number' ? Math.max(latest ?? 0, expiry) : latest
-    }, null)
-    const expiresAt = 1000 * (artifactExpiry ?? expiresSeconds ?? Math.floor(Date.now() / 1000) + 24 * 60 * 60)
-    this._videoAffinities.set(id, { sellerPeerId: peer.peerId.toLowerCase(), provider, service, expiresAt })
-    const idempotencyKey = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'idempotency-key')?.[1]
-    if (idempotencyKey) this._videoAffinities.set(`idem:${idempotencyKey}`, { sellerPeerId: peer.peerId.toLowerCase(), provider, service, expiresAt })
-    await this._mergeStateFile({ videoAffinities: Object.fromEntries(this._videoAffinities) })
   }
 
   private _startIncrementalDiscoverySweep(): void {
@@ -2253,7 +2168,7 @@ export class BuyerProxy {
       res.writeHead(400, responseHeaders)
       res.end(JSON.stringify({
         error: {
-          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text", "images", or "decisions".`,
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text", "images", "decisions", or "videos".`,
           type: 'invalid_request_error',
           param: 'type',
         },
@@ -2280,7 +2195,8 @@ export class BuyerProxy {
 
     // Only proxy known API paths — reject everything else with 404
     const normalizedPath = path.split('?')[0]?.trim().toLowerCase() ?? '/'
-    const isKnownApiPath =
+    const nativeVideo = nativeVideoRoute({ method, path })
+    const isKnownApiPath = nativeVideo !== null ||
       normalizedPath.startsWith('/v1/messages') ||
       normalizedPath.startsWith('/v1/chat/completions') ||
       normalizedPath.startsWith('/v1/responses') ||
@@ -2361,6 +2277,30 @@ export class BuyerProxy {
       return
     }
 
+    if (nativeVideo) {
+      try {
+        if (nativeVideo.action === 'create') {
+          const release = this._resourceRoutes.reserve()
+          res.once('finish', release)
+          res.once('close', release)
+        } else {
+          const pin = serializedReq.headers['x-antseed-pin-peer']?.toLowerCase()
+          const route = this._resourceRoutes.resolve(nativeVideo.protocol, nativeVideo.resourceId!, pin)
+          if (!route && (!pin || !serializedReq.headers['x-antseed-service'])) throw new Error('Unknown video resource; supply x-antseed-pin-peer and x-antseed-service to recover its route')
+          if (route) {
+            serializedReq.headers['x-antseed-pin-peer'] = route.sellerPeerId
+            serializedReq.headers['x-antseed-provider'] = route.provider
+            serializedReq.headers['x-antseed-service'] = route.service
+            await this._persistResourceRoutes().catch(error => console.error('[proxy] Route persistence failed:', error))
+          }
+        }
+      } catch (error) {
+        res.writeHead(409, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'video_route_error', message: String(error instanceof Error ? error.message : error) } }))
+        return
+      }
+    }
+
     // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
     const effectivePinnedPeer = this._pinnedPeer
@@ -2401,7 +2341,9 @@ export class BuyerProxy {
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
     // substituted value. Tool configs written by the desktop carry the alias
     // so route changes apply to running sessions without config rewrites.
-    const aliasResult = substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, effectiveRoutedModel)
+    const aliasResult = nativeVideo
+      ? { body: serializedReq.body, headers: serializedReq.headers, aliasRequested: false, substituted: false }
+      : substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, effectiveRoutedModel)
     if (aliasResult.aliasRequested && !aliasResult.substituted) {
       log(`Request rejected: model alias "${ROUTED_MODEL_ALIAS}" with no default route set`)
       res.writeHead(400, { 'content-type': 'application/json' })
@@ -2427,7 +2369,7 @@ export class BuyerProxy {
     // does for alias-carrying configs; otherwise pinning a chat in the
     // desktop silently does nothing for intercepted apps.
     let chatPinOverrideApplied = false
-    if (systemRoutedModel && !aliasResult.aliasRequested && chatPinnedModel) {
+    if (!nativeVideo && systemRoutedModel && !aliasResult.aliasRequested && chatPinnedModel) {
       const pinOverride = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, chatPinnedModel)
       if (pinOverride.overridden) {
         serializedReq = { ...serializedReq, body: pinOverride.body, headers: pinOverride.headers }
@@ -2486,7 +2428,9 @@ export class BuyerProxy {
       body: servicePinBody,
       headers: servicePinHeaders,
       pinnedPeerId: bodyPinnedPeer,
-    } = rewritePeerPinnedServiceInBody(serializedReq.body, serializedReq.headers)
+    } = nativeVideo
+      ? { body: serializedReq.body, headers: serializedReq.headers, pinnedPeerId: null }
+      : rewritePeerPinnedServiceInBody(serializedReq.body, serializedReq.headers)
     if (servicePinBody !== serializedReq.body) {
       serializedReq = { ...serializedReq, body: servicePinBody, headers: servicePinHeaders }
       if (bodyPinnedPeer) {
@@ -2514,24 +2458,7 @@ export class BuyerProxy {
     })
 
     const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
-    let requestedService = extractRequestedService(serializedReq)
-    const videoAffinity = this._videoAffinityForRequest(serializedReq)
-    if (videoAffinity) {
-      serializedReq = {
-        ...serializedReq,
-        headers: {
-          ...serializedReq.headers,
-          'x-antseed-pin-peer': videoAffinity.sellerPeerId,
-          'x-antseed-provider': videoAffinity.provider,
-          'x-antseed-service': videoAffinity.service,
-        },
-      }
-      requestedService = videoAffinity.service
-    } else if (isVideoFollowUpPath(serializedReq.path)) {
-      res.writeHead(404, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { code: 'generation_not_found', message: 'Unknown local video generation ID', retryable: false } }))
-      return
-    }
+    const requestedService = extractRequestedService(serializedReq)
     log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
@@ -2744,6 +2671,11 @@ export class BuyerProxy {
                 `${selected.peer.peerId}@${selected.serviceId}`,
               )
             }
+            return
+          }
+          if (nativeVideo) {
+            res.writeHead(result.statusCode, result.responseHeaders)
+            res.end(result.responseBody)
             return
           }
           lastRetry = result
@@ -3132,11 +3064,10 @@ export class BuyerProxy {
         ...(requestedService ? { 'x-antseed-service': requestedService } : {}),
       },
     }
-    if (selectedRoutePlan.serviceId) {
+    if (selectedRoutePlan.serviceId && !nativeVideoRoute(requestForPeer)) {
       requestForPeer = withRoutedModel(requestForPeer, selectedRoutePlan.serviceId)
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
-    const binaryArtifactStream = /^\/v1\/video\/generations\/[^/]+\/artifacts\/[^/]+\/content(?:\?|$)/i.test(serializedReq.path)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
     let streamResponseAdapter: StreamingResponseAdapter | null = null
 
@@ -3195,7 +3126,7 @@ export class BuyerProxy {
     this._markModelActivity()
 
     // Forward through P2P
-    const wantsStreaming = clientWantsStreaming || binaryArtifactStream
+    const wantsStreaming = clientWantsStreaming && !nativeVideoRoute(requestForPeer)
     const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, peerResponseProtocol, { pinned })
@@ -3218,7 +3149,7 @@ export class BuyerProxy {
             // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
             // omit it, which can cause the client's fetch body reader to not
             // detect end-of-stream properly.
-            if (clientWantsStreaming && !streamingHeaders['content-type']) {
+            if (!streamingHeaders['content-type']) {
               streamingHeaders['content-type'] = 'text/event-stream'
             }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
@@ -3238,7 +3169,7 @@ export class BuyerProxy {
               }
             }
           },
-        }, { signal: requestSignal, pinned, collectResponseBody: !binaryArtifactStream })
+        }, { signal: requestSignal, pinned })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
         responseForClient = adaptPeerResponse(responseForClient)
@@ -3254,7 +3185,6 @@ export class BuyerProxy {
         if (responseForClient.statusCode === 402) {
           responseForClient = inject402PeerId(responseForClient, selectedPeer.peerId)
         }
-        await this._recordVideoAffinity(requestForPeer, responseForClient, selectedPeer, selectedRoutePlan.provider, selectedRoutePlan.serviceId ?? requestedService)
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -3331,6 +3261,18 @@ export class BuyerProxy {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
+        const videoRoute = nativeVideoRoute(requestForPeer)
+        if (videoRoute) {
+          upstreamResponse.headers['x-antseed-seller-peer'] = selectedPeer.peerId
+          const resourceId = videoRoute.action === 'create' ? nativeVideoAcceptance(videoRoute.protocol, upstreamResponse) : null
+          if (resourceId && requestedService) {
+            this._resourceRoutes.record({ protocol: videoRoute.protocol, resourceId, sellerPeerId: selectedPeer.peerId.toLowerCase(), provider: selectedRoutePlan.provider, service: requestedService })
+            try { await this._persistResourceRoutes() } catch (error) {
+              upstreamResponse.headers['x-antseed-route-persistence'] = 'failed'
+              console.error('[proxy] Accepted video route was not persisted:', error)
+            }
+          }
+        }
         let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
         response = adaptPeerResponse(response)
         if (
@@ -3344,7 +3286,6 @@ export class BuyerProxy {
         if (response.statusCode === 402) {
           response = inject402PeerId(response, selectedPeer.peerId)
         }
-        await this._recordVideoAffinity(requestForPeer, response, selectedPeer, selectedRoutePlan.provider, selectedRoutePlan.serviceId ?? requestedService)
         const latencyMs = Date.now() - startTime
         this._markModelActivity()
 

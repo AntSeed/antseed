@@ -650,6 +650,9 @@ importers:
 
   packages/provider-core:
     dependencies:
+      '@antseed/api-adapter':
+        specifier: workspace:*
+        version: link:../api-adapter
       bottleneck:
         specifier: ^2.19.5
         version: 2.19.5
@@ -853,6 +856,10 @@ importers:
         version: 2.1.9(@types/node@22.7.5)(lightningcss@1.27.0)(sass@1.97.3)(terser@5.46.0)
 
   plugins/provider-runway:
+    dependencies:
+      '@antseed/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
     devDependencies:
       '@antseed/node':
         specifier: workspace:*
@@ -881,6 +888,10 @@ importers:
         version: 2.1.9(@types/node@22.7.5)(lightningcss@1.27.0)(sass@1.97.3)(terser@5.46.0)
 
   plugins/provider-veo:
+    dependencies:
+      '@antseed/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
     devDependencies:
       '@antseed/node':
         specifier: workspace:*

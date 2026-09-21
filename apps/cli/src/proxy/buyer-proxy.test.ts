@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
+import { ResourceRoutes } from './resource-routes.js'
 import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
@@ -47,6 +48,118 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
   }
 }
 
+for (const provider of ['runway', 'veo'] as const) {
+  test(`native ${provider} routes concurrent jobs independently, persist before returning, and survive pin changes`, async () => {
+    const protocol = provider === 'runway' ? 'runway-video' : 'veo-video'
+    const resourceId = (suffix: string) => provider === 'runway' ? `task-${suffix}` : `operations/task-${suffix}`
+    const statusPath = (suffix: string) => provider === 'runway' ? `/v1/tasks/${resourceId(suffix)}` : `/v1beta/${resourceId(suffix)}`
+    const directory = await mkdtemp(join(tmpdir(), 'native-video-routes-'))
+    try {
+      const peers = [makePeer('a', [provider]), makePeer('b', [provider])]
+      for (const [index, peer] of peers.entries()) {
+        peer.providerServiceApiProtocols = { [provider]: { services: { [`model-${index}`]: [protocol] } } }
+      }
+      const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
+      ;(proxy as any)._stateDir = directory
+      ;(proxy as any)._stateFile = join(directory, 'buyer.state.json')
+      await writeFile(join(directory, 'buyer.state.json'), JSON.stringify({ unrelated: 'preserved' }))
+      const calls: Array<{ peer: string; path: string; service?: string; provider?: string }> = []
+      ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; method: string; path: string; headers: Record<string, string> }) => {
+        calls.push({ peer: peer.peerId, path: request.path, service: request.headers['x-antseed-service'], provider: request.headers['x-antseed-provider'] })
+        if (request.method === 'POST' && peer === peers[0]) await new Promise(resolve => setTimeout(resolve, 10))
+        return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(provider === 'runway' ? { id: resourceId(peer.peerId[0]!) } : { name: resourceId(peer.peerId[0]!) })) }
+      }
+      const submissions = await Promise.all([0, 1].map(index => invokeProxy(proxy, makeProxyRequest({ path: provider === 'runway' ? '/v1/text_to_video' : `/v1beta/models/model-${index}:predictLongRunning`, body: provider === 'runway' ? { model: `model-${index}`, duration: 8, promptText: 'cat' } : { instances: [{ prompt: 'cat' }], parameters: { durationSeconds: 8 } } }))))
+      assert.deepEqual(submissions.map(result => result.statusCode), [200, 200])
+      const state = JSON.parse(await readFile(join(directory, 'buyer.state.json'), 'utf8'))
+      assert.equal(state.unrelated, 'preserved')
+      assert.equal(state.resourceRoutes.length, 2)
+      const restored = new ResourceRoutes()
+      restored.hydrate(state.resourceRoutes)
+      const restarted = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
+      ;(restarted as any)._stateDir = directory
+      ;(restarted as any)._stateFile = join(directory, 'buyer.state.json')
+      ;(restarted as any)._resourceRoutes = restored
+      ;(restarted as any)._node.sendRequest = (proxy as any)._node.sendRequest
+      ;(restarted as any)._pinnedPeer = peers[1]!.peerId
+      ;(restarted as any)._defaultRoutedModel = `${peers[1]!.peerId}@unrelated-chat-model`
+      for (const [index, suffix] of ['a', 'b'].entries()) {
+        const result = await invokeProxy(restarted, makeProxyRequest({ method: 'GET', path: statusPath(suffix), body: {} }))
+        assert.equal(result.statusCode, 200)
+        assert.equal(calls.at(-1)?.peer, peers[index]!.peerId)
+        assert.equal(calls.at(-1)?.service, `model-${index}`)
+        assert.equal(calls.at(-1)?.provider, provider)
+      }
+      const count = calls.length
+      const conflict = await invokeProxy(restarted, makeProxyRequest({ method: 'GET', path: statusPath('a'), body: {}, headers: { 'x-antseed-pin-peer': peers[1]!.peerId } }))
+      assert.equal(conflict.statusCode, 409)
+      assert.equal(calls.length, count)
+      await (proxy as any)._stateWriteChain
+      await (restarted as any)._stateWriteChain
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 })
+    }
+  })
+}
+
+test('native video preserves literal models and extension fields byte-for-byte despite global chat routing', async () => {
+  for (const provider of ['runway', 'veo'] as const) {
+    for (const model of provider === 'runway' ? ['antseed', `${'b'.repeat(40)}@video-model`] : ['antseed', 'video-model']) {
+      const peer = makePeer('a', [provider])
+      peer.providerServiceApiProtocols = { [provider]: { services: { [model]: [provider === 'runway' ? 'runway-video' : 'veo-video'] } } }
+      const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+      ;(proxy as any)._defaultRoutedModel = `${'c'.repeat(40)}@chat-model`
+      ;(proxy as any)._persistResourceRoutes = async () => {}
+      const rawBody = ` \n{ "model": ${JSON.stringify(provider === 'runway' ? model : `${'b'.repeat(40)}@extension-model`)}, "service": "antseed", "duration": 8, "custom": {"value":1e2,"prompt":"猫"} }\n`
+      let forwarded = false
+      ;(proxy as any)._node.sendRequest = async (selected: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+        forwarded = true
+        assert.equal(selected.peerId, peer.peerId)
+        assert.deepEqual(Buffer.from(request.body), Buffer.from(rawBody))
+        return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(provider === 'runway' ? { id: 'task' } : { name: 'operations/task' })) }
+      }
+      const response = await invokeProxy(proxy, makeProxyRequest({ path: provider === 'runway' ? '/v1/text_to_video' : `/v1beta/models/${model}:predictLongRunning`, rawBody, headers: { [SYSTEM_ROUTED_MODEL_HEADER]: '1' } }))
+      assert.equal(response.statusCode, 200, response.body)
+      assert.equal(forwarded, true)
+    }
+  }
+})
+
+test('native resource follow-ups fail when the recorded provider loses support instead of switching providers', async () => {
+  for (const provider of ['runway', 'veo'] as const) {
+    const protocol = provider === 'runway' ? 'runway-video' : 'veo-video'
+    const peer = makePeer('a', [provider, 'replacement'])
+    peer.providerServiceApiProtocols = { [provider]: { services: { other: [protocol] } }, replacement: { services: { 'video-model': [protocol] } } }
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+    ;(proxy as any)._persistResourceRoutes = async () => {}
+    const resourceId = provider === 'runway' ? 'task' : 'operations/task'
+    ;(proxy as any)._resourceRoutes.record({ protocol, resourceId, sellerPeerId: peer.peerId, provider, service: 'video-model' })
+    let calls = 0
+    ;(proxy as any)._node.sendRequest = async () => { calls += 1; throw new Error('must not dispatch') }
+    const response = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: provider === 'runway' ? `/v1/tasks/${resourceId}` : `/v1beta/${resourceId}`, body: {} }))
+    assert.ok(response.statusCode >= 400, response.body)
+    assert.equal(calls, 0)
+  }
+})
+
+test('native video does not retry uncertain submissions and reports route persistence failures without losing acceptance', async () => {
+  const peers = [makePeer('a', ['runway']), makePeer('b', ['runway'])]
+  for (const peer of peers) peer.providerServiceApiProtocols = { runway: { services: { model: ['runway-video'] } } }
+  const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
+  let attempts = 0
+  ;(proxy as any)._node.sendRequest = async () => { attempts += 1; throw new Error('uncertain connection loss') }
+  const failed = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 } }))
+  assert.equal(attempts, 1)
+  assert.ok(failed.statusCode >= 400)
+  ;(proxy as any)._persistResourceRoutes = async () => { throw new Error('disk full') }
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({ requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"id":"accepted-task"}') })
+  const accepted = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 } }))
+  assert.equal(accepted.statusCode, 200)
+  assert.equal(accepted.headers['x-antseed-route-persistence'], 'failed')
+  assert.ok(accepted.headers['x-antseed-seller-peer'])
+  assert.equal(JSON.parse(accepted.body).id, 'accepted-task')
+})
+
 test('existing required CLI verification rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {
   const rejected = makePeer('a', ['openai'])
   const accepted = makePeer('b', ['openai'])
@@ -87,8 +200,9 @@ function makeProxyRequest(options: {
   path?: string
   headers?: Record<string, string>
   body?: Record<string, unknown>
+  rawBody?: string
 }): Readable {
-  const body = JSON.stringify(options.body ?? { model: 'gpt-4o', messages: [] })
+  const body = options.rawBody ?? JSON.stringify(options.body ?? { model: 'gpt-4o', messages: [] })
   const req = Readable.from([Buffer.from(body)]) as Readable & {
     method: string
     url: string
@@ -3738,41 +3852,4 @@ test('getSweepReceipt returns cached relayer receipts case-insensitively', () =>
   assert.equal(proxy.getSweepReceipt(nonce), receipt)
   assert.equal(proxy.getSweepReceipt(nonce.toLowerCase()), receipt)
   assert.equal(proxy.getSweepReceipt('0x' + '00'.repeat(32)), null)
-})
-
-test('video route affinity persists and restores without failover', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'antseed-video-affinity-'))
-  try {
-    const peer = makePeer('a', ['runway'])
-    const first = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
-    const request = {
-      requestId: randomUUID(), method: 'POST', path: '/v1/video/generations',
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'idem-video' },
-      body: new TextEncoder().encode(JSON.stringify({ model: 'gen4.5', prompt: 'test', duration_seconds: 4 })),
-    }
-    const response: SerializedHttpResponse = {
-      requestId: request.requestId, statusCode: 402, headers: { 'content-type': 'application/json' },
-      body: new TextEncoder().encode(JSON.stringify({
-        generation_id: 'vg_persisted', expires_at: Math.floor(Date.now() / 1000) + 3600,
-      })),
-    }
-    await (first as any)._recordVideoAffinity(request, response, peer, 'runway', 'gen4.5')
-
-    const restored = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
-    await (restored as any)._hydratePeersFromStateFile()
-    assert.deepEqual((restored as any)._videoAffinityForRequest({
-      ...request, method: 'GET', path: '/v1/video/generations/vg_persisted', body: new Uint8Array(), headers: {},
-    }), {
-      sellerPeerId: peer.peerId.toLowerCase(), provider: 'runway', service: 'gen4.5',
-      expiresAt: (JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf8')) as any).videoAffinities.vg_persisted.expiresAt,
-    })
-    assert.deepEqual((restored as any)._videoAffinityForRequest(request), (restored as any)._videoAffinityForRequest({
-      ...request, method: 'GET', path: '/v1/video/generations/vg_persisted', body: new Uint8Array(), headers: {},
-    }))
-    assert.equal((restored as any)._videoAffinityForRequest({
-      ...request, method: 'GET', path: '/v1/video/generations/vg_unknown', body: new Uint8Array(), headers: {},
-    }), null)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
 })

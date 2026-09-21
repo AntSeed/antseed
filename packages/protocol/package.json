@@ -76,10 +76,6 @@
     "./connection-state": {
       "import": "./dist/connection-state.js",
       "types": "./dist/connection-state.d.ts"
-    },
-    "./video": {
-      "import": "./dist/video.js",
-      "types": "./dist/video.d.ts"
     }
   },
   "scripts": {

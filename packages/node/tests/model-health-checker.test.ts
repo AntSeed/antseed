@@ -104,6 +104,8 @@ describe('buildHealthProbeRequest', () => {
 
   it('does not fall back to a chat probe for image services', () => {
     expect(supportsHealthProbe('openai-images')).toBe(false);
+    expect(supportsHealthProbe('runway-video')).toBe(false);
+    expect(supportsHealthProbe('veo-video')).toBe(false);
     expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(
       'Health probes are not supported for openai-images services',
     );
@@ -321,11 +323,11 @@ describe('ModelHealthChecker', () => {
     expect(paths.sort()).toEqual(['/v1/chat/completions', '/v1/messages']);
   });
 
-  it.each(['openai-images', 'antseed-video-jobs-v1'] as const)('skips %s without calling the provider or changing availability', async (protocol) => {
+  it('skips image services without calling the provider or changing availability', async () => {
     const handleRequest = vi.fn(async (req: SerializedHttpRequest) => jsonResponse(req.requestId, 500));
     const provider = makeProvider({
       services: ['gpt-image-1'],
-      serviceApiProtocols: { 'gpt-image-1': [protocol] },
+      serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
       onRequest: handleRequest,
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 1 });
@@ -340,7 +342,7 @@ describe('ModelHealthChecker', () => {
         advertised: true,
         consecutiveFailures: 0,
         lastStatusCode: null,
-        lastDetail: `Skipped health probe for unsupported protocol ${protocol}`,
+        lastDetail: 'Skipped health probe for unsupported protocol openai-images',
       }),
     ]);
   });

@@ -125,7 +125,7 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
     ].join('\n'));
   });
 
-  it.each([true, false])('buffers and wraps streaming seller errors with collectResponseBody=%s', async (collectResponseBody) => {
+  it('buffers a streaming seller error and returns the protocol-wrapped response', async () => {
     const sellerBody = new TextEncoder().encode(JSON.stringify({
       error: {
         type: 'rate_limit_error',
@@ -168,7 +168,7 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
     const response = await handler.sendRequest(peer, makeChatRequest(), {
       onResponseStart,
       onResponseChunk,
-    }, { pinned: true, collectResponseBody });
+    }, { pinned: true });
 
     expect(onResponseStart).not.toHaveBeenCalled();
     expect(onResponseChunk).not.toHaveBeenCalled();

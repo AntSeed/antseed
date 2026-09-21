@@ -8,6 +8,9 @@ import {
   extractProviderResponseFacts,
   extractRequestBodyFields,
   parseJsonObject,
+  nativeVideoFacts,
+  nativeVideoAcceptance,
+  type NativeVideoFacts,
 } from '@antseed/api-adapter';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/protocol/http';
 import type {
@@ -30,10 +33,12 @@ const ZERO_TOKEN_USAGE: TokenUsage = {
   cachedInputTokens: 0,
 };
 
+export type BillingRequestFacts = ImageRequestFacts & { video?: NativeVideoFacts };
+
 export interface CapturedUnitBillingContext {
   context: UnitBillingContext;
   requestUsage: UnitBillingUsage;
-  requestFacts: ImageRequestFacts;
+  requestFacts: BillingRequestFacts;
 }
 
 export interface FinalUnitBillingResult {
@@ -51,11 +56,13 @@ export function captureUnitBillingContext(args: {
   request: SerializedHttpRequest;
 }): CapturedUnitBillingContext {
   const parsed = extractRequestBodyFields(args.request.headers, args.request.body);
-  const requestFacts = extractImageRequestFacts({
+  const requestFacts: BillingRequestFacts = extractImageRequestFacts({
     path: args.request.path,
     method: args.request.method,
     body: parsed ?? undefined,
   });
+  const video = nativeVideoFacts(args.request);
+  if (video) requestFacts.video = video;
   const requestUsage = factsToUnitUsage(requestFacts);
   const attributes = factsToAttributes(requestFacts);
   return {
@@ -68,6 +75,7 @@ export function captureUnitBillingContext(args: {
       ...(requestFacts.requestedImages !== undefined
         ? { unitLimits: { output_images: requestFacts.requestedImages } }
         : {}),
+      ...(video ? { unitLimits: requestUsage.units, attributes: { model: args.service, ...(video.resolution ? { resolution: video.resolution } : {}) } } : {}),
     },
     requestUsage,
     requestFacts,
@@ -76,8 +84,13 @@ export function captureUnitBillingContext(args: {
 
 export function extractUnitResponseUsage(
   response: SerializedHttpResponse,
-  requestFacts?: ImageRequestFacts,
+  requestFacts?: BillingRequestFacts,
 ): { usage: UnitBillingUsage; tokenUsage: TokenUsage } {
+  if (requestFacts?.video) {
+    const video = requestFacts.video;
+    const accepted = video.action === 'create' && nativeVideoAcceptance(video.protocol, response) !== null;
+    return { usage: accepted ? factsToUnitUsage(requestFacts) : { units: {} }, tokenUsage: ZERO_TOKEN_USAGE };
+  }
   const parsed = parseJsonObject(response.body);
   const responseFacts: ProviderResponseFacts = parsed
     ? extractProviderResponseFacts(parsed)
@@ -100,9 +113,10 @@ export function computeFinalUnitBilling(
   model: UnitBillingModelV1,
   context: UnitBillingContext,
   response: SerializedHttpResponse,
-  requestFacts?: ImageRequestFacts,
+  requestFacts?: BillingRequestFacts,
 ): FinalUnitBillingResult {
   const responseUsage = extractUnitResponseUsage(response, requestFacts);
+  if (requestFacts?.video) responseUsage.usage = videoBillingUsage(model, requestFacts.video, responseUsage.usage);
   const costUsdc = evaluateUnitBilling(model, context, responseUsage.usage);
   return {
     usage: responseUsage.usage,
@@ -112,12 +126,30 @@ export function computeFinalUnitBilling(
   };
 }
 
-function factsToUnitUsage(facts: ImageRequestFacts): UnitBillingUsage {
+function factsToUnitUsage(facts: BillingRequestFacts): UnitBillingUsage {
+  if (facts.video) {
+    return { units: {
+      video_generations: facts.video.count,
+      video_seconds: (facts.video.duration ?? 0) * facts.video.count,
+    } };
+  }
   return {
     units: {
       ...(facts.requestedImages !== undefined ? { output_images: facts.requestedImages } : {}),
     },
   };
+}
+
+export function videoBillingUsage(model: UnitBillingModelV1, facts: NativeVideoFacts, usage: UnitBillingUsage): UnitBillingUsage {
+  const units: UnitBillingUsage['units'] = {};
+  if (facts.action !== 'create') return { units };
+  for (const component of model.components) {
+    if (component.unit === 'video_seconds' && facts.duration === undefined) throw new Error('Explicit video duration is required for per-second pricing');
+    if (component.unit === 'video_generations' || component.unit === 'video_seconds') {
+      units[component.unit] = usage.units[component.unit] ?? 0;
+    }
+  }
+  return { units };
 }
 
 function factsToAttributes(

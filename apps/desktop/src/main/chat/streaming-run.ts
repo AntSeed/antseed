@@ -280,6 +280,9 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
       };
     }
+    if (advertisedProtocol === 'runway-video' || advertisedProtocol === 'veo-video') {
+      return { ok: false, error: 'Video services cannot be used for text chat.' };
+    }
     if (advertisedProtocol === 'typesafe-systemone') {
       return {
         ok: false,

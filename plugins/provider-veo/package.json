@@ -1,9 +1,11 @@
 {
   "name": "@antseed/provider-veo",
   "version": "0.1.0-beta.0",
-  "description": "Google Veo video generation provider for AntSeed",
+  "description": "Seller-operated veo API relay for AntSeed",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -12,12 +14,15 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@antseed/provider-core": "workspace:*"
+  },
   "peerDependencies": {
-    "@antseed/node": ">=0.2.114"
+    "@antseed/node": ">=0.1.0"
   },
   "devDependencies": {
-    "@antseed/node": "workspace:*",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "vitest": "^2.0.0",
+    "@antseed/node": "workspace:*"
   }
 }

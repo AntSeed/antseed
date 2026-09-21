@@ -1,37 +1,65 @@
-# `@antseed/provider-veo`
+# @antseed/provider-veo
 
-Beta Google Veo 3.1 video-generation provider for `antseed-video-jobs-v1`, using the Gemini Developer API and an API key.
-
-## Supported presets
-
-- `veo-3.1-generate-preview`
-- `veo-3.1-fast-generate-preview`
-- text-to-video and one first-frame image
-- 4, 6, or 8 seconds; `16:9` or `9:16`; 720p/1080p MP4
-
-Veo through the Gemini Developer API always returns audio. Explicit `seed` and `generate_audio: false` are rejected. Vertex AI projects, regions, service accounts, and IAM are intentionally out of scope.
+Thin native Veo API relay for a seller-operated service. The seller owns job execution, permissions, retries, storage, result URLs, and refunds. This plugin does not manage jobs or safely isolate a directly shared upstream account on its own.
 
 ## Configuration
 
-```bash
-export GEMINI_API_KEY=<key>
-antseed seller setup
-antseed seller start
+Install with `antseed plugin add @antseed/provider-veo`, set `GEMINI_API_KEY` to the seller endpoint credential, and merge this provider into `seller.providers` in your configuration:
+
+```json
+{
+  "veo": {
+    "plugin": "veo",
+    "baseUrl": "https://seller.example.test",
+    "apiKeyEnv": "GEMINI_API_KEY",
+    "defaults": {
+      "inputUsdPerMillion": 0,
+      "outputUsdPerMillion": 0
+    },
+    "services": {
+      "veo-3.1-generate-preview": {
+        "capabilities": {
+          "inputs": [
+            "text",
+            "image"
+          ],
+          "outputs": [
+            "video"
+          ]
+        },
+        "unitBillingModels": {
+          "veo-video": {
+            "version": 1,
+            "components": [
+              {
+                "unit": "video_seconds",
+                "priceUsd": 0.1
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
-Runtime keys are:
+The sample price is illustrative. For fixed pricing use `video_generations`; an empty component list explicitly makes the service free. Start with `antseed seller start`. Runtime settings: `GEMINI_BASE_URL` (required), `GEMINI_API_KEY` (required), `ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON`, optional `ANTSEED_SERVICE_CAPABILITIES_JSON`, and `ANTSEED_MAX_CONCURRENCY` (default 10 concurrent HTTP requests, not active jobs). Service names must match native model names; aliases are not supported.
+
+## Buyer API
+
+Send this native request to the local buyer proxy with JSON content type:
 
 ```text
-GEMINI_API_KEY
-GEMINI_BASE_URL
-ANTSEED_ALLOWED_SERVICES
-ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON
-ANTSEED_SERVICE_CAPABILITIES_JSON
-ANTSEED_MAX_CONCURRENCY
+POST /v1beta/models/veo-3.1-generate-preview:predictLongRunning
+
+{"instances":[{"prompt":"A cat in a garden"}],"parameters":{"durationSeconds":8,"sampleCount":1}}
 ```
 
-The adapter submits `predictLongRunning`, polls the returned Gemini operation, and retrieves output through the authenticated Gemini Files API. It rejects external artifact origins so the Gemini API key cannot be forwarded to an attacker-controlled URL.
+Poll `GET /v1beta/{name}` using the returned operation `name`; do not replace it with the model ID. The proxy persists the originating seller automatically. Multiple concurrent jobs can use different sellers. Native bodies and identifiers are preserved.
 
-Run `antseed seller doctor --video-live` before production use.
+A successful acceptance is billable even if generation later fails. Polling and cancellation do not repeat the generation charge. No automatic submission retries occur after an uncertain send.
 
-Video bills the full quoted price at upstream acceptance, after full buyer authorization. There is no delivery payment or receipt. Accepted attempts remain payable even if generation or delivery later fails; buyers depend on seller-operated refunds. This is not escrow. The former `ANTSEED_VIDEO_UPFRONT_BPS` setting is rejected.
+The endpoint must enforce authenticated buyer ownership using `x-antseed-buyer-peer-id` supplied by the relay and return downloadable result URLs that do not require exposing seller credentials. No authenticated Files API download proxy is included.
+
+For persistence limits, failure recovery, and compatibility, see [native video integration](../../docs/protocol/spec/10-native-video.md).

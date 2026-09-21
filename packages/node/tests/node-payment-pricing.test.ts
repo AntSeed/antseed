@@ -83,6 +83,48 @@ function makeSellerRequestHandler(
   });
 }
 
+it('meters native video acceptance once, preserves buyer ownership, and serves follow-ups without budget', async () => {
+  const provider = makeProvider(0, 0, {
+    name: 'runway', services: ['gen4.5'], serviceApiProtocols: { 'gen4.5': ['runway-video'] },
+    serviceUnitBillingModels: { 'gen4.5': { 'runway-video': { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1 }] } } },
+  });
+  const owners = new Map<string, string>();
+  provider.handleRequest = vi.fn(async request => {
+    expect(request.headers['X-Antseed-Buyer-Peer-Id']).toBeUndefined();
+    const buyer = request.headers['x-antseed-buyer-peer-id']!;
+    if (request.method === 'POST') owners.set('task', buyer);
+    const statusCode = owners.get('task') === buyer ? 200 : 403;
+    return { requestId: request.requestId, statusCode, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ id: 'task', status: 'SUCCEEDED', output: ['https://seller.example.test/result'] })) };
+  });
+  let paid = true;
+  const recordSpend = vi.fn();
+  const sendNeedAuth = vi.fn();
+  const handler = makeSellerRequestHandler({
+    providers: [provider], sellerPaymentManager: makeSpmMock({ recordSpend, hasSession: () => paid }),
+    channelsClient: {} as any, sessionTracker: null, announcer: null, emit: () => false,
+  });
+  const frames: Uint8Array[] = [];
+  const payment = { sendNeedAuth, sendPaymentRequired: vi.fn() } as any;
+  const buyer = 'b'.repeat(40);
+  const { mux } = handler.handleConnection(makeConn(frames), buyer, payment);
+  const request = (method: string, path: string): SerializedHttpRequest => ({ requestId: `${method}-${frames.length}`, method, path,
+    headers: { 'content-type': 'application/json', 'x-antseed-service': 'gen4.5', 'X-Antseed-Buyer-Peer-Id': 'spoofed', 'x-antseed-buyer-peer-id': 'spoofed' }, body: Buffer.from(JSON.stringify(method === 'POST' ? { model: 'gen4.5', duration: 8 } : {})) });
+  await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest(request('POST', '/v1/text_to_video')) });
+  expect(recordSpend).toHaveBeenCalledWith('session-1', 800000n);
+  expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ billingUsage: { version: 1, units: { video_seconds: '8' } } }));
+  paid = false;
+  for (const method of ['GET', 'GET', 'DELETE']) {
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: frames.length + 1, payload: encodeHttpRequest(request(method, '/v1/tasks/task')) });
+    expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(200);
+  }
+  expect(recordSpend).toHaveBeenCalledTimes(1);
+  expect(payment.sendPaymentRequired).not.toHaveBeenCalled();
+  const other = handler.handleConnection(makeConn(frames), 'c'.repeat(40), payment);
+  await other.mux.handleFrame({ type: MessageType.HttpRequest, messageId: 10, payload: encodeHttpRequest(request('GET', '/v1/tasks/task')) });
+  expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(403);
+  expect(owners.get('task')).toBe(buyer);
+});
+
 function makeAttestHarness() {
   const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
   provider.handleRequest = vi.fn(provider.handleRequest);
@@ -298,6 +340,25 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     expect(matched?.name).toBe('openai');
     expect(pricing).toEqual({ inputUsdPerMillion: 0.05, outputUsdPerMillion: 0.1 });
+  });
+
+  it.each(['runway-video', 'veo-video'] as const)('never replaces an explicitly selected %s provider that lost its service', (protocol) => {
+    const recorded = makeProvider(0, 0, { name: 'recorded', services: ['other'] });
+    const replacement = makeProvider(0, 0, { name: 'replacement', services: ['video-model'], serviceApiProtocols: { 'video-model': [protocol] } });
+    const handler = makeSellerRequestHandler({ providers: [recorded, replacement], sellerPaymentManager: null, sessionTracker: null, channelsClient: null, announcer: null, emit: () => false });
+    const request: SerializedHttpRequest = { requestId: 'video', method: 'GET', path: protocol === 'runway-video' ? '/v1/tasks/job' : '/v1beta/operations/job', headers: { 'x-antseed-provider': 'recorded', 'x-antseed-service': 'video-model' }, body: new Uint8Array() };
+    expect(handler.matchProvider(request)).toBeUndefined();
+    recorded.services = ['video-model'];
+    expect(handler.matchProvider(request)).toBeUndefined();
+    request.headers['x-antseed-provider'] = 'missing';
+    expect(handler.matchProvider(request)).toBeUndefined();
+    delete request.headers['x-antseed-provider'];
+    expect(handler.matchProvider(request)).toBe(replacement);
+    request.path = '/v1/chat/completions';
+    request.method = 'POST';
+    request.headers['x-antseed-provider'] = 'missing';
+    request.body = Buffer.from('{"model":"video-model"}');
+    expect(handler.matchProvider(request)).toBe(recorded);
   });
 
   it('does not touch payment state for free responses even when a paid session exists', async () => {

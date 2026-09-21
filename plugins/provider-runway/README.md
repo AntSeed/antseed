@@ -1,35 +1,65 @@
-# `@antseed/provider-runway`
+# @antseed/provider-runway
 
-Beta Runway video-generation provider for `antseed-video-jobs-v1`.
-
-## Supported presets
-
-- `gen4.5`: text-to-video and first-frame image-to-video, 2–10 seconds, `16:9` or `9:16`, 720p MP4
-- `gen4_turbo`: first-frame image-to-video, 2–10 seconds, tested Runway ratios, 720p MP4
-
-Only explicit tested presets are advertised. Unknown Runway model IDs are rejected.
+Thin native Runway API relay for a seller-operated service. The seller owns job execution, permissions, retries, storage, result URLs, and refunds. This plugin does not manage jobs or safely isolate a directly shared upstream account on its own.
 
 ## Configuration
 
-```bash
-export RUNWAY_API_KEY=<key>
-antseed seller setup
-antseed seller start
+Install with `antseed plugin add @antseed/provider-runway`, set `RUNWAY_API_KEY` to the seller endpoint credential, and merge this provider into `seller.providers` in your configuration:
+
+```json
+{
+  "runway": {
+    "plugin": "runway",
+    "baseUrl": "https://seller.example.test",
+    "apiKeyEnv": "RUNWAY_API_KEY",
+    "defaults": {
+      "inputUsdPerMillion": 0,
+      "outputUsdPerMillion": 0
+    },
+    "services": {
+      "gen4.5": {
+        "capabilities": {
+          "inputs": [
+            "text",
+            "image"
+          ],
+          "outputs": [
+            "video"
+          ]
+        },
+        "unitBillingModels": {
+          "runway-video": {
+            "version": 1,
+            "components": [
+              {
+                "unit": "video_seconds",
+                "priceUsd": 0.1
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
-The setup wizard writes services, capabilities, and fixed/per-second pricing to `config.json`. Runtime keys are:
+The sample price is illustrative. For fixed pricing use `video_generations`; an empty component list explicitly makes the service free. Start with `antseed seller start`. Runtime settings: `RUNWAY_BASE_URL` (required), `RUNWAY_API_KEY` (required), `ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON`, optional `ANTSEED_SERVICE_CAPABILITIES_JSON`, and `ANTSEED_MAX_CONCURRENCY` (default 10 concurrent HTTP requests, not active jobs). Service names must match native model names; aliases are not supported.
+
+## Buyer API
+
+Send this native request to the local buyer proxy with JSON content type:
 
 ```text
-RUNWAY_API_KEY
-RUNWAY_BASE_URL
-ANTSEED_ALLOWED_SERVICES
-ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON
-ANTSEED_SERVICE_CAPABILITIES_JSON
-ANTSEED_MAX_CONCURRENCY
+POST /v1/text_to_video
+
+{"model":"gen4.5","promptText":"A cat in a garden","duration":8}
 ```
 
-Run `antseed seller doctor --video-live` to check provider access, configuration, disk capacity, and durable-job state. This does not perform a paid end-to-end generation or artifact download.
+Poll `GET /v1/tasks/{id}` using the returned task `id`; `DELETE` on the same path cancels/deletes it. The proxy persists the originating seller automatically. Multiple concurrent jobs can use different sellers. Native bodies and identifiers are preserved.
 
-The adapter never returns Runway's signed output URL to a buyer. The seller downloads it into the bounded AntSeed artifact cache, hashes it, and serves it through the canonical content endpoint.
+A successful acceptance is billable even if generation later fails. Polling and cancellation do not repeat the generation charge. No automatic submission retries occur after an uncertain send.
 
-Video bills the full quoted price at upstream acceptance, after full buyer authorization. There is no delivery payment or receipt. Accepted attempts remain payable even if generation or delivery later fails; buyers depend on seller-operated refunds. This is not escrow. The former `ANTSEED_VIDEO_UPFRONT_BPS` setting is rejected.
+The endpoint must enforce authenticated buyer ownership using `x-antseed-buyer-peer-id` supplied by the relay and return downloadable result URLs that do not require exposing seller credentials. No authenticated Files API download proxy is included.
+
+For persistence limits, failure recovery, and compatibility, see [native video integration](../../docs/protocol/spec/10-native-video.md).

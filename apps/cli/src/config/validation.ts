@@ -336,18 +336,6 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('buyer.disableMetadataV2Services must be a boolean');
   }
 
-  if (config.buyer.video) {
-    if (typeof config.buyer.video.autoApprove !== 'boolean') {
-      errors.push('buyer.video.autoApprove must be a boolean');
-    }
-    if (typeof config.buyer.video.maxTotalUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(config.buyer.video.maxTotalUsdc)) {
-      errors.push('buyer.video.maxTotalUsdc must be unsigned USDC base units');
-    }
-    if (!Number.isInteger(config.buyer.video.maxDurationSeconds) || config.buyer.video.maxDurationSeconds < 1) {
-      errors.push('buyer.video.maxDurationSeconds must be a positive integer');
-    }
-  }
-
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {

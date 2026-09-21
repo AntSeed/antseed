@@ -27,19 +27,14 @@ import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
-import type { ImageRequestFacts } from '@antseed/api-adapter';
+import { nativeVideoRoute, requestService } from '@antseed/api-adapter';
+import { videoBillingUsage, type BillingRequestFacts } from '@antseed/buyer-core';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
-  extractRequestBodyFields,
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
-import {
-  VideoGenerationController,
-  type VideoStreamResponse,
-} from './video/video-generation-controller.js';
-import { ANTSEED_STREAMING_RESPONSE_HEADER } from './types/http.js';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -58,7 +53,6 @@ export interface SellerRequestHandlerDeps {
   sessionTracker: SellerSessionTracker | null;
   channelsClient: ChannelsClient | null;
   announcer: PeerAnnouncer | null;
-  videoController?: VideoGenerationController | null;
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
@@ -67,7 +61,7 @@ export interface SellerRequestHandlerDeps {
 interface SellerBillingContext {
   context: UnitBillingContext;
   requestUsage: UnitBillingUsage;
-  requestFacts: ImageRequestFacts;
+  requestFacts: BillingRequestFacts;
 }
 
 /** Debounce interval for metadata refresh after load changes. */
@@ -209,27 +203,6 @@ export class SellerRequestHandler {
         return;
       }
 
-      const videoController = this._deps.videoController;
-      if (videoController?.enabled && videoController.isVideoPath(request.path)) {
-        const result = await videoController.handleRequest(request, buyerPeerId);
-        if (isVideoStreamResponse(result)) {
-          mux.sendProxyResponse({
-            ...result.response,
-            headers: {
-              ...result.response.headers,
-              [ANTSEED_STREAMING_RESPONSE_HEADER]: '1',
-            },
-          });
-          for await (const data of result.chunks) {
-            await mux.sendProxyChunkAsync({ requestId: request.requestId, data, done: false });
-          }
-          await mux.sendProxyChunkAsync({ requestId: request.requestId, data: new Uint8Array(0), done: true });
-        } else {
-          mux.sendProxyResponse(result);
-        }
-        return;
-      }
-
       // Match the requested model to one of our published services BEFORE any
       // payment handshake or upstream forwarding. Rejecting unknown/missing
       // models locally avoids reserving payment for something we won't serve
@@ -258,11 +231,24 @@ export class SellerRequestHandler {
       }
 
       const requestPricing = this.resolveProviderPricing(provider, request);
-      const requestBilling = this._captureSellerBillingContext(provider, request);
+      let requestBilling: SellerBillingContext | null;
+      try {
+        requestBilling = this._captureSellerBillingContext(provider, request);
+        const pricingModel = requestBilling ? this.resolveProviderUnitBillingModel(provider, requestBilling.context) : undefined;
+        if (requestBilling?.requestFacts.video?.action === 'create' && pricingModel) this._estimateUnitRequestCostUsdc(requestBilling, pricingModel);
+      } catch (error) {
+        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'invalid_billing_request', message: error instanceof Error ? error.message : String(error) } })) });
+        return;
+      }
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
         : undefined;
-      const isFreeService = isZeroTokenPricing(requestPricing)
+      const videoRoute = nativeVideoRoute(request);
+      if (videoRoute && !unitBillingModel) {
+        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 503, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify({ error: { code: "billing_configuration_error", message: "Video service requires explicit unit pricing" } })) });
+        return;
+      }
+      const isFreeService = (videoRoute !== null && videoRoute.action !== 'create') || isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
       // Reject with 402 if no active payment session and channels client is configured.
@@ -489,6 +475,9 @@ export class SellerRequestHandler {
       // Track active seller session at request start
       this._deps.sessionTracker?.getOrCreateSession(buyerPeerId, provider.name);
 
+      for (const header of Object.keys(request.headers)) {
+        if (header.toLowerCase() === 'x-antseed-buyer-peer-id') delete request.headers[header];
+      }
       request.headers['x-antseed-buyer-peer-id'] = buyerPeerId;
 
       const requestedModel = this._extractRequestedService(request) ?? 'unknown';
@@ -762,9 +751,10 @@ export class SellerRequestHandler {
       return undefined;
     }
     const requestedProvider = this._extractRequestedProvider(request);
+    const videoRoute = nativeVideoRoute(request);
     const providers = this._deps.providers;
     const matchesService = (provider: Provider): boolean =>
-      provider.services.includes(requestedService);
+      provider.services.includes(requestedService) && (!videoRoute || Boolean(provider.serviceApiProtocols?.[requestedService]?.includes(videoRoute.protocol)));
 
     let provider: Provider | undefined;
     if (requestedProvider) {
@@ -772,7 +762,7 @@ export class SellerRequestHandler {
         candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
       );
     }
-    if (!provider) {
+    if (!provider && !(videoRoute && requestedProvider)) {
       provider = providers.find((candidate) => matchesService(candidate));
     }
     return provider;
@@ -828,12 +818,7 @@ export class SellerRequestHandler {
   }
 
   private _extractRequestedService(request: SerializedHttpRequest): string | null {
-    const body = extractRequestBodyFields(request.headers, request.body);
-    const service = body?.["service"] ?? body?.["model"];
-    if (typeof service !== "string" || service.trim().length === 0) {
-      return null;
-    }
-    return service.trim();
+    return requestService(request) ?? null;
   }
 
   private _extractRequestedProvider(request: SerializedHttpRequest): string | null {
@@ -878,11 +863,11 @@ export class SellerRequestHandler {
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
     const usage: UnitBillingUsage = {
       units: {
-        output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
+        ...requestBilling.requestUsage.units,
       },
     };
     return {
-      cost: evaluateUnitBilling(model, requestBilling.context, usage),
+      cost: evaluateUnitBilling(model, requestBilling.context, requestBilling.requestFacts.video ? videoBillingUsage(model, requestBilling.requestFacts.video, usage) : usage),
       inputTokens: 0,
       maxOutputTokens: 0,
     };
@@ -1049,10 +1034,4 @@ export class SellerRequestHandler {
       debugWarn(`[SellerHandler] Failed to send ResponseAuth for ${request.requestId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`);
     }
   }
-}
-
-function isVideoStreamResponse(
-  result: SerializedHttpResponse | VideoStreamResponse,
-): result is VideoStreamResponse {
-  return 'response' in result && 'chunks' in result;
 }

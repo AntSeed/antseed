@@ -42,6 +42,19 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 
 
 describe('validateMetadata', () => {
+  it('accepts native video unit pricing and video output capabilities', () => {
+    const metadata = validMetadata();
+    const provider = metadata.providers[0]!;
+    provider.provider = 'runway';
+    provider.services = ['video'];
+    provider.serviceApiProtocols = { video: ['runway-video', 'veo-video'] };
+    provider.serviceCapabilities = { video: { inputs: ['text'], outputs: ['video'] } };
+    provider.serviceUnitBillingModels = { video: {
+      'runway-video': { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.01 }] },
+      'veo-video': { version: 1, components: [{ unit: 'video_generations', priceUsd: 0.1 }] },
+    } };
+    expect(validateMetadata(metadata)).toEqual([]);
+  });
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
     expect(errors).toEqual([]);
@@ -305,7 +318,7 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects service unit billing models outside image and video protocols', () => {
+  it('rejects unit billing for unsupported chat protocols', () => {
     const errors = validateMetadata(validMetadata({
       version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
@@ -339,7 +352,7 @@ describe('validateMetadata', () => {
       expect.arrayContaining([
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images and antseed-video-jobs-v1 only'),
+          message: expect.stringContaining('openai-images, runway-video and veo-video only'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',

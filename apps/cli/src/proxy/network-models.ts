@@ -25,14 +25,8 @@ export { effectiveModelReputationScore } from '@antseed/node'
 
 export type NetworkModelType = 'text' | 'image' | 'decision' | 'video'
 
-const MODEL_TYPE_PRIORITY: Record<NetworkModelType, number> = {
-  text: 3,
-  image: 2,
-  video: 1,
-  decision: 0,
-}
-
 export type NetworkModelPeerOffer = {
+  unitBillingModels?: NetworkServiceOffer['unitBillingModels']
   advertisedVerifierIds?: string[]
   peerId: string
   displayName?: string
@@ -51,8 +45,6 @@ export type NetworkModelPeerOffer = {
   cachedInputUsdPerMillion?: number
   minImageUsdPerImage?: number
   maxImageUsdPerImage?: number
-  minVideoUsdPerSecond?: number
-  maxVideoUsdPerSecond?: number
 }
 
 export type NetworkModelCapabilityCoverage = {
@@ -191,9 +183,9 @@ export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
   const value = raw?.trim().toLowerCase() ?? ''
   if (value === '') return 'all'
   if (value === 'image' || value === 'images') return 'image'
+  if (value === 'video' || value === 'videos') return 'video'
   if (value === 'text') return 'text'
   if (value === 'decision' || value === 'decisions') return 'decision'
-  if (value === 'video' || value === 'videos') return 'video'
   return 'invalid'
 }
 
@@ -262,7 +254,10 @@ export function buildNetworkModels(
     for (const duplicate of duplicateOffers) {
       entry.aliases.push(normalizedModelAlias(duplicate.serviceId), key)
     }
-    if (MODEL_TYPE_PRIORITY[offer.type] > MODEL_TYPE_PRIORITY[entry.type]) entry.type = offer.type
+    // Text wins over image, image over decision, so a canonically merged
+    // model stays routable for the most general client.
+    if (offer.type === 'text') entry.type = 'text'
+    else if (offer.type === 'image' && entry.type === 'decision') entry.type = 'image'
     const peer = peerById.get(offer.peerId)
     entry.peers.push({
       advertisedVerifierIds: offer.advertisedVerifierIds,
@@ -273,6 +268,7 @@ export function buildNetworkModels(
       protocol: offer.protocol,
       protocols: offer.protocols,
       type: offer.type,
+      ...(offer.unitBillingModels ? { unitBillingModels: offer.unitBillingModels } : {}),
       ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
       ...(offer.categories ? { categories: offer.categories } : {}),
       reputationScore: normalizedReputationByPeerId.get(offer.peerId) ?? null,
@@ -283,10 +279,6 @@ export function buildNetworkModels(
       ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
       ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
       ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
-      ...(offer.minVideoUsdPerSecond !== undefined ? { minVideoUsdPerSecond: offer.minVideoUsdPerSecond } : {}),
-      ...(offer.maxVideoUsdPerSecond !== undefined ? { maxVideoUsdPerSecond: offer.maxVideoUsdPerSecond } : {}),
-      ...(offer.minVideoUsdPerVideo !== undefined ? { minVideoUsdPerVideo: offer.minVideoUsdPerVideo } : {}),
-      ...(offer.maxVideoUsdPerVideo !== undefined ? { maxVideoUsdPerVideo: offer.maxVideoUsdPerVideo } : {}),
     })
   }
 

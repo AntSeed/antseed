@@ -317,7 +317,9 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  return protocol !== 'openai-images' && protocol !== 'antseed-video-jobs-v1';
+  // Image generations cost real money per probe; everything else has a
+  // near-free minimal request shape.
+  return !['openai-images', 'runway-video', 'veo-video'].includes(protocol);
 }
 
 /**
@@ -366,10 +368,10 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
         questions: { ok: { type: 'noul', instructions: 'Is the state the word ping?' } },
       };
       break;
+    case 'runway-video':
+    case 'veo-video':
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
-    case 'antseed-video-jobs-v1':
-      throw new Error('Health probes are not supported for antseed-video-jobs-v1 services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

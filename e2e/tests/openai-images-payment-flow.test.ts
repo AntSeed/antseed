@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { AntseedNode } from '@antseed/node';
-import type { NodePaymentsConfig, PeerInfo } from '@antseed/node';
+import type { NodePaymentsConfig, PeerInfo, Provider } from '@antseed/node';
+import { createNativeVideoProvider } from '@antseed/provider-core';
 import { createLocalBootstrap } from './helpers/local-bootstrap.js';
 import { MockOpenAIImageProvider } from './helpers/mock-openai-provider.js';
 
@@ -252,15 +253,15 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     rpcCallLog = [];
   }
 
-  async function setupProxyNetwork(provider?: MockOpenAIImageProvider): Promise<{
-    provider: MockOpenAIImageProvider;
+  async function setupProxyNetwork<ProviderType extends Provider = MockOpenAIImageProvider>(provider?: ProviderType): Promise<{
+    provider: ProviderType;
     port: number;
     discoveredSeller: PeerInfo;
   }> {
     bootstrap = await createLocalBootstrap();
 
     sellerDataDir = await mkdtemp(join(tmpdir(), 'antseed-seller-images-pay-'));
-    const imageProvider = provider ?? new MockOpenAIImageProvider();
+    const imageProvider = provider ?? new MockOpenAIImageProvider() as unknown as ProviderType;
     sellerNode = new AntseedNode({
       role: 'seller',
       dataDir: sellerDataDir,
@@ -334,8 +335,8 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     expect(provider.requestCount).toBe(1);
     expect(provider.lastRequest?.path).toBe('/v1/images/generations');
 
-    // Discovery should carry the signed v13 billing model all the way into buyer peer info.
-    expect(discoveredSeller.metadata?.version).toBe(13);
+    // Discovery should carry the signed v12 billing model all the way into buyer peer info.
+    expect(discoveredSeller.metadata?.version).toBe(12);
     const billingComponent = discoveredSeller
       .providerServiceUnitBillingModels?.openai?.services['gpt-image-2']?.['openai-images']?.components[0];
     expect(billingComponent).toMatchObject({
@@ -404,4 +405,77 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     expect(buyerNode!.buyerPaymentManager?.getActiveSession(discoveredSeller.peerId)).toBeNull();
     expect(buyerNode!.buyerPaymentManager?.getVerifiedCost(discoveredSeller.peerId)).toBe(0n);
   }, 30_000);
+
+  for (const name of ['runway', 'veo'] as const) {
+    it(`relays seller-operated ${name} jobs with acceptance billing and free follow-ups`, async () => {
+      await setupRpc();
+      const protocol = name === 'runway' ? 'runway-video' : 'veo-video';
+      const prefix = name === 'runway' ? 'RUNWAY' : 'GEMINI';
+      const owners = new Map<string, string>();
+      let submissions = 0;
+      let lastSubmission: unknown;
+      let lastSubmissionBytes: Buffer | undefined;
+      const sellerApi = createServer(async (request, response) => {
+        if (request.url === '/result') {
+          response.writeHead(200, { 'content-type': 'video/mp4' });
+          response.end('mock-video');
+          return;
+        }
+        const buyer = String(request.headers['x-antseed-buyer-peer-id'] ?? '');
+        const credentials = name === 'runway' ? request.headers.authorization : request.headers['x-goog-api-key'];
+        if (credentials !== (name === 'runway' ? 'Bearer endpoint-secret' : 'endpoint-secret') || !buyer) {
+          response.writeHead(401); response.end(); return;
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        if (request.method === 'POST') {
+          submissions += 1;
+          lastSubmissionBytes = Buffer.concat(chunks);
+          lastSubmission = JSON.parse(lastSubmissionBytes.toString());
+          owners.set('job', buyer);
+        }
+        if (owners.get('job') !== buyer) { response.writeHead(403); response.end(); return; }
+        const address = sellerApi.address() as { port: number };
+        const uri = `http://127.0.0.1:${address.port}/result`;
+        const body = name === 'runway'
+          ? { id: 'job', ...(request.method === 'POST' ? {} : { status: 'SUCCEEDED', output: [uri] }) }
+          : { name: 'models/video-model/operations/job', ...(request.method === 'POST' ? {} : { done: true, response: { generatedVideos: [{ video: { uri } }] } }) };
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body));
+      });
+      await new Promise<void>(resolve => sellerApi.listen(0, '127.0.0.1', resolve));
+      try {
+        const address = sellerApi.address() as { port: number };
+        const provider = createNativeVideoProvider(name, {
+          [`${prefix}_BASE_URL`]: `http://127.0.0.1:${address.port}`, [`${prefix}_API_KEY`]: 'endpoint-secret',
+          ANTSEED_ALLOWED_SERVICES: 'video-model',
+          ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({ 'video-model': { [protocol]: { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.01 }] } } }),
+        });
+        const { port, discoveredSeller } = await setupProxyNetwork(provider);
+        const body = name === 'runway' ? { model: 'video-model', service: 'extension', promptText: '猫', duration: 8, custom: { enabled: true } }
+          : { model: 'extension-model', service: 'extension-service', instances: [{ prompt: '猫' }], parameters: { durationSeconds: 8, sampleCount: 1 }, custom: [1, null] };
+        const path = name === 'runway' ? '/v1/text_to_video' : '/v1beta/models/video-model:predictLongRunning';
+        const rawBody = ` \n${JSON.stringify(body, null, 2)}\n`;
+        const created = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: rawBody });
+        expect(created.status).toBe(200);
+        expect(await created.json()).toEqual(name === 'runway' ? { id: 'job' } : { name: 'models/video-model/operations/job' });
+        expect(lastSubmission).toEqual(body);
+        expect(lastSubmissionBytes).toEqual(Buffer.from(rawBody));
+        expect(submissions).toBe(1);
+        expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(80_000n);
+        const statusPath = name === 'runway' ? '/v1/tasks/job' : '/v1beta/models/video-model/operations/job';
+        for (let poll = 0; poll < 2; poll += 1) {
+          const status = await fetch(`http://127.0.0.1:${port}${statusPath}`);
+          expect(status.status).toBe(200);
+          const result = await status.json() as any;
+          const uri = name === 'runway' ? result.output[0] : result.response.generatedVideos[0].video.uri;
+          expect(await (await fetch(uri)).text()).toBe('mock-video');
+        }
+        expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(80_000n);
+        expect(submissions).toBe(1);
+      } finally {
+        await new Promise<void>((resolve, reject) => sellerApi.close(error => error ? reject(error) : resolve()));
+      }
+    }, 30_000);
+  }
 });

@@ -8,6 +8,8 @@ export interface TrustedPlugin {
 }
 
 export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
+  { name: 'runway', type: 'provider', description: 'Seller-operated Runway-compatible API', package: '@antseed/provider-runway' },
+  { name: 'veo', type: 'provider', description: 'Seller-operated Veo-compatible API', package: '@antseed/provider-veo' },
   {
     name: 'anthropic',
     type: 'provider',
@@ -49,18 +51,6 @@ export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
     type: 'provider',
     description: 'TypeSafe System One decision-model provider (API key)',
     package: '@antseed/provider-typesafe',
-  },
-  {
-    name: 'runway',
-    type: 'provider',
-    description: 'Runway Gen-4-family video generation (API key)',
-    package: '@antseed/provider-runway',
-  },
-  {
-    name: 'veo',
-    type: 'provider',
-    description: 'Google Veo 3.1 through the Gemini Developer API',
-    package: '@antseed/provider-veo',
   },
 ]
 

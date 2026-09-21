@@ -23,7 +23,6 @@ import type {
 /** Minimum transport surface the muxes need: raw frame bytes out. */
 export interface FrameSender {
   send(data: Uint8Array): void;
-  waitForDrain?(): Promise<void>;
 }
 
 /** Connection surface used by the buyer request/payment machinery. */

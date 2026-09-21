@@ -42,11 +42,6 @@ export function createDefaultConfig(): AntseedConfig {
       maxStreamDurationMs: DEFAULT_BUYER_MAX_STREAM_DURATION_MS,
       disableMetadataV2Services: false,
       autoSweep: true,
-      video: {
-        autoApprove: true,
-        maxTotalUsdc: '5000000',
-        maxDurationSeconds: 10,
-      },
     },
     payments: {
       preferredMethod: 'crypto',
