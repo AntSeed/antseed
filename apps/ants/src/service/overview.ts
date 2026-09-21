@@ -1,14 +1,8 @@
+import { overviewReads } from './overview-reads.js';
 import type { AntsContext } from './context.js';
 import type { OverviewView, EpochInfo } from '../api-types.js';
 import { toJson } from './json.js';
 
-async function safe<T>(read: () => Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await read();
-  } catch {
-    return fallback;
-  }
-}
 
 export function epochInfo(stack: { currentEpoch: number; effectiveEpoch: number | null; genesis: number; epochDuration: number }, now = Math.floor(Date.now() / 1000)): EpochInfo {
   const nextBoundaryAt = stack.genesis + (stack.currentEpoch + 1) * stack.epochDuration;
@@ -24,37 +18,13 @@ export function epochInfo(stack: { currentEpoch: number; effectiveEpoch: number 
 
 export async function overview(ctx: AntsContext): Promise<OverviewView> {
   const stack = await ctx.stack();
-  const token = ctx.antsToken();
   const pools = ctx.pools();
   const sellerRegistry = ctx.sellerRegistry();
-  const legacyStaking = ctx.legacyStakingAt(stack.legacyStaking);
-
-  const [ants, eth, transfersEnabled, whitelisted, totalActiveStake, positionCount, registryAgentId, legacyAgentId, totalSupply, maxSupply] = await Promise.all([
-    token.balanceOf(ctx.address),
-    token.provider.getBalance(ctx.address),
-    safe(() => token.transfersEnabled(), false),
-    safe(() => token.transferWhitelist(ctx.address), false),
-    pools ? safe(() => pools.stakerTotalActiveStake(ctx.address), 0n) : Promise.resolve(0n),
-    pools ? safe(() => pools.stakerPositionCount(ctx.address), 0) : Promise.resolve(0),
-    sellerRegistry ? safe(() => sellerRegistry.getAgentId(ctx.address), 0) : Promise.resolve(0),
-    legacyStaking ? safe(() => legacyStaking.getAgentId(ctx.address), 0) : Promise.resolve(0),
-    safe(() => token.totalSupply(), 0n),
-    safe(() => token.maxSupply(), 0n),
-  ]);
+  const { ants, eth, transfersEnabled, whitelisted, totalActiveStake, positionCount, registryAgentId, legacyAgentId,
+    totalSupply, maxSupply, networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets } = await overviewReads(ctx, stack);
 
   let network: OverviewView['network'] = null;
   if (pools) {
-    const gate = ctx.gate();
-    const poolRewards = ctx.poolRewards();
-    const usageRewards = ctx.usageRewards();
-    const epoch = stack.currentEpoch;
-    const [networkStake, networkWeight, epochEmission, stakerBudget, usageBudgets] = await Promise.all([
-      safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
-      safe(() => pools.totalPowerWeightAtEpoch(epoch), 0n),
-      gate ? safe(() => gate.getEpochEmission(epoch), 0n) : Promise.resolve(0n),
-      poolRewards ? safe(() => poolRewards.stakerEpochBudget(epoch), 0n) : Promise.resolve(0n),
-      usageRewards ? safe(() => usageRewards.usageEpochBudgets(epoch), { buyer: 0n, seller: 0n }) : Promise.resolve({ buyer: 0n, seller: 0n }),
-    ]);
     network = {
       totalActiveStake: networkStake.toString(),
       totalPowerWeight: networkWeight.toString(),
@@ -68,6 +38,8 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
   }
 
   const notices: string[] = [];
+  const sellerBound = !!sellerRegistry && registryAgentId !== 0 &&
+    (await sellerRegistry.agentSeller(registryAgentId)).toLowerCase() === ctx.address.toLowerCase();
   const epoch = epochInfo(stack);
   if (stack.phase === 'legacy') {
     notices.push('The recognized-usage contracts are not configured for this chain. Only legacy emissions are available.');
@@ -96,7 +68,7 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
       totalActiveStake: totalActiveStake.toString(),
       positionCount,
       agentId: registryAgentId || legacyAgentId,
-      sellerBound: registryAgentId !== 0,
+      sellerBound,
     },
     network,
     notices,

@@ -8,6 +8,7 @@ export interface Column<T> {
   align?: 'left' | 'right';
   mono?: boolean;
   title?: string;
+  sortDirection?: 'ascending' | 'descending' | 'none';
   className?: string;
 }
 
@@ -30,12 +31,12 @@ export function Table<T>({ columns, rows, rowKey, empty, loading, onRowClick, is
   const cellClass = (column: Column<T>) =>
     [column.align === 'right' ? 'num' : '', column.mono ? 'mono' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" tabIndex={0} role="region" aria-label="Data table; scroll horizontally to see all columns">
       <table className="table">
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className={[column.align === 'right' ? 'num' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined} title={column.title}>
+              <th key={column.key} className={[column.align === 'right' ? 'num' : '', column.className ?? ''].filter(Boolean).join(' ') || undefined} title={column.title} aria-sort={column.sortDirection}>
                 {column.label}
               </th>
             ))}

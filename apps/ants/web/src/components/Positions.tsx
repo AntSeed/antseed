@@ -1,3 +1,5 @@
+import { EarlyExitHelp } from './EarlyExitHelp';
+import { Modal } from '@antseed/ui';
 import { Button } from './ui';
 import { useMemo, useState, type MouseEvent } from 'react';
 import type { ExtendRequest, MaxLockRequest, MergeRequest, MoveRequest, PoolConfigView, PoolView, PositionView, SplitRequest } from '../../../src/api-types';
@@ -21,8 +23,8 @@ type RowActionKind = 'split' | 'extend' | 'max-lock' | 'withdraw';
 type BulkKind = 'move' | 'merge' | 'withdraw';
 
 /** "Your positions" card: six columns, row-level Withdraw and ⋯ menu, click-to-expand detail, bulk bar once something is selected. */
-export function PositionsCard({ pools }: { pools: PoolView[] }) {
-  const page = usePageData('positions:current', api.positions);
+export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; enabled?: boolean }) {
+  const page = usePageData(enabled ? 'positions:current' : null, api.positions);
   const [showClosed, setShowClosed] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -106,13 +108,14 @@ export function PositionsCard({ pools }: { pools: PoolView[] }) {
       render: (p) =>
         isOpen(p) ? (
           <span className="row-nowrap" onClick={stop}>
-            <Button variant="outline" size="sm" onClick={() => openRowAction(p.id, 'withdraw')}>
+            <Button variant="outline" size="sm" onClick={() => openBulk('move', [p.id])}>Move allocation</Button>
+            <Button variant="ghost" size="sm" onClick={() => openRowAction(p.id, 'withdraw')}>
               Withdraw
             </Button>
             <Menu
               label={`More actions for position ${p.id}`}
               items={[
-                { label: 'Move', onSelect: () => openBulk('move', [p.id]) },
+
                 { label: 'Split', onSelect: () => openRowAction(p.id, 'split') },
                 { label: 'Merge', onSelect: () => openBulk('merge', [...new Set([...selected, p.id])]) },
                 { label: 'Extend', onSelect: () => openRowAction(p.id, 'extend') },
@@ -138,6 +141,8 @@ export function PositionsCard({ pools }: { pools: PoolView[] }) {
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
+      {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
+      {data?.historySource === 'chain' ? <div className="status-line">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
       {selected.size > 0 ? (
         <div className="bulk-bar">
           <span className="muted small">
@@ -157,7 +162,7 @@ export function PositionsCard({ pools }: { pools: PoolView[] }) {
           </button>
         </div>
       ) : null}
-      {bulk && data ? <BulkPanel kind={bulk} rows={selectedRows} config={data.config} pools={pools} onClose={() => setBulk(null)} onStarted={clearSelection} /> : null}
+      {bulk && data ? <Modal isOpen title={bulk === 'move' ? 'Move allocation' : bulk === 'merge' ? 'Merge positions' : 'Withdraw positions'} size="lg" overlayClassName="ants-stake-overlay" onClose={() => setBulk(null)}><BulkPanel kind={bulk} rows={selectedRows} config={data.config} pools={pools} onStarted={clearSelection} /></Modal> : null}
       {rowAction && actionRow && data ? <RowActionPanel kind={rowAction.kind} position={actionRow} config={data.config} onClose={() => setRowAction(null)} /> : null}
       <Table
         columns={columns}
@@ -167,14 +172,14 @@ export function PositionsCard({ pools }: { pools: PoolView[] }) {
         isSelected={(p) => selected.has(p.id)}
         onRowClick={(p) => setExpanded((cur) => (cur === p.id ? null : p.id))}
         renderDetail={(p) => (expanded === p.id ? <PositionDetail position={p} /> : null)}
-        empty="No open positions. Stake ANTS into a pool to open one."
+        empty={enabled ? "No open positions. Stake ANTS into a pool to open one." : "Connect a wallet to see your positions."}
       />
     </Panel>
   );
 }
 
 function isOpen(p: PositionView): boolean {
-  return !p.withdrawn && p.state !== 'withdrawn';
+  return !p.withdrawn && p.closedAtEpoch === 0 && p.state !== 'withdrawn' && p.state !== 'closed';
 }
 
 /** Rows shown by default: closed sources (split, merge, move) and withdrawn positions are behind the toggle. */
@@ -219,7 +224,7 @@ function PositionDetail({ position: p }: { position: PositionView }) {
       </span>
       {isOpen(p) ? (
         <span>
-          Early-exit slash <span className={`mono ${bps > 0 ? 'danger' : ''}`}>{formatBps(bps)}</span>
+          Early-exit slash <EarlyExitHelp /> <span className={`mono ${bps > 0 ? 'danger' : ''}`}>{formatBps(bps)}</span>
           <span className="dim"> {projected ? 'projected' : 'on-chain'}</span>
           <span className="muted">
             {' '}
@@ -241,7 +246,6 @@ interface BulkProps {
   rows: PositionView[];
   config: PoolConfigView;
   pools: PoolView[];
-  onClose: () => void;
   onStarted: () => void;
 }
 
@@ -253,12 +257,12 @@ function CloseButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function BulkPanel({ kind, rows, config, pools, onClose, onStarted }: BulkProps) {
+function BulkPanel({ kind, rows, config, pools, onStarted }: BulkProps) {
   const ids = rows.map((p) => p.id);
   const idList = <span className="mono">{ids.map((id) => `#${id}`).join(', ') || '—'}</span>;
   const total = formatAnts(rows.reduce((sum, p) => sum + BigInt(p.amount), 0n), 4);
   return (
-    <Panel tone="accent" className="panel-inset" title={kind === 'move' ? 'Move positions' : kind === 'merge' ? 'Merge positions' : 'Withdraw positions'} actions={<CloseButton onClick={onClose} />}>
+    <div className="stack">
       <div className="small mb">
         {rows.length} position(s): {idList} · total <span className="mono">{total} ANTS</span>
       </div>
@@ -271,18 +275,23 @@ function BulkPanel({ kind, rows, config, pools, onClose, onStarted }: BulkProps)
           <WithdrawAction positionIds={ids} onStarted={onStarted} />
         </div>
       ) : null}
-    </Panel>
+    </div>
   );
 }
 
 function MoveForm({ rows, idList, config, pools, onStarted }: { rows: PositionView[]; idList: JSX.Element; config: PoolConfigView; pools: PoolView[]; onStarted: () => void }) {
+  const info = useEpochInfo();
   const current = new Set(rows.map((p) => p.agentId));
-  const targets = pools.filter((p) => !current.has(p.agentId));
+  const targets = pools.filter((p) => p.stakeable && !current.has(p.agentId));
   const [toAgent, setToAgent] = useState(() => String(targets[0]?.agentId ?? ''));
   const target = targets.find((p) => String(p.agentId) === toAgent) ?? null;
   const body: MoveRequest = { positionIds: rows.map((p) => p.id), toAgentId: Number(toAgent) };
+  const problem = rows.some(p => p.maxLocked) ? 'Disable maximum lock first, then wait for it to take effect.' : rows.some(p => p.changePending) ? 'A position change is pending. Wait until it takes effect.' : rows.some(p => p.state === 'matured' || !isOpen(p)) ? 'Only open positions with a remaining lock can move.' : null;
+  const effective = Math.max((info?.current ?? 0) + 1, ...rows.map(p => p.stakeStartEpoch));
   return (
     <div className="form-row">
+      <p className="hint">Move your allocation directly to another seller. Principal stays staked and the lock end date is preserved. Accrued rewards remain claimable on the source position.</p>
+      {problem && <p className="error-text">{problem}</p>}
       <Field label="To pool" hint={`Weight penalty ${formatBps(config.moveWeightPenaltyBps)} applies`} width="lg">
         <Select value={toAgent} onChange={(e) => setToAgent(e.target.value)} disabled={targets.length === 0}>
           {targets.length === 0 ? <option value="">No other pool to move to</option> : null}
@@ -294,18 +303,25 @@ function MoveForm({ rows, idList, config, pools, onStarted }: { rows: PositionVi
         </Select>
       </Field>
       <ActionButton
-        label="Move"
+        label="Review move"
+        disabled={problem !== null}
+        disabledReason={problem ?? undefined}
         variant="primary"
         title="Move positions to another pool"
         path="/api/positions/move"
         body={body}
-        validate={() => (target ? null : 'Choose a target pool.')}
+        validate={() => !target ? 'Choose a target pool.' : null}
         onStarted={onStarted}
         summary={[
           ['Positions', idList],
           ['To pool', <span className="mono">{target ? poolLabel(target) : '—'}</span>],
-          ['Weight penalty', formatBps(config.moveWeightPenaltyBps)],
-          ['Effective', 'next epoch'],
+          ['Amount', `${formatAnts(rows.reduce((sum, position) => sum + BigInt(position.amount), 0n), 4)} ANTS`],
+          ['Lock end', rows.map(p => `#${p.id}: epoch ${p.stakeEndEpoch}${info ? ` (${formatUtcDate(epochStartAt(p.stakeEndEpoch, info.genesis, info.epochDuration))})` : ''}`).join('; ')],
+          ['Future power reduction', formatBps(config.moveWeightPenaltyBps)],
+          ['Effective', `epoch ${effective}${info ? ` (${formatUtcDate(epochStartAt(effective, info.genesis, info.epochDuration))})` : ''}`],
+          ['Principal burned by moving', '0 ANTS'],
+          ['Source rewards', `${formatAnts(rows.reduce((sum,p) => sum + BigInt(p.pendingReward), 0n), 4)} ANTS remain claimable separately`],
+          ['Wallet approvals', '1'],
         ]}
       />
     </div>
@@ -357,8 +373,11 @@ interface RowActionProps {
 }
 
 function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
+  const info = useEpochInfo();
   const [amount, setAmount] = useState('');
-  const maxAdd = Math.max(config.maxStakeEpochs - position.epochsRemaining, 0);
+  const effectiveEpoch = info ? info.current + 1 : null;
+  const extensionStart = effectiveEpoch === null ? null : Math.max(position.stakeEndEpoch, effectiveEpoch);
+  const maxAdd = extensionStart === null || effectiveEpoch === null ? 0 : Math.max(config.maxStakeEpochs - (extensionStart - effectiveEpoch), 0);
   const [epochs, setEpochs] = useState(Math.min(1, maxAdd) || 1);
   const title =
     kind === 'split'
@@ -418,7 +437,7 @@ function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
       ) : null}
       {kind === 'extend' ? (
         <div className="form-row">
-          <LockSlider label="Add" value={epochs} min={1} max={Math.max(maxAdd, 1)} onChange={setEpochs} disabled={maxAdd <= 0} />
+          <LockSlider label="Add" value={epochs} min={1} max={Math.max(maxAdd, 1)} startEpoch={extensionStart} onChange={setEpochs} disabled={maxAdd <= 0} />
           <ActionButton
             label="Extend"
             variant="primary"
@@ -430,7 +449,7 @@ function RowActionPanel({ kind, position, config, onClose }: RowActionProps) {
             summary={[
               ['Position', <span className="mono">#{position.id}</span>],
               ['Add', <span className="mono">{epochs} epochs</span>],
-              ['New end epoch', <span className="mono">{position.stakeEndEpoch + epochs}</span>],
+              ['New end epoch', <span className="mono">{extensionStart === null ? 'Unavailable' : extensionStart + epochs}</span>],
             ]}
           />
         </div>

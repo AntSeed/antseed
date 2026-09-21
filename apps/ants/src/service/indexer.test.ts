@@ -60,3 +60,25 @@ describe('AntscanIndexer', () => {
     expect(calls).toHaveLength(2);
   });
 });
+
+it('does not invent a zero staker count or historical volume when indexer fields are absent', async () => {
+  const indexer = new AntscanIndexer('https://scan', fakeFetch({
+    '/api/staking/pools/1?epochs=8': { pool: null, epochs: [{ epoch: 21 }, { epoch: 20, volumeUsdc: '0' }] },
+  }));
+  const detail = await indexer.pool(1);
+  expect(detail.stakers).toBeNull();
+  expect(detail.epochs.map(row => [row.epoch, row.volumeUsdc])).toEqual([[20, '0']]);
+});
+
+it('preserves missing yield inputs and incomplete network snapshots for RPC fallback', async () => {
+  const indexer = new AntscanIndexer('https://scan', fakeFetch({
+    '/api/staking/pools': { currentEpoch: 22, network: { current: { epoch: 22 } }, pools: [
+      { agentId: 1, lastWeight: '0' },
+      { agentId: 2, lastWeight: '0', lastEmission: '0', lastEmissionSettled: true },
+    ] },
+  }));
+  const data = await indexer.pools();
+  expect(data.network.current?.complete).toBe(false);
+  expect(data.pools[0]?.historicalYield).toBeNull();
+  expect(data.pools[1]?.historicalYield).toEqual({ power: '0', reward: '0', settled: true });
+});

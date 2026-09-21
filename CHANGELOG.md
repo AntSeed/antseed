@@ -8,10 +8,43 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- ANTS provider overview: use Antscan's seller/period model-usage API for the last completed epoch instead of a capped network-wide sample. Show the epoch label, settled/model-attributed/unattributed volume, and volume-ranked models without lengthy explanatory copy; keep catalog availability independent of usage failures.
+
+- ANTS provider overview: show observed model usage before the final advertised-model catalog, replacing the catalog pricing table with one list of model tags, with each model name shown once.
+
+- ANTS provider overview: remove the expandable epoch-data table; keep per-epoch values on chart points.
+
+- ANTS provider overview: use a 10,000 ANTS reference stake for APY estimates, place the four lock durations in their own second-row tiles, and keep assumptions in tooltips rather than a visible reference-stake caption. Model request failures now show their cause and a retry action, with restart guidance when the running backend lacks the endpoint.
+
+- ANTS dashboard: replace the pool sidebar with an informational provider-overview popup, one dual-axis volume/network-share chart, 1-day/1-month/1-year/2-year lock APY estimates with unsupported durations labeled, lifetime activity, and lazily loaded Antscan model offerings and last-epoch model usage. Staking remains outside the popup. Keep shared-dialog keyboard focus guards active so Tab and Shift+Tab stay inside the open dialog.
+
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.
 - Protocol/CLI/Node: `typesafe-systemone` joins the well-known service API protocols with a one-question health probe. The buyer proxy accepts `POST /v1/systemone`, routes only to sellers advertising the protocol, and never adapts it onto chat protocols. Point `TYPESAFE_BASE_URL` at the buyer proxy to use the TypeSafe SDKs unchanged. `GET /v1/models` reports these services as `type: "decision"` (filter with `?type=decisions`), so chat clients no longer see them as text models. A chat request for a model served only on another API now returns `400 unsupported_protocol` naming the supported protocols instead of `model_not_found`. Desktop chat refuses decision-model services with a clear message.
 - `@antseed/antseed-verifier`, the capability-based buyer verifier and seller prover for TEE attestation, now lives at `packages/antseed-verifier` with its standalone repository history preserved. The package keeps its existing name, version, public API, and GPL-3.0-only license while using the monorepo build, test, and npm publishing workflow.
+- ANTS dashboard: keep seller settlement history consistent while pool details load, including legacy epochs; preserve previously loaded history when a refresh is unavailable and distinguish seller volume from staking-pool statistics.
+
+- ANTS dashboard: use short, stable descriptions beneath each reward type; keep eligibility and legacy-staking guidance in action tooltips and confirmations instead.
+
+- ANTS dashboard: align reward descriptions, amounts, and claim/stake buttons across rows, with consistent button sizing and responsive full-width confirmations.
+
+- ANTS dashboard testing: extend the Anvil browser-signing suite with mixed current/legacy rewards, source-specific buyer claims, seller payout eligibility, M002 release rules, transfer restrictions, and repeat-claim safety. Add a `legacy` filter and reject filters that run no scenarios.
+
+- ANTS dashboard: split current and legacy buyer rewards into source-specific claims, rename Wallet rewards to Seller & staking rewards, and consistently label reward staking actions. Show verified legacy seller payout destinations and locked-pool withdrawal details; block dashboard legacy seller claims when the reviewed destination changes or cannot be verified.
+
+- ANTS dashboard: keep buyer Stake rewards visible with eligibility explanations, distinguish direct reward staking from claim-then-wallet-staking, and explain M002 release limits and wallet-transfer restrictions for legacy rewards without changing contract permissions.
+
+- ANTS dashboard: stake eligible unclaimed buyer, seller, or position rewards directly from the staking form while wallet ANTS transfers are restricted. Explain early-exit penalties with tooltips, show seller pool names, and replace the APY range with a single N/A if either endpoint exceeds 10,000%, keeping ranges at or below 10,000% visible.
+
+- VPR: route Claim rewards and Manage staking into the shared browser dashboard. Separate buyer and wallet reward actions, retain wallet authorization, and replace the old payments claim screen with a dashboard handoff.
+- ANTS dashboard: show the originating VPR/CLI buyer’s rewards before browser wallet connection, without querying disconnected-wallet positions. Claims still require the authorized wallet.
+
+- ANTS dashboard: remove standalone network/read-only header badges; load page sections independently, batch overview reads, reuse matching Antscan epoch data, and skip yield reads for sellers without pools. Show total active ANTS without table-wide staker-count fetching.
+
+- CLI/VPR: open the localhost staking dashboard in the system browser with connected-wallet approvals and verified transaction results. Keep terminal signing local, preserve the originating buyer separately from its authorized wallet, and retain explicit buyer-wallet authorization and one Manage staking entry.
+- ANTS dashboard: show one sortable APY range for 1-week through 2-year locks using a 10,000 ANTS reference stake and the last completed epoch's rewards and power. Explain actual whole-epoch durations and hypothetical-compounding assumptions, and preserve estimated/unavailable labels. Keep the staking form free of amount-sensitive projections. Sort settled volume independently of yield availability, and inspect seller activity. Model revenue breakdown remains unavailable.
+- ANTS dashboard: promote whole-position Move allocation, preview lock/power effects, and separate withdrawal principal, penalties, outstanding rewards and transfer restrictions. Reject partial-move requests; retain the separate Split action. Preserve recent closed-position rewards through chain-verified local history.
+- Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
 
 ### Fixed
 
@@ -24,12 +57,13 @@ This project uses selective package publishing. Each release entry lists the pub
 - Desktop: align TEE badge tooltips with GitHub and website identity badge tooltips.
 - Desktop VPR: keep TEE sellers beyond the 512-result cache eligible for automatic checks, prioritize displayed sellers, and preserve retry backoff across discovery updates. Explain missing local verification credentials without changing routing or searching other data directories.
 - Buyer payments: reserve top-ups now use fixed remaining-headroom thresholds—35% of the initial reserve for the first top-up and $0.50 thereafter—instead of reserving again whenever 65% of an ever-growing channel ceiling is spent. Top-up increments remain unchanged, preventing unused locked USDC from scaling with lifetime channel volume.
-
 - Desktop/Payments: reward balances and claims now support both legacy emissions epochs and the recognized-usage protocol. Claims route legacy rewards through Emissions V2, current seller rewards through UsageAccounting, and current buyer rewards through UsageRewards instead of sending every claim to the new accounting contract with the legacy ABI.
 - Node/CLI/Desktop: buyer discovery strips decorative emoji and symbol glyphs from seller-provided display names before persisting `buyer.state.json`; legacy cached names are cleaned during startup hydration.
 - Node: buyers on `base-mainnet` had no fresh on-chain seller stats since the epoch-22 cutover. `stakingContractAddress` points at `AntseedSellerRegistry`, which has no `sellers(address)` view; the old peer enrichment called it for stake and staked-at, failed, and skipped every peer. The trust-signal reader no longer calls it.
 - CLI/Desktop: importing `@antseed/ants` no longer auto-starts the ANTS dashboard server. In the desktop's bundled CLI the package's main-module check was always true, so every child process (tunnel, connect, buyer) tried to bind port 3119 and exited on `EADDRINUSE`. The standalone entry moved to `dist/bin.js`.
-
+- Payments: resolve legacy reward reads and browser claim targets separately from the current Usage Accounting address; read the current emission schedule from the Emissions Gate after the protocol upgrade.
+- ANTS dashboard: open staking in a centered modal from the main button or a seller row, with stacked fields, a separate review/confirmation step, keyboard focus handling, and a scrollable layout on small screens.
+- ANTS dashboard: complete new-seller identity creation and binding, distinguish legacy identity lookup from explicit seller binding, display locked rewards even with zero claimable, correct lock dates and seller units, and report failed financial reads instead of zero balances. Add paced RPC reads, transaction readiness checks, stakeable-pool filtering, read-only withdrawal previews, and saved activity with interrupted-action recovery guidance.
 - CLI: accept the deployed-but-inactive contract stack, retain legacy USDC staking and V2 reward targets across cutover, include closed-position rewards in claims and restakes, strictly parse staking IDs and epoch options, and honor JSON output for nested proof status.
 - Packaging: include `@antseed/ants` in npm release planning and publishing, and install its dashboard assets separately from Payments in bundled Nix distributions.
 

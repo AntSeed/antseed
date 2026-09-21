@@ -1,3 +1,4 @@
+import { EarlyExitHelp } from './EarlyExitHelp';
 import { Button } from './ui';
 import { useEffect, useState } from 'react';
 import type { WithdrawRequest } from '../../../src/api-types';
@@ -48,7 +49,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
     void loadPreview();
   };
 
-  const disabled = block.blocked || positionIds.length === 0;
+  const disabled = positionIds.length === 0;
 
   useEffect(() => {
     if (autoOpen && !disabled) onOpen();
@@ -77,7 +78,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
   };
 
   const reason = block.reason ?? (positionIds.length === 0 ? 'Select at least one position.' : undefined);
-  const canConfirm = preview !== null && (!preview.earlyExit || accepted);
+  const canConfirm = !block.blocked && preview !== null && !preview.simulationError && (!preview.earlyExit || accepted);
 
   return (
     <div className="action">
@@ -104,6 +105,7 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
             onCancel?.();
           }}
         >
+          {block.reason ? <div className="hint">{block.reason} You can still review this estimate.</div> : null}
           {loadingPreview ? (
             <div className="muted small">
               <Spinner /> Computing slashing preview…
@@ -119,6 +121,8 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
               </div>
             </div>
           ) : null}
+          {preview?.simulationError && <div className="error-text">Withdrawal cannot execute: {preview.simulationError}</div>}
+          {preview ? <div className="hint">Rewards to claim separately: {formatAnts(preview.pendingRewards, 4)} ANTS. {preview.transfersRestricted ? 'Returned ANTS remain transfer-restricted in this wallet. Ending a position does not enable token transfers. Consider moving your allocation directly to another seller.' : 'ANTS transfers are currently enabled for this wallet.'}</div> : null}
           {preview ? (
             <div className="stack">
               <div className="table-wrap" style={{ marginBottom: 0 }}>
@@ -127,8 +131,8 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
                     <tr>
                       <th>Position</th>
                       <th className="num">Amount</th>
-                      <th className="num">Slash</th>
-                      <th className="num">Burned</th>
+                      <th className="num">Slash<EarlyExitHelp /></th>
+                      <th className="num">Burned<EarlyExitHelp /></th>
                       <th className="num">Returned</th>
                     </tr>
                   </thead>
@@ -155,14 +159,14 @@ export function WithdrawAction({ positionIds, size, autoOpen = false, onStarted,
                 </table>
               </div>
               {preview.earlyExit ? (
-                <label className="check danger">
+                <div className="row"><label className="check danger">
                   <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
                   <span>
                     I accept burning <span className="mono">{formatAnts(preview.totalSlashed, 4)}</span> ANTS of principal (early exit).
                   </span>
-                </label>
+                </label><EarlyExitHelp /></div>
               ) : (
-                <div className="hint">No early-exit slashing applies. Pending rewards are settled with the withdrawal.</div>
+                <div className="hint">No early-exit penalty applies. Withdrawal returns principal; rewards must be claimed separately.<EarlyExitHelp /></div>
               )}
             </div>
           ) : null}
