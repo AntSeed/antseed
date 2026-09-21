@@ -26,7 +26,7 @@ import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV2, UnitBillingUsage, UnitBillingUsageReportV2 } from './types/billing.js';
-import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel, type CapturedUnitBillingContext } from './billing/unit.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
@@ -55,6 +55,12 @@ export interface SellerRequestHandlerDeps {
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
+}
+
+interface SellerBillingContext {
+  context: UnitBillingContext;
+  requestUsage: UnitBillingUsage;
+  estimatedPromptTokens?: number;
 }
 
 /** Debounce interval for metadata refresh after load changes. */
@@ -821,7 +827,7 @@ export class SellerRequestHandler {
     return providers[0] ?? null;
   }
 
-  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): CapturedUnitBillingContext | null {
+  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): SellerBillingContext | null {
     const service = this._extractRequestedService(request);
     if (!service) return null;
     return captureUnitBillingContext({
@@ -850,7 +856,7 @@ export class SellerRequestHandler {
   }
 
   private _estimateUnitRequestCostUsdc(
-    requestBilling: CapturedUnitBillingContext,
+    requestBilling: SellerBillingContext,
     model: UnitBillingModelV2,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
     const usage: UnitBillingUsage = { quantity: requestBilling.requestUsage.quantity };
@@ -863,7 +869,7 @@ export class SellerRequestHandler {
 
   private _estimateRequestCostUsdc(
     request: SerializedHttpRequest,
-    requestBilling: CapturedUnitBillingContext,
+    requestBilling: SellerBillingContext,
     pricing: ProviderTokenPricing,
     unitModel: UnitBillingModelV2 | undefined,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {

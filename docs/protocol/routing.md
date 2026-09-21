@@ -1,11 +1,13 @@
 # Structured routing contract
 
-This document describes the protocol/discovery contract of the five-PR routing
-stack. Generic quantity billing is PR 1/5; [reasoning-effort announcements](reasoning-efforts.md)
-are PR 2/5; this protocol/discovery slice is PR 3/5. Shared payments (PR 4/5)
-supply request execution and per-call accounting; buyer integration (PR 5/5)
-connects selection, policy, fallback, observations, and reasoning
-to this contract. See [buyer integration](../router-network-integration.md).
+This document describes the protocol/discovery contract of the six-PR routing
+stack. [Generic quantity billing](../quantity-billing.md) is PR 1/6 (#1039);
+[reasoning-effort announcements](reasoning-efforts.md) are PR 2/6 (#1040); this
+protocol/discovery slice is PR 3/6 (#1034). [Routing-critical paid execution](../router-per-call-billing.md)
+is PR 4/6 (#1035), supplying shared accounting, acceptance, and attribution needed
+by buyer integration in PR 5/6 (#1036). That integration will connect selection,
+policy, fallback, observations, and reasoning to this contract. Independent generic
+payment fixes follow the integration in PR 6/6, rather than blocking it.
 The early slices are review boundaries, not standalone deployments; the stack
 contains no temporary execution guards.
 
@@ -153,13 +155,15 @@ for `antseed-routing` and non-streaming `openai-chat-completions`.
 Metadata v13 encodes the billing model version, components, uint32 prices, and conditions. Legacy network
 billing advertisements/reports are rejected, not reinterpreted. Older token-only
 announcements remain supported. Compatible legacy seller configuration is
-migrated before provider construction by [PR 1/5](../quantity-billing.md).
+migrated before provider construction by the [quantity billing layer](../quantity-billing.md).
 
 Catalog `billingByProtocol` exposes fixed prices or conditional rules without treating
-them as token prices or inventing numeric summaries for conditional offers. The shared payments slice adds response-acceptance hooks,
-request-scoped accounting, cancellation cleanup, and serialized channel updates;
-see [shared payment execution](../router-per-call-billing.md). Buyer integration
-wires these hooks to network-router selection and buyer policy.
+them as token prices or inventing numeric summaries for conditional offers.
+[Routing-critical paid execution](../router-per-call-billing.md) in #1035 adds
+response-acceptance hooks, request-scoped accounting and attribution, cancellation
+cleanup, and serialized channel updates. Buyer integration in #1036 will wire these
+hooks to network-router selection and buyer policy; they are not deferred to the
+independent generic payment follow-up.
 
 ## Conformance example
 
