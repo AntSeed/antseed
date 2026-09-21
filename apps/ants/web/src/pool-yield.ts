@@ -4,11 +4,12 @@ const REFERENCE_STAKE = 10000n * 10n ** 18n;
 const DAY = 86400;
 
 export const YIELD_DISPLAY_LIMIT = 10_000;
-export const EXTREME_YIELD_NOTE = 'APY is shown as N/A when either end of the range exceeds 10,000%. Ranges at or below 10,000% remain visible.';
+export const EXTREME_YIELD_LABEL = '>10.000%';
+export const EXTREME_YIELD_NOTE = `APY is shown as ${EXTREME_YIELD_LABEL} when either end of the range exceeds 10,000%. Ranges at or below 10,000% remain visible.`;
 
 export function formatYieldPercent(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  if (value > YIELD_DISPLAY_LIMIT) return 'N/A';
+  if (value > YIELD_DISPLAY_LIMIT) return EXTREME_YIELD_LABEL;
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 

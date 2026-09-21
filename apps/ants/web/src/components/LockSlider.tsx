@@ -9,10 +9,11 @@ interface Props {
   label?: string;
   disabled?: boolean;
   startEpoch?: number | null;
+  showUnlockDate?: boolean;
 }
 
 /** Range slider for a lock length in epochs; the readout shows the length and the approximate unlock date. */
-export function LockSlider({ value, min = 1, max, onChange, label = 'Lock', disabled, startEpoch }: Props) {
+export function LockSlider({ value, min = 1, max, onChange, label = 'Lock', disabled, startEpoch, showUnlockDate = true }: Props) {
   const info = useEpochInfo();
   const clamped = Math.min(Math.max(value, min), max);
   const unlockEpoch = startEpoch == null ? null : startEpoch + clamped;
@@ -37,7 +38,7 @@ export function LockSlider({ value, min = 1, max, onChange, label = 'Lock', disa
       <span className="lock-slider-readout">
         <span className="mono">{clamped}</span> {clamped === 1 ? 'epoch' : 'epochs'}
         {info ? ` (${clamped * info.epochDuration / 86_400} days)` : ''}
-        {unlockDate ? (
+        {showUnlockDate && unlockDate ? (
           <span className="muted">
             {' '}
             · unlocks <span className="mono">{unlockDate}</span>

@@ -9,7 +9,7 @@ import { AbiCoder, Contract, ContractFactory, id, keccak256, parseUnits, toBeHex
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let compiled;
 
-function artifacts() {
+export function artifacts() {
   if (compiled) return compiled;
   const installed = path.join(homedir(), '.svm/0.8.24/solc-0.8.24');
   const compiler = process.env.SOLC_BIN || (existsSync(installed) ? installed : 'solc');

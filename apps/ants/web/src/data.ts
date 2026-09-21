@@ -16,28 +16,29 @@ interface Entry {
 let generation = 0;
 const cache = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
-const listeners = new Set<(clear: boolean) => void>();
+const listeners = new Set<(clear: boolean, confirmed: boolean) => void>();
 
 /** Clear visible account data only across identity changes; otherwise revalidate in place. */
-export function invalidateAll({ clear = false }: { clear?: boolean } = {}): void {
+export function invalidateAll({ clear = false, confirmed = false }: { clear?: boolean; confirmed?: boolean } = {}): void {
   generation++;
   inflight.clear();
   if (clear) cache.clear();
   else for (const entry of cache.values()) entry.at = 0;
-  for (const listener of listeners) listener(clear);
+  for (const listener of listeners) listener(clear, confirmed);
 }
 
 export function invalidatePrefix(prefix: string): void {
   for (const key of [...cache.keys()]) {
     if (key.startsWith(prefix)) cache.delete(key);
   }
-  for (const listener of listeners) listener(false);
+  for (const listener of listeners) listener(false, false);
 }
 
 export interface PageData<T> {
   data: T | null;
   error: string | null;
   loading: boolean;
+  reconciling: boolean;
   updatedAt: number | null;
   refresh: () => void;
 }
@@ -47,13 +48,14 @@ interface State<T> {
   data: T | null;
   error: string | null;
   loading: boolean;
+  reconciling: boolean;
   updatedAt: number | null;
 }
 
 function readCache<T>(key: string | null): State<T> {
   const hit = key !== null ? cache.get(key) : undefined;
-  if (hit) return { key, data: hit.data as T, error: null, loading: false, updatedAt: hit.at };
-  return { key, data: null, error: null, loading: key !== null, updatedAt: null };
+  if (hit) return { key, data: hit.data as T, error: null, loading: false, reconciling: false, updatedAt: hit.at };
+  return { key, data: null, error: null, loading: key !== null, reconciling: false, updatedAt: null };
 }
 
 export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, staleMs = 60_000): PageData<T> {
@@ -72,9 +74,9 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
     };
   }, []);
 
-  const load = useCallback((k: string) => {
+  const load = useCallback((k: string, confirmed = false) => {
     const startedGeneration = generation;
-    setState((prev) => (prev.key === k ? { ...prev, loading: true, error: null } : { ...readCache<T>(k), loading: true }));
+    setState((prev) => (prev.key === k ? { ...prev, loading: true, error: null, reconciling: confirmed || prev.reconciling } : { ...readCache<T>(k), loading: true, reconciling: confirmed }));
     let promise = inflight.get(k) as Promise<T> | undefined;
     if (!promise) {
       const started = fetcherRef.current();
@@ -92,7 +94,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
     promise.then(
       (data) => {
         if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
-        setState({ key: k, data, error: null, loading: false, updatedAt: Date.now() });
+        setState({ key: k, data, error: null, loading: false, reconciling: false, updatedAt: Date.now() });
       },
       (error: unknown) => {
         if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
@@ -115,11 +117,11 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   }, [key, load, staleMs]);
 
   useEffect(() => {
-    const listener = (clear: boolean) => {
+    const listener = (clear: boolean, confirmed: boolean) => {
       if (keyRef.current !== null) {
         // Keep the shell mounted, but do not display the previous wallet's balances.
         if (clear && keyRef.current !== 'config') setState(readCache<T>(keyRef.current));
-        load(keyRef.current);
+        load(keyRef.current, confirmed && !clear);
       }
     };
     listeners.add(listener);
@@ -150,5 +152,5 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   }, [key, state.error, state.loading, load]);
 
   const view = state.key === key ? state : readCache<T>(key);
-  return { data: view.data, error: view.error, loading: view.loading, updatedAt: view.updatedAt, refresh };
+  return { data: view.data, error: view.error, loading: view.loading, reconciling: view.reconciling, updatedAt: view.updatedAt, refresh };
 }
