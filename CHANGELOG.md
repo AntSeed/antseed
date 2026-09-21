@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Protocol/Node/Providers/Desktop: sellers can advertise supported reasoning efforts as seller-defined labels in signed metadata v13. Configuration and wire validation bound label size and count, and per-peer CLI and desktop catalogs preserve the choices, including explicitly empty lists. Announcements without effort lists retain metadata v12; billing, request execution, and UI controls are unchanged.
+
 - ANTS provider overview: use Antscan's seller/period model-usage API for the last completed epoch instead of a capped network-wide sample. Show the epoch label, settled/model-attributed/unattributed volume, and volume-ranked models without lengthy explanatory copy; keep catalog availability independent of usage failures.
 
 - ANTS provider overview: show observed model usage before the final advertised-model catalog, replacing the catalog pricing table with one list of model tags, with each model name shown once.

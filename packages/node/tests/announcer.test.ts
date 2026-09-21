@@ -16,7 +16,7 @@ import {
   CONNECTION_CAPABILITY_SIGNED_SDP_V1,
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
-import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
+import { SERVICE_CAPABILITIES_METADATA_VERSION } from '../src/discovery/peer-metadata.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -133,7 +133,23 @@ describe('PeerAnnouncer capabilities', () => {
 });
 
 describe('PeerAnnouncer metadata versions', () => {
-  it('announces current-version metadata carrying configured billing models', async () => {
+  it('announces signed v13 effort capabilities without billing or routing', async () => {
+    const config = makeBaseConfig();
+    config.providers[0]!.serviceCapabilities = {
+      'gpt-4.1': { reasoning: true, reasoningEfforts: ['none', 'high'] },
+      'unlisted-service': { reasoningEfforts: ['low'] },
+    };
+    const announcer = new PeerAnnouncer(config);
+    await announcer.announce();
+    const metadata = announcer.getLatestMetadata();
+    expect(metadata?.version).toBe(13);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
+    expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
+      'gpt-4.1': { reasoning: true, reasoningEfforts: ['none', 'high'] },
+    });
+    expect(validateMetadata(metadata!)).toEqual([]);
+  });
+  it.each([undefined, []])('preserves v1 billing when reasoning efforts are %s', async (reasoningEfforts) => {
     const base = makeBaseConfig();
     const announcer = new PeerAnnouncer({
       ...base,
@@ -151,7 +167,7 @@ describe('PeerAnnouncer metadata versions', () => {
             },
           },
           serviceCapabilities: {
-            'gpt-image-1': { inputs: ['text'] },
+            'gpt-image-1': { inputs: ['text'], ...(reasoningEfforts ? { reasoningEfforts } : {}) },
             'unlisted-service': { contextWindow: 1000 },
           },
           maxConcurrency: 5,
@@ -162,23 +178,24 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(METADATA_VERSION);
+    expect(metadata?.version).toBe(reasoningEfforts ? 13 : SERVICE_CAPABILITIES_METADATA_VERSION);
+    expect(validateMetadata(metadata!)).toEqual([]);
     expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
       components: [{ unit: 'output_images', priceUsd: 0.04 }],
     });
     // Capabilities for services outside providers[].services are dropped.
     expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
-      'gpt-image-1': { inputs: ['text'] },
+      'gpt-image-1': { inputs: ['text'], ...(reasoningEfforts ? { reasoningEfforts } : {}) },
     });
   });
 
-  it('announces current-version metadata without billing models when none are configured', async () => {
+  it('retains v12 metadata when no effort lists or billing models are configured', async () => {
     const announcer = new PeerAnnouncer(makeBaseConfig());
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(METADATA_VERSION);
+    expect(metadata?.version).toBe(SERVICE_CAPABILITIES_METADATA_VERSION);
     expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

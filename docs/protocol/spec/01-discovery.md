@@ -67,7 +67,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 12
+METADATA_VERSION = 13
 MIN_SUPPORTED_METADATA_VERSION = 10
 ```
 
@@ -169,12 +169,15 @@ Per provider (repeated providerCount times):
     Components encode unit id, float32 USD price, and optional match key/value pairs.
   [serviceCapabilityEntryCount : 2 bytes uint16 ]    // v12+
   Per capability entry:
-    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][optional output bitset:1][boolean value bits:1][optional supported parameters]
+    [service][presenceBits:1 in v12, 2 in v13+][optional uint32 token limits][optional input bitset:1][optional output bitset:1][boolean value bits:1][optional supported parameters][optional reasoning efforts]
     Presence bits: contextWindow(0), maxOutputTokens(1), inputs(2), reasoning(3),
-    toolUse(4), structuredOutput(5), outputs(6), supportedParameters(7).
+    toolUse(4), structuredOutput(5), outputs(6), supportedParameters(7),
+    reserved for routing(8), reasoningEfforts(9, v13+).
     Input/output bitsets index into ["text","image","audio","video","pdf"].
     Supported parameters encode as [count:1] then per parameter [len:1][utf8],
     in code-unit sorted order so re-encoding decoded metadata is byte-stable.
+    Reasoning efforts use the same [count:1][len:1][utf8] list layout and sorting.
+    See reasoning-efforts.md for labels, validation, and version compatibility.
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
 
@@ -211,13 +214,16 @@ Trailer:
 
 Metadata validation is intentionally bounded: buyers accept versions from `MIN_SUPPORTED_METADATA_VERSION` through their own `METADATA_VERSION`. Consequently:
 
-| Buyer | Seller v10 | Seller v11 | Seller v12 |
-|---|---:|---:|---:|
-| v10 | accepted | rejected | rejected |
-| v11 | accepted | accepted | rejected |
-| v12 | accepted | accepted | accepted |
+| Buyer | Seller v10 | Seller v11 | Seller v12 | Seller v13 |
+|---|---:|---:|---:|---:|
+| v10 | accepted | rejected | rejected | rejected |
+| v11 | accepted | accepted | rejected | rejected |
+| v12 | accepted | accepted | accepted | rejected |
+| v13 | accepted | accepted | accepted | accepted |
 
 The decoder cannot safely ignore unknown newer versions because provider extensions are embedded in the signed binary layout. Deploy buyer support first, then seller binaries. Metadata v12 widens service and service-map counts from `uint8` to `uint16`; removing optional fields from config does not make a v12 seller emit an older version.
+
+Metadata v13 widens the capability presence mask and adds reasoning-effort lists without changing v1 unit billing. Sellers emit v13 only when a listed service advertises `reasoningEfforts` (including an empty list); otherwise they continue emitting v12.
 
 The body (everything except the trailing 65-byte signature) is the data that is signed. `encodeMetadataForSigning()` produces this body without the signature for signing and verification purposes.
 
