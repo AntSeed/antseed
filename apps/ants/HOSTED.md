@@ -1,8 +1,14 @@
-# Hosted ANTS dashboard
+# Standalone ANTS dashboard
 
-The hosted build is a static website. It does not start Fastify, load a buyer
+The standalone build is a static website. It does not start Fastify, load a buyer
 identity, or connect to a local AntSeed process. The desktop and CLI still open
 the existing local dashboard; their launch URLs and authorization flow are unchanged.
+
+- **Local dashboard:** opened from the desktop app or CLI and connected to its local server.
+- **Standalone dashboard:** opened directly in a browser without AntSeed installed or running. Initial buyer-wallet authorization still requires the AntSeed app holding the buyer identity; afterward, eligible claims work independently.
+
+Existing internal names such as `hosted`, `build:hosted`, and `dist/ants-hosted`
+remain unchanged. They refer to the standalone mode described here.
 
 ## Build and preview
 
@@ -41,7 +47,7 @@ URL parameters never override RPC endpoints, contract addresses, network, or
 transaction recipients. Production configuration rejects insecure/localhost
 endpoints. A dedicated public RPC endpoint with origin restrictions and quotas
 is recommended for sustained traffic. The build rejects Node/native modules in
-the hosted dependency graph.
+the standalone dependency graph.
 
 ## Accounts and rewards
 
@@ -64,7 +70,7 @@ the hosted dependency graph.
 ## Transaction recovery
 
 The existing contract services and browser-signing checks are shared with local
-mode. Every hosted action is bound to the original chain, wallet, and buyer.
+mode. Every standalone action is bound to the original chain, wallet, and buyer.
 Same-origin tabs take an exclusive wallet/chain Web Lock. A second tab cannot
 start signing while that lock is held; other sites or devices are outside this
 lock's scope.
@@ -83,7 +89,7 @@ automatically; inspect confirmed steps before initiating another action.
 Browser storage contains public addresses, transaction intents/hashes, local
 labels, and activity. Clearing site data loses local recovery history; inspect
 the wallet/explorer before retrying any interrupted action. No signing keys,
-private buyer identity, or server-session token is stored by the hosted runtime.
+private buyer identity, or server-session token is stored by the standalone runtime.
 
 ## Hosting and rollout checks
 
@@ -135,4 +141,4 @@ For disposable Anvil tests only, use `vite build --mode hosted-test`,
 `VITE_ANTS_CHAIN=base-local`, and `VITE_ANTS_TEST_CONFIG` containing the test
 chain configuration JSON. Set `VITE_ANTS_RPC_URL` to that fork and disable
 fallbacks/indexing. Never deploy a `hosted-test` artifact; test overrides are
-ignored by the normal hosted production build.
+ignored by the normal standalone production build.
