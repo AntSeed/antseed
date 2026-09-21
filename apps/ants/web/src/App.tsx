@@ -9,6 +9,7 @@ import { usePageData } from './data';
 import { JobsProvider } from './jobs';
 import { AddressesPage } from './pages/Addresses';
 import { NetworkPage } from './pages/Network';
+import { PositionsPage } from './pages/Positions';
 import { RewardsPage } from './pages/Rewards';
 import { SellerPage } from './pages/Seller';
 import { StakePage } from './pages/Stake';
@@ -18,7 +19,7 @@ const THEME_KEY = 'ants.dashboard.theme';
 /** The shell re-reads the overview on this cadence so the footer "updated" time and the tiles stay fresh. */
 const OVERVIEW_POLL_MS = 60_000;
 
-/** Stored preference wins; otherwise follow the OS setting; light by default. */
+/** Stored preference wins; otherwise follow the OS setting; dark by default. */
 function readTheme(): Theme {
   try {
     const stored = window.localStorage.getItem(THEME_KEY);
@@ -27,9 +28,9 @@ function readTheme(): Theme {
     /* storage unavailable */
   }
   try {
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   } catch {
-    return 'light';
+    return 'dark';
   }
 }
 
@@ -115,6 +116,8 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
 
 function PageView({ page }: { page: Page }) {
   switch (page) {
+    case 'positions':
+      return <PositionsPage />;
     case 'rewards':
       return <RewardsPage />;
     case 'seller':

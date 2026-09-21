@@ -1,59 +1,80 @@
 import { useMemo, useState, type MouseEvent } from 'react';
-import type { ExtendRequest, MoveRequest, PoolConfigView, PoolView, PositionView } from '../../../src/api-types';
+import type { ExtendRequest, MaxLockRequest, MergeRequest, MoveRequest, PoolConfigView, PoolView, PositionView, SplitRequest } from '../../../src/api-types';
 import { api } from '../api';
 import { useEpochInfo } from '../app-context';
 import { usePageData } from '../data';
-import { epochStartAt, formatAnts, formatBps, formatEpochLength, formatUtcDate, shortAddress } from '../format';
+import { epochStartAt, formatAnts, formatBps, formatEpochLength, formatUtcDate, isPositiveDecimal, parseUnits, shortAddress, toBigInt } from '../format';
 import { ActionButton, ActionDialog } from './Confirm';
 import { EpochCell } from './Epoch';
 import { ErrorBox } from './Feedback';
-import { Field, Select } from './Field';
+import { Field, Input, Select } from './Field';
 import { LockSlider } from './LockSlider';
 import { Menu } from './Menu';
 import { Panel } from './Panel';
 import { Pill } from './Pill';
 import { Table, type Column } from './Table';
+import { Button } from './ui';
 import { WithdrawAction } from './WithdrawAction';
 
-type RowActionKind = 'move' | 'extend' | 'withdraw';
+export type RowActionKind = 'move' | 'extend' | 'withdraw' | 'split' | 'max-lock';
+type BulkActionKind = 'merge' | 'withdraw';
 
 export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; enabled?: boolean }) {
   const page = usePageData(enabled ? 'positions:current' : null, api.positions);
   const [showClosed, setShowClosed] = useState(false);
   const [rowAction, setRowAction] = useState<{ id: number; kind: RowActionKind } | null>(null);
+  const [bulkAction, setBulkAction] = useState<BulkActionKind | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
 
   const data = page.data;
   const allPositions = useMemo(() => data?.positions ?? [], [data]);
-  const closedCount = useMemo(() => allPositions.filter((p) => !isOpenRow(p)).length, [allPositions]);
-  const positions = useMemo(() => (showClosed ? allPositions : allPositions.filter(isOpenRow)), [allPositions, showClosed]);
+  const closedCount = useMemo(() => allPositions.filter((p) => !isOpen(p)).length, [allPositions]);
+  const positions = useMemo(() => (showClosed ? allPositions : allPositions.filter(isOpen)), [allPositions, showClosed]);
   const actionRow = rowAction ? (positions.find((p) => p.id === rowAction.id) ?? null) : null;
   const poolById = useMemo(() => new Map(pools.map((p) => [p.agentId, p])), [pools]);
+  const openPositions = useMemo(() => positions.filter(isOpen), [positions]);
+  const selectedRows = useMemo(() => openPositions.filter((p) => selected.has(p.id)), [openPositions, selected]);
+  const mergeProblem = mergeEligibility(selectedRows);
 
-  const openRowAction = (id: number, kind: RowActionKind) => {
-    setRowAction({ id, kind });
-  };
+  const openRowAction = (id: number, kind: RowActionKind) => setRowAction({ id, kind });
+  const toggle = (id: number) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected((current) => current.size === openPositions.length ? new Set() : new Set(openPositions.map((p) => p.id)));
+  const clearSelection = () => setSelected(new Set());
 
   const stop = (e: MouseEvent) => e.stopPropagation();
 
   const columns: Array<Column<PositionView>> = [
+    {
+      key: 'select',
+      className: 'col-select',
+      label: openPositions.length > 0 ? (
+        <input type="checkbox" aria-label="Select all open positions" checked={selected.size > 0 && selected.size === openPositions.length} onChange={toggleAll} />
+      ) : '',
+      render: (p) => isOpen(p) ? <input type="checkbox" aria-label={`Select position ${p.id}`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} onClick={stop} /> : null,
+    },
     {
       key: 'seller',
       label: 'Seller',
       render: (p) => {
         const pool = poolById.get(p.agentId);
         return (
-          <span title={pool?.seller ?? undefined}>
-            {pool?.profile?.name?.trim() || (pool?.seller ? shortAddress(pool.seller) : 'Unknown seller')}
+          <span className="cell-stack" title={pool?.seller ?? undefined}>
+            <span>{pool?.profile?.name?.trim() || (pool?.seller ? shortAddress(pool.seller) : 'Unknown seller')}</span>
+            <span className="cell-sub">#{p.id}{maxLockLabel(p)}{p.changePending ? ' · change pending' : ''}</span>
           </span>
         );
       },
     },
-    { key: 'amount', label: 'Amount', align: 'right', mono: true, render: (p) => formatAnts(p.amount, 4) },
+    { key: 'amount', label: 'Amount', align: 'right', mono: true, render: (p) => <span className="cell-stack">{formatAnts(p.amount, 4)}<span className="cell-sub">power {formatAnts(p.weightAmount, 0)}</span></span> },
     {
       key: 'unlocks',
       label: 'Unlocks',
       title: 'Epoch and date when the lock expires. Funds are not withdrawn automatically.',
-      render: (p) => (!isOpen(p) ? <span className="muted">—</span> : p.maxLocked ? <span className="muted" title="This position's lock does not count down automatically. Lock-management controls are currently unavailable in this dashboard.">No scheduled unlock</span> : <EpochCell epoch={p.stakeEndEpoch} />),
+      render: (p) => (!isOpen(p) ? <span className="muted">—</span> : p.maxLocked ? <span className="muted" title="Max lock keeps this position at constant maximum power. Disable max lock to start the countdown.">No scheduled unlock</span> : <EpochCell epoch={p.stakeEndEpoch} />),
     },
     { key: 'state', label: 'Status', title: 'The current stage of this staking position.', render: (p) => <StateBadge state={p.state} /> },
     { key: 'reward', label: 'Pending reward', align: 'right', mono: true, render: (p) => formatAnts(p.pendingReward, 4) },
@@ -68,8 +89,10 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
             <Menu
               label={`More actions for position ${p.id}`}
               items={[
+                { label: 'Split', onSelect: () => openRowAction(p.id, 'split'), disabled: p.changePending, title: p.changePending ? 'A change is pending until the next epoch.' : undefined },
+                { label: 'Extend lock', onSelect: () => openRowAction(p.id, 'extend'), disabled: willBeMaxLocked(p), title: willBeMaxLocked(p) ? 'Max-locked positions already hold the maximum lock.' : undefined },
+                { label: willBeMaxLocked(p) ? 'Disable max lock' : 'Enable max lock', onSelect: () => openRowAction(p.id, 'max-lock') },
                 { label: 'Move allocation', onSelect: () => openRowAction(p.id, 'move') },
-                { label: 'Extend', onSelect: () => openRowAction(p.id, 'extend') },
                 { label: 'Withdraw', onSelect: () => openRowAction(p.id, 'withdraw') },
               ]}
             />
@@ -92,41 +115,87 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
-      {data?.displaySource?.source === 'indexer' ? <p className="hint">Position records from Antscan at block {data.displaySource.indexedBlock}. Rewards and withdrawal checks are read live.</p> : null}
       {data?.displaySource?.error ? <p className="hint">Antscan position data unavailable: {data.displaySource.error}. Showing live wallet positions.</p> : null}
       {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
-      {data?.historySource === 'chain' ? <div className="status-line">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
+      {data?.historySource === 'chain' ? <div className="status-line status-line--muted">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
+      {selectedRows.length > 0 ? (
+        <div className="bulk-bar" role="region" aria-label="Selected positions">
+          <span className="bulk-bar-count">{selectedRows.length} selected · {formatAnts(sumAmounts(selectedRows), 4)} ANTS</span>
+          <button type="button" className="link-button" onClick={clearSelection}>clear</button>
+          <div className="bulk-bar-actions">
+            <span className="btn-wrap" title={mergeProblem ?? 'Combine the selected positions into one.'}>
+              <Button variant="outline" size="sm" disabled={mergeProblem !== null} onClick={() => setBulkAction('merge')}>Merge {selectedRows.length > 1 ? selectedRows.length : ''}</Button>
+            </span>
+            <Button variant="outline" size="sm" onClick={() => setBulkAction('withdraw')}>Withdraw {selectedRows.length}</Button>
+          </div>
+        </div>
+      ) : null}
       {rowAction && actionRow && data ? <RowActionPanel key={`${rowAction.id}:${rowAction.kind}`} kind={rowAction.kind} position={actionRow} config={data.config} pools={pools} onClose={() => setRowAction(null)} /> : null}
+      {bulkAction && data && selectedRows.length > 0 ? (
+        <BulkActionPanel kind={bulkAction} positions={selectedRows} pools={pools} onClose={() => setBulkAction(null)} onStarted={() => { setBulkAction(null); clearSelection(); }} />
+      ) : null}
       <Table
         columns={columns}
         rows={positions}
         rowKey={(p) => p.id}
         loading={page.loading && !data}
-        empty={enabled ? "No open positions. Stake ANTS into a pool to open one." : "Connect a wallet to see your positions."}
+        empty={enabled ? "No open positions. Stake rewards into a seller to open one." : "Connect a wallet to see your positions."}
       />
+      {data?.displaySource?.source === 'indexer' ? <p className="hint">Position records from Antscan at block {data.displaySource.indexedBlock}. Rewards and withdrawal checks are read live.</p> : null}
     </Panel>
   );
 }
 
+function sumAmounts(positions: PositionView[]): string {
+  return positions.reduce((sum, position) => sum + (toBigInt(position.amount) ?? 0n), 0n).toString();
+}
+
+/** Why the selected rows cannot merge, mirroring the contract's rules; null when they can. */
+export function mergeEligibility(positions: PositionView[]): string | null {
+  if (positions.length < 2) return 'Select at least two positions to merge.';
+  if (new Set(positions.map((p) => p.agentId)).size !== 1) return 'Merged positions must stake the same seller.';
+  if (new Set(positions.map((p) => p.stakeEndEpoch)).size !== 1) return 'Merged positions must share the same unlock epoch. Extend the shorter ones first.';
+  if (positions.some((p) => p.maxLocked)) return 'Disable max lock on every selected position before merging.';
+  if (positions.some((p) => p.changePending)) return 'A selected position changed this epoch. Wait for the next epoch.';
+  return null;
+}
+
+/** Max-lock state the next action must reverse: the contract applies changes from the next epoch. */
+export function willBeMaxLocked(p: PositionView): boolean {
+  return p.maxLockedNext ?? p.maxLocked;
+}
+
+function maxLockLabel(p: PositionView): string {
+  const next = willBeMaxLocked(p);
+  if (next && p.maxLocked) return ' · max lock';
+  if (next) return ' · max lock from next epoch';
+  if (p.maxLocked) return ' · max lock ends next epoch';
+  return '';
+}
+
+/** Open positions can be acted on; closed sources (split, merge, move) and withdrawn positions sit behind the toggle. */
 function isOpen(p: PositionView): boolean {
   return !p.withdrawn && p.closedAtEpoch === 0 && p.state !== 'withdrawn' && p.state !== 'closed';
 }
 
-/** Rows shown by default: closed sources (split, merge, move) and withdrawn positions are behind the toggle. */
-function isOpenRow(p: PositionView): boolean {
-  return p.state !== 'closed' && p.state !== 'withdrawn';
-}
+const STATE_TONE: Record<PositionView['state'], 'accent' | 'amber' | 'muted'> = { pending: 'amber', active: 'accent', matured: 'muted', closed: 'muted', withdrawn: 'muted' };
+const STATE_DESCRIPTION: Record<PositionView['state'], string> = {
+  pending: 'Waiting for the stake activation epoch.',
+  active: 'The staking position is active and its lock has not expired.',
+  matured: 'The lock has expired. Withdraw to receive your funds; withdrawal is not automatic.',
+  closed: 'This position has been closed, for example by a split, merge, or move.',
+  withdrawn: 'Funds have been withdrawn from this position.',
+};
 
 function StateBadge({ state }: { state: PositionView['state'] }) {
-  const tone = state === 'active' ? 'accent' : state === 'pending' ? 'amber' : 'muted';
-  const descriptions: Record<PositionView['state'], string> = {
-    pending: 'Waiting for the stake activation epoch.',
-    active: 'The staking position is active and its lock has not expired.',
-    matured: 'The lock has expired. Withdraw to receive your funds; withdrawal is not automatic.',
-    closed: 'This position has been closed, for example by a split, merge, or move.',
-    withdrawn: 'Funds have been withdrawn from this position.',
-  };
-  return <Pill tone={tone} title={descriptions[state]}>{state}</Pill>;
+  return <Pill tone={STATE_TONE[state]} title={STATE_DESCRIPTION[state]}>{state}</Pill>;
+}
+
+/** Why a position cannot change right now; null when it can. */
+function changeProblem(position: PositionView, action: string): string | null {
+  if (!isOpen(position)) return `Only open positions can ${action}.`;
+  if (position.changePending) return 'A position change is pending. Wait until it takes effect.';
+  return null;
 }
 
 function allocationSellerName(agentId: number, pools: PoolView[]): string {
@@ -160,7 +229,9 @@ function MoveForm({ position, config, pools, onStarted }: { position: PositionVi
   const [toAgent, setToAgent] = useState(() => String(targets[0]?.agentId ?? ''));
   const target = targets.find((p) => String(p.agentId) === toAgent) ?? null;
   const body: MoveRequest = { positionIds: [position.id], toAgentId: Number(toAgent) };
-  const problem = position.maxLocked ? 'Disable maximum lock first, then wait for it to take effect.' : position.changePending ? 'A position change is pending. Wait until it takes effect.' : position.state === 'matured' || !isOpen(position) ? 'Only open positions with a remaining lock can move.' : null;
+  const problem = position.maxLocked ? 'Disable maximum lock first, then wait for it to take effect.'
+    : position.state === 'matured' ? 'Only open positions with a remaining lock can move.'
+    : changeProblem(position, 'move');
   const effective = Math.max((info?.current ?? 0) + 1, position.stakeStartEpoch);
   return (
     <div className="form-row">
@@ -191,6 +262,92 @@ function MoveForm({ position, config, pools, onStarted }: { position: PositionVi
   );
 }
 
+/** Carve `amount` out of a position into a new position with the same lock; both parts keep proportional power. */
+function SplitForm({ position, onStarted }: { position: PositionView; onStarted: () => void }) {
+  const total = toBigInt(position.amount) ?? 0n;
+  const weight = toBigInt(position.weightAmount) ?? 0n;
+  const [amount, setAmount] = useState('');
+  const units = isPositiveDecimal(amount) ? parseUnits(amount, 18) : null;
+  const valid = units !== null && units > 0n && units < total;
+  const secondWeight = valid ? (weight * units) / total : 0n;
+  const problem = changeProblem(position, 'be split');
+  const percent = (fraction: number) => setAmount(formatAnts((total * BigInt(Math.round(fraction * 10_000))) / 10_000n, 18).replace(/,/g, ''));
+  const body: SplitRequest = { positionId: position.id, amount: amount.trim() };
+  return (
+    <div className="stack">
+      <p className="hint">Splitting creates a second position with the same seller, lock end and max-lock setting. Power splits in proportion to the amount, so total power is unchanged. Use it to withdraw, move or merge part of a stake later.</p>
+      {problem && <p className="error-text">{problem}</p>}
+      <div className="form-row">
+        <Input label="Amount to split off (ANTS)" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" hint={<>
+          of <span className="mono">{formatAnts(position.amount, 4)}</span> ·{' '}
+          {[0.25, 0.5, 0.75].map((fraction) => <button key={fraction} type="button" className="link-button" style={{ marginRight: 8 }} onClick={() => percent(fraction)}>{fraction * 100}%</button>)}
+        </>} />
+      </div>
+      <div className="split-preview" aria-live="polite">
+        <div className="split-part">
+          <span className="tile-label">Keeps position #{position.id}</span>
+          <strong>{valid ? formatAnts(total - units, 4) : formatAnts(total, 4)} ANTS</strong>
+          <span className="small muted">power {valid ? formatAnts(weight - secondWeight, 0) : formatAnts(weight, 0)}</span>
+        </div>
+        <div className="split-part split-part--new">
+          <span className="tile-label">New position</span>
+          <strong>{valid ? formatAnts(units, 4) : '—'} ANTS</strong>
+          <span className="small muted">power {valid ? formatAnts(secondWeight, 0) : '—'}</span>
+        </div>
+      </div>
+      <ActionButton
+        label="Split position"
+        variant="primary"
+        path="/api/positions/split"
+        body={body}
+        disabled={problem !== null}
+        disabledReason={problem ?? undefined}
+        validate={() => {
+          if (!isPositiveDecimal(amount)) return 'Amount must be a positive decimal number of ANTS.';
+          if (units === null) return 'Amount must have no more than 18 decimal places.';
+          if (units >= total) return `Amount must be below the position's ${formatAnts(position.amount, 4)} ANTS.`;
+          if (secondWeight === 0n || weight - secondWeight === 0n) return 'Amount is too small: both parts need non-zero power.';
+          return null;
+        }}
+        onStarted={onStarted}
+      />
+    </div>
+  );
+}
+
+function MaxLockForm({ position, config, onStarted }: { position: PositionView; config: PoolConfigView; onStarted: () => void }) {
+  const info = useEpochInfo();
+  const enable = !willBeMaxLocked(position);
+  const body: MaxLockRequest = { positionId: position.id, enable };
+  const problem = changeProblem(position, 'change max lock');
+  const restartEnd = info ? info.current + 1 + config.maxStakeEpochs : null;
+  return (
+    <div className="stack">
+      {enable ? (
+        <>
+          <p className="hint">Max lock pins this position at the maximum lock ({config.maxStakeEpochs} epochs{info ? `, ${formatEpochLength(config.maxStakeEpochs * info.epochDuration)}` : ''}) so its staking power stays at the maximum instead of decaying as the lock runs down.</p>
+          <p className="hint">The lock no longer counts down. To withdraw later, disable max lock first: a fresh full countdown then starts from the next epoch. Max-locked positions cannot be moved or merged until max lock is disabled.</p>
+        </>
+      ) : (
+        <>
+          <p className="hint">Disabling max lock starts a fresh {config.maxStakeEpochs}-epoch countdown from the next epoch{restartEnd !== null ? <> (unlocks <EpochCell epoch={restartEnd} dateOnly />)</> : null}. Power then decays as the lock runs down.</p>
+          <p className="hint">Withdrawing before that countdown ends is an early exit and burns part of the principal.</p>
+        </>
+      )}
+      {problem && <p className="error-text">{problem}</p>}
+      <ActionButton
+        label={enable ? 'Enable max lock' : 'Disable max lock'}
+        variant={enable ? 'primary' : 'default'}
+        path="/api/positions/max-lock"
+        body={body}
+        disabled={problem !== null}
+        disabledReason={problem ?? undefined}
+        onStarted={onStarted}
+      />
+    </div>
+  );
+}
+
 interface RowActionProps {
   kind: RowActionKind;
   position: PositionView;
@@ -205,7 +362,13 @@ export function RowActionPanel({ kind, position, config, pools = [], onClose }: 
   const extensionStart = effectiveEpoch === null ? null : Math.max(position.stakeEndEpoch, effectiveEpoch);
   const maxAdd = extensionStart === null || effectiveEpoch === null ? 0 : Math.max(config.maxStakeEpochs - (extensionStart - effectiveEpoch), 0);
   const [epochs, setEpochs] = useState(Math.min(1, maxAdd) || 1);
-  const title = kind === 'move' ? 'Move allocation' : kind === 'extend' ? 'Extend position' : 'Withdraw positions';
+  const titles: Record<RowActionKind, string> = {
+    move: 'Move allocation',
+    extend: 'Extend position',
+    split: 'Split position',
+    'max-lock': willBeMaxLocked(position) ? 'Disable max lock' : 'Enable max lock',
+    withdraw: 'Withdraw positions',
+  };
 
   const extendBody: ExtendRequest = { positionId: position.id, epochs };
   const validateExtend = (): string | null => {
@@ -215,7 +378,7 @@ export function RowActionPanel({ kind, position, config, pools = [], onClose }: 
   };
 
   return (
-    <ActionDialog title={title} onClose={onClose}>
+    <ActionDialog title={titles[kind]} onClose={onClose}>
       {kind !== 'extend' ? <div className="small mb">
         <PositionSummary position={position} pools={pools} />
       </div> : null}
@@ -226,6 +389,8 @@ export function RowActionPanel({ kind, position, config, pools = [], onClose }: 
         </div>
       ) : null}
       {kind === 'move' ? <MoveForm position={position} config={config} pools={pools} onStarted={onClose} /> : null}
+      {kind === 'split' ? <SplitForm position={position} onStarted={onClose} /> : null}
+      {kind === 'max-lock' ? <MaxLockForm position={position} config={config} onStarted={onClose} /> : null}
       {kind === 'extend' ? (
         <div className="stack">
           <dl className="facts">
@@ -250,5 +415,47 @@ export function RowActionPanel({ kind, position, config, pools = [], onClose }: 
         </div>
       ) : null}
     </ActionDialog>
+  );
+}
+
+/** Merge or withdraw several selected positions at once. */
+export function BulkActionPanel({ kind, positions, pools, onClose, onStarted }: { kind: BulkActionKind; positions: PositionView[]; pools: PoolView[]; onClose: () => void; onStarted: () => void }) {
+  const ids = positions.map((p) => p.id);
+  const mergeProblem = mergeEligibility(positions);
+  const mergeBody: MergeRequest = { positionIds: ids };
+  const first = positions[0]!;
+  return (
+    <ActionDialog title={kind === 'merge' ? `Merge ${positions.length} positions` : `Withdraw ${positions.length} positions`} onClose={onClose}>
+      <div className="stack">
+        <dl className="facts">
+          {positions.map((position) => (
+            <PositionFact key={position.id} position={position} pools={pools} />
+          ))}
+          <dt>Total</dt>
+          <dd>{formatAnts(sumAmounts(positions), 4)} ANTS</dd>
+        </dl>
+        {kind === 'merge' ? (
+          <>
+            <p className="hint">Merging combines these positions into one position of {formatAnts(sumAmounts(positions), 4)} ANTS in {allocationSellerName(first.agentId, pools)} with the shared unlock epoch {first.stakeEndEpoch}. Power is preserved. The source positions close; their accrued rewards stay claimable.</p>
+            {mergeProblem ? <p className="error-text">{mergeProblem}</p> : null}
+            <ActionButton label="Merge positions" variant="primary" path="/api/positions/merge" body={mergeBody} disabled={mergeProblem !== null} disabledReason={mergeProblem ?? undefined} onStarted={onStarted} />
+          </>
+        ) : (
+          <>
+            {positions.some((p) => p.changePending) ? <div className="error-text">A selected position changed this epoch; the preview will be rejected until the next epoch.</div> : null}
+            <WithdrawAction positionIds={ids} autoOpen onStarted={onStarted} onCancel={onClose} />
+          </>
+        )}
+      </div>
+    </ActionDialog>
+  );
+}
+
+function PositionFact({ position, pools }: { position: PositionView; pools: PoolView[] }) {
+  return (
+    <>
+      <dt>#{position.id} · {allocationSellerName(position.agentId, pools)}</dt>
+      <dd>{formatAnts(position.amount, 4)} ANTS · unlocks epoch {position.stakeEndEpoch}</dd>
+    </>
   );
 }

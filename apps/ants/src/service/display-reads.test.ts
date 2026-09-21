@@ -115,7 +115,8 @@ describe('indexed display / live financial read boundary', () => {
     expect(pools.positionsBatch).toHaveBeenCalledWith([7, 8]);
     expect(result.positions.map(row => row.id)).toEqual([8, 7]);
     expect(result.positions.find(row => row.id === 7)?.closedBy).toBeUndefined();
-    expect(requests.filter(row => row.method === 'positionMaxLockPowerAtEpoch')).toHaveLength(2);
+    // Current and next epoch for each of the two live positions (max-lock changes apply next epoch).
+    expect(requests.filter(row => row.method === 'positionMaxLockPowerAtEpoch')).toHaveLength(4);
   });
 
   it('removes transferred local positions from the display', async () => {
@@ -155,14 +156,25 @@ describe('indexed display / live financial read boundary', () => {
     snapshot.pools[1]!.settled = settled;
     const result = await poolsView(ctx);
     expect(result.pools[0]?.yield).toEqual({ ...poolYield(settled ? 10n : 20n, 100n, 21, stack.epochDuration, stack.genesis, settled), reward: settled ? '10' : '20', power: '200', minLockEpochs: 1, maxLockEpochs: 104 });
-    expect(requests.map(row => row.method)).toEqual(['stakerAgentActiveStake', 'positionWeightAtEpoch', 'minStakeEpochs', 'MAX_STAKE_EPOCHS']);
+    expect(requests.map(row => row.method)).toEqual(['positionWeightAtEpoch', 'minStakeEpochs', 'MAX_STAKE_EPOCHS']);
     expect(pools.allStakerPositionIds).not.toHaveBeenCalled();
     expect(pools.totalPowerWeightAtEpoch).not.toHaveBeenCalled();
     expect(rewards.stakerEpochBudget).not.toHaveBeenCalled();
     expect(indexer.pool).not.toHaveBeenCalled();
     expect(result.totalActiveStake).toBe('1000');
     expect((await singlePool(ctx, 1))).toMatchObject({ stakers: 2, openPositions: 3 });
-    expect(indexer.pool).toHaveBeenCalledWith(1, 1);
+    expect(indexer.pool).toHaveBeenCalledWith(1, 16);
+  });
+
+  it('prices your positions from the explorer and reads the chain only for ids it could not price', async () => {
+    const { ctx, snapshot, requests, indexer } = fixture();
+    snapshot.positions.push({ ...snapshot.positions[0]!, id: 8, stakeStartEpoch: 23, amount: '40' });
+    indexer.positions.mockResolvedValueOnce([{ ...snapshot.positions[0]!, power: '150' }, { ...snapshot.positions[1]!, power: null }]);
+    const result = await poolsView(ctx);
+    expect(indexer.positions).toHaveBeenCalledWith(snapshot.positions[0]!.owner, false);
+    expect(requests.filter(row => row.method === 'positionWeightAtEpoch').map(row => row.args)).toEqual([[8, 22]]);
+    expect(result.pools[0]).toMatchObject({ yourStake: '100', yourPendingStake: '40', yourPower: '250', yourPositionIds: [7, 8] });
+    expect(result.yourPendingStake).toBe('40');
   });
 
   it.each(['missing', 'zero', 'stale', 'offline'])('keeps %s history distinct without historical RPC amplification', async mode => {

@@ -117,8 +117,8 @@ function RewardsBody({ data, onRefresh }: { data: RewardsView; onRefresh: () => 
   return (
     <>
       <Card className="hero" aria-label="Staking rewards">
-        {data.historySource === 'chain' ? <p className="status-line">Closed-position history is unavailable (no indexer configured, or the indexer is unreachable). These are known rewards; rewards from closed positions may be missing. Refresh to retry.</p> : null}
-        {data.historySource === 'local' ? <p className="status-line">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
+        {data.historySource === 'chain' ? <p className="status-line status-line--muted">Closed-position history is unavailable (no indexer configured, or the indexer is unreachable). These are known rewards; rewards from closed positions may be missing. Refresh to retry.</p> : null}
+        {data.historySource === 'local' ? <p className="status-line status-line--muted">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
         <div className="tile-label">Staking rewards</div>
         <p className="hint">Earned from staking ANTS in seller pools for <AddressLink value={dashboard.address} />. These are unclaimed rewards, not your wallet balance.</p>
         <div className="hero-value"><RewardAmount>{formatAnts(data.staker.total, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>

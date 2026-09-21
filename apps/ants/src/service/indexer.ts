@@ -80,6 +80,8 @@ export interface IndexedPoolDetail {
   epochs: IndexedPoolEpoch[];
   openPositions: number | null;
   stakers: number | null;
+  /** Stake in open positions waiting for their activation epoch; null when the explorer predates the field. */
+  pendingStake: string | null;
 }
 
 export interface IndexedPosition {
@@ -102,6 +104,9 @@ export interface IndexedPosition {
   slashedAmount: string;
   createdAt: number;
   closedAt: number | null;
+  /** Live power this epoch as read by the explorer; null when the explorer could not read it or predates the field. */
+  power?: string | null;
+  nextPower?: string | null;
 }
 
 export interface IndexedSellerEpoch { seller: string; epoch: number; agentId: number | null; volumeUsdc: string; points: string; weightedPoints: string; requests: string; }
@@ -139,6 +144,10 @@ const str = (value: unknown): string => (value === null || value === undefined ?
 const lower = (value: unknown): string | null => (typeof value === 'string' && value ? value.toLowerCase() : null);
 /** `convert(value)`, or null when the field is absent. */
 const optional = <T>(value: unknown, convert: (value: unknown) => T): T | null => (value === null || value === undefined ? null : convert(value));
+/** A non-negative integer string, or null for anything else (absent field, error marker, older explorer). */
+const decimalOrNull = (value: unknown): string | null => (/^\d+$/.test(String(value ?? '')) ? String(value) : null);
+/** A non-negative safe integer count, or null. */
+const countOrNull = (value: unknown): number | null => (value != null && Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : null);
 const CLOSE_REASONS = ['split', 'merge', 'move', 'withdraw'] as const;
 
 function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoch | null {
@@ -185,7 +194,7 @@ function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: num
     lastEmissionSettled: row['lastEmissionSettled'] === true,
     historicalYield: /^\d+$/.test(String(row['lastWeight'] ?? '')) && /^\d+$/.test(String(row['lastEmission'] ?? '')) && typeof row['lastEmissionSettled'] === 'boolean'
       ? { power: String(row['lastWeight']), reward: String(row['lastEmission']), settled: row['lastEmissionSettled'] } : null,
-    stakers: row['stakers'] != null && Number.isSafeInteger(Number(row['stakers'])) && Number(row['stakers']) >= 0 ? Number(row['stakers']) : null,
+    stakers: countOrNull(row['stakers']),
     lastRewardPer1kPower: optional(row['lastRewardPer1kPower'], str),
     projectedEmission: str(row['projectedEmission']),
     projectedRewardPer1kPower: optional(row['projectedRewardPer1kPower'], str),
@@ -215,6 +224,8 @@ function toPosition(row: Record<string, unknown>): IndexedPosition {
     slashedAmount: str(row['slashedAmount']),
     createdAt: num(row['createdAt']),
     closedAt: optional(row['closedAt'], num),
+    power: decimalOrNull(row['power']),
+    nextPower: decimalOrNull(row['nextPower']),
   };
 }
 
@@ -285,15 +296,16 @@ export class AntscanIndexer implements Indexer {
   }
 
   async pool(agentId: number, epochs = 8): Promise<IndexedPoolDetail> {
-    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
+    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown; pendingStake?: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
     return {
       pool: raw.pool ? toPool(raw.pool) : null,
       epochs: (raw.epochs ?? []).filter(row => row['volumeUsdc'] != null).map((row) => ({
         epoch: num(row['epoch']), weight: str(row['weight']), activeStake: str(row['activeStake']), usagePoints: str(row['usagePoints']), weightedUsagePoints: str(row['weightedUsagePoints']),
         volumeUsdc: str(row['volumeUsdc']), requests: str(row['requests']), settledEmission: str(row['settledEmission']), settled: row['settled'] === true,
       })),
-      openPositions: raw.openPositions != null && Number.isSafeInteger(Number(raw.openPositions)) && Number(raw.openPositions) >= 0 ? Number(raw.openPositions) : null,
-      stakers: raw.stakers != null && Number.isSafeInteger(Number(raw.stakers)) && Number(raw.stakers) >= 0 ? Number(raw.stakers) : null,
+      openPositions: countOrNull(raw.openPositions),
+      stakers: countOrNull(raw.stakers),
+      pendingStake: decimalOrNull(raw.pendingStake),
     };
   }
 

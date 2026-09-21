@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { WagmiProvider, useAccount, useWalletClient } from 'wagmi';
-import { getDefaultConfig, RainbowKitProvider, ConnectButton } from '@rainbow-me/rainbowkit';
+import { getDefaultConfig, RainbowKitProvider, ConnectButton, darkTheme } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defineChain, http } from 'viem';
 import { request, type DashboardConfig } from './api';
@@ -11,6 +11,8 @@ import type { BrowserTransaction } from '../../src/browser-signer';
 import '@rainbow-me/rainbowkit/styles.css';
 
 const queries = new QueryClient();
+/** Match the dashboard's signal colour; the connect button sits on the dark top bar in both themes. */
+const walletTheme = darkTheme({ accentColor: '#1fd87a', accentColorForeground: '#06281a', borderRadius: 'small', fontStack: 'system' });
 // The workspace also contains React 19; wagmi declarations resolve that peer. Runtime is deduped by Vite.
 const WalletRoot = WagmiProvider as unknown as ComponentType<{ config: ReturnType<typeof getDefaultConfig>; children: ReactNode }>;
 export function WalletProvider({ config, children }: { config: DashboardConfig; children: ReactNode }) {
@@ -21,7 +23,7 @@ export function WalletProvider({ config, children }: { config: DashboardConfig; 
     transports: { [config.evmChainId]: http() },
   }), [config.chainId, config.evmChainId, config.walletRpcUrl]);
   if (!config.browserWallet) return <>{children}</>;
-  return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider>{children}</RainbowKitProvider></QueryClientProvider></WalletRoot>;
+  return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider theme={walletTheme}>{children}</RainbowKitProvider></QueryClientProvider></WalletRoot>;
 }
 
 /** Sync wallet identity before enabling jobs. Every transaction has an explicit wallet approval. */

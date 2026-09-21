@@ -30,6 +30,8 @@ async function indexedStatuses(ctx: AntsContext, positions: SellerPoolPosition[]
     return {
       id: position.id, withdrawable: add('positionWithdrawableEpoch', [position.id]),
       max: open && !maxLocks.has(position.id) ? add('positionMaxLockPowerAtEpoch', [position.id, Math.max(epoch, position.stakeStartEpoch)]) : null,
+      // Max-lock changes apply from the next epoch; the UI labels the pending state from this read.
+      maxNext: open && !maxLocks.has(position.id) ? add('positionMaxLockPowerAtEpoch', [position.id, Math.max(epoch + 1, position.stakeStartEpoch)]) : null,
       slash: open ? add('earlyExitSlashBps', [position.id]) : null,
     };
   });
@@ -39,9 +41,11 @@ async function indexedStatuses(ctx: AntsContext, positions: SellerPoolPosition[]
     if (typeof value !== 'bigint') throw new Error(`Position status read failed: ${requests[index]!.method}`);
     return value;
   };
-  return reads.map(({ id, withdrawable, max, slash }) => {
+  return reads.map(({ id, withdrawable, max, maxNext, slash }) => {
     const withdrawableEpoch = Number(read(withdrawable));
-    return { withdrawableEpoch, maxLocked: slash !== null && (max !== null ? read(max) !== 0n : maxLocks.get(id) ?? false), slashBps: slash !== null && epoch >= withdrawableEpoch ? Number(read(slash)) : null };
+    const maxLocked = slash !== null && (max !== null ? read(max) !== 0n : maxLocks.get(id) ?? false);
+    const maxLockedNext = slash !== null && (maxNext !== null ? read(maxNext) !== 0n : maxLocked);
+    return { withdrawableEpoch, maxLocked, maxLockedNext, slashBps: slash !== null && epoch >= withdrawableEpoch ? Number(read(slash)) : null };
   });
 }
 
@@ -58,7 +62,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
   const statuses = maxLocks ? await indexedStatuses(ctx, positions, currentEpoch, maxLocks) : await pools.positionStatusesBatch(positions, currentEpoch);
   const details = positions.map((position, index): PositionDetail => {
     const open = !position.withdrawn && position.closedAtEpoch === 0;
-    const { withdrawableEpoch, maxLocked, slashBps } = statuses[index]!;
+    const { withdrawableEpoch, maxLocked, maxLockedNext, slashBps } = statuses[index]!;
     const changePending = currentEpoch < withdrawableEpoch;
     const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
     const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);
@@ -76,6 +80,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
       withdrawableEpoch,
       changePending,
       maxLocked,
+      maxLockedNext,
       slashBps,
       projectedSlashBps,
       slashedAmount: open ? estimate.slashedAmount.toString() : '0',
@@ -134,6 +139,7 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
   const details = await describePositions(ctx, list, stack.currentEpoch, config, maxLocks);
   const closedById = new Map(closed.rows.map((row) => [row.id, row]));
   const activeStake = details.filter((position) => position.state === 'active' || position.state === 'matured').reduce((sum, position) => sum + BigInt(position.amount), 0n);
+  const pendingStake = details.filter((position) => position.state === 'pending').reduce((sum, position) => sum + BigInt(position.amount), 0n);
   const pendingRewards = details.reduce((sum, position) => sum + BigInt(position.pendingReward), 0n);
   return toJson({
     currentEpoch: stack.currentEpoch,
@@ -143,7 +149,7 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
       return meta && meta.closedAtEpoch === view.closedAtEpoch && meta.withdrawn === view.withdrawn
         ? { ...view, closedBy: meta.closedBy, replacementIds: meta.replacementIds } : view;
     }),
-    totals: { activeStake: activeStake.toString(), pendingRewards: pendingRewards.toString(), open: details.filter((position) => !position.withdrawn && position.closedAtEpoch === 0).length },
+    totals: { activeStake: activeStake.toString(), pendingStake: pendingStake.toString(), pendingRewards: pendingRewards.toString(), open: details.filter((position) => !position.withdrawn && position.closedAtEpoch === 0).length },
     historySource: closed.source,
     displaySource: display.source,
   });

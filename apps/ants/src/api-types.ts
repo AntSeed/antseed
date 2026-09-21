@@ -80,6 +80,8 @@ export interface PositionView {
   withdrawableEpoch: number;
   changePending: boolean;
   maxLocked: boolean;
+  /** Max-lock state from the next epoch; differs from `maxLocked` while an enable/disable is pending. */
+  maxLockedNext: boolean;
   /** On-chain early-exit slash for a withdrawal now; null while a change is pending (projected value is in `projectedSlashBps`). */
   slashBps: number | null;
   projectedSlashBps: number;
@@ -107,7 +109,7 @@ export interface PositionsView {
   config: PoolConfigView;
   /** Indexed position records when fresh, otherwise chain records; rewards and withdrawal checks remain live. */
   positions: PositionView[];
-  totals: { activeStake: string; pendingRewards: string; open: number };
+  totals: { activeStake: string; pendingStake: string; pendingRewards: string; open: number };
   /** Where closed positions came from; 'chain' means only open positions are listed. */
   historySource: DataSource;
 }
@@ -174,8 +176,22 @@ export interface PoolYield {
   apy: number | null;
   status: 'settled' | 'estimated' | 'unavailable';
 }
+/** One indexed epoch of a seller pool: stake, power, settled volume and the staker emission it earned. */
+export interface PoolEpochPoint {
+  epoch: number;
+  activeStake: string;
+  weight: string;
+  volumeUsdc: string;
+  requests: string;
+  /** Staker emission for the epoch; settled once a claim finalises it, otherwise the indexer's running figure. */
+  emission: string;
+  settled: boolean;
+}
+
 export interface PoolView {
   displaySource?: DisplaySource;
+  /** Per-epoch history (oldest first) for charts; present on the single-pool endpoint when the indexer is reachable. */
+  history?: PoolEpochPoint[];
   openPositions?: number;
   totalPositions?: number;
   stakers?: number | null;
@@ -206,7 +222,11 @@ export interface PoolView {
   lastEpochRewardPer1kPower: string | null;
   /** Projected staker ANTS per 1,000 units of pool power this epoch from current usage. */
   projectedRewardPer1kPower: string | null;
+  /** Stake in open positions that activates at a later epoch (indexer-sourced; absent from chain-only rows). */
+  pendingStake?: string;
   yourStake: string;
+  /** Your stake in this pool whose activation epoch is still ahead. */
+  yourPendingStake: string;
   /** Your power in this pool this epoch (sum of your positions' weight). */
   yourPower: string;
   /** Your power as a share of the pool's power. */
@@ -226,6 +246,8 @@ export interface PoolsView {
   yourTotalPower: string;
   /** Your power as a share of all pools' power. */
   yourNetworkShareBps: number;
+  /** Your stake across pools that activates at a later epoch. */
+  yourPendingStake: string;
   explorer: string | null;
   /** 'indexer' = full pool statistics from the explorer; 'chain' = only the pools this wallet stakes in, read live. */
   source: DataSource;

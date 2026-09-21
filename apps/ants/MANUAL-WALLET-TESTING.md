@@ -45,10 +45,16 @@ Run the fixture seeder once per fresh sandbox, before starting the proxy.
 The signing wallet is funded and allowlisted initially. Global ANTS transfers
 remain disabled, so restricted behavior can be restored without restarting.
 
-Split, merge, max-lock toggles, and combined compounding are not exposed in the
-current dashboard. The fixtures retain max-locked positions so their existing
-terms and withdrawal handling can still be inspected. Withdraw one position at a
-time through its action menu.
+Split, extend, max-lock toggles, move and withdraw live in each position's
+action menu; select several positions with the row checkboxes to merge them
+(same seller and unlock epoch, no max lock) or withdraw them together from the
+bulk bar. Max-lock changes apply from the next epoch; the position's secondary
+line shows "max lock from next epoch" / "max lock ends next epoch" until then.
+Combined compounding is not exposed in the dashboard.
+
+With transfers restricted, the stake dialog lists only reward sources (buyer,
+seller, position rewards); the wallet balance is not offered until transfers
+are enabled for the wallet.
 
 When claiming or restaking, the wallet opens directly for newly started actions.
 Rejecting approval must leave reward amounts unchanged. After a transaction
@@ -67,6 +73,7 @@ node scripts/ants-browser-qa.mjs /absolute/path/to/scenario.json 3135 --controls
 - **Use buyer account / Use authorized wallet:** exercise account mismatch and recovery.
 - **Wrong network / Anvil network:** exercise chain mismatch and recovery.
 - **Reject next transaction:** reject the next submitted wallet request.
+- Pending positions (split parts, merge results, fresh stakes) appear under **My positions** in the left menu with a `pending` badge, and their amount is called out in amber as "pending activation" on the sellers table, the seller sheet and the positions page tiles.
 - **Advance 1 epoch:** activate pending positions or clear next-epoch restrictions
   after move, split, merge, or extend.
 - **Mature ordinary locks (+106 epochs):** test normal withdrawals. Perpetually

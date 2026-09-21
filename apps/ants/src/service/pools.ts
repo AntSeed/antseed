@@ -1,17 +1,19 @@
 import { closedPositionIds } from './positions.js';
 import { poolYield } from './yield.js';
 import { Interface, ZeroAddress } from 'ethers';
-import { multicallRead, type MulticallRequest } from '@antseed/node/payments';
+import { multicallRead, type MulticallRequest, type SellerPoolPosition } from '@antseed/node/payments';
 import type { AntsContext, ResolvedStack } from './context.js';
-import type { PoolsView, PoolView, EpochVolume, SellerProfile } from '../api-types.js';
+import type { PoolsView, PoolView, PoolEpochPoint, EpochVolume, SellerProfile } from '../api-types.js';
 import { toJson } from './json.js';
 import { explorerSellers, type ExplorerSellers } from './explorer.js';
 import { mergePools, sortPools } from './pool-merge.js';
-import { IndexerError, type IndexedPools } from './indexer.js';
+import { IndexerError, type IndexedPoolEpoch, type IndexedPools } from './indexer.js';
 import { stakeEligibility } from './stake-eligibility.js';
 import { displayData, indexedPositions, type DisplayData } from './display-snapshot.js';
 
 const VOLUME_EPOCHS = 9;
+/** Epochs of per-pool history returned by the single-pool endpoint for charts. */
+export const HISTORY_EPOCHS = 16;
 
 async function safe<T>(read: () => Promise<T>, fallback: T): Promise<T> {
   try { return await read(); } catch { return fallback; }
@@ -76,7 +78,15 @@ interface PoolContext {
   lastStakerBudget: bigint;
   lastTotalWeightedPoolPoints: bigint;
   explorer: ExplorerSellers;
-  ownPositions: Map<number, number[]>;
+  /** Your open positions per agent. */
+  own: Map<number, OwnPool>;
+}
+
+/** Ids, stake counting this epoch, stake still pending activation, and live power of your positions in one pool. */
+export interface OwnPool { positionIds: number[]; power: bigint; stake: bigint; pending: bigint; }
+
+function totalPending(own: Map<number, OwnPool>): bigint {
+  return [...own.values()].reduce((sum, entry) => sum + entry.pending, 0n);
 }
 
 async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<PoolContext> {
@@ -103,14 +113,45 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
       return pools.positionsBatch([...new Set([...open, ...closed.ids])]);
     })(),
   ]);
-  const ownPositions = new Map<number, number[]>();
-  for (const position of own) {
-    // A moved/split source can still have power until its effective epoch.
-    if (position.owner.toLowerCase() !== ctx.address.toLowerCase() || position.withdrawn || (position.closedAtEpoch !== 0 && position.closedAtEpoch <= epoch)) continue;
-    ownPositions.set(position.agentId, [...(ownPositions.get(position.agentId) ?? []), position.id]);
+  // A moved/split source keeps its power until its effective epoch, so it still counts as open here.
+  const openRows = own.filter((position) => position.owner.toLowerCase() === ctx.address.toLowerCase() && !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > epoch));
+  const [totalActiveStake, ownSummary] = await Promise.all([
+    current ? Promise.resolve(BigInt(current.totalActiveStake)) : safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
+    ownPools(ctx, openRows, epoch),
+  ]);
+  return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary };
+}
+
+/**
+ * Your open positions grouped by agent. Stake splits into active and pending
+ * from the position records themselves; each position's live power comes from
+ * the explorer's positions endpoint, and only ids it could not price (or a
+ * missing explorer) are read from the chain.
+ */
+export async function ownPools(ctx: AntsContext, rows: SellerPoolPosition[], epoch: number): Promise<Map<number, OwnPool>> {
+  const power = new Map<number, bigint>();
+  const indexer = ctx.indexer();
+  if (indexer && rows.length > 0) {
+    const indexed = await indexer.positions(ctx.address, false).catch((error: unknown) => { if (error instanceof IndexerError) return []; throw error; });
+    for (const row of indexed) if (row.power != null && rows.some((position) => position.id === row.id)) power.set(row.id, BigInt(row.power));
   }
-  const totalActiveStake = current ? BigInt(current.totalActiveStake) : await safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n);
-  return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, ownPositions };
+  const missing = rows.filter((position) => !power.has(position.id));
+  if (missing.length > 0) {
+    const poolsAddress = ctx.requirePools().contractAddress;
+    const batch = new Batch();
+    const reads = missing.map((position) => batch.add(poolsAddress, POOLS_IFACE, 'positionWeightAtEpoch', [position.id, epoch]));
+    await batch.run(ctx);
+    missing.forEach((position, index) => power.set(position.id, big(reads[index]!)));
+  }
+  const own = new Map<number, OwnPool>();
+  for (const position of rows) {
+    const entry = own.get(position.agentId) ?? { positionIds: [], power: 0n, stake: 0n, pending: 0n };
+    entry.positionIds.push(position.id);
+    entry.power += power.get(position.id) ?? 0n;
+    if (position.stakeStartEpoch <= epoch) entry.stake += position.amount; else entry.pending += position.amount;
+    own.set(position.agentId, entry);
+  }
+  return own;
 }
 
 async function describePools(ctx: AntsContext, agents: Array<[number, string | null]>, context: PoolContext): Promise<PoolView[]> {
@@ -127,27 +168,24 @@ async function describePools(ctx: AntsContext, agents: Array<[number, string | n
     const stakeable = registration.stakeable;
     const seller = stakeable ? registration.owner : context.explorer.byAgent.get(agentId) ?? null;
     const weight = big(read.weight);
-    const yourIds = context.ownPositions.get(agentId) ?? [];
-    return { agentId, stakeable, seller, weight, yourIds, full: weight !== 0n || stakeable || yourIds.length > 0 };
+    const mine = context.own.get(agentId);
+    return { agentId, stakeable, seller, weight, mine, full: weight !== 0n || stakeable || mine !== undefined };
   });
 
   const none = () => null;
   const readHistory = !ctx.indexer()?.displaySnapshot && epoch > 0;
   const batch = new Batch();
-  const reads = resolved.map(({ agentId, yourIds, full }) => ({
+  const reads = resolved.map(({ agentId, full }) => ({
     activeStake: full ? batch.add(poolsAddress, POOLS_IFACE, 'poolActiveStakeAtEpoch', [agentId, epoch]) : none,
     lastWeight: full && readHistory ? batch.add(poolsAddress, POOLS_IFACE, 'poolWeightAtEpoch', [agentId, epoch - 1]) : none,
     security: full ? batch.add(poolsAddress, POOLS_IFACE, 'currentPoolSecurityShareBps', [agentId]) : none,
     usage: full ? batch.add(ctx.chain.usageAccountingAddress, ACCOUNTING_IFACE, 'agentEpochUsage', [epoch, agentId]) : none,
     lastUsage: full && readHistory ? batch.add(ctx.chain.usageAccountingAddress, ACCOUNTING_IFACE, 'agentEpochUsage', [epoch - 1, agentId]) : none,
     lastEmission: full && readHistory ? batch.add(ctx.chain.sellerPoolsRewardsAddress, REWARDS_IFACE, 'poolEpochEmissions', [epoch - 1, agentId]) : none,
-    yourStake: yourIds.length > 0 ? batch.add(poolsAddress, POOLS_IFACE, 'stakerAgentActiveStake', [ctx.address, agentId]) : none,
-    yourWeights: yourIds.map((id) => batch.add(poolsAddress, POOLS_IFACE, 'positionWeightAtEpoch', [id, epoch])),
-
   }));
   await batch.run(ctx);
 
-  return resolved.map(({ agentId, stakeable, seller, weight, yourIds }, index) => {
+  return resolved.map(({ agentId, stakeable, seller, weight, mine }, index) => {
     const read = reads[index]!;
     const lastWeight = big(read.lastWeight);
     const usage = read.usage()?.[0] as unknown as [bigint, bigint] | undefined;
@@ -163,7 +201,7 @@ async function describePools(ctx: AntsContext, agents: Array<[number, string | n
     const emissionAmount = settled
       ? (emission?.[1] as bigint)
       : context.lastTotalWeightedPoolPoints > 0n ? context.lastStakerBudget * lastWeightedPoints / context.lastTotalWeightedPoolPoints : 0n;
-    const yourPower = read.yourWeights.reduce((sum, weightRead) => sum + big(weightRead), 0n);
+    const yourPower = mine?.power ?? 0n;
     const projected = context.totalWeightedPoolPoints > 0n && weightedPoints > 0n
       ? context.stakerBudget * weightedPoints / context.totalWeightedPoolPoints
       : 0n;
@@ -187,27 +225,13 @@ async function describePools(ctx: AntsContext, agents: Array<[number, string | n
       lastEpochEmissionSettled: settled,
       lastEpochRewardPer1kPower: emissionAmount > 0n ? per1k(emissionAmount, lastWeight) : null,
       projectedRewardPer1kPower: projected > 0n ? per1k(projected, weight) : null,
-      yourStake: big(read.yourStake).toString(),
+      yourStake: (mine?.stake ?? 0n).toString(),
+      yourPendingStake: (mine?.pending ?? 0n).toString(),
       yourPower: yourPower.toString(),
       yourPoolShareBps: bps(yourPower, weight),
-      yourPositionIds: yourIds,
+      yourPositionIds: mine?.positionIds ?? [],
     };
   });
-}
-
-/** Your open positions grouped by agent, with each position's live power this epoch (a bounded read: only your ids). */
-async function ownPools(ctx: AntsContext, context: PoolContext): Promise<Map<number, { positionIds: number[]; power: bigint; stake: bigint }>> {
-  const poolsAddress = ctx.requirePools().contractAddress;
-  const epoch = context.stack.currentEpoch;
-  const batch = new Batch();
-  const reads = [...context.ownPositions.entries()].map(([agentId, ids]) => ({
-    agentId,
-    ids,
-    stake: batch.add(poolsAddress, POOLS_IFACE, 'stakerAgentActiveStake', [ctx.address, agentId]),
-    weights: ids.map((id) => batch.add(poolsAddress, POOLS_IFACE, 'positionWeightAtEpoch', [id, epoch])),
-  }));
-  await batch.run(ctx);
-  return new Map(reads.map((read) => [read.agentId, { positionIds: read.ids, stake: big(read.stake), power: read.weights.reduce((sum, weight) => sum + big(weight), 0n) }]));
 }
 
 /**
@@ -234,13 +258,13 @@ export async function poolsView(ctx: AntsContext): Promise<PoolsView> {
   };
   if (indexer && indexed) {
     try {
-      const [sellerEpochs, metrics, own] = await Promise.all([indexer.sellerEpochs(VOLUME_EPOCHS), indexer.epochMetrics(), ownPools(ctx, context)]);
-      const views = mergePools({ indexed, explorer: context.explorer, sellerEpochs, epochs, own });
+      const [sellerEpochs, metrics] = await Promise.all([indexer.sellerEpochs(VOLUME_EPOCHS), indexer.epochMetrics()]);
+      const views = mergePools({ indexed, explorer: context.explorer, sellerEpochs, epochs, own: context.own });
       await verifyStakeability(ctx, views);
       for (const view of views) setVolumeStatus(view, indexed.currentEpoch, context.stack.currentEpoch);
       await enrichYields(ctx, context, views, indexed);
       const totalPower = context.totalPowerWeight;
-      const yourTotalPower = [...own.values()].reduce((sum, entry) => sum + entry.power, 0n);
+      const yourTotalPower = [...context.own.values()].reduce((sum, entry) => sum + entry.power, 0n);
       return toJson({
         ...base,
         totalActiveStake: context.totalActiveStake.toString(),
@@ -248,6 +272,7 @@ export async function poolsView(ctx: AntsContext): Promise<PoolsView> {
         networkVolumes: metrics.filter(row => epochs.includes(row.epoch)).map((row): EpochVolume => ({ epoch: row.epoch, usdc: row.volumeUsdc })),
         yourTotalPower: yourTotalPower.toString(),
         yourNetworkShareBps: bps(yourTotalPower, totalPower),
+        yourPendingStake: totalPending(context.own).toString(),
         source: 'indexer',
         sourceError: context.display.source.error ?? null,
         displaySource: context.display.source,
@@ -267,7 +292,7 @@ async function chainOnlyPools(
   base: Pick<PoolsView, 'currentEpoch' | 'firstRewardedEpoch' | 'stakerBudget' | 'explorer'>,
   sourceError: string | null,
 ): Promise<PoolsView> {
-  const agents: Array<[number, string | null]> = [...context.ownPositions.keys()].map((agentId) => [agentId, null]);
+  const agents: Array<[number, string | null]> = [...context.own.keys()].map((agentId) => [agentId, null]);
   const views = sortPools(await describePools(ctx, agents, context));
   await enrichYields(ctx, context, views);
   const totalActiveStake = context.totalActiveStake;
@@ -279,6 +304,7 @@ async function chainOnlyPools(
     networkVolumes: [],
     yourTotalPower: yourTotalPower.toString(),
     yourNetworkShareBps: bps(yourTotalPower, context.totalPowerWeight),
+    yourPendingStake: totalPending(context.own).toString(),
     source: 'chain',
     sourceError,
     displaySource: context.display.source,
@@ -291,8 +317,8 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
   const indexer = ctx.indexer();
   if (indexer) {
     try {
-      const [indexed, sellerEpochs, own] = await Promise.all([indexer.pools(), indexer.sellerEpochs(VOLUME_EPOCHS), ownPools(ctx, context)]);
-      const ownHere = new Map([...own.entries()].filter(([id]) => id === agentId));
+      const [indexed, sellerEpochs] = await Promise.all([indexer.pools(), indexer.sellerEpochs(VOLUME_EPOCHS)]);
+      const ownHere = new Map([...context.own.entries()].filter(([id]) => id === agentId));
       const explorer = { byAddress: context.explorer.byAddress, byAgent: new Map([...context.explorer.byAgent.entries()].filter(([id]) => id === agentId)) };
       const merged = mergePools({ indexed: { ...indexed, pools: indexed.pools.filter((pool) => pool.agentId === agentId) }, explorer, sellerEpochs, epochs: context.epochs, own: ownHere });
       const view = merged.find((pool) => pool.agentId === agentId);
@@ -300,10 +326,14 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
         await verifyStakeability(ctx, [view]);
         setVolumeStatus(view, indexed.currentEpoch, context.stack.currentEpoch);
         await enrichYields(ctx, context, [view], indexed);
-        const participation = indexer.displaySnapshot ? await indexer.pool(agentId, 1).catch(() => null) : null;
-        if (participation) {
-          view.stakers = participation.stakers;
-          if (participation.openPositions != null) view.openPositions = participation.openPositions;
+        const detail = indexer.displaySnapshot ? await indexer.pool(agentId, HISTORY_EPOCHS).catch(() => null) : null;
+        if (detail) {
+          view.stakers = detail.stakers;
+          if (detail.openPositions != null) view.openPositions = detail.openPositions;
+          if (detail.pendingStake != null) view.pendingStake = detail.pendingStake;
+          const indexedPool = indexed.pools.find((pool) => pool.agentId === agentId);
+          view.history = poolHistory(detail.epochs, context.stack.currentEpoch, indexedPool && indexed.currentEpoch === context.stack.currentEpoch
+            ? { last: indexedPool.lastEmission, current: indexedPool.projectedEmission } : undefined);
         }
         return toJson({ ...view, currentEpoch: context.stack.currentEpoch });
       }
@@ -314,6 +344,26 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
   const [view] = await describePools(ctx, [[agentId, null]], context);
   if (view) await enrichYields(ctx, context, [view]);
   return toJson({ ...view!, currentEpoch: context.stack.currentEpoch });
+}
+
+/**
+ * Oldest-first epoch rows up to the current epoch; the current epoch is a partial, unsettled point.
+ * The indexer only records an emission once a claim settles it, so the previous epoch falls back to
+ * the pool's running estimate and the current epoch to its projection until then.
+ */
+export function poolHistory(epochs: IndexedPoolEpoch[], currentEpoch: number, estimates?: { last: string; current: string }): PoolEpochPoint[] {
+  return (epochs ?? [])
+    .filter((row) => row.epoch <= currentEpoch)
+    .sort((a, b) => a.epoch - b.epoch)
+    .map((row) => {
+      const settled = row.settled && row.epoch < currentEpoch;
+      let emission = row.settledEmission;
+      if (!settled && estimates && !/^[1-9]/.test(emission)) {
+        if (row.epoch === currentEpoch - 1) emission = estimates.last;
+        else if (row.epoch === currentEpoch) emission = estimates.current;
+      }
+      return { epoch: row.epoch, activeStake: row.activeStake, weight: row.weight, volumeUsdc: row.volumeUsdc, requests: row.requests, emission, settled };
+    });
 }
 
 function setVolumeStatus(view: PoolView, indexedEpoch: number, currentEpoch: number): void {

@@ -50,7 +50,7 @@ describe('position display reads', () => {
     expect(pools.isMaxLocked).not.toHaveBeenCalled();
     expect(rewards).toHaveBeenCalledWith([7]);
     expect(result.positions[0]).toMatchObject({ id: 7, slashedAmount: '10', returnedAmount: '90', pendingReward: '15', changePending: false, maxLocked: false });
-    expect(result.totals).toEqual({ activeStake: '100', pendingRewards: '15', open: 1 });
+    expect(result.totals).toEqual({ activeStake: '100', pendingStake: '0', pendingRewards: '15', open: 1 });
   });
 
   it('does not present failed status or reward reads as zero balances', async () => {

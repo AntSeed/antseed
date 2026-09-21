@@ -28,7 +28,7 @@ function position(overrides: Partial<PositionView> = {}): PositionView {
     id: 29, agentId: 86939, owner: '0x148C5602f160F21E52144dC2d60E11A2C20D6ad6',
     amount: '125000000000000000000', weightAmount: '125000000000000000000',
     stakeStartEpoch: 26, stakeEndEpoch: 38, closedAtEpoch: 0, withdrawn: false,
-    state: 'active', withdrawableEpoch: 27, changePending: false, maxLocked: false,
+    state: 'active', withdrawableEpoch: 27, changePending: false, maxLocked: false, maxLockedNext: false,
     slashBps: 5000, projectedSlashBps: 5000, slashedAmount: '62500000000000000000',
     returnedAmount: '62500000000000000000', pendingReward: '0', epochsRemaining: 11,
     ...overrides,
@@ -47,7 +47,7 @@ function pool(name: string | null): PoolView {
     hasPool: true, stakeable: true, activeStake: '0', weight: '0', powerShareBps: 0, securityShareBps: 0,
     volumes: [], usagePoints: '0', weightedUsagePoints: '0', lastEpochUsagePoints: '0', lastEpochEmission: null,
     lastEpochEmissionSettled: false, lastEpochRewardPer1kPower: null, projectedRewardPer1kPower: null,
-    yourStake: '0', yourPower: '0', yourPoolShareBps: 0, yourPositionIds: [29],
+    yourStake: '0', yourPendingStake: '0', yourPower: '0', yourPoolShareBps: 0, yourPositionIds: [29],
   };
 }
 
@@ -124,22 +124,28 @@ describe('positions table', () => {
     expect(html).toContain('Anvil Seller Alpha');
     expect(html).not.toContain('>ID<');
     expect(html).not.toContain('>Pool<');
-    expect(html).not.toContain('#29');
+    // The position id stays as a secondary line so split/merge results can be told apart.
+    expect(html).toContain('#29');
     expect(html).not.toContain('86939');
-    expect(html).not.toContain('Select position 29');
+    expect(html).toContain('Select position 29');
   });
 
-  it.each([false, true])('groups allowed actions in the menu when maxLocked is %s', maxLocked => {
-    const html = renderPosition({ maxLocked });
+  it.each([false, true])('groups every position action in the menu when maxLocked is %s', maxLocked => {
+    const html = renderPosition({ maxLocked, maxLockedNext: maxLocked });
     expect(html).toContain('More actions for position 29');
     const props = mocks.menu.mock.calls[0]![0];
-    expect(props.items.map((item: { label: string }) => item.label)).toEqual(['Move allocation', 'Extend', 'Withdraw']);
-    expect(html).not.toContain('Split');
-    expect(html).not.toContain('Merge');
-    expect(html).not.toContain('Extend');
-    expect(html).not.toContain('Max lock');
-    expect(html).not.toContain('Move allocation');
-    expect(html).not.toContain('Withdraw');
+    const items = props.items as Array<{ label: string; disabled?: boolean }>;
+    expect(items.map((item) => item.label)).toEqual(['Split', 'Extend lock', maxLocked ? 'Disable max lock' : 'Enable max lock', 'Move allocation', 'Withdraw']);
+    // Extending a max-locked position is pointless: it already holds the maximum lock.
+    expect(items.find((item) => item.label === 'Extend lock')?.disabled ?? false).toBe(maxLocked);
+    // The menu renders closed, so no action label leaks into the row itself.
+    for (const label of ['Split', 'Merge', 'Extend lock', 'Move allocation', 'Withdraw']) expect(html).not.toContain(`>${label}<`);
+  });
+
+  it('disables split while a change is pending', () => {
+    renderPosition({ changePending: true });
+    const items = mocks.menu.mock.calls[0]![0].items as Array<{ label: string; disabled?: boolean }>;
+    expect(items.find((item) => item.label === 'Split')?.disabled).toBe(true);
   });
 
   it.each([null, '   '])('falls back to the seller address when its name is %s', name => {
@@ -161,19 +167,23 @@ describe('positions table', () => {
     expect(html).not.toContain('Epochs left');
     expect(html).not.toContain('Change pending');
     expect(html).toContain('More actions for position 29');
-    expect(html).not.toContain('Select position 29');
   });
 
-  it('removes selection checkboxes, row highlights and the bulk action bar', () => {
+  it('offers selection checkboxes for open positions and keeps the bulk bar hidden until something is selected', () => {
     const html = renderPosition();
     const props = mocks.table.mock.calls[0]![0];
-    expect(html).not.toContain('type="checkbox"');
-    expect(html).not.toContain('Select all open positions');
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('Select all open positions');
+    expect(html).toContain('Select position 29');
     expect(html).not.toContain('bulk-bar');
     expect(html).not.toContain('>clear<');
-    expect(props.isSelected).toBeUndefined();
-    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['seller', 'amount', 'unlocks', 'state', 'reward', 'actions']);
-    expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toEqual(['Move allocation', 'Extend', 'Withdraw']);
+    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['select', 'seller', 'amount', 'unlocks', 'state', 'reward', 'actions']);
+  });
+
+  it('does not offer selection on closed positions', () => {
+    const html = renderPosition({ state: 'withdrawn', withdrawn: true });
+    expect(html).not.toContain('Select position 29');
+    expect(html).not.toContain('More actions for position 29');
   });
 
   it('explains status and lock expiry without implying automatic withdrawal', () => {
@@ -184,10 +194,20 @@ describe('positions table', () => {
   });
 
   it('does not imply an automatic unlock date for an existing perpetual lock', () => {
-    const html = renderPosition({ maxLocked: true });
+    const html = renderPosition({ maxLocked: true, maxLockedNext: true });
     expect(html).toContain('No scheduled unlock');
-    expect(html).toContain('lock does not count down automatically');
-    expect(html).toContain('Lock-management controls are currently unavailable');
+    expect(html).toContain('Disable max lock to start the countdown');
+    expect(html).toContain('max lock</span>');
+  });
+
+  it('labels max-lock changes that take effect next epoch and offers the reversing action', () => {
+    const enabling = renderPosition({ maxLocked: false, maxLockedNext: true });
+    expect(enabling).toContain('max lock from next epoch');
+    expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Disable max lock');
+    vi.clearAllMocks(); mocks.epoch.mockReturnValue(null);
+    const disabling = renderPosition({ maxLocked: true, maxLockedNext: false });
+    expect(disabling).toContain('max lock ends next epoch');
+    expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Enable max lock');
   });
 
   it.each([
