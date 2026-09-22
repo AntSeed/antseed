@@ -13,16 +13,15 @@ test('dashboard selection loads an existing identity without creating one, or sk
   const dataDir = await mkdtemp(join(tmpdir(), 'ants-dashboard-context-'));
   context.after(() => rm(dataDir, { recursive: true, force: true }));
   const command = new Command('ants').option('--data-dir <directory>', '', dataDir).option('--config <file>', '', join(dataDir, 'config.json'));
-  await assert.rejects(loadAntsContext(command, { existingIdentity: true }), /No integrated identity found/);
-  assert.deepEqual(await readdir(dataDir), []);
   const wallet = Wallet.createRandom();
   const external = await loadAntsContext(command, { address: wallet.address });
   assert.equal(external.ctx.address, wallet.address);
   assert.equal(external.ctx.signer, undefined);
   assert.deepEqual(await readdir(dataDir), []);
   await writeFile(join(dataDir, 'identity.key'), wallet.privateKey.slice(2));
-  const integrated = await loadAntsContext(command, { existingIdentity: true });
+  const integrated = await loadAntsContext(command);
   assert.equal(integrated.ctx.address, wallet.address);
+  assert.equal(await integrated.ctx.signer?.getAddress(), wallet.address);
 });
 
 test('parseIds turns positional strings into numbers', () => {

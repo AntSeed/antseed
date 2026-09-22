@@ -18,19 +18,15 @@ export function registerAntsDashboardAction(antsCmd: Command): void {
   antsCmd
     .option('-p, --port <port>', 'dashboard port', String(DEFAULT_ANTS_PORT))
     .option('--no-open', 'do not open the browser automatically')
-    .addOption(new Option('--local-address', 'select your local AntSeed identity’s address; transactions still require a browser wallet').conflicts('address'))
-    .addOption(new Option('--address <address>', 'select the account to manage with a browser wallet').argParser(dashboardAddress).conflicts('localAddress'))
+    .addOption(new Option('--address <address>', 'pin the dashboard to one account; the connected wallet must be that account (or its authorized operator for buyer actions)').argParser(dashboardAddress))
     .hook('preSubcommand', () => {
-      if (antsCmd.opts().localAddress || antsCmd.opts().address) antsCmd.error('--local-address and --address only apply to the dashboard, not transaction subcommands.');
+      if (antsCmd.opts().address) antsCmd.error('--address only applies to the dashboard, not transaction subcommands.');
     })
-    .action(async (options: { port: string; open: boolean; localAddress?: boolean; address?: string }) => {
-      if (!options.localAddress && !options.address) {
-        antsCmd.error('Select an account to open the dashboard:\n  antseed ants --local-address       Use your local AntSeed identity’s address\n  antseed ants --address 0x...        Use an explicit account address\nBoth options require a connected browser wallet to sign transactions.');
-      }
+    .action(async (options: { port: string; open: boolean; address?: string }) => {
       const port = Number(options.port) || DEFAULT_ANTS_PORT;
       try {
-        const { ctx, chain, dataDir, configPath } = await loadAntsContext(antsCmd, { address: options.address, existingIdentity: options.localAddress });
-        const selectedAddress = ctx.address;
+        const { ctx, chain, dataDir, configPath } = await loadAntsContext(antsCmd, { address: options.address });
+        const selectedAddress = options.address ? ctx.address : undefined;
         let payments: Awaited<ReturnType<typeof import('@antseed/payments').createServer>> | undefined;
         const server = await createAntsServer({ port, dataDir, configPath, chain, browserWallet: true, address: ctx.address, selectedAddress, onAuthorize: options.address ? undefined : async () => {
           if (!payments) {
@@ -47,7 +43,7 @@ export function registerAntsDashboardAction(antsCmd: Command): void {
         const url = await server.listen();
         console.log('');
         console.log(chalk.bold('ANTS staking dashboard'));
-        console.log(`  Selected account: ${selectedAddress}`);
+        console.log(selectedAddress ? `  Selected account: ${selectedAddress}` : `  Buyer account: ${ctx.address}`);
         console.log(`  Chain:   ${chain.chainId} (${chain.rpcUrl})`);
         console.log(`  URL:     ${chalk.cyan(url)}`);
         console.log(chalk.dim('  The URL carries a one-time session token; connect your wallet in the browser to approve transactions.'));

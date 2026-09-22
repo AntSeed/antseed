@@ -66,7 +66,7 @@ function AuthGate() {
           ANTS<span>staking</span>
         </div>
         <p>
-          Open this dashboard with <code>antseed ants --local-address</code> or <code>antseed ants --address 0x...</code>.
+          Open this dashboard with <code>antseed ants</code>.
         </p>
         <p className="muted small">
           The CLI starts the local server and opens the browser with a one-time session token. This page has no token (or the server rejected it), so it cannot read
