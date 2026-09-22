@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
-import { AntsContext, formatAnts, jsonReplacer, type StepReporter } from '@antseed/ants';
+import { AntsContext, formatAnts, jsonReplacer, loadPositionCheckpoints, recordPositionCheckpoint, type StepReporter } from '@antseed/ants';
 import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import { loadCryptoContext, requireCryptoConfig } from '../../payment-utils.js';
@@ -21,6 +21,7 @@ export async function loadAntsContext(command: Command): Promise<AntsCommandCont
   const chain = requireCryptoConfig(config) as unknown as AntsChainConfig;
   const { wallet, address } = await loadCryptoContext(global.dataDir);
   const ctx = new AntsContext({ chain, address, signer: wallet });
+  await loadPositionCheckpoints(ctx, global.dataDir);
   await ctx.selectRpc();
   return { ctx, chain: ctx.chain, dataDir: global.dataDir, configPath: global.config };
 }
@@ -29,7 +30,7 @@ export function printJson(value: unknown): void {
   console.log(JSON.stringify(value, jsonReplacer, 2));
 }
 
-export function ants(baseUnits: string | bigint, digits = 4): string {
+export function ants(baseUnits: string | bigint | null, digits = 4): string {
   return `${formatAnts(baseUnits, digits)} ANTS`;
 }
 
@@ -56,7 +57,18 @@ export async function runAction(command: Command, title: string, work: (context:
   const spinner = ora(title).start();
   try {
     const context = await loadAntsContext(command);
-    const summary = await work(context, spinnerReporter(spinner, context.chain.evmChainId), spinner);
+    const report = spinnerReporter(spinner, context.chain.evmChainId);
+    const summary = await work(context, async (label, hash) => {
+      await report(label, hash);
+      if (hash) {
+        try {
+          const receipt = await context.ctx.provider().getTransactionReceipt(hash);
+          if (receipt) await recordPositionCheckpoint(context.ctx, context.dataDir, receipt);
+        } catch (error) {
+          console.warn(chalk.yellow(`Could not save the transaction checkpoint; indexed displays may lag: ${(error as Error).message}`));
+        }
+      }
+    }, spinner);
     spinner.succeed(chalk.green(summary ?? 'Done'));
   } catch (error) {
     spinner.fail(chalk.red((error as Error).message));

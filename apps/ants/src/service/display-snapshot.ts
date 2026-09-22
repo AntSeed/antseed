@@ -164,6 +164,8 @@ export async function displayData(ctx: AntsContext, stack: ResolvedStack): Promi
     const snapshot = await indexer.displaySnapshot(stack.currentEpoch, ctx.address);
     const now = Math.floor(Date.now() / 1000);
     if (snapshot.chainId !== ctx.chain.evmChainId) throw new Error('Antscan chain does not match the dashboard');
+    const barrier = ctx.positionReadBarriers?.get(ctx.address.toLowerCase());
+    if (barrier && snapshot.indexedBlock < barrier.block) throw new Error('Antscan has not caught up with your transaction');
     if (now - snapshot.indexedAt > MAX_AGE_SECONDS || snapshot.indexedAt > now + 30) throw new Error('Antscan checkpoint is stale');
     if (snapshot.indexedAt < stack.genesis + stack.currentEpoch * stack.epochDuration) throw new Error('Antscan has not reached the current epoch');
     return { snapshot, source: { source: 'indexer', indexedBlock: snapshot.indexedBlock, indexedAt: snapshot.indexedAt } };

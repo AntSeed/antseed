@@ -6,6 +6,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- ANTS dashboard and CLI: use Antscan's live position feed and paginated staking-reward feed to reduce RPC reads, including closed positions with unclaimed rewards. Keep transaction checks on-chain and show stale or incomplete rewards as unavailable. Share persisted confirmed-transaction checkpoints so older indexed snapshots cannot restore pre-transaction balances.
+- Payments: add a Disconnect button to the wallet authorization dialog. Disconnection does not revoke on-chain authorization and is disabled while authorization is in progress.
+
 ### Added
 
 - ANTS dashboard: left sidebar navigation (Sellers · My positions · Rewards · Seller · Network · Addresses) replaces the top tabs; the epoch clock, theme toggle and wallet sit at the bottom of the rail and the rail collapses into a top strip on narrow screens. Your wallet tiles and the positions table moved off the sellers page onto a dedicated `#/positions` page.

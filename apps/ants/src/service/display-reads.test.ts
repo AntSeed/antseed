@@ -67,6 +67,84 @@ function fixture() {
 beforeEach(() => vi.clearAllMocks());
 
 describe('indexed display / live financial read boundary', () => {
+  function positionFeeds() {
+    const result = fixture();
+    const { snapshot, indexer } = result;
+    const live = {
+      currentEpoch: 22, positions: snapshot.positions.map(row => ({ ...row, state: 'active' as const, power: '200', nextPower: '200', withdrawableEpoch: 1, maxLockedNext: true, changePending: false })),
+      summary: [{ agentId: 1, positionIds: [7], activeStake: '100', pendingStake: '0', power: '200' }], totals: { activeStake: '100', pendingStake: '0', power: '200' },
+      liveSource: { fetchedAt: Math.floor(Date.now() / 1000), stale: false, complete: true },
+    };
+    const reward = {
+      currentEpoch: 22, positions: snapshot.positions.map(row => ({ ...row, rewards: { status: 'available' as const, pending: '15', claimedThroughEpoch: 1, calculatedThroughEpoch: 21, requiresPoolIndexing: false } })),
+      source: { schemaVersion: 1, chainId: 8453, contracts: { sellerPools: owner, sellerPoolsRewards: owner }, indexedBlock: 100, indexedBlockHash: `0x${'ab'.repeat(32)}`, indexedAt: Math.floor(Date.now() / 1000), revision: 'revision', stale: false, complete: true, historyComplete: true, historyFromBlock: 1 },
+    };
+    const feeds = { livePositions: vi.fn(async () => live), rewardPositions: vi.fn(async () => reward) };
+    Object.assign(indexer, feeds);
+    return { ...result, live, reward, feeds };
+  }
+
+  it('uses PR8 rewards and PR9 live fields without per-position RPC display reads', async () => {
+    const { ctx, pools, rewards, requests, feeds } = positionFeeds();
+    const result = await positions(ctx);
+    expect(result.positions[0]).toMatchObject({ id: 7, pendingReward: '15', power: '200', nextPower: '200', maxLockedNext: true, changePending: false, slashBps: null });
+    expect(result.totals).toEqual({ activeStake: '100', pendingStake: '0', pendingRewards: '15', open: 1 });
+    expect(result.rewardSource).toMatchObject({ indexedBlock: 100 });
+    expect(feeds.rewardPositions).toHaveBeenCalledWith(owner, false);
+    expect(pools.positionsBatch).not.toHaveBeenCalled();
+    expect(pools.allStakerPositionIds).not.toHaveBeenCalled();
+    expect(pools.positionStatusesBatch).not.toHaveBeenCalled();
+    expect(rewards.previewStakerRewards).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
+  });
+
+  it('preserves positions but marks rewards unavailable without a historical RPC fallback', async () => {
+    const { ctx, feeds, rewards } = positionFeeds();
+    feeds.rewardPositions.mockRejectedValue(new Error('snapshot backfill pending'));
+    const result = await positions(ctx);
+    expect(result.positions[0]!.pendingReward).toBeNull();
+    expect(result.totals.pendingRewards).toBeNull();
+    expect(result.rewardSource?.error).toContain('backfill');
+    expect(rewards.previewStakerRewards).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a not-yet-indexed reward row as zero', async () => {
+    const { ctx, reward } = positionFeeds();
+    reward.positions = [];
+    const result = await positions(ctx);
+    expect(result.totals.pendingRewards).toBeNull();
+    expect(result.rewardSource?.error).toContain('every position');
+  });
+
+  it('labels stale live fallback and still uses healthy indexed rewards', async () => {
+    const { ctx, live, requests, rewards } = positionFeeds();
+    live.liveSource.stale = true;
+    const result = await positions(ctx);
+    expect(result.displaySource?.error).toContain('stale');
+    expect(result.totals.pendingRewards).toBe('15');
+    expect(requests.map(row => row.method)).toContain('positionWithdrawableEpoch');
+    expect(rewards.previewStakerRewards).not.toHaveBeenCalled();
+  });
+
+  it('uses whole-wallet live summaries for personal pool totals', async () => {
+    const { ctx, pools, requests } = positionFeeds();
+    const result = await poolsView(ctx);
+    expect(result).toMatchObject({ yourPendingStake: '0', yourTotalPower: '200' });
+    expect(result.pools[0]).toMatchObject({ yourStake: '100', yourPower: '200' });
+    expect(pools.positionsBatch).not.toHaveBeenCalled();
+    expect(requests.map(row => row.method)).not.toContain('positionWeightAtEpoch');
+  });
+
+  it('rejects both reward and legacy display snapshots older than a confirmed transaction', async () => {
+    const { ctx, pools } = positionFeeds();
+    Object.assign(ctx, { positionReadBarriers: new Map([[owner, { block: 101, at: Math.floor(Date.now() / 1000) }]]) });
+    const result = await positions(ctx);
+    expect(result.rewardSource?.error).toContain('caught up');
+    expect(result.totals.pendingRewards).toBeNull();
+    expect(pools.allStakerPositionIds).toHaveBeenCalled();
+    expect(pools.positionStatusesBatch).toHaveBeenCalled();
+  });
+
   it('removes three overview network calls but keeps wallet state and permissions live', async () => {
     const { ctx, stack, requests } = fixture();
     const result = await overviewReads(ctx, stack);
@@ -102,6 +180,16 @@ describe('indexed display / live financial read boundary', () => {
     expect(pools.allStakerPositionIds).not.toHaveBeenCalled();
     expect(rewards.previewStakerRewards).not.toHaveBeenCalled();
     expect(requests).toEqual([]);
+  });
+
+  it('keeps rewards unavailable when a failed feed leaves no fallback positions', async () => {
+    const { ctx, snapshot, indexer } = fixture();
+    snapshot.positions = [];
+    Object.assign(indexer, { rewardPositions: async () => { throw new Error('Antscan unavailable'); } });
+    const result = await positions(ctx);
+    expect(result.positions).toEqual([]);
+    expect(result.totals.pendingRewards).toBeNull();
+    expect(result.rewardSource?.error).toBe('Antscan unavailable');
   });
 
   it('overlays local transactions and reads their max-lock state live', async () => {

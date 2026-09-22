@@ -69,7 +69,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
         );
       },
     },
-    { key: 'amount', label: 'Amount', align: 'right', mono: true, render: (p) => <span className="cell-stack">{formatAnts(p.amount, 4)}<span className="cell-sub">power {formatAnts(p.weightAmount, 0)}</span></span> },
+    { key: 'amount', label: 'Amount', align: 'right', mono: true, render: (p) => <span className="cell-stack">{formatAnts(p.amount, 4)}<span className="cell-sub" title={p.nextPower != null ? `Next epoch power: ${formatAnts(p.nextPower, 0)}` : undefined}>power {formatAnts(p.power ?? p.weightAmount, 0)}</span></span> },
     {
       key: 'unlocks',
       label: 'Unlocks',
@@ -115,7 +115,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
-      {data?.displaySource?.error ? <p className="hint">Antscan position data unavailable: {data.displaySource.error}. Showing live wallet positions.</p> : null}
+      {data?.displaySource?.error ? <p className="hint">Antscan live position feed unavailable: {data.displaySource.error}. Using fallback position reads.</p> : null}
       {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
       {data?.historySource === 'chain' ? <div className="status-line status-line--muted">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
       {selectedRows.length > 0 ? (
@@ -141,7 +141,9 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
         loading={page.loading && !data}
         empty={enabled ? "No open positions. Stake rewards into a seller to open one." : "Connect a wallet to see your positions."}
       />
-      {data?.displaySource?.source === 'indexer' ? <p className="hint">Position records from Antscan at block {data.displaySource.indexedBlock}. Rewards and withdrawal checks are read live.</p> : null}
+      {data?.displaySource?.source === 'indexer' ? <p className="hint">Position status from Antscan. Withdrawal amounts and transaction eligibility are checked live before signing.</p> : null}
+      {data?.rewardSource?.indexedBlock !== undefined ? <p className="hint">Reward estimates from Antscan at block {data.rewardSource.indexedBlock}.</p> : null}
+      {data?.rewardSource?.error ? <p role="status" className="hint">Indexed rewards unavailable: {data.rewardSource.error}. Unknown amounts are shown as —, not zero.</p> : null}
     </Panel>
   );
 }

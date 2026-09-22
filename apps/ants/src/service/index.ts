@@ -1,4 +1,5 @@
 export { AntsContext, MissingContractError } from './context.js';
+export { loadPositionCheckpoints, recordPositionCheckpoint } from './position-checkpoints.js';
 export type { AntsChainConfig, AntsContextOptions, ResolvedStack } from './context.js';
 export { overview, epochInfo } from './overview.js';
 export { positions, closedPositionIds, stake, move, split, merge, extend, maxLock, previewWithdraw, withdraw } from './positions.js';

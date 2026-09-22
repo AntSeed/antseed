@@ -63,6 +63,20 @@ beforeEach(() => {
 });
 
 describe('reward row actions and confirmations', () => {
+  it('shows unavailable staking rewards without a false zero or disabling buyer claims', () => {
+    state.rewards!.staker = { total: null, positions: [], source: { error: 'Antscan snapshot is incomplete' } };
+    state.rewards!.total = null;
+    const html = render();
+    expect(html).toContain('Staking rewards unavailable: Antscan snapshot is incomplete');
+    expect(html).not.toContain('Nothing to claim yet');
+    expect(state.actions.some(entry => entry.title === 'Stake position rewards')).toBe(false);
+    expect(action('Claim current buyer rewards').disabled).toBe(false);
+  });
+
+  it('labels the staking reward checkpoint and retains live transaction validation', () => {
+    state.rewards!.staker.source = { indexedBlock: 123 };
+    expect(render()).toContain('Estimated by Antscan at block 123. Claims and restaking are checked live.');
+  });
   it('shows reward destinations by seller name and sums rewards within each pool', () => {
     state.pools = [
       { agentId: 42, profile: { name: 'Seller Alpha' } },

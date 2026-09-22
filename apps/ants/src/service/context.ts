@@ -103,6 +103,7 @@ export class AntsContext {
   address: string;
   readonly buyerAddress: string;
   readonly localPositionIds = new Map<number, string>();
+  readonly positionReadBarriers = new Map<string, { block: number; at: number }>();
   signer: AbstractSigner | undefined;
   private readonly stackTtlMs: number;
   private stackCache: ResolvedStack | null = null;

@@ -18,6 +18,8 @@ export function registerAntsPositionsCommand(antsCmd: Command): void {
     .action(async (options: { json: boolean }) => runRead(antsCmd, 'Loading positions...', async ({ ctx }) => {
       const view = await positions(ctx);
       if (options.json) return printJson(view);
+      if (view.rewardSource?.error) console.log(chalk.yellow(`Staking rewards unavailable: ${view.rewardSource.error}`));
+      if (view.displaySource?.error) console.log(chalk.yellow(`Position feed fallback: ${view.displaySource.error}`));
       if (view.positions.length === 0) {
         console.log(chalk.yellow('No staking positions for this wallet.'));
         console.log(chalk.dim('Stake with: antseed ants stake <amount> --agent <agentId> --epochs <n>'));

@@ -7,6 +7,7 @@
  */
 
 import { fetchDisplaySnapshot, type DisplaySnapshot } from './display-snapshot.js';
+import { fetchRewardPositions, parseLivePositions, type LivePositions, type RewardPositions } from './position-feed.js';
 
 const FETCH_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 15_000;
@@ -76,6 +77,7 @@ export interface IndexedPoolEpoch {
 }
 
 export interface IndexedPoolDetail {
+  activeStake?: string | null;
   pool: (IndexedPool & { firstStakeAt: number | null }) | null;
   epochs: IndexedPoolEpoch[];
   openPositions: number | null;
@@ -116,6 +118,8 @@ export interface IndexedParticipant { address: string; currentEpoch: number; sel
 export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; requests: string; }
 
 export interface Indexer {
+  livePositions?(owner: string): Promise<LivePositions>;
+  rewardPositions?(owner: string, outstanding?: boolean): Promise<RewardPositions>;
   displaySnapshot?(epoch: number, owner: string): Promise<DisplaySnapshot>;
   invalidate?(): void;
   readonly baseUrl: string;
@@ -130,7 +134,7 @@ export interface Indexer {
 }
 
 export class IndexerError extends Error {
-  constructor(message: string, readonly url: string) {
+  constructor(message: string, readonly url: string, readonly status?: number) {
     super(message);
     this.name = 'IndexerError';
   }
@@ -267,9 +271,9 @@ export class AntscanIndexer implements Indexer {
     return value;
   }
 
-  private get<T>(path: string): Promise<T> {
+  private get<T>(path: string, cache = true): Promise<T> {
     const hit = this.cache.get(path);
-    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
+    if (cache && hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
     const url = `${this.baseUrl}${path}`;
     const value = (async () => {
       let response: Response;
@@ -278,10 +282,10 @@ export class AntscanIndexer implements Indexer {
       } catch (error) {
         throw new IndexerError(`Explorer unreachable: ${(error as Error).message}`, url);
       }
-      if (!response.ok) throw new IndexerError(`Explorer responded with HTTP ${response.status}`, url);
+      if (!response.ok) throw new IndexerError(`Explorer responded with HTTP ${response.status}`, url, response.status);
       return await response.json() as T;
     })();
-    this.cache.set(path, { at: Date.now(), value });
+    if (cache) this.cache.set(path, { at: Date.now(), value });
     value.catch(() => { if (this.cache.get(path)?.value === value) this.cache.delete(path); });
     return value;
   }
@@ -296,7 +300,7 @@ export class AntscanIndexer implements Indexer {
   }
 
   async pool(agentId: number, epochs = 8): Promise<IndexedPoolDetail> {
-    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown; pendingStake?: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
+    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown; pendingStake?: unknown; activeStake?: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
     return {
       pool: raw.pool ? toPool(raw.pool) : null,
       epochs: (raw.epochs ?? []).filter(row => row['volumeUsdc'] != null).map((row) => ({
@@ -306,12 +310,34 @@ export class AntscanIndexer implements Indexer {
       openPositions: countOrNull(raw.openPositions),
       stakers: countOrNull(raw.stakers),
       pendingStake: decimalOrNull(raw.pendingStake),
+      activeStake: decimalOrNull(raw.activeStake),
     };
   }
 
   async positions(owner: string, includeClosed = true): Promise<IndexedPosition[]> {
     const raw = await this.get<{ positions: Record<string, unknown>[] }>(`/api/staking/positions?owner=${owner.toLowerCase()}${includeClosed ? '&includeClosed=1' : ''}`);
     return (raw.positions ?? []).map(toPosition);
+  }
+
+  async livePositions(owner: string): Promise<LivePositions> {
+    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&include=live&includeClosed=1`), owner);
+  }
+
+  rewardPositions(owner: string, outstanding = false): Promise<RewardPositions> {
+    const key = `rewards:${owner.toLowerCase()}:${outstanding}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<RewardPositions>;
+    const value = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        try { return await fetchRewardPositions(owner, outstanding, path => this.get(path, false)); }
+        catch (error) {
+          if (!(error instanceof IndexerError && error.status === 409 && attempt === 0)) throw error;
+        }
+      }
+    })();
+    this.cache.set(key, { at: Date.now(), value });
+    value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    return value;
   }
 
   async stakingEpochs(limit = 8): Promise<IndexedStakingEpoch[]> {

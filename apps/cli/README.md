@@ -368,8 +368,18 @@ it prints, so no other page can act with your wallet. Pass `--no-open` to
 print the URL only, or `--port` to change the port.
 
 Pool statistics, volume history, and closed positions come from the Antscan
-indexer (`payments.crypto.explorerApiUrl`); the chain is read only for your
-wallet's live state and when sending transactions.
+indexer (`payments.crypto.explorerApiUrl`). Position displays also use its
+fresh live-status feed, and staking rewards use its paginated indexed-reward
+feed, including closed positions with unclaimed rewards. Claims and restaking
+still validate positions and reward amounts on-chain before sending transactions.
+
+The configured Antscan deployment must support the staking positions endpoint's
+`include=live` and `include=rewards` feeds. Stale, incomplete, or unsupported
+indexed rewards appear as unavailable, not zero; JSON reward amounts can be
+`null`. Position state falls back to the display snapshot or chain reads when
+the live feed is unavailable. With no indexer configured, staking rewards
+retain on-chain previews. The local dashboard and CLI share confirmed-transaction
+checkpoints to reject older indexed snapshots after a restart.
 
 Everything the dashboard does is also a command under `antseed ants`, so the
 dashboard is optional:

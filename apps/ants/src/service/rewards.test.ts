@@ -46,6 +46,41 @@ function fixture(indexed = true) {
 }
 
 describe('closed-position rewards', () => {
+  function indexedFixture() {
+    const result = fixture();
+    const row = { id: 7, owner: address, agentId: 2, closedAtEpoch: 5, rewards: { status: 'available', pending: '99' } };
+    const source = { schemaVersion: 1, chainId: 8453, contracts: { sellerPools: address, sellerPoolsRewards: address }, indexedBlock: 100, indexedAt: Math.floor(Date.now() / 1000), stale: false, complete: true, historyComplete: true, historyFromBlock: 1 };
+    const rewardPositions = vi.fn(async () => ({ currentEpoch: 6, positions: [row], source }));
+    Object.assign(result.ctx, { chain: { evmChainId: 8453, sellerPoolsAddress: address, sellerPoolsRewardsAddress: address }, indexer: () => ({ rewardPositions, positions: async () => [row] }) });
+    return { ...result, rewardPositions, source };
+  }
+
+  it('reads outstanding indexed staker rewards without exact previews', async () => {
+    const { ctx, poolRewards, rewardPositions } = indexedFixture();
+    const preview = vi.spyOn(poolRewards, 'previewStakerRewards');
+    expect(await rewards(ctx)).toMatchObject({ staker: { total: '99', positions: [{ id: 7, amount: '99', closed: true }], source: { indexedBlock: 100 } } });
+    expect(rewardPositions).toHaveBeenCalledWith(address, true);
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it('keeps buyer/seller buckets available when indexed staking rewards fail', async () => {
+    const { ctx, rewardPositions, poolRewards } = indexedFixture();
+    rewardPositions.mockRejectedValue(new Error('backfill incomplete'));
+    const preview = vi.spyOn(poolRewards, 'previewStakerRewards');
+    expect(await rewards(ctx)).toMatchObject({ total: null, staker: { total: null, source: { error: 'backfill incomplete' } }, sellerUsage: { total: '0' }, buyerUsage: { total: '0' } });
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it.each(['claim', 'restake'])('validates indexed candidates live for %s rather than trusting the displayed amount', async action => {
+    const { ctx, poolRewards, pools } = indexedFixture();
+    const preview = vi.spyOn(poolRewards, 'previewStakerRewards');
+    if (action === 'claim') await claim(ctx, { buckets: ['staker'] });
+    else await restake(ctx, { epochs: 3 });
+    expect(pools.positionsBatch).toHaveBeenCalledWith([7]);
+    expect(preview).toHaveBeenCalled();
+    expect(action === 'claim' ? poolRewards.claimStakerRewardsBatch : poolRewards.restakeStakerRewardsBatch).toHaveBeenCalled();
+  });
+
   it('preserves known rewards with an incomplete-history marker when the indexer is unreachable', async () => {
     const { ctx, pools } = fixture();
     pools.allStakerPositionIds = async () => [7];

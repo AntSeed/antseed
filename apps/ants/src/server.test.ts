@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Wallet } from 'ethers';
+import { Wallet, type TransactionReceipt } from 'ethers';
 import { AntsContext } from './service/context.js';
 import { createAntsServer, type AntsServer } from './server.js';
 import { BrowserSigning } from './browser-signer.js';
 import { JobRunner } from './jobs.js';
+import * as routes from './routes.js';
 
 const directories: string[] = [];
 const servers: AntsServer[] = [];
@@ -14,6 +15,32 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   vi.restoreAllMocks();
+});
+
+it('persists monotonic per-wallet position checkpoints across local server restarts', async () => {
+  vi.spyOn(AntsContext.prototype, 'selectRpc').mockResolvedValue();
+  const registration = vi.spyOn(routes, 'registerRoutes');
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ants-checkpoint-test-'));
+  directories.push(dataDir);
+  const address = Wallet.createRandom().address;
+  const options = { port: 0, dataDir, address, chain: { chainId: 'base-local' as const, evmChainId: 31337, rpcUrl: 'http://127.0.0.1:1', fallbackRpcUrls: [], explorerApiUrl: '' } };
+  const server = await createAntsServer(options);
+  servers.push(server);
+  const receipt = { from: address, status: 1, blockNumber: 100, logs: [] } as unknown as TransactionReceipt;
+  const getReceipt = vi.spyOn(server.context.provider(), 'getTransactionReceipt').mockResolvedValue(receipt);
+  const rememberTransaction = registration.mock.calls[0]![1].rememberTransaction!;
+  await rememberTransaction(`0x${'ab'.repeat(32)}`);
+  getReceipt.mockResolvedValue({ ...receipt, blockNumber: 90 } as TransactionReceipt);
+  await rememberTransaction(`0x${'cd'.repeat(32)}`);
+  getReceipt.mockResolvedValue({ ...receipt, status: 0, blockNumber: 110 } as TransactionReceipt);
+  await rememberTransaction(`0x${'ef'.repeat(32)}`);
+  const barrier = server.context.positionReadBarriers.get(address.toLowerCase());
+  expect(barrier).toEqual({ block: 100, at: expect.any(Number) });
+  await server.close();
+  servers.pop();
+  const restarted = await createAntsServer(options);
+  servers.push(restarted);
+  expect([...restarted.context.positionReadBarriers]).toEqual([[address.toLowerCase(), barrier]]);
 });
 
 it.each([true, false])('correlates a wallet request only with its running owner job (active=%s)', async active => {
