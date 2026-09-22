@@ -125,6 +125,13 @@ describe('seller directory', () => {
 });
 
 describe('positions table', () => {
+  it('reports a failed position feed without promising fallback reads', () => {
+    mocks.page.mockReturnValue({ data: null, loading: false, error: 'Antscan positions are unavailable', refresh: vi.fn() });
+    const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
+    expect(html).toContain('Antscan positions are unavailable');
+    expect(html).not.toContain('fallback position reads');
+  });
+
   it('shows estimated position APY with help and an unavailable fallback', () => {
     mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const seller = { ...pool('Alpha'), weight: '125000000000000000000', yield: { epoch: 26, startsAt: 0, endsAt: 604800, reward: '0', power: '125000000000000000000', apr: 0, apy: 0, status: 'settled' as const } };

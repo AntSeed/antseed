@@ -111,7 +111,6 @@ export interface PositionsView {
   displaySource?: DisplaySource;
   currentEpoch: number;
   config: PoolConfigView;
-  /** Fresh Antscan live position data or a labelled fallback; transaction checks remain live. */
   positions: PositionView[];
   totals: { activeStake: string; pendingStake: string; pendingRewards: string | null; open: number };
   /** Where closed positions came from; 'chain' means only open positions are listed. */

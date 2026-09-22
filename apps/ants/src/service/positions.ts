@@ -29,19 +29,6 @@ function isOpenAt(position: SellerPoolPosition, epoch: number): boolean {
   return !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > epoch);
 }
 
-type PositionStatus = { withdrawableEpoch: number; maxLocked: boolean; maxLockedNext: boolean; slashBps: number | null };
-
-async function positionStatuses(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, sources: PositionSources): Promise<PositionStatus[]> {
-  if (sources.live) {
-    const liveById = new Map(sources.live.positions.map(row => [row.id, row]));
-    return positions.map(position => {
-      const row = liveById.get(position.id)!;
-      return { withdrawableEpoch: row.withdrawableEpoch!, maxLocked: row.maxLocked, maxLockedNext: row.maxLockedNext!, slashBps: null };
-    });
-  }
-  return ctx.requirePools().positionStatusesBatch(positions, currentEpoch);
-}
-
 async function describePositions(ctx: AntsContext, positions: SellerPoolPosition[], currentEpoch: number, config: SellerPoolConfig, sources: PositionSources = {}): Promise<PositionDetail[]> {
   const { live, indexedRewards } = sources;
   const poolRewards = ctx.poolRewards();
@@ -53,7 +40,7 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
     ids.forEach((id, index) => rewards.set(id, amounts[index] ?? 0n));
   }
   const liveById = new Map(live?.positions.map(row => [row.id, row]));
-  const statuses = await positionStatuses(ctx, positions, currentEpoch, sources);
+  const statuses = live ? null : await ctx.requirePools().positionStatusesBatch(positions, currentEpoch);
   const pendingReward = (id: number): string | null => {
     if (indexedRewards === undefined) return (rewards.get(id) ?? 0n).toString();
     return indexedRewards?.get(id) ?? null;
@@ -61,7 +48,9 @@ async function describePositions(ctx: AntsContext, positions: SellerPoolPosition
   const details = positions.map((position, index): PositionDetail => {
     const open = isOpenAt(position, currentEpoch);
     const liveRow = liveById.get(position.id);
-    const { withdrawableEpoch, maxLocked, maxLockedNext, slashBps } = statuses[index]!;
+    const { withdrawableEpoch, maxLocked, maxLockedNext, slashBps } = liveRow
+      ? { withdrawableEpoch: liveRow.withdrawableEpoch!, maxLocked: liveRow.maxLocked, maxLockedNext: liveRow.maxLockedNext!, slashBps: null }
+      : statuses![index]!;
     const changePending = liveRow?.changePending ?? currentEpoch < withdrawableEpoch;
     const projectedSlashBps = open ? projectedEarlyExitSlashBps(position, currentEpoch, config, maxLocked) : 0;
     const estimate = estimateEarlyExit(position, slashBps ?? projectedSlashBps);

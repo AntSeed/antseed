@@ -119,7 +119,7 @@ export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; request
 
 export interface Indexer {
   rewardPositions?(owner: string, outstanding?: boolean): Promise<RewardPositions>;
-  displaySnapshot?(epoch: number, owner: string): Promise<DisplaySnapshot>;
+  displaySnapshot?(epoch: number): Promise<DisplaySnapshot>;
   invalidate?(): void;
   readonly baseUrl: string;
   pools(): Promise<IndexedPools>;
@@ -260,11 +260,11 @@ export class AntscanIndexer implements Indexer {
 
   invalidate(): void { this.cache.clear(); }
 
-  displaySnapshot(epoch: number, owner: string): Promise<DisplaySnapshot> {
-    const key = `display:${epoch}:${owner.toLowerCase()}`;
+  displaySnapshot(epoch: number): Promise<DisplaySnapshot> {
+    const key = `display:${epoch}`;
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<DisplaySnapshot>;
-    const value = fetchDisplaySnapshot(this.baseUrl, this.fetchImpl, epoch, owner.toLowerCase());
+    const value = fetchDisplaySnapshot(this.baseUrl, this.fetchImpl, epoch);
     this.cache.set(key, { at: Date.now(), value });
     value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
     return value;

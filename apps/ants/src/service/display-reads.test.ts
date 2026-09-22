@@ -24,15 +24,15 @@ function fixture() {
   const snapshot: DisplaySnapshot = {
     chainId: 8453, indexedBlock: 100, indexedAt: now, epochs: [epoch(22), epoch(21)],
     pools: [22, 21].map(epoch => ({ agentId: 1, epoch, weight: '200', activeStake: '100', usagePoints: '3', weightedUsagePoints: '4', settledEmission: '10', settled: true, snapshotBlock: 90, lastBlockNumber: 99 })),
-    positions: [{ id: 7, owner, agentId: 1, amount: '100', weightAmount: '200', stakeStartEpoch: 1, stakeEndEpoch: 30, closedAtEpoch: 0, withdrawn: false, maxLocked: true, restaked: false, closedBy: null, replacementIds: [], sourceId: null, returnedAmount: '0', slashedAmount: '0', createdAt: 1, closedAt: null }],
   };
   const indexed = {
     currentEpoch: 22, network: { current: epoch(22), last: epoch(21) },
     pools: [{ agentId: 1, seller: owner, registered: true, openPositions: 1, totalPositions: 2, weight: '200', activeStake: '100', powerShareBps: 1000, securityShareBps: '0', usagePoints: '3', weightedUsagePoints: '4', lastUsagePoints: '3', lastEmission: '10', lastEmissionSettled: true, lastWeight: '200', volumeUsdc: '0', lastVolumeUsdc: '0' }],
   } as IndexedPools;
   const feed: RewardPositions = {
-    currentEpoch: 22, positions: snapshot.positions.map(row => ({ ...row, state: 'active', power: '200', nextPower: '200', withdrawableEpoch: 1, maxLockedNext: true, changePending: false,
-      rewards: { status: 'available', pending: '15', claimedThroughEpoch: 1, calculatedThroughEpoch: 21, requiresPoolIndexing: false } })),
+    currentEpoch: 22, positions: [{ id: 7, owner, agentId: 1, amount: '100', weightAmount: '200', stakeStartEpoch: 1, stakeEndEpoch: 30, closedAtEpoch: 0, withdrawn: false, maxLocked: true, restaked: false, closedBy: null, replacementIds: [], sourceId: null, returnedAmount: '0', slashedAmount: '0', createdAt: 1, closedAt: null,
+      state: 'active', power: '200', nextPower: '200', withdrawableEpoch: 1, maxLockedNext: true, changePending: false,
+      rewards: { status: 'available', pending: '15', claimedThroughEpoch: 1, calculatedThroughEpoch: 21, requiresPoolIndexing: false } }],
     summary: [{ agentId: 1, positionIds: [7], activeStake: '100', pendingStake: '0', power: '200' }], totals: { activeStake: '100', pendingStake: '0', power: '200' },
     liveSource: { currentEpoch: 22, fetchedAt: now, stale: false, complete: true },
     source: { schemaVersion: 1, chainId: 8453, contracts: { sellerPools: owner, sellerPoolsRewards: owner }, indexedBlock: 100, indexedBlockHash: `0x${'ab'.repeat(32)}`, indexedAt: now, revision: 'revision', stale: false, complete: true, historyComplete: true, historyFromBlock: 1 },

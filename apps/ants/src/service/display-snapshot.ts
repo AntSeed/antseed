@@ -1,7 +1,6 @@
-import { ZeroAddress } from 'ethers';
 import type { DisplaySource } from '../api-types.js';
 import type { AntsContext, ResolvedStack } from './context.js';
-import { IndexerError, type IndexedPosition, type IndexedStakingEpoch } from './indexer.js';
+import { IndexerError, type IndexedStakingEpoch } from './indexer.js';
 
 export interface DisplayPoolEpoch {
   agentId: number;
@@ -22,7 +21,6 @@ export interface DisplaySnapshot {
   indexedAt: number;
   epochs: IndexedStakingEpoch[];
   pools: DisplayPoolEpoch[];
-  positions: IndexedPosition[];
 }
 
 export interface DisplayData {
@@ -75,40 +73,23 @@ function parsePool(row: Row): DisplayPoolEpoch {
   };
 }
 
-function parsePosition(row: Row, owner: string): IndexedPosition {
-  if (typeof row.owner !== 'string' || row.owner.toLowerCase() !== owner) throw new Error('Indexed position owner mismatch');
-  const closeReasons = ['split', 'merge', 'move', 'withdraw'];
-  if (row.closedBy !== null && !closeReasons.includes(String(row.closedBy))) throw new Error('Invalid indexed closure');
-  if (!Array.isArray(row.replacementIds)) throw new Error('Missing indexed replacement IDs');
-  return {
-    id: integer(row, 'id'), owner, agentId: integer(row, 'agentId'), amount: decimal(row, 'amount'), weightAmount: decimal(row, 'weightAmount'),
-    stakeStartEpoch: integer(row, 'stakeStartEpoch'), stakeEndEpoch: integer(row, 'stakeEndEpoch'), closedAtEpoch: integer(row, 'closedAtEpoch'),
-    withdrawn: boolean(row, 'withdrawn'), maxLocked: boolean(row, 'maxLocked'), restaked: boolean(row, 'restaked'),
-    closedBy: row.closedBy as IndexedPosition['closedBy'], replacementIds: row.replacementIds.map(id => integer({ id }, 'id')),
-    sourceId: row.sourceId === null ? null : integer(row, 'sourceId'), returnedAmount: decimal(row, 'returnedAmount'), slashedAmount: decimal(row, 'slashedAmount'),
-    createdAt: integer(row, 'createdAt'), closedAt: row.closedAt === null ? null : integer(row, 'closedAt'), lastBlockNumber: integer(row, 'lastBlockNumber'),
-  };
-}
-
 const FIELDS = {
   epochs: 'epoch totalPowerWeight totalActiveStake totalSellerPoints totalWeightedPoolPoints totalBuyerPoints volumeUsdc requests stakerBudget snapshotBlock lastBlockNumber',
   pools: 'agentId epoch weight activeStake usagePoints weightedUsagePoints settledEmission settled snapshotBlock lastBlockNumber',
-  positions: 'id owner agentId amount weightAmount stakeStartEpoch stakeEndEpoch closedAtEpoch closedBy replacementIds sourceId restaked maxLocked withdrawn returnedAmount slashedAmount createdAt closedAt lastBlockNumber',
 };
 
-export async function fetchDisplaySnapshot(baseUrl: string, fetchImpl: typeof fetch, epoch: number, owner: string): Promise<DisplaySnapshot> {
+export async function fetchDisplaySnapshot(baseUrl: string, fetchImpl: typeof fetch, epoch: number): Promise<DisplaySnapshot> {
   const url = `${baseUrl}/graphql`;
   try {
-    if (!Number.isSafeInteger(epoch) || epoch < 0 || !/^0x[0-9a-f]{40}$/.test(owner)) throw new Error('Invalid display snapshot request');
+    if (!Number.isSafeInteger(epoch) || epoch < 0) throw new Error('Invalid display snapshot request');
     const periods = [epoch, epoch - 1].filter(value => value >= 0).map(String);
     const datasets = {
       epochs: { table: 'stakingEpochs', filter: `epoch_in:${JSON.stringify(periods)}` },
       pools: { table: 'poolEpochs', filter: `epoch_in:${JSON.stringify(periods)}` },
-      positions: { table: 'stakePositions', filter: `owner:${JSON.stringify(owner)}` },
     };
     type Dataset = keyof typeof datasets;
-    const pending = new Map<Dataset, string | null>([['epochs', null], ['pools', null], ...(owner === ZeroAddress ? [] : [['positions', null] as [Dataset, null]])]);
-    const rows: Record<Dataset, Row[]> = { epochs: [], pools: [], positions: [] };
+    const pending = new Map<Dataset, string | null>([['epochs', null], ['pools', null]]);
+    const rows: Record<Dataset, Row[]> = { epochs: [], pools: [] };
     const seen = new Map<Dataset, Set<string>>();
     let checkpoint: { chainId: number; indexedBlock: number; indexedAt: number } | null = null;
     for (let page = 0; pending.size > 0; page++) {
@@ -143,14 +124,13 @@ export async function fetchDisplaySnapshot(baseUrl: string, fetchImpl: typeof fe
     if (!checkpoint) throw new Error('Missing indexed checkpoint');
     const epochs = rows.epochs.map(parseEpoch);
     const pools = rows.pools.map(parsePool);
-    const positions = rows.positions.map(row => parsePosition(row, owner));
-    for (const collection of [epochs.map(row => row.epoch), pools.map(row => `${row.agentId}:${row.epoch}`), positions.map(row => row.id)]) {
+    for (const collection of [epochs.map(row => row.epoch), pools.map(row => `${row.agentId}:${row.epoch}`)]) {
       if (new Set<string | number>(collection).size !== collection.length) throw new Error('Duplicate indexed display records');
     }
     if (!epochs.some(row => row.epoch === epoch)) throw new Error('Current indexed epoch is unavailable');
     if ([...epochs, ...pools].some(row => !periods.includes(String(row.epoch)))) throw new Error('Unexpected indexed epoch');
-    if ([...epochs, ...pools, ...positions].some(row => (row.lastBlockNumber ?? 0) > checkpoint.indexedBlock || ('snapshotBlock' in row && (row.snapshotBlock ?? 0) > checkpoint.indexedBlock))) throw new Error('Indexed record is ahead of its checkpoint');
-    return { ...checkpoint, epochs, pools, positions };
+    if ([...epochs, ...pools].some(row => (row.lastBlockNumber ?? 0) > checkpoint.indexedBlock || (row.snapshotBlock ?? 0) > checkpoint.indexedBlock)) throw new Error('Indexed record is ahead of its checkpoint');
+    return { ...checkpoint, epochs, pools };
   } catch (error) {
     throw new IndexerError(error instanceof Error ? error.message : String(error), url);
   }
@@ -160,7 +140,7 @@ export async function displayData(ctx: AntsContext, stack: ResolvedStack): Promi
   const indexer = ctx.indexer();
   if (!indexer?.displaySnapshot) return { snapshot: null, source: { source: 'chain' } };
   try {
-    const snapshot = await indexer.displaySnapshot(stack.currentEpoch, ctx.address);
+    const snapshot = await indexer.displaySnapshot(stack.currentEpoch);
     const now = Math.floor(Date.now() / 1000);
     if (snapshot.chainId !== ctx.chain.evmChainId) throw new Error('Antscan chain does not match the dashboard');
     const barrier = ctx.positionReadBarriers?.get(ctx.address.toLowerCase());

@@ -131,7 +131,6 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
-      {data?.displaySource?.error ? <p className="hint">Antscan live position feed unavailable: {data.displaySource.error}. Using fallback position reads.</p> : null}
       {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
       {data?.historySource === 'chain' ? <div className="status-line status-line--muted">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
       {selectedRows.length > 0 ? (

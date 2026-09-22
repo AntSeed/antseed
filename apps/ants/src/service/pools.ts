@@ -111,8 +111,7 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
     last ? Promise.resolve(BigInt(last.totalWeightedPoolPoints)) : !ctx.indexer()?.displaySnapshot && accounting && epoch > 0 ? safe(() => accounting.totalWeightedPoolPointsByEpoch(epoch - 1), 0n) : Promise.resolve(0n),
     explorerSellers(ctx.chain.explorerApiUrl),
     (async () => {
-      if (ctx.address === ZeroAddress) return [];
-      if (live) return live.positions.map(row => ({ ...row, amount: BigInt(row.amount), weightAmount: BigInt(row.weightAmount) }));
+      if (ctx.address === ZeroAddress || live) return [];
       const [open, closed] = await Promise.all([pools.allStakerPositionIds(ctx.address), closedPositionIds(ctx)]);
       return pools.positionsBatch([...new Set([...open, ...closed.ids])]);
     })(),
