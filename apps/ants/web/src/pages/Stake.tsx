@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { OverviewView, PoolView, PoolsView } from '../../../src/api-types';
 import { api } from '../api';
 import { useConfig } from '../app-context';
-import { ErrorBox, Skeleton } from '../components/Feedback';
+import { ErrorBox } from '../components/Feedback';
 import { Panel } from '../components/Panel';
 import { PoolDrawer, PoolsTable, sortPools } from '../components/Pools';
 import { StakeForm } from '../components/StakeForm';
@@ -73,7 +73,6 @@ export function StakePage() {
       ) : null}
       {overview.error && !data ? <ErrorBox error={overview.error} onRetry={overview.refresh} /> : null}
       {overview.error && data ? <div className="status-line">Refresh failed: {overview.error}</div> : null}
-      {!data && overview.loading ? <Skeleton rows={4} /> : null}
       {data && data.phase !== 'active' ? <PhaseBanner data={data} /> : null}
       {notices.length > 0 ? (
         <Alert tone="info">

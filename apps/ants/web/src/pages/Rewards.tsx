@@ -1,4 +1,5 @@
 import { Button, Card } from '../components/ui';
+import { Panel } from '../components/Panel';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { ClaimRequest, PoolView, RestakeRequest, RewardBucket, RewardsView, StakeUsageRequest } from '../../../src/api-types';
 import { request, api } from '../api';
@@ -22,7 +23,7 @@ export function RewardsPage() {
   const disconnected = isHostedDisconnected(config);
   const page = usePageData(disconnected ? null : 'rewards', api.rewards, 5 * 60_000);
   const data = page.data;
-  if (disconnected) return <Card><h2>Your rewards</h2><p>Connect your wallet to view staking and seller rewards, then select a saved buyer account for buyer rewards.</p><BuyerWalletAction /></Card>;
+  if (disconnected) return <Panel title="Your rewards"><p className="muted">Connect your wallet to view staking and seller rewards, then select a saved buyer account for buyer rewards.</p><BuyerWalletAction /></Panel>;
   const updating = !!data && page.loading && page.reconciling;
   const stale = !!data && (page.reconciling || !!page.error);
   return (
@@ -36,7 +37,7 @@ export function RewardsPage() {
         </>
       ) : null}
       {data ? <RewardRefreshContext.Provider value={{ updating, stale }}>
-        {config.mode === 'hosted' && !config.buyerAddress ? <Card><h2>Buyer rewards</h2><p>Add a buyer account using the wallet menu. Your staking and seller rewards do not require a buyer account.</p></Card> : <BuyerRewardsCard data={data} />}
+        {config.mode === 'hosted' && !config.buyerAddress ? <Panel title="Buyer rewards"><p className="muted">Add a buyer account using the wallet menu. Your staking and seller rewards do not require a buyer account.</p></Panel> : <BuyerRewardsCard data={data} />}
         {data.scope !== 'buyer' ? <RewardsBody onRefresh={page.refresh} data={data} /> : null}
       </RewardRefreshContext.Provider> : null}
     </>
