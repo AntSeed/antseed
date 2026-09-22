@@ -252,7 +252,6 @@ export interface StakePanelProps {
   rewards?: RewardsView | null;
   rewardsError?: string | null;
   walletReady: boolean;
-  onStarted?: () => void;
 }
 
 export function PoolDrawer({ pool: initialPool, view, onClose, stake }: { pool: PoolView; view: PoolsView; onClose: () => void; stake?: StakePanelProps }) {
@@ -346,7 +345,6 @@ export function PoolDrawer({ pool: initialPool, view, onClose, stake }: { pool: 
                 rewardsError={stake.rewardsError}
                 defaultAgentId={pool.agentId}
                 lockedPool
-                onStarted={stake.onStarted}
               />
             ) : <p className="hint">Open this seller from the Stake page to stake into it.</p>}
           </Card>

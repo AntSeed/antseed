@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { JobView } from '../../src/api-types';
 import { api } from './api';
 import { invalidateAll } from './data';
+import { href } from './router';
 import { describeError } from './format';
 import { readStartedJobs, rememberStartedJob } from './job-session';
 import { useWalletReadiness } from './wallet-readiness';
@@ -30,7 +31,12 @@ export interface Toast {
   hash?: string;
   /** Sticky toasts stay until dismissed. */
   sticky: boolean;
+  /** Optional follow-up link ("View my positions" after a stake). */
+  link?: { href: string; label: string };
 }
+
+/** Jobs that create or grow a position; their completion toast links to the positions page. */
+const POSITION_JOBS = new Set(['stake', 'restake', 'stake-usage', 'compound']);
 
 export interface JobsValue {
   /** This session's jobs, newest first. */
@@ -176,7 +182,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
           if (job.status === 'failed') {
             pushToast({ tone: 'danger', jobId: job.id, title: `${titleForJob(job.id)} · ${job.error?.startsWith('You rejected') ? 'Rejected' : 'Failed'}`, body: job.error ?? 'The transaction did not complete.', sticky: true });
           } else if (!silent) {
-            pushToast({ tone: 'success', jobId: job.id, title: `${titleForJob(job.id)} · ${job.steps.some(step => !!step.hash) ? 'Confirmed' : 'Complete'}`, hash: [...job.steps].reverse().find(step => !!step.hash)?.hash, sticky: false });
+            const link = POSITION_JOBS.has(job.kind) ? { href: href('positions'), label: 'View my positions' } : undefined;
+            pushToast({ tone: 'success', jobId: job.id, title: `${titleForJob(job.id)} · ${job.steps.some(step => !!step.hash) ? 'Confirmed' : 'Complete'}`, hash: [...job.steps].reverse().find(step => !!step.hash)?.hash, sticky: !!link, link });
           }
         }
       }

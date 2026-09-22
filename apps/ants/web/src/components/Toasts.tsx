@@ -16,6 +16,7 @@ export function Toasts() {
             <div className="toast-title">{toast.title}</div>
             {toast.body ? <div className="toast-text">{toast.body}</div> : null}
             {toast.hash ? <TxLink hash={toast.hash} /> : null}
+            {toast.link ? <a className="toast-link" href={toast.link.href}>{toast.link.label} →</a> : null}
           </div>
           <IconButton label="Dismiss" className="toast-close" onClick={() => dismissToast(toast.id)}>
             <CloseIcon />

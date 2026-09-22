@@ -88,7 +88,7 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
         } catch (e) {
           if (!stopped) {
             setError(e instanceof Error ? e.message : String(e));
-            if (config.selectedAddress && e instanceof ApiError && e.status === 400) invalidateAll({ clear: true });
+            if (config.selectedAddress && e instanceof ApiError && e.status === 400) invalidateAll();
             else timer = setTimeout(() => sync(refresh), 1500);
           }
         } finally { queued = false; }
