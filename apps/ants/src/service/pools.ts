@@ -126,14 +126,20 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
   const openRows = own.filter((position) => position.owner.toLowerCase() === ctx.address.toLowerCase() && !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > epoch));
   const [totalActiveStake, ownSummary] = await Promise.all([
     current ? Promise.resolve(BigInt(current.totalActiveStake)) : safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
-    live ? Promise.resolve(ownPoolsFromLive(live)) : ownPools(ctx, openRows, epoch),
+    live ? Promise.resolve(ownPoolsFromLive(live, epoch)) : ownPools(ctx, openRows, epoch),
   ]);
   if (liveError) display.source = { ...display.source, error: [display.source.error, liveError].filter(Boolean).join('; ') };
   return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary };
 }
 
-function ownPoolsFromLive(live: LivePositions): Map<number, OwnPool> {
-  return new Map(live.summary.map(row => [row.agentId, { positionIds: row.positionIds, power: BigInt(row.power), stake: BigInt(row.activeStake), pending: BigInt(row.pendingStake) }]));
+/** Antscan's per-agent summary counts a closing split/merge/move source as pending; its principal already lives in the replacement, so pending is derived from the rows instead. */
+function ownPoolsFromLive(live: LivePositions, epoch: number): Map<number, OwnPool> {
+  const own = new Map(live.summary.map(row => [row.agentId, { positionIds: row.positionIds, power: BigInt(row.power), stake: BigInt(row.activeStake), pending: 0n }]));
+  for (const position of live.positions) {
+    const entry = own.get(position.agentId);
+    if (entry && !position.withdrawn && position.closedAtEpoch === 0 && position.stakeStartEpoch > epoch) entry.pending += BigInt(position.amount);
+  }
+  return own;
 }
 
 /**

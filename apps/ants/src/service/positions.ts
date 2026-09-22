@@ -202,7 +202,7 @@ export async function positions(ctx: AntsContext): Promise<PositionsView> {
   const closedById = new Map(closed.rows.map((row) => [row.id, row]));
   const stakeIn = (states: PositionView['state'][]) => details.filter((position) => states.includes(position.state)).reduce((sum, position) => sum + BigInt(position.amount), 0n);
   const activeStake = live ? BigInt(live.totals.activeStake) : stakeIn(['active', 'matured']);
-  const pendingStake = live ? BigInt(live.totals.pendingStake) : stakeIn(['pending']);
+  const pendingStake = stakeIn(['pending']);
   const pendingRewards = rewardsKnown ? details.reduce((sum, position) => sum + BigInt(position.pendingReward!), 0n) : null;
   return toJson({
     currentEpoch: stack.currentEpoch,

@@ -126,6 +126,20 @@ describe('indexed display / live financial read boundary', () => {
     expect(rewards.previewStakerRewards).not.toHaveBeenCalled();
   });
 
+  it('does not count a closing merge source as pending stake on the live path', async () => {
+    const { ctx, live } = positionFeeds();
+    const source = { ...live.positions[0]!, id: 9, stakeStartEpoch: 23, closedAtEpoch: 23, amount: '500', state: 'closed' as const };
+    const fresh = { ...live.positions[0]!, id: 8, stakeStartEpoch: 23, amount: '40', state: 'pending' as const };
+    live.positions.push(source, fresh);
+    live.summary[0]!.positionIds.push(9, 8);
+    live.summary[0]!.pendingStake = '540';
+    live.totals.pendingStake = '540';
+    const pools = await poolsView(ctx);
+    expect(pools.pools[0]).toMatchObject({ yourPendingStake: '40' });
+    const view = await positions(ctx);
+    expect(view.totals.pendingStake).toBe('40');
+  });
+
   it('uses whole-wallet live summaries for personal pool totals', async () => {
     const { ctx, pools, requests } = positionFeeds();
     const result = await poolsView(ctx);
