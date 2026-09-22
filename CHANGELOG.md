@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- CLI: add `antseed buyer set-operator <address>` to set the initial authorized withdrawal wallet, matching AI VPN authorization. Validate addresses, reuse the SDK deposits authorization, skip already-authorized wallets, and reject replacement of an existing operator. The buyer hot wallet pays gas; document withdrawal authority and transfer limitations.
+
 - ANTS dashboard: add a local Anvil wallet-flow fixture setup and testing guide, with optional authenticated test controls for epoch changes, transfer restrictions, and chain resets.
 
 - ANTS dashboard: open the connected wallet automatically for newly initiated transaction requests in the same tab. Keep explicit wallet approval, cross-tab request locking, manual recovery for resumed requests, and no automatic rebroadcasts or retries after rejection.

@@ -42,6 +42,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer activity` | Activity summary: tokens, spend history, savings, channels, claimable ANTS |
 | `antseed buyer deposit --onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
+| `antseed buyer set-operator <address>` | Set the initial authorized withdrawal wallet (hot wallet pays ETH gas) |
 | `antseed buyer balance` | Check wallet and deposit balance |
 | `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
 | **Session** | |
@@ -494,6 +495,21 @@ Point your AI tools (Claude Code, Codex, etc.) at `http://localhost:8377` as the
 `antseed buyer deposit` prints your node's funding address and a QR code (an EIP-681 payment request any mobile wallet can scan). Send USDC on Base to that address from anywhere — an exchange withdrawal, another wallet, a card on-ramp. Incoming funds are swept into your deposits balance gaslessly: your node signs an EIP-3009 authorization and a permissionless relayer submits the transaction for a fixed ~$0.05 USDC fee, so the hot wallet never needs ETH. While watching, the command also serves the connected-wallet checkout page and prints its link (`http://127.0.0.1:3118?token=…`) for depositing from a browser-extension wallet instead.
 
 While `antseed buyer start` is running, this sweeping happens automatically in the background (disable with `buyer.autoSweep: false` in your config). `antseed buyer sweep` triggers the same gasless sweep manually, and `antseed buyer deposit --onchain <usdc>` remains for direct on-chain deposits from a hot wallet that holds ETH. (The `antseed payments` web portal is retired.)
+
+### Set an authorized wallet
+
+```bash
+antseed buyer set-operator 0xYourWalletAddress
+# Select the same buyer identity/config used for your deposits:
+antseed --data-dir ~/.antseed-buyer --config ~/.antseed-buyer/config.json buyer set-operator 0xYourWalletAddress
+```
+
+Replace the placeholder with a valid, non-zero Ethereum address. This is the CLI equivalent of **Set authorized wallet** in AI VPN: it signs the deposits contract's EIP-712 operator authorization with the buyer identity and submits `setOperator`. Unlike the browser flow (where the connected wallet pays gas), this command submits from the buyer hot wallet, which needs ETH on the configured chain. It respects the selected data directory, identity environment override, and payment chain/contract configuration, and prints the confirmed transaction hash.
+
+**The authorized wallet gains control of withdrawals and future authorization transfers.** Choose a wallet you control. Initial authorization is only possible when no operator is set. Repeating the same address sends no transaction; a different existing operator is rejected. Changing it later requires `transferOperator` from the current authorized wallet, not the buyer identity.
+
+`antseed buyer withdraw` still submits from the buyer identity. If you authorize an external wallet, withdraw from that wallet through AI VPN's payments UI (for the same buyer identity) or the deposits contract, not through the current CLI withdrawal command. To use CLI withdrawal, the buyer identity itself must be the authorized wallet. Setting an operator does not resolve other withdrawal constraints, such as reserved funds or insufficient available balance.
+
 
 ### Configuration
 
