@@ -21,7 +21,8 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed seller pool withdraw <id...> [--accept-slashing]` | Withdraw positions, with a slashing estimate and confirmation for early exits |
 | `antseed seller rewards [claim]` | View or claim all seller rewards |
 | **ANTS staking** | |
-| `antseed ants` | Open the local ANTS staking dashboard (wallet-signed, `--port`, `--no-open`) |
+| `antseed ants` | Open the local ANTS staking dashboard; the connected browser wallet is the acting account (`--port`, `--no-open`) |
+| `antseed ants --address 0x...` | Pin the dashboard to one account. Transactions require that account's browser wallet, or its authorized operator for buyer actions. Does not use the local wallet. |
 | `antseed ants status` | Protocol phase, epoch countdown, balances, stake, claimable rewards |
 | `antseed ants stake <ants> --agent <id> --epochs <n>` | Stake ANTS into any registered seller pool |
 | `antseed ants positions` | List open lANTS positions with state, pending rewards, and exit slash |
@@ -363,14 +364,45 @@ ANTS pool positions.
 ### ANTS Staking Dashboard and Commands
 
 `antseed ants` starts a local dashboard on `http://127.0.0.1:3119` and opens it
-in your browser. It signs with the node wallet in `--data-dir`, binds to
-localhost only, and requires the one-time session token embedded in the URL
+in your browser. Browse pools before connecting; once you connect a browser
+wallet it becomes the acting account for staking, positions and seller
+actions, and every transaction is approved in that wallet. The dashboard binds
+to localhost only and requires the one-time session token embedded in the URL
 it prints, so no other page can act with your wallet. Pass `--no-open` to
-print the URL only, or `--port` to change the port.
+print the URL only, or `--port` to change the port. Buyer rewards follow the
+connected wallet too: a wallet that is a buyer account in its own right sees
+its own usage and legacy buyer rewards. If the wallet is instead the on-chain
+authorized operator of the local identity's buyer account (the one in
+`--data-dir`), that buyer account's rewards are shown, and the existing
+payments flow can authorize such an operator.
+
+`antseed ants --address 0x...` pins the dashboard to one account instead.
+Seller and position actions then require that account's wallet, buyer reward
+actions require its current deposits operator, and switching browser wallets
+does not change the pinned account. It does not use the local wallet, load or
+create a local identity, or offer the local authorization flow. Buyer rewards
+and positions created by staking them belong to the authorized operator; pin
+the operator's address to manage those positions.
 
 Pool statistics, volume history, and closed positions come from the Antscan
-indexer (`payments.crypto.explorerApiUrl`); the chain is read only for your
-wallet's live state and when sending transactions.
+indexer (`payments.crypto.explorerApiUrl`). Positions, personal pool totals, and
+staking rewards share its paginated `/api/staking/positions?include=rewards`
+response, including closed positions with unclaimed rewards. Power and status
+are included by default; there is no separate live-mode request. Wallet totals
+are calculated across all pages rather than treating page totals as wallet totals.
+Claims and restaking still validate positions and amounts on-chain.
+
+The configured Antscan deployment must include Antscan PR #8 and complete its
+reward backfill. Stale or incomplete rewards appear as unavailable, not zero;
+JSON reward amounts can be `null`. Live-state failures do not discard usable
+indexed rewards. Position/personal-pool reads show an error instead of repeating
+per-position RPC calls when the configured indexer is unavailable. An explicitly
+unconfigured indexer retains direct chain reads for local setups.
+
+During a dashboard session, confirmed transactions temporarily block older
+position/reward snapshots until Antscan catches up. This marker is in memory,
+not saved to disk or shared with later CLI invocations. After a restart, indexed
+amounts remain estimates at the displayed source block, not transaction quotes.
 
 Everything the dashboard does is also a command under `antseed ants`, so the
 dashboard is optional:

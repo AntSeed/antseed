@@ -17,7 +17,7 @@ function setup(readOnly = false, chainOverrides: Partial<AntsContext['chain']> =
   const app = Fastify();
   apps.push(app);
   const ctx = { signer: readOnly ? undefined : {}, address: '0x123', chain: { chainId: 'base-local', evmChainId: 31337, ...chainOverrides }, invalidate: vi.fn() } as unknown as AntsContext;
-  registerRoutes(app, { ctx, jobs: new JobRunner(), views: new ViewCache(), readOnly, dataDir: null });
+  registerRoutes(app, { ctx, jobs: new JobRunner(), views: new ViewCache(), readOnly, dataDir: null, originBuyer: ctx.buyerAddress });
   return app;
 }
 
