@@ -258,6 +258,8 @@ it('browser sessions ignore host signing keys and retain the original buyer acro
   const server = await createAntsServer({ port: 0, dataDir, signer: buyer, address: buyer.address,
     chain: { chainId: 'base-local', evmChainId: 31337, rpcUrl: 'http://127.0.0.1:8545', fallbackRpcUrls: [], explorerApiUrl: '' } });
   servers.push(server);
+  // The external wallet is the buyer's authorized operator, so buyer reads stay on the originating buyer.
+  vi.spyOn(server.context, 'deposits').mockReturnValue({ getOperator: async () => external.address } as never);
   const invalidate = vi.spyOn(server.context, 'invalidate');
   const noChange = await server.app.inject({ method: 'POST', url: '/api/wallet', headers: { authorization: `Bearer ${server.token}` }, payload: {} });
   expect(noChange.json().data).toEqual({ changed: false });
@@ -282,4 +284,35 @@ it('browser sessions ignore host signing keys and retain the original buyer acro
   expect(server.context.address).toBe(external.address);
   const disconnectedConfig = (await server.app.inject({ url: '/api/config', headers })).json().data;
   expect(disconnectedConfig).toMatchObject({ readOnly: true, address: external.address });
+});
+
+it('shows a connected wallet its own buyer rewards unless it operates the originating buyer', async () => {
+  vi.spyOn(AntsContext.prototype, 'selectRpc').mockResolvedValue();
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ants-buyer-test-'));
+  directories.push(dataDir);
+  const buyer = Wallet.createRandom();
+  const operator = Wallet.createRandom();
+  const other = Wallet.createRandom();
+  const server = await createAntsServer({ port: 0, dataDir, signer: buyer, address: buyer.address, onAuthorize: async () => {},
+    chain: { chainId: 'base-local', evmChainId: 31337, rpcUrl: 'http://127.0.0.1:8545', fallbackRpcUrls: [], explorerApiUrl: '' } });
+  servers.push(server);
+  vi.spyOn(server.context, 'deposits').mockReturnValue({ getOperator: async () => operator.address } as never);
+  const headers = { authorization: `Bearer ${server.token}` };
+  const connect = (address: string) => server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { address, chainId: 31337 } });
+  const config = async () => (await server.app.inject({ url: '/api/config', headers })).json().data;
+
+  await connect(other.address);
+  expect(server.context.buyerAddress).toBe(other.address);
+  expect(await config()).toMatchObject({ buyerAddress: other.address, canAuthorize: false });
+  expect((await server.app.inject({ method: 'POST', url: '/api/wallet/authorize', headers })).statusCode).toBe(400);
+
+  await connect(operator.address);
+  expect(server.context.buyerAddress).toBe(buyer.address);
+  expect(await config()).toMatchObject({ buyerAddress: buyer.address, canAuthorize: true });
+
+  await connect(buyer.address);
+  expect(server.context.buyerAddress).toBe(buyer.address);
+
+  await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { disconnect: true } });
+  expect(server.context.buyerAddress).toBe(buyer.address);
 });

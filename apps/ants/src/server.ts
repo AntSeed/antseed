@@ -89,6 +89,18 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   const browserSigning = browserWallet ? new BrowserSigning(chain.evmChainId) : undefined;
   const context = new AntsContext({ chain, address, ...(signer ? { signer } : {}) });
   if (browserSigning && !selectedAddress) context.address = ZeroAddress;
+  const originBuyer = context.buyerAddress;
+  /** The buyer account a connected wallet manages: the originating buyer when the wallet is that buyer or its authorized operator, otherwise the wallet itself. */
+  const buyerAccountFor = async (wallet: string | null): Promise<string> => {
+    if (!wallet || wallet.toLowerCase() === originBuyer.toLowerCase()) return originBuyer;
+    try {
+      const operator = await context.deposits()?.getOperator(originBuyer);
+      if (operator && operator.toLowerCase() === wallet.toLowerCase()) return originBuyer;
+    } catch {
+      return originBuyer;
+    }
+    return wallet;
+  };
   await context.selectRpc();
 
   const app = Fastify({ logger: false, bodyLimit: 32 * 1024 * 1024 });
@@ -150,7 +162,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     },
     ...(!readOnly || browserSigning ? { journalPath } : {}),
   });
-  registerRoutes(app, { ctx: context, jobs, views, readOnly, dataDir, selectedAddress, browserSigning, onAuthorize: options.onAuthorize, rememberTransaction });
+  registerRoutes(app, { ctx: context, jobs, views, readOnly, dataDir, selectedAddress, originBuyer, browserSigning, onAuthorize: options.onAuthorize, rememberTransaction });
   if (browserSigning) {
     app.post<{ Body: { address?: string; chainId?: number; refresh?: boolean; disconnect?: boolean } }>('/api/wallet', async (request, reply) => {
       const body = request.body ?? {};
@@ -172,6 +184,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
         if (jobs.busy && !(next === null && body.disconnect)) return reply.code(409).send({ ok: false, error: 'Waiting for the previous wallet action to finish. Submitted transactions are still tracked.' });
         browserSigning.cancel();
         context.address = selectedAddress ?? next ?? context.address;
+        if (!selectedAddress) context.buyerAddress = await buyerAccountFor(next);
         context.signer = next ? browserSigning.signer(next, context.provider()) : undefined;
         context.invalidate(); views.invalidate();
         return { ok: true, data: { changed: true } };

@@ -102,7 +102,8 @@ export class MissingContractError extends Error {
 export class AntsContext {
   chain: AntsChainConfig;
   address: string;
-  readonly buyerAddress: string;
+  /** The buyer account whose usage rewards are shown; a browser session re-resolves it per connected wallet. */
+  buyerAddress: string;
   readonly localPositionIds = new Map<number, string>();
   readonly positionReadBarriers = new Map<string, { block: number; at: number }>();
   signer: AbstractSigner | undefined;

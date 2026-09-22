@@ -23,6 +23,8 @@ export interface RouteContext {
   readOnly: boolean;
   dataDir: string | null;
   selectedAddress?: string;
+  /** The buyer account this session started for; the local authorization flow only applies to it. */
+  originBuyer: string;
   browserSigning?: import('./browser-signer.js').BrowserSigning;
   onAuthorize?: () => Promise<void>;
   rememberTransaction?: (hash: string) => Promise<void>;
@@ -52,11 +54,12 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   app.get('/api/config', async () => ({
     ok: true,
-    data: { address: ctx.address, selectedAddress: context.selectedAddress, walletAddress: context.selectedAddress ? await ctx.signer?.getAddress() ?? null : ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize, dataDir: context.dataDir },
+    data: { address: ctx.address, selectedAddress: context.selectedAddress, walletAddress: context.selectedAddress ? await ctx.signer?.getAddress() ?? null : ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize && ctx.buyerAddress.toLowerCase() === context.originBuyer.toLowerCase(), dataDir: context.dataDir },
   }));
 
   app.post('/api/wallet/authorize', (_request, reply) => respond(reply, async () => {
     if (!context.onAuthorize) throw new Error('Open the VPR wallet authorization setup to authorize a wallet.');
+    if (ctx.buyerAddress.toLowerCase() !== context.originBuyer.toLowerCase()) throw new Error('The connected wallet is its own buyer account; the local authorization flow only applies to the originating buyer.');
     await context.onAuthorize(); return {};
   }));
 
