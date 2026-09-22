@@ -25,6 +25,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - ANTS dashboard: DeFi-style redesign. Dark-first "vault desk" theme (light theme kept behind the header toggle), epoch countdown in the header, a network ticker (total stake, power, staker budget, last-epoch volume), and a sellers table with per-seller volume sparklines, APY, TVL, last-epoch volume and your stake. Opening a seller shows a full-height sheet with the volume/network-share chart, active stake and pool power per epoch, staker rewards per epoch (estimated until settled), APY-by-lock tiles, lifetime profile, model usage, your position in that pool, and a stake panel. The single-pool endpoint (`GET /api/pools/:agentId`) now returns per-epoch `history` from the staking index.
 - ANTS dashboard: position management. Each open position's menu offers Split (with a live preview of both resulting parts), Extend lock, Enable/Disable max lock, Move allocation and Withdraw; row checkboxes select several positions to Merge (same seller and unlock epoch, no max lock) or Withdraw together. `GET /api/positions` and the node SDK's `positionStatusesBatch` now report `maxLockedNext`, the max-lock state from the next epoch, so a pending enable/disable is labelled and the reversing action is offered.
 - ANTS dashboard: staking from the wallet balance is only offered when ANTS transfers are enabled for the wallet. Under transfer restrictions the stake dialog lists only reward sources (buyer, seller, position rewards) as selectable cards, with lock presets (1w, 1m, 6m, 1y, max), and explains the empty state instead of showing a disabled wallet row.
+- CLI: add `antseed buyer set-authorized-wallet` to open the AI VPN browser flow, where a connected external wallet becomes the buyer's initial authorized wallet and submits the transaction. Add `--self` for explicitly authorizing the buyer hot wallet instead, plus `--no-open` for printing the secure local URL. Skip redundant self-authorization, reject replacement of a different existing wallet, and document withdrawal authority and transfer limitations.
 
 - ANTS dashboard: add a local Anvil wallet-flow fixture setup and testing guide, with optional authenticated test controls for epoch changes, transfer restrictions, and chain resets.
 
@@ -71,6 +72,8 @@ This project uses selective package publishing. Each release entry lists the pub
 - Development: add disposable Anvil browser-wallet scenarios and transaction lifecycle checks with separate buyer/authorized wallets and restricted ANTS transfers.
 
 ### Fixed
+
+- Payments: reconnect to retained channels without adding the seller's minimum budget to buyer-signed spend. Sellers safely acknowledge replayed authorizations and restore request access while preserving earned payments and zero-spend closure without buyer withdrawal or ghost penalties.
 
 - ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
 
