@@ -10,7 +10,7 @@ import type { AbstractSigner } from 'ethers';
 import { loadOrCreateIdentity, resolveChainConfig } from '@antseed/node';
 import { AntsContext, type AntsChainConfig } from './service/context.js';
 import { JobRunner } from './jobs.js';
-import { registerRoutes } from './routes.js';
+import { assertSelectedWallet, registerRoutes } from './routes.js';
 import { BrowserSigning } from './browser-signer.js';
 import { getAddress, ZeroAddress, id as eventId } from 'ethers';
 import { ViewCache } from './view-cache.js';
@@ -32,6 +32,7 @@ export interface AntsServerOptions {
   /** Explicit signer/address; skips loading the identity from disk. */
   signer?: AbstractSigner;
   address?: string;
+  selectedAddress?: string;
   /** Serve a read-only dashboard for `address` without a signer. */
   readOnly?: boolean;
   /** Notify the host after an action finishes, including failed actions. */
@@ -69,12 +70,15 @@ export async function resolveAntsChain(configPath: string, env: NodeJS.ProcessEn
 export async function createAntsServer(options: AntsServerOptions): Promise<AntsServer> {
   const host = options.host ?? '127.0.0.1';
   const browserWallet = options.browserWallet !== false;
+  const selectedAddress = options.selectedAddress ? getAddress(options.selectedAddress) : undefined;
+  if (selectedAddress === ZeroAddress) throw new Error('Select a non-zero account address.');
+  if (selectedAddress && !browserWallet) throw new Error('Account selection requires browser wallet signing.');
   const dataDir = options.dataDir ?? path.join(homedir(), '.antseed');
   const configPath = options.configPath ?? path.join(dataDir, 'config.json');
   const chain = options.chain ?? await resolveAntsChain(configPath);
 
   let signer = browserWallet ? undefined : options.signer;
-  let address = options.address;
+  let address = selectedAddress ?? options.address;
   if (!signer && !options.readOnly && !browserWallet) {
     const identity = await loadOrCreateIdentity(dataDir);
     signer = identity.wallet;
@@ -84,7 +88,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   const readOnly = !signer;
   const browserSigning = browserWallet ? new BrowserSigning(chain.evmChainId) : undefined;
   const context = new AntsContext({ chain, address, ...(signer ? { signer } : {}) });
-  if (browserSigning) context.address = ZeroAddress;
+  if (browserSigning && !selectedAddress) context.address = ZeroAddress;
   await context.selectRpc();
 
   const app = Fastify({ logger: false, bodyLimit: 32 * 1024 * 1024 });
@@ -146,14 +150,16 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     },
     ...(!readOnly || browserSigning ? { journalPath } : {}),
   });
-  registerRoutes(app, { ctx: context, jobs, views, readOnly, dataDir, browserSigning, onAuthorize: options.onAuthorize, rememberTransaction });
+  registerRoutes(app, { ctx: context, jobs, views, readOnly, dataDir, selectedAddress, browserSigning, onAuthorize: options.onAuthorize, rememberTransaction });
   if (browserSigning) {
     app.post<{ Body: { address?: string; chainId?: number; refresh?: boolean; disconnect?: boolean } }>('/api/wallet', async (request, reply) => {
       const body = request.body ?? {};
       try {
         const next = body.address ? getAddress(body.address) : null;
+        if (next === ZeroAddress) throw new Error('Connect a non-zero wallet address.');
         if (next && body.chainId !== chain.evmChainId) throw new Error('Switch your wallet to the dashboard network.');
-        const current = context.signer ? context.address : null;
+        const current = await context.signer?.getAddress() ?? null;
+        if (next && selectedAddress && !jobs.busy) await assertSelectedWallet(context, selectedAddress, next, 'connection');
         // A tab without a wallet (still reconnecting, or a second tab opened from VPR) must not
         // downgrade the connected session; only an explicit disconnect clears the signer.
         if (next === current || (next === null && !body.disconnect)) {
@@ -165,11 +171,18 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
         // Check before cancelling: a refused switch must not poison the running job's signer.
         if (jobs.busy) return reply.code(409).send({ ok: false, error: 'Waiting for the previous wallet action to finish. Submitted transactions are still tracked.' });
         browserSigning.cancel();
-        context.address = next ?? ZeroAddress;
+        context.address = selectedAddress ?? next ?? ZeroAddress;
         context.signer = next ? browserSigning.signer(next, context.provider()) : undefined;
         context.invalidate(); views.invalidate();
         return { ok: true, data: { changed: true } };
-      } catch (error) { return reply.code(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+      } catch (error) {
+        if (selectedAddress && !jobs.busy) {
+          browserSigning.cancel();
+          context.signer = undefined;
+          context.invalidate(); views.invalidate();
+        }
+        return reply.code(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
     });
     app.post<{ Body: { id: string } }>('/api/wallet/begin', async (request, reply) => {
       try { browserSigning.begin(request.body.id); return { ok: true, data: {} }; }
@@ -177,7 +190,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     });
     app.get('/api/wallet/request', async () => {
       const transaction = browserSigning.request;
-      const job = transaction ? jobs.list(transaction.from).find(job => job.status === 'running') : undefined;
+      const job = transaction ? jobs.list(selectedAddress ?? transaction.from).find(job => job.status === 'running') : undefined;
       return { ok: true, data: transaction ? { ...transaction, ...(job ? { jobId: job.id } : {}) } : null };
     });
     app.post<{ Body: { id: string; hash?: string; error?: string } }>('/api/wallet/result', async (request, reply) => {

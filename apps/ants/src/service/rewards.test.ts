@@ -2,7 +2,7 @@ import { ZeroAddress } from 'ethers';
 import { describe, expect, it, vi } from 'vitest';
 import type { AntsContext } from './context.js';
 import { IndexerError } from './indexer.js';
-import { claim, compound, restake, rewards } from './rewards.js';
+import { claim, compound, restake, rewards, stakeUsageRewards } from './rewards.js';
 
 const address = '0x0000000000000000000000000000000000000001';
 const foreign = '0x0000000000000000000000000000000000000002';
@@ -185,9 +185,10 @@ describe('buyer rewards before browser wallet connection', () => {
     expect(f.walletRead).not.toHaveBeenCalled();
   });
 
-  it('keeps buyer reads tied to the buyer when a separate authorized wallet connects', async () => {
+  it.each([false, true])('keeps buyer reads tied to the buyer when a separate authorized wallet connects (selected=%s)', async selected => {
     const { ctx } = fixture(false);
-    ctx.address = foreign;
+    ctx.address = selected ? address : foreign;
+    if (selected) ctx.signer = { getAddress: async () => foreign } as never;
     ctx.stack = async () => ({ phase: 'active', currentEpoch: 23 }) as never;
     ctx.claimableEpochs = async () => ({ legacy: [], recognized: [22] }) as never;
     ctx.usageAccounting = () => ({ pendingEmissions: async () => ({ seller: 0n, buyer: 999n }) }) as never;
@@ -230,6 +231,31 @@ describe('explicit buyer and wallet claim scopes', () => {
     expect(f.oldBuyer).toHaveBeenCalledWith({}, address, [21]);
     expect(f.seller).not.toHaveBeenCalled();
     expect(f.poolRewards.claimStakerRewardsBatch).not.toHaveBeenCalled();
+  });
+  it('checks the browser signer, not the selected buyer address, for buyer claims', async () => {
+    const setup = claimFixture();
+    setup.ctx.address = address;
+    setup.ctx.signer = { getAddress: async () => foreign } as never;
+    const received = vi.fn(async () => 5n);
+    setup.ctx.antsToken = () => ({ receivedInTransaction: received }) as never;
+    expect((await claim(setup.ctx, { buckets: [], scope: 'buyer' })).transactions).toEqual(['buyer-current', 'buyer-legacy']);
+    expect(received).toHaveBeenCalledWith('buyer-current', foreign);
+    expect(setup.seller).not.toHaveBeenCalled();
+    setup.ctx.signer = { getAddress: async () => address } as never;
+    await expect(claim(setup.ctx, { buckets: [], scope: 'buyer' })).rejects.toThrow('authorized wallet');
+  });
+  it('stakes selected buyer rewards with its separate authorized operator', async () => {
+    const setup = claimFixture();
+    setup.ctx.address = address;
+    const signer = { getAddress: async () => foreign };
+    setup.ctx.signer = signer as never;
+    setup.ctx.requireSigner = () => signer as never;
+    const stakeBuyerReward = vi.fn(async () => 'buyer-stake');
+    setup.ctx.usageRewards = () => ({ buyerEpochClaimed: async () => false, pendingBuyerReward: async () => 5n, stakeBuyerReward }) as never;
+    expect((await stakeUsageRewards(setup.ctx, { side: 'buyer', stakeAgentId: 42, epochs: 4 })).transactions).toEqual(['buyer-stake']);
+    expect(stakeBuyerReward).toHaveBeenCalledWith(signer, address, 22, 42, 4);
+    setup.ctx.deposits = () => ({ getOperator: async () => address }) as never;
+    await expect(stakeUsageRewards(setup.ctx, { side: 'buyer', stakeAgentId: 42, epochs: 4 })).rejects.toThrow('deposits operator');
   });
   it.each(['buyer', 'legacy'] as const)('claims only the selected buyer source: %s', async (bucket) => {
     const setup = claimFixture();

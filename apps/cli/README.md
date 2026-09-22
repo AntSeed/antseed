@@ -21,7 +21,9 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed seller pool withdraw <id...> [--accept-slashing]` | Withdraw positions, with a slashing estimate and confirmation for early exits |
 | `antseed seller rewards [claim]` | View or claim all seller rewards |
 | **ANTS staking** | |
-| `antseed ants` | Open the local ANTS staking dashboard (wallet-signed, `--port`, `--no-open`) |
+| `antseed ants` | Require explicit account selection; print the two dashboard launch options and exit with an error |
+| `antseed ants --local-address` | Select the existing local AntSeed identity’s address; keep signing in the browser wallet |
+| `antseed ants --address 0x...` | Select an explicit account; connect its wallet for seller/staking actions or its authorized operator for buyer actions |
 | `antseed ants status` | Protocol phase, epoch countdown, balances, stake, claimable rewards |
 | `antseed ants stake <ants> --agent <id> --epochs <n>` | Stake ANTS into any registered seller pool |
 | `antseed ants positions` | List open lANTS positions with state, pending rewards, and exit slash |
@@ -361,11 +363,25 @@ ANTS pool positions.
 
 ### ANTS Staking Dashboard and Commands
 
-`antseed ants` starts a local dashboard on `http://127.0.0.1:3119` and opens it
-in your browser. It signs with the node wallet in `--data-dir`, binds to
+`antseed ants --local-address` or `antseed ants --address 0x...` starts a local dashboard on `http://127.0.0.1:3119` and opens it
+in your browser. Transactions require approval from a connected browser wallet; the dashboard binds to
 localhost only, and requires the one-time session token embedded in the URL
 it prints, so no other page can act with your wallet. Pass `--no-open` to
 print the URL only, or `--port` to change the port.
+
+Use `antseed ants --local-address` to select the existing local identity
+from `--data-dir`, or `antseed ants --address 0x...` to select another account.
+These mutually exclusive flags apply only to the dashboard and never enable
+local transaction signing. Plain `antseed ants` exits with an error and shows both
+launch options before loading an identity or starting a server. The selected account stays fixed across wallet changes:
+seller and position actions require that account's wallet, while buyer reward
+actions require its current deposits operator on the configured network.
+
+`--local-address` fails if no local identity exists. `--address` does not
+load or create a local identity and does not offer the local authorization flow;
+authorize that buyer separately first. Buyer rewards and positions created by
+staking them belong to the authorized operator. Select the operator's address
+with `--address` to manage those positions.
 
 Pool statistics, volume history, and closed positions come from the Antscan
 indexer (`payments.crypto.explorerApiUrl`). Positions, personal pool totals, and

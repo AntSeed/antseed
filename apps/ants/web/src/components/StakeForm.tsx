@@ -46,7 +46,6 @@ function sourceNote(source: StakeSource): string {
 export function StakeForm({ config, pools, balance, rewards = null, rewardsError, defaultAgentId, lockedPool = false, onStarted, onClose, onBusyChange }: Props) {
   const { overview, config: dashboardConfig } = useApp();
   const info = useEpochInfo();
-  const block = useActionBlock();
   const jobs = useJobs();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,11 +54,13 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
   const [walletAmount, setAmount] = useState('');
   const [sourceId, setSourceId] = useState<string | null>(null);
   const canTransfer = overview?.wallet.canTransfer ?? false;
-  const allSources = stakeSources(rewardsError ? null : rewards, balance ?? '0', canTransfer);
+  const managesWallet = !dashboardConfig.selectedAddress || dashboardConfig.selectedAddress.toLowerCase() === dashboardConfig.walletAddress?.toLowerCase();
+  const allSources = stakeSources(rewardsError ? null : rewards, balance ?? '0', canTransfer).filter(source => managesWallet || source.kind === 'buyer');
   const sources = lockedPool && defaultAgentId ? allSources.filter((s) => s.agentId === undefined || s.agentId === defaultAgentId) : allSources;
   const hiddenBound = lockedPool ? allSources.length - sources.length : 0;
   const chosenSource = sources.find(s => s.id === sourceId);
   const source: StakeSource | null = chosenSource ?? sources.find(s => s.available && s.kind !== 'wallet') ?? sources[0] ?? null;
+  const block = useActionBlock(source?.kind === 'buyer');
   const sourceMissing = sourceId !== null && !chosenSource;
   const isWallet = source?.kind === 'wallet';
   const amount = source === null ? '' : isWallet ? walletAmount : plainAnts(source.amount);
@@ -111,7 +112,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
     : !overview ? 'Wallet information is unavailable. Refresh before staking.'
     : sourceMissing ? 'The selected rewards are no longer available. Choose a source again.'
     : source && !source.available ? 'Use the wallet button above to switch to the authorized wallet for these rewards.'
-    : BigInt(overview.wallet.eth) === 0n ? 'This wallet needs ETH on the selected network to pay transaction fees.'
+    : BigInt(overview.wallet.signingWalletEth ?? overview.wallet.eth) === 0n ? 'The signing wallet needs ETH on the selected network to pay transaction fees.'
     : null;
   const blocked = block.blocked || noPools || !!readinessError || source === null;
   const blockedReason = readinessError ?? block.reason ?? (noPools ? 'No stakeable pools yet.' : null);

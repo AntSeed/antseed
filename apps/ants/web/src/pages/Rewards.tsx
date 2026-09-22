@@ -9,7 +9,7 @@ import { ActionButton } from '../components/Confirm';
 import { ErrorBox, Skeleton } from '../components/Feedback';
 import { Field, Select } from '../components/Field';
 import { LockSlider } from '../components/LockSlider';
-import { poolLabel, poolName } from '../components/Pools';
+import { poolName } from '../components/Pools';
 import { usePageData } from '../data';
 import { formatAnts, isZero, sumBig, toBigInt } from '../format';
 
@@ -58,7 +58,7 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
   const [authorizing, setAuthorizing] = useState(false);
   const amount = sumBig([data.buyerUsage.total, data.legacy.buyer]);
   const operator = data.buyerUsage.operator;
-  const authorized = !!operator && operator.toLowerCase() === dashboard.address.toLowerCase() && !dashboard.readOnly;
+  const authorized = !!operator && operator.toLowerCase() === (dashboard.walletAddress ?? dashboard.address).toLowerCase() && !dashboard.readOnly;
   const stakeUnavailable = isZero(data.buyerUsage.total)
     ? 'No current buyer rewards are available to stake yet.'
     : !authorized
@@ -77,6 +77,7 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
     <div className="hero-value"><RewardAmount>{formatAnts(amount, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>
     {isZero(amount) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : null}
     {!operator ? <p className="hint">Authorize a wallet to claim or stake this buyer’s rewards.</p> : !authorized ? <p className="hint">Connect the authorized wallet <AddressLink value={operator} /> on {dashboard.chainId} to claim or stake.</p> : null}
+    {authorized && dashboard.selectedAddress && operator?.toLowerCase() !== dashboard.selectedAddress.toLowerCase() ? <p className="hint">Buyer rewards and positions created by staking them belong to operator <AddressLink value={operator!} />. Select that address to manage those positions.</p> : null}
     <div className="hero-actions">
       {!operator && dashboard.canAuthorize ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
       {operator && !authorized && dashboard.browserWallet ? <BuyerWalletAction /> : null}
@@ -307,7 +308,7 @@ function RestakeButton({ kind, data, maxEpochs }: { kind: 'staker' | 'seller' | 
             <Select value={stakeAgent} onChange={(e) => setStakeAgent(e.target.value)}>
               {poolList.map((p) => (
                 <option key={p.agentId} value={p.agentId}>
-                  {poolLabel(p)}
+                  {p.profile?.name?.trim() || `Agent ID ${p.agentId}`}
                 </option>
               ))}
             </Select>

@@ -63,6 +63,31 @@ beforeEach(() => {
 });
 
 describe('reward row actions and confirmations', () => {
+  it('shows seller names in the staking dropdown and falls back to agent IDs when names are missing', () => {
+    state.pools = [
+      { agentId: 42, profile: { name: ' Seller Alpha ' } },
+      { agentId: 43, profile: { name: 'Seller Beta' } },
+      { agentId: 44, profile: { name: ' ' } },
+    ] as PoolView[];
+    render();
+    const stake = action('Stake current buyer rewards');
+    const controls = renderToStaticMarkup(createElement(AppContext.Provider, { value: context }, stake.children));
+    const options = [...controls.matchAll(/<option\b([^>]*)>(.*?)<\/option>/g)];
+    expect(options.map(option => option[2])).toEqual(['Seller Alpha', 'Seller Beta', 'Agent ID 44']);
+    expect(options.map(option => option[1])).toEqual([
+      expect.stringContaining('value="42"'),
+      expect.stringContaining('value="43"'),
+      expect.stringContaining('value="44"'),
+    ]);
+    expect(stake.body).toMatchObject({ side: 'buyer', stakeAgentId: 42 });
+  });
+
+  it('uses the connected operator rather than the selected buyer to enable buyer rewards', () => {
+    const selectedContext = { ...context, config: { ...context.config, address: buyer, selectedAddress: buyer, walletAddress: wallet } };
+    renderToStaticMarkup(createElement(AppContext.Provider, { value: selectedContext }, createElement(RewardsPage)));
+    expect(action('Claim current buyer rewards').disabled).toBe(false);
+    expect(action('Claim legacy buyer rewards').disabled).toBe(false);
+  });
   it('shows unavailable staking rewards without a false zero or disabling buyer claims', () => {
     state.rewards!.staker = { total: null, positions: [], source: { error: 'Antscan snapshot is incomplete' } };
     state.rewards!.total = null;

@@ -3,10 +3,11 @@ import { WagmiProvider, useAccount, useWalletClient } from 'wagmi';
 import { getDefaultConfig, RainbowKitProvider, ConnectButton, darkTheme } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defineChain, http } from 'viem';
-import { request, type DashboardConfig } from './api';
+import { ApiError, request, type DashboardConfig } from './api';
 import { invalidateAll } from './data';
 import { useJobs } from './jobs';
 import { WalletPromptGate } from './wallet-prompt';
+import { WalletResultDelivery } from './wallet-result';
 import type { BrowserTransaction } from '../../src/browser-signer';
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -29,8 +30,7 @@ export function WalletProvider({ config, children }: { config: DashboardConfig; 
 /** Sync wallet identity before enabling jobs. Every transaction has an explicit wallet approval. */
 export function WalletControls({ config }: { config: DashboardConfig }) {
   const account = useAccount();
-  const { jobs, running, locallyStartedJobIds } = useJobs();
-  const action = jobs.find(job => job.status === 'running');
+  const { running, locallyStartedJobIds, pushToast } = useJobs();
   const { data: wallet } = useWalletClient();
   const [pending, setPending] = useState<BrowserTransaction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,11 +39,14 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
   const promptGate = useRef(new WalletPromptGate());
   const syncedIdentity = useRef<string | null>(null);
   const syncQueue = useRef<Promise<void>>(Promise.resolve());
-  const submitted = useRef(new Map<string, string>());
+  const delivery = useRef(new WalletResultDelivery(result => request('/api/wallet/result', { method: 'POST', body: result })));
   const transactionActive = useRef(false);
   transactionActive.current = running || busy || pending !== null;
   const wrongChain = !!account.address && account.chainId !== config.evmChainId;
   const settling = account.status === 'connecting' || account.status === 'reconnecting';
+  useEffect(() => {
+    if (error) pushToast({ tone: 'danger', title: 'Wallet request failed', body: error, sticky: true });
+  }, [error, pushToast]);
   useEffect(() => {
     // Wait for wagmi to settle; a transient wallet-less state must not be reported as a disconnect.
     if (settling) return;
@@ -70,7 +73,11 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
             if (changed || refreshAccount) invalidateAll({ clear: changed });
           }
         } catch (e) {
-          if (!stopped) { setError(e instanceof Error ? e.message : String(e)); timer = setTimeout(() => sync(refresh), 1500); }
+          if (!stopped) {
+            setError(e instanceof Error ? e.message : String(e));
+            if (config.selectedAddress && e instanceof ApiError && e.status === 400) invalidateAll({ clear: true });
+            else timer = setTimeout(() => sync(refresh), 1500);
+          }
         } finally { queued = false; }
       });
     }
@@ -78,12 +85,18 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
     const onFocus = () => { if (!transactionActive.current) void sync(true); };
     window.addEventListener('focus', onFocus);
     return () => { stopped = true; clearTimeout(timer); window.removeEventListener('focus', onFocus); };
-  }, [account.address, account.chainId, wrongChain, settling]);
+  }, [account.address, account.chainId, wrongChain, settling, config.selectedAddress]);
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      try { const next = await request<BrowserTransaction | null>('/api/wallet/request'); if (!stopped) setPending(next); }
+      try {
+        const next = await request<BrowserTransaction | null>('/api/wallet/request');
+        if (!stopped) {
+          setPending(next);
+          await delivery.current.deliver(next?.id ?? null);
+        }
+      }
       catch { /* Normal API surfaces handle server errors. */ }
       finally {
         // Keep slow idle discovery for actions from another tab; active jobs poll promptly.
@@ -96,41 +109,30 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
   const approve = useCallback(async () => {
     if (!pending || !wallet || processing.current || pending.submittedHash) return;
     processing.current = true; setBusy(true); setError(null);
-    let hash = submitted.current.get(pending.id);
     let startedHere = false;
     try {
       if (wallet.account.address.toLowerCase() !== pending.from.toLowerCase() || account.address?.toLowerCase() !== pending.from.toLowerCase() || account.chainId !== pending.chainId || wallet.chain.id !== pending.chainId || config.evmChainId !== pending.chainId) throw new Error('Connect the wallet and network shown in this request.');
-      if (!hash) {
-        await request('/api/wallet/begin', { method: 'POST', body: { id: pending.id } });
-        startedHere = true;
-        hash = await wallet.sendTransaction({ account: wallet.account, chain: wallet.chain, to: pending.to as `0x${string}`, data: pending.data as `0x${string}`, value: BigInt(pending.value) });
-        submitted.current.set(pending.id, hash);
-      }
-      await request('/api/wallet/result', { method: 'POST', body: { id: pending.id, hash } });
+      await request('/api/wallet/begin', { method: 'POST', body: { id: pending.id } });
+      startedHere = true;
+      const hash = await wallet.sendTransaction({ account: wallet.account, chain: wallet.chain, to: pending.to as `0x${string}`, data: pending.data as `0x${string}`, value: BigInt(pending.value) });
+      delivery.current.enqueue({ id: pending.id, hash });
+      await delivery.current.deliver(pending.id);
     } catch (e) {
       const short = e && typeof e === 'object' && 'shortMessage' in e ? e.shortMessage : undefined;
       const message = typeof short === 'string' ? short : (e instanceof Error ? e.message : String(e)).split('\n')[0]!;
-      setError(message);
-      // If broadcast succeeded, keep its hash and retry acknowledgment, never broadcast again.
-      if (!hash && startedHere) await request('/api/wallet/result', { method: 'POST', body: { id: pending.id, error: message } }).catch(() => {});
+      if (startedHere) {
+        delivery.current.enqueue({ id: pending.id, error: message });
+        await delivery.current.deliver(pending.id);
+      } else setError(message);
     } finally { processing.current = false; setBusy(false); }
   }, [pending, wallet, account.address, account.chainId, config.evmChainId]);
   const promptContext = useMemo(() => ({ transaction: pending, locallyStartedJobIds, accountAddress: account.address, accountChainId: account.chainId, walletAddress: wallet?.account.address, walletChainId: wallet?.chain.id, expectedChainId: config.evmChainId, busy, settling }), [pending, locallyStartedJobIds, account.address, account.chainId, wallet, config.evmChainId, busy, settling]);
-  const openingWallet = promptGate.current.canPrompt(promptContext);
   useEffect(() => {
     if (promptGate.current.claim(promptContext)) void approve();
   }, [promptContext, approve]);
   return <div className="browser-wallet">
     <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
     {wrongChain && <span className="hint">Switch to {config.chainId} to continue.</span>}
-    {error && <div role="alert" className="hint">{error}</div>}
-    {pending && <div className="wallet-approval" role="status">
-      <strong>{pending.submittedHash ? 'Waiting for transaction confirmation…' : busy || pending.approvalStarted ? 'Waiting for wallet approval…' : openingWallet ? 'Opening your wallet…' : 'Open your wallet to continue'}</strong>
-      {action && <span>{action.steps.at(-1)?.label ?? action.kind}</span>}
-      <span className="small mono">{pending.from.slice(0, 8)}…{pending.from.slice(-4)} · {config.chainId}</span>
-      {!pending.submittedHash && <>{!openingWallet && !busy && (!pending.approvalStarted || submitted.current.has(pending.id)) && <button className="btn" disabled={wrongChain || !wallet} onClick={() => void approve()}>{submitted.current.has(pending.id) ? 'Track submitted transaction' : 'Open wallet'}</button>}
-        {!submitted.current.has(pending.id) && <button className="link-button" disabled={busy} title={pending.approvalStarted ? 'Only cancel if you rejected or closed the wallet prompt. A transaction already confirmed in the wallet is not tracked after cancelling.' : undefined} onClick={() => void request('/api/wallet/result', { method: 'POST', body: { id: pending.id, error: 'Cancelled' } })}>{pending.approvalStarted ? 'Cancel (rejected in wallet)' : 'Cancel'}</button>}</>}
-    </div>}
   </div>;
 }
 

@@ -85,8 +85,9 @@ describe('position summary', () => {
   });
 
   it('does not show a countdown for a perpetual lock', () => {
-    const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ maxLocked: true }), pools: [] }));
-    expect(html).toContain('No scheduled unlock');
+    const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ maxLocked: true, maxLockedNext: true }), pools: [] }));
+    expect(html).toContain('>Max lock</span>');
+    expect(html).not.toContain('No scheduled unlock');
     expect(html).not.toContain('Remaining lock');
     expect(html).not.toContain('unlocks epoch');
   });
@@ -137,6 +138,7 @@ describe('positions table', () => {
   });
 
   it.each([false, true])('groups every position action in the menu when maxLocked is %s', maxLocked => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const html = renderPosition({ maxLocked, maxLockedNext: maxLocked });
     expect(html).toContain('More actions for position 29');
     const props = mocks.menu.mock.calls[0]![0];
@@ -148,10 +150,13 @@ describe('positions table', () => {
     for (const label of ['Split', 'Merge', 'Extend lock', 'Move allocation', 'Withdraw']) expect(html).not.toContain(`>${label}<`);
   });
 
-  it('disables split while a change is pending', () => {
-    renderPosition({ changePending: true });
+  it('allows split while activation is pending and labels the activation epoch', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
+    const html = renderPosition({ state: 'pending', stakeStartEpoch: 28, changePending: true });
     const items = mocks.menu.mock.calls[0]![0].items as Array<{ label: string; disabled?: boolean }>;
-    expect(items.find((item) => item.label === 'Split')?.disabled).toBe(true);
+    expect(items.find((item) => item.label === 'Split')?.disabled).toBe(false);
+    expect(html).toContain('Activates epoch 28');
+    expect(html).not.toContain('change pending');
   });
 
   it.each([null, '   '])('falls back to the seller address when its name is %s', name => {
@@ -201,23 +206,30 @@ describe('positions table', () => {
 
   it('does not imply an automatic unlock date for an existing perpetual lock', () => {
     const html = renderPosition({ maxLocked: true, maxLockedNext: true });
-    expect(html).toContain('No scheduled unlock');
+    expect(html).toContain('>Max lock</span>');
+    expect(html).not.toContain('No scheduled unlock');
     expect(html).toContain('Disable max lock to start the countdown');
     expect(html).toContain('max lock</span>');
   });
 
   it('labels max-lock changes that take effect next epoch and offers the reversing action', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const enabling = renderPosition({ maxLocked: false, maxLockedNext: true });
     expect(enabling).toContain('max lock from next epoch');
+    expect(enabling).toContain('Max lock starts epoch 28');
+    expect(enabling).toContain('>Max lock</span>');
+    expect(enabling).not.toContain('2026-12-31');
     expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Disable max lock');
     vi.clearAllMocks(); mocks.epoch.mockReturnValue(null);
     const disabling = renderPosition({ maxLocked: true, maxLockedNext: false });
     expect(disabling).toContain('max lock ends next epoch');
+    expect(disabling).toContain('Countdown starts next epoch');
+    expect(disabling).not.toContain('>Max lock</span>');
     expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Enable max lock');
   });
 
   it.each([
-    ['pending', 'Waiting for the stake activation epoch.'],
+    ['pending', 'The transaction is confirmed.'],
     ['active', 'The staking position is active and its lock has not expired.'],
   ] as const)('explains %s status', (state, description) => {
     expect(renderPosition({ state })).toContain(description);

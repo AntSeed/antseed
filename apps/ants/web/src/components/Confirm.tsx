@@ -108,19 +108,22 @@ export interface ActionButtonProps {
 }
 
 /** Hook describing why actions are blocked (read-only wallet or a job already running). */
-export function useActionBlock(): { blocked: boolean; reason: string | undefined } {
-  const { config: { readOnly }, overview, overviewError } = useApp();
+export function useActionBlock(buyerAction = false): { blocked: boolean; reason: string | undefined } {
+  const { config: { readOnly, selectedAddress, walletAddress }, overview, overviewError } = useApp();
   const { running } = useJobs();
   if (readOnly) return { blocked: true, reason: 'Read-only mode: no wallet is available to sign.' };
+  if (selectedAddress && !buyerAction && selectedAddress.toLowerCase() !== walletAddress?.toLowerCase()) return { blocked: true, reason: `Connect the selected account wallet ${selectedAddress} for seller and staking actions.` };
   if (!overview || overviewError) return { blocked: true, reason: 'Wallet information is unavailable. Refresh before sending a transaction.' };
-  if (BigInt(overview.wallet.eth) === 0n) return { blocked: true, reason: 'This wallet needs ETH on the selected network for transaction fees.' };
+  if (BigInt(overview.wallet.signingWalletEth ?? overview.wallet.eth) === 0n) return { blocked: true, reason: 'The signing wallet needs ETH on the selected network for transaction fees.' };
   if (running) return { blocked: true, reason: 'Another action is still running.' };
   return { blocked: false, reason: undefined };
 }
 
 export function ActionButton(props: ActionButtonProps) {
   const jobs = useJobs();
-  const block = useActionBlock();
+  const body = props.body as { scope?: string; side?: string } | null;
+  const buyerAction = (props.path === '/api/rewards/claim' && body?.scope === 'buyer') || (props.path === '/api/rewards/stake-usage' && body?.side === 'buyer');
+  const block = useActionBlock(buyerAction);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

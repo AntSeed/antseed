@@ -6,6 +6,7 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import { loadCryptoContext, requireCryptoConfig } from '../../payment-utils.js';
 import type { AntsChainConfig } from '@antseed/ants';
+import { FileIdentityStore, loadOrCreateIdentity } from '@antseed/node';
 
 export interface AntsCommandContext {
   ctx: AntsContext;
@@ -15,11 +16,16 @@ export interface AntsCommandContext {
 }
 
 /** Build the ANTS service context from the CLI config and the node identity wallet. */
-export async function loadAntsContext(command: Command): Promise<AntsCommandContext> {
+export async function loadAntsContext(command: Command, options: { address?: string; existingIdentity?: boolean } = {}): Promise<AntsCommandContext> {
   const global = getGlobalOptions(command);
   const config = await loadConfig(global.config);
   const chain = requireCryptoConfig(config) as unknown as AntsChainConfig;
-  const { wallet, address } = await loadCryptoContext(global.dataDir);
+  const store = new FileIdentityStore(global.dataDir);
+  const identity = options.address ? undefined : options.existingIdentity
+    ? await loadOrCreateIdentity({ load: () => store.load(), save: async () => { throw new Error('No integrated identity found. Set up AntSeed first or use --address <address>.'); } })
+    : await loadCryptoContext(global.dataDir);
+  const wallet = identity?.wallet;
+  const address = options.address ?? wallet!.address;
   const ctx = new AntsContext({ chain, address, signer: wallet });
   await ctx.selectRpc();
   return { ctx, chain: ctx.chain, dataDir: global.dataDir, configPath: global.config };

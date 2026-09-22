@@ -129,7 +129,7 @@ export async function createServer(options: PaymentsServerOptions) {
   registerRoutes(fastify, { cryptoCtx, cryptoConfig, chainConfig, proxyPort });
 
   fastify.post('/api/pay/open-rewards', async (_request, reply) => {
-    if (!options.onOpenRewards) return reply.status(409).send({ ok: false, error: 'Open the ANTS dashboard with antseed ants, using this account’s data directory, then select Rewards.' });
+    if (!options.onOpenRewards) return reply.status(409).send({ ok: false, error: 'Open the ANTS dashboard with antseed ants --local-address, using this account’s data directory, then select Rewards.' });
     try { await options.onOpenRewards(); return { ok: true }; }
     catch (error) { return reply.status(500).send({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
   });

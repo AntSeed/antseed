@@ -8,9 +8,123 @@ import { createAntsServer, type AntsServer } from './server.js';
 import { BrowserSigning } from './browser-signer.js';
 import { JobRunner } from './jobs.js';
 import * as routes from './routes.js';
+import * as service from './service/index.js';
 
 const directories: string[] = [];
 const servers: AntsServer[] = [];
+
+describe('selected account browser sessions', () => {
+  async function setup() {
+    vi.spyOn(AntsContext.prototype, 'selectRpc').mockResolvedValue();
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'ants-selected-test-'));
+    directories.push(dataDir);
+    const selected = Wallet.createRandom();
+    const operator = Wallet.createRandom();
+    const server = await createAntsServer({ port: 0, dataDir, address: selected.address, selectedAddress: selected.address, signer: selected,
+      chain: { chainId: 'base-local', evmChainId: 31337, rpcUrl: 'http://127.0.0.1:1', fallbackRpcUrls: [], explorerApiUrl: '' } });
+    servers.push(server);
+    const getOperator = vi.fn(async () => operator.address);
+    vi.spyOn(server.context, 'deposits').mockReturnValue({ getOperator } as never);
+    const headers = { authorization: `Bearer ${server.token}` };
+    const connect = (address: string, chainId = 31337) => server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { address, chainId } });
+    const action = async (url: string, payload: object = {}) => {
+      const response = await server.app.inject({ method: 'POST', url, headers, payload });
+      expect(response.statusCode).toBe(200);
+      const id = response.json().data.id;
+      await vi.waitFor(() => expect(server.busy).toBe(false));
+      return (await server.app.inject({ url: `/api/jobs/${id}`, headers })).json().data;
+    };
+    return { server, selected, operator, getOperator, connect, action, headers };
+  }
+
+  it('pins reads to the selected address without ever using the integrated signer', async () => {
+    const { server, selected, operator, connect, headers } = await setup();
+    expect(server.context.address).toBe(selected.address);
+    expect(server.context.signer).toBeUndefined();
+    expect((await connect(operator.address)).statusCode).toBe(200);
+    expect(server.context.address).toBe(selected.address);
+    expect(server.context.buyerAddress).toBe(selected.address);
+    expect(await server.context.signer!.getAddress()).toBe(operator.address);
+    const config = (await server.app.inject({ url: '/api/config', headers })).json().data;
+    expect(config).toMatchObject({ selectedAddress: selected.address, walletAddress: operator.address, readOnly: false, canAuthorize: false });
+    await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { disconnect: true } });
+    expect(server.context.address).toBe(selected.address);
+    expect(server.context.signer).toBeUndefined();
+  });
+
+  it('rejects unrelated wallets and wrong networks and clears an idle old signer', async () => {
+    const { server, selected, operator, connect } = await setup();
+    await connect(selected.address);
+    const mismatch = await connect(Wallet.createRandom().address);
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.json().error).toContain('Wallet mismatch');
+    expect(mismatch.json().error).toContain(operator.address);
+    expect(server.context.signer).toBeUndefined();
+    expect((await connect(operator.address, 1)).json().error).toContain('network');
+    expect(server.context.address).toBe(selected.address);
+  });
+
+  it('allows the selected seller without an operator, but rejects unauthorized buyer writes', async () => {
+    const { selected, getOperator, connect, action } = await setup();
+    getOperator.mockResolvedValue('0x0000000000000000000000000000000000000000');
+    const register = vi.spyOn(service, 'registerBinding').mockResolvedValue({} as never);
+    const claim = vi.spyOn(service, 'claim').mockResolvedValue({} as never);
+    expect((await connect(selected.address.toLowerCase())).statusCode).toBe(200);
+    expect((await action('/api/seller/register')).status).toBe('done');
+    expect(register).toHaveBeenCalledOnce();
+    const rejected = await action('/api/rewards/claim', { scope: 'buyer', buckets: ['buyer'] });
+    expect(rejected.error).toContain('authorize a wallet first');
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it('allows buyer-only actions for the operator, not seller or position actions', async () => {
+    const { operator, connect, action } = await setup();
+    const claim = vi.spyOn(service, 'claim').mockResolvedValue({} as never);
+    const register = vi.spyOn(service, 'registerBinding').mockResolvedValue({} as never);
+    const stake = vi.spyOn(service, 'stake').mockResolvedValue({} as never);
+    await connect(operator.address);
+    expect((await action('/api/rewards/claim', { scope: 'buyer', buckets: ['buyer', 'legacy'] })).status).toBe('done');
+    expect(claim).toHaveBeenCalledOnce();
+    for (const url of ['/api/seller/register', '/api/positions/stake', '/api/rewards/compound']) {
+      expect((await action(url)).error).toContain('selected account wallet');
+    }
+    expect(register).not.toHaveBeenCalled();
+    expect(stake).not.toHaveBeenCalled();
+  });
+
+  it('rechecks operator permissions before actions and fails closed on RPC errors', async () => {
+    const { operator, getOperator, connect, action } = await setup();
+    const claim = vi.spyOn(service, 'claim').mockResolvedValue({} as never);
+    await connect(operator.address);
+    getOperator.mockResolvedValue(Wallet.createRandom().address);
+    expect((await action('/api/rewards/claim', { scope: 'buyer', buckets: ['buyer'] })).error).toContain('authorized wallet');
+    getOperator.mockRejectedValue(new Error('Operator RPC unavailable'));
+    expect((await action('/api/rewards/claim', { scope: 'buyer', buckets: ['buyer'] })).error).toContain('Operator RPC unavailable');
+    expect((await connect(operator.address)).statusCode).toBe(400);
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it('allows both roles when the selected wallet is also the operator', async () => {
+    const { selected, getOperator, connect, action } = await setup();
+    getOperator.mockResolvedValue(selected.address);
+    vi.spyOn(service, 'claim').mockResolvedValue({} as never);
+    await connect(selected.address);
+    expect((await action('/api/rewards/claim', { buckets: ['seller', 'buyer'] })).status).toBe('done');
+  });
+
+  it('does not cancel or switch wallets while an action is pending', async () => {
+    const { server, selected, operator, connect, headers } = await setup();
+    let finish!: () => void;
+    vi.spyOn(service, 'registerBinding').mockImplementation(() => new Promise(resolve => { finish = () => resolve({} as never); }));
+    await connect(selected.address);
+    await server.app.inject({ method: 'POST', url: '/api/seller/register', headers, payload: {} });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    expect((await connect(operator.address)).statusCode).toBe(409);
+    expect(await server.context.signer!.getAddress()).toBe(selected.address);
+    finish();
+    await vi.waitFor(() => expect(server.busy).toBe(false));
+  });
+});
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));

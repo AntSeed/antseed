@@ -17,6 +17,8 @@ const TOKEN_KEY = 'ants.dashboard.token';
 
 export interface DashboardConfig {
   address: string;
+  selectedAddress?: string;
+  walletAddress?: string | null;
   buyerAddress: string;
   browserWallet?: boolean;
   canAuthorize?: boolean;

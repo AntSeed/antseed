@@ -3,6 +3,7 @@ import type { JobView } from '../../src/api-types';
 import { api } from './api';
 import { invalidateAll } from './data';
 import { describeError } from './format';
+import { readStartedJobs, rememberStartedJob } from './job-session';
 
 /*
  * Session transaction state, modelled on Uniswap's transaction UX: a pending
@@ -41,6 +42,7 @@ export interface JobsValue {
   toasts: Toast[];
   setDrawerOpen: (open: boolean) => void;
   dismissToast: (id: number) => void;
+  pushToast: (toast: Omit<Toast, 'id'>) => void;
   /** POST an action; resolves with the running job (throws on 403/409/other errors). */
   start: (path: string, body: unknown) => Promise<JobView>;
 }
@@ -89,7 +91,8 @@ function sortNewestFirst(jobs: JobView[]): JobView[] {
 
 export function JobsProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<JobView[]>([]);
-  const [locallyStartedJobIds, setLocallyStartedJobIds] = useState<ReadonlySet<string>>(new Set());
+  const [locallyStartedJobIds, setLocallyStartedJobIds] = useState(readStartedJobs);
+  const localJobIdsRef = useRef(locallyStartedJobIds);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -208,7 +211,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
 
   const start = useCallback(async (path: string, body: unknown) => {
     const job = await api.startJob(path, body);
-    setLocallyStartedJobIds(ids => new Set([...ids, job.id]));
+    localJobIdsRef.current = rememberStartedJob(localJobIdsRef.current, job.id);
+    setLocallyStartedJobIds(localJobIdsRef.current);
     // A freshly started job is never silent: every hashed step it reports from here on is toasted.
     silentRef.current = false;
     if (!seenRef.current.has(job.id)) seenRef.current.set(job.id, { hashes: new Set(), terminal: false });
@@ -218,8 +222,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<JobsValue>(
-    () => ({ jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, start }),
-    [jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, dismissToast, start],
+    () => ({ jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, pushToast, start }),
+    [jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, dismissToast, pushToast, start],
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

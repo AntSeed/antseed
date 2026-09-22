@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { ZeroAddress } from 'ethers';
 import type { AntsContext } from './service/context.js';
 import { JobRunner, describeError } from './jobs.js';
 import type { ViewCache } from './view-cache.js';
@@ -20,9 +21,20 @@ export interface RouteContext {
   views: ViewCache;
   readOnly: boolean;
   dataDir: string | null;
+  selectedAddress?: string;
   browserSigning?: import('./browser-signer.js').BrowserSigning;
   onAuthorize?: () => Promise<void>;
   rememberTransaction?: (hash: string) => Promise<void>;
+}
+
+export async function assertSelectedWallet(ctx: AntsContext, selected: string, wallet: string, scope: 'connection' | 'wallet' | 'buyer'): Promise<void> {
+  if (scope !== 'buyer' && wallet.toLowerCase() === selected.toLowerCase()) return;
+  if (scope === 'wallet') throw new Error(`Connect the selected account wallet ${selected} for seller and staking actions.`);
+  const operator = await ctx.deposits()?.getOperator(selected);
+  if (operator && operator !== ZeroAddress && wallet.toLowerCase() === operator.toLowerCase()) return;
+  throw new Error(scope === 'buyer'
+    ? `Connect the authorized wallet for buyer ${selected}. Current operator: ${operator && operator !== ZeroAddress ? operator : 'not configured; authorize a wallet first'}.`
+    : `Wallet mismatch. Connect ${selected} for seller/staking actions${operator && operator !== ZeroAddress ? ` or authorized operator ${operator} for buyer actions` : '; no buyer operator is configured'}.`);
 }
 
 async function respond(reply: FastifyReply, read: () => Promise<unknown>): Promise<void> {
@@ -39,7 +51,7 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
 
   app.get('/api/config', async () => ({
     ok: true,
-    data: { address: ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize, dataDir: context.dataDir },
+    data: { address: ctx.address, selectedAddress: context.selectedAddress, walletAddress: context.selectedAddress ? await ctx.signer?.getAddress() ?? null : ctx.address, chainId: ctx.chain.chainId, evmChainId: ctx.chain.evmChainId, walletRpcUrl: ctx.chain.evmChainId === 31337 && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(ctx.chain.rpcUrl) ? ctx.chain.rpcUrl : undefined, readOnly: !ctx.signer, browserWallet: !!context.browserSigning, buyerAddress: ctx.buyerAddress, canAuthorize: !!context.onAuthorize, dataDir: context.dataDir },
   }));
 
   app.post('/api/wallet/authorize', (_request, reply) => respond(reply, async () => {
@@ -75,6 +87,15 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
         const job = jobs.start(kind, async (report) => {
           ctx.invalidate();
           try {
+            if (context.selectedAddress) {
+              const body = (request.body ?? {}) as Partial<ClaimRequest & StakeUsageRequest>;
+              const buyerOnly = (kind === 'claim' && body.scope === 'buyer') || (kind === 'stake-usage' && body.side === 'buyer');
+              const wallet = await ctx.requireSigner().getAddress();
+              await assertSelectedWallet(ctx, context.selectedAddress, wallet, buyerOnly ? 'buyer' : 'wallet');
+              if (kind === 'claim' && body.scope !== 'wallet' && body.buckets?.includes('buyer')) {
+                await assertSelectedWallet(ctx, context.selectedAddress, wallet, 'buyer');
+              }
+            }
             return await run((request.body ?? {}) as Body, async (label, hash) => {
               if (hash) ctx.invalidate();
               await report(label, hash);

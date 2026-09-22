@@ -1494,15 +1494,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 }
 
 .browser-wallet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wallet-approval {
-  position: fixed; z-index: 10000; bottom: 24px; right: 24px;
-  width: min(400px, calc(100vw - 48px)); padding: 20px;
-  border: 1px solid var(--pc-line-strong); border-radius: 12px;
-  background: var(--pc-panel); color: var(--pc-ink); box-shadow: var(--pc-shadow-float);
-  display: grid; gap: 12px;
-  > strong { font-size: 13px; font-weight: 600; line-height: 18px; }
-  > span { font-size: 12px; color: var(--pc-sub); line-height: 17px; overflow-wrap: anywhere; }
-}
 
 .volume-bars { display: grid; gap: 10px; margin: 16px 0; }
 .volume-bar-row { display: grid; grid-template-columns: 70px 1fr 120px; gap: 10px; align-items: center; font-size: 12px; }

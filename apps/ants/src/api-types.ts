@@ -28,6 +28,7 @@ export interface WalletSummary {
   address: string;
   ants: string;
   eth: string;
+  signingWalletEth?: string;
   transfersEnabled: boolean;
   whitelisted: boolean;
   canTransfer: boolean;

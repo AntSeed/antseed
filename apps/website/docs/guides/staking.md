@@ -7,7 +7,7 @@ hide_title: true
 
 # ANTS Staking
 
-`antseed ants` opens a local staking dashboard for the recognized-usage
+`antseed ants --local-address` opens a local staking dashboard for the recognized-usage
 protocol: stake ANTS into seller pools, manage locked positions, claim or
 restake rewards, and handle seller-side verification. Every dashboard action is
 also a CLI command, so the dashboard is optional. The protocol mechanics
@@ -18,17 +18,27 @@ tooling.
 ## Opening the dashboard
 
 ```bash
-antseed ants                # start on http://127.0.0.1:3119 and open the browser
-antseed ants --no-open      # print the URL only
-antseed ants --port 4000    # use another port
+antseed ants --local-address
+antseed ants --address 0x...
+antseed ants --local-address --no-open
+antseed ants --local-address --port 4000
 ```
+
+Choose exactly one account-selection flag: `--local-address` selects the existing
+local identity in your data directory; `--address 0x...` selects an explicit
+account. Plain `antseed ants` exits with an error showing both options, without
+starting a server. The default port is `3119`; `--no-open` prints the URL without
+opening a browser, and `--port` changes the port. Help and CLI subcommands do not
+require these dashboard flags.
 
 The dashboard opens in your system browser. Browse pools before connecting, then
 connect a wallet to approve transactions. The dashboard cannot sign transactions
 with the local identity key. Terminal commands still use that local identity.
-The originating CLI/VPR buyer account remains separate: buyer usage rewards require
-its on-chain authorized wallet, even when that differs from the buyer address.
-If no wallet is authorized, use the existing payments authorization flow.
+For a CLI-selected account, seller and position actions require that account's wallet;
+buyer usage rewards require its on-chain authorized operator, even when that
+differs from the buyer address. Selecting a different browser wallet does not
+change the selected account. With `--local-address`, the existing payments flow can
+authorize a wallet. Explicit `--address` accounts must be authorized separately.
 The dashboard binds to localhost and the URL carries a per-session authorization token. Keep
 that URL private: possession of the token allows access to the local API.
 Read-only data refreshes on its own; any
@@ -315,7 +325,7 @@ account. There is no staking sidebar entry or separate Electron staking window.
 reuse the server session and preserve their destination through authentication.
 Opening a page never submits a transaction. Old payments claim links show an
 **Open rewards dashboard** handoff instead of a separate claim form; standalone
-payments sessions explain how to open `antseed ants` when no host launcher exists.
+payments sessions explain how to open `antseed ants --local-address` when no host launcher exists.
 
 VPR keeps the local server alive while the browser is open. Reopening reuses its
 session. Wallet/network switching cancels unsigned steps; transactions already

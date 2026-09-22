@@ -42,6 +42,9 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
   const sellerBound = !!sellerRegistry && registryAgentId !== 0 &&
     (await sellerRegistry.agentSeller(registryAgentId)).toLowerCase() === ctx.address.toLowerCase();
   const epoch = epochInfo(stack);
+  const signingAddress = await ctx.signer?.getAddress();
+  const signingWalletEth = signingAddress && signingAddress.toLowerCase() !== ctx.address.toLowerCase()
+    ? (await ctx.provider().getBalance(signingAddress)).toString() : undefined;
   if (stack.phase === 'legacy') {
     notices.push('The recognized-usage contracts are not configured for this chain. Only legacy emissions are available.');
   } else if (stack.phase === 'deployed') {
@@ -63,6 +66,7 @@ export async function overview(ctx: AntsContext): Promise<OverviewView> {
       address: ctx.address,
       ants: ants.toString(),
       eth: eth.toString(),
+      signingWalletEth,
       transfersEnabled,
       whitelisted,
       canTransfer: transfersEnabled || whitelisted,

@@ -53,6 +53,7 @@ function Sidebar({ page, updatedAt }: { page: Page; updatedAt: number | null }) 
       </nav>
       <div className="sidebar-foot">
         <EpochChip updatedAt={updatedAt} />
+        {config.selectedAddress && <div className="small">Selected account <AddressLink value={config.selectedAddress} copy /></div>}
         <div className="sidebar-foot-row">
           {config.browserWallet ? <WalletControls config={config} /> : <span className="wallet-chip">
             <AddressLink value={config.address} copy className="wallet-chip-addr" />

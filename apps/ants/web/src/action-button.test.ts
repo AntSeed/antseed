@@ -39,6 +39,30 @@ beforeEach(() => {
 });
 
 describe('direct action submission', () => {
+  it('blocks seller and position actions when the selected buyer is managed by a separate operator', async () => {
+    mocks.app.mockReturnValue({ config: { readOnly: false, selectedAddress: '0xaaa', walletAddress: '0xbbb' }, overview: { wallet: { eth: '0', signingWalletEth: '1' } } });
+    const { button } = renderButton();
+    expect(button.disabled).toBe(true);
+    await button.onClick();
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: '/api/rewards/claim', body: { scope: 'buyer', buckets: ['buyer'] } },
+    { path: '/api/rewards/stake-usage', body: { side: 'buyer', stakeAgentId: 42, epochs: 4 } },
+  ])('allows buyer actions using the operator gas balance: $path', async request => {
+    mocks.app.mockReturnValue({ config: { readOnly: false, selectedAddress: '0xaaa', walletAddress: '0xbbb' }, overview: { wallet: { eth: '0', signingWalletEth: '1' } } });
+    const { button } = renderButton(request);
+    expect(button.disabled).toBeFalsy();
+    await button.onClick();
+    expect(mocks.start).toHaveBeenCalledWith(request.path, request.body);
+  });
+
+  it('blocks a buyer action when the signing wallet has no gas even if the selected buyer does', async () => {
+    mocks.app.mockReturnValue({ config: { readOnly: false, selectedAddress: '0xaaa', walletAddress: '0xbbb' }, overview: { wallet: { eth: '1', signingWalletEth: '0' } } });
+    expect(renderButton({ path: '/api/rewards/claim', body: { scope: 'buyer' } }).button.disabled).toBe(true);
+  });
+
   it('starts one move job directly without an intermediate confirmation', async () => {
     const onStarted = vi.fn();
     const { html, button } = renderButton({ onStarted });
