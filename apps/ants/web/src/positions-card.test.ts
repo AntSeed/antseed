@@ -54,6 +54,12 @@ function pool(name: string | null): PoolView {
 beforeEach(() => { vi.clearAllMocks(); mocks.epoch.mockReturnValue(null); });
 
 describe('position summary', () => {
+  it('shows live power rather than the original weight and exposes next-epoch power', () => {
+    const html = renderPosition({ power: '9000000000000000000', nextPower: '8000000000000000000' });
+    expect(html).toContain('power 9');
+    expect(html).not.toContain('power 125');
+    expect(html).toContain('Next epoch power: 8');
+  });
   it('shows the pending lock duration, activation date and unchanged unlock date', () => {
     mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ state: 'pending', stakeStartEpoch: 28, stakeEndEpoch: 40, epochsRemaining: 12 }), pools: [pool('Anvil Seller Beta')] }));
@@ -79,8 +85,9 @@ describe('position summary', () => {
   });
 
   it('does not show a countdown for a perpetual lock', () => {
-    const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ maxLocked: true }), pools: [] }));
-    expect(html).toContain('No scheduled unlock');
+    const html = renderToStaticMarkup(createElement(PositionSummary, { position: position({ maxLocked: true, maxLockedNext: true }), pools: [] }));
+    expect(html).toContain('>Max lock</span>');
+    expect(html).not.toContain('No scheduled unlock');
     expect(html).not.toContain('Remaining lock');
     expect(html).not.toContain('unlocks epoch');
   });
@@ -118,6 +125,23 @@ describe('seller directory', () => {
 });
 
 describe('positions table', () => {
+  it('reports a failed position feed without promising fallback reads', () => {
+    mocks.page.mockReturnValue({ data: null, loading: false, error: 'Antscan positions are unavailable', refresh: vi.fn() });
+    const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
+    expect(html).toContain('Antscan positions are unavailable');
+    expect(html).not.toContain('fallback position reads');
+  });
+
+  it('shows estimated position APY with help and an unavailable fallback', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
+    const seller = { ...pool('Alpha'), weight: '125000000000000000000', yield: { epoch: 26, startsAt: 0, endsAt: 604800, reward: '0', power: '125000000000000000000', apr: 0, apy: 0, status: 'settled' as const } };
+    const html = renderPosition({ power: '125000000000000000000' }, [seller]);
+    expect(html).toContain('Est. APY');
+    expect(html).toContain('aria-label="About position APY"');
+    expect(html).toContain('>0.00%</span>');
+    expect(html).toContain('pool rewards in epoch 26');
+    expect(renderPosition()).toContain('title="APY unavailable for this position.">—</span>');
+  });
   it('shows seller names instead of position and pool IDs', () => {
     const html = renderPosition({}, [pool('Anvil Seller Alpha')]);
     expect(html).toContain('>Seller<');
@@ -131,6 +155,7 @@ describe('positions table', () => {
   });
 
   it.each([false, true])('groups every position action in the menu when maxLocked is %s', maxLocked => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const html = renderPosition({ maxLocked, maxLockedNext: maxLocked });
     expect(html).toContain('More actions for position 29');
     const props = mocks.menu.mock.calls[0]![0];
@@ -142,10 +167,13 @@ describe('positions table', () => {
     for (const label of ['Split', 'Merge', 'Extend lock', 'Move allocation', 'Withdraw']) expect(html).not.toContain(`>${label}<`);
   });
 
-  it('disables split while a change is pending', () => {
-    renderPosition({ changePending: true });
+  it('allows split while activation is pending and labels the activation epoch', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
+    const html = renderPosition({ state: 'pending', stakeStartEpoch: 28, changePending: true });
     const items = mocks.menu.mock.calls[0]![0].items as Array<{ label: string; disabled?: boolean }>;
-    expect(items.find((item) => item.label === 'Split')?.disabled).toBe(true);
+    expect(items.find((item) => item.label === 'Split')?.disabled).toBe(false);
+    expect(html).toContain('Activates epoch 28');
+    expect(html).not.toContain('change pending');
   });
 
   it.each([null, '   '])('falls back to the seller address when its name is %s', name => {
@@ -177,7 +205,7 @@ describe('positions table', () => {
     expect(html).toContain('Select position 29');
     expect(html).not.toContain('bulk-bar');
     expect(html).not.toContain('>clear<');
-    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['select', 'seller', 'amount', 'unlocks', 'state', 'reward', 'actions']);
+    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['select', 'seller', 'amount', 'apy', 'unlocks', 'state', 'reward', 'actions']);
   });
 
   it('does not offer selection on closed positions', () => {
@@ -195,23 +223,30 @@ describe('positions table', () => {
 
   it('does not imply an automatic unlock date for an existing perpetual lock', () => {
     const html = renderPosition({ maxLocked: true, maxLockedNext: true });
-    expect(html).toContain('No scheduled unlock');
+    expect(html).toContain('>Max lock</span>');
+    expect(html).not.toContain('No scheduled unlock');
     expect(html).toContain('Disable max lock to start the countdown');
     expect(html).toContain('max lock</span>');
   });
 
   it('labels max-lock changes that take effect next epoch and offers the reversing action', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
     const enabling = renderPosition({ maxLocked: false, maxLockedNext: true });
     expect(enabling).toContain('max lock from next epoch');
+    expect(enabling).toContain('Max lock starts epoch 28');
+    expect(enabling).toContain('>Max lock</span>');
+    expect(enabling).not.toContain('2026-12-31');
     expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Disable max lock');
     vi.clearAllMocks(); mocks.epoch.mockReturnValue(null);
     const disabling = renderPosition({ maxLocked: true, maxLockedNext: false });
     expect(disabling).toContain('max lock ends next epoch');
+    expect(disabling).toContain('Countdown starts next epoch');
+    expect(disabling).not.toContain('>Max lock</span>');
     expect(mocks.menu.mock.calls[0]![0].items.map((item: { label: string }) => item.label)).toContain('Enable max lock');
   });
 
   it.each([
-    ['pending', 'Waiting for the stake activation epoch.'],
+    ['pending', 'The transaction is confirmed.'],
     ['active', 'The staking position is active and its lock has not expired.'],
   ] as const)('explains %s status', (state, description) => {
     expect(renderPosition({ state })).toContain(description);

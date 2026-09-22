@@ -646,7 +646,26 @@ button.btn:not([class*="btn--"]) { @extend .btn--primary; }
 .field__hint, .field__error { font-size: 12px; line-height: 16px; }
 .field__hint { color: var(--pc-faint); }
 .field__error { color: var(--pc-danger); }
-select.field__input { cursor: pointer; padding-right: 8px; }
+select.field__input { cursor: pointer; -webkit-appearance: none; appearance: none; padding-right: 34px; }
+/* Native select arrows render inconsistently; draw a chevron on the wrapper instead. */
+.select-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  color: var(--pc-sub);
+  &::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+  }
+}
 .field-w-sm { width: 140px; }
 .field-w-md { width: 200px; }
 .field-w-lg { width: 360px; max-width: 100%; }
@@ -841,7 +860,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 110;
+  z-index: 300; /* above the seller sheet and action overlays (250) */
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -868,6 +887,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 .toast--danger .toast-title { color: var(--pc-danger); }
 .toast-text { font-size: 12px; color: var(--pc-sub); line-height: 17px; white-space: pre-wrap; word-break: break-word; }
 .toast--danger .toast-text { color: var(--pc-danger); }
+.toast-link { font-size: 12px; font-weight: 600; color: var(--pc-accent); text-decoration: none; &:hover { text-decoration: underline; } }
 .toast-close { flex: 0 0 auto; width: 24px; height: 24px; margin: -3px -2px -3px 0; border-color: transparent; background: transparent; &:hover:not(:disabled) { border-color: transparent; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
@@ -1190,6 +1210,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   flex-direction: column;
   gap: 8px;
 }
+.hero > .hint, .hero > .hero-sub { margin: 0; }
 .hero-value {
   display: flex;
   align-items: baseline;
@@ -1305,6 +1326,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   &:focus-visible { outline: none; &::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--pc-panel), 0 0 0 5px var(--pc-accent); } }
 }
 .stake-lock-settings { flex: 1 1 280px; min-width: 0; .lock-slider { width: 100%; } }
+.stake-apy { display: grid; gap: 4px; margin-top: 12px; strong { margin-left: 6px; } }
 
 /* Lock presets under the slider */
 .lock-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -1316,40 +1338,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   &[aria-pressed="true"] { background: var(--pc-accent-bg); border-color: var(--pc-accent-line); color: var(--pc-accent); }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
 }
-
-/* ── Stake source picker ── */
-
-.source-grid { display: grid; gap: 8px; }
-.source-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--pc-line-strong);
-  border-radius: 10px;
-  background: var(--pc-bg);
-  color: var(--pc-ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
-  &:hover:not(:disabled) { border-color: var(--pc-accent-line); }
-  &[aria-pressed="true"] { border-color: var(--pc-accent); background: var(--pc-accent-bg); box-shadow: 0 0 0 1px var(--pc-accent-line); }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
-  &:focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 2px; }
-}
-.source-card-radio {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 1.5px solid var(--pc-line-strong);
-  display: grid; place-items: center;
-  &::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pc-accent); opacity: 0; transition: opacity 0.12s; }
-}
-.source-card[aria-pressed="true"] .source-card-radio { border-color: var(--pc-accent); &::after { opacity: 1; } }
-.source-card-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.source-card-name { font-size: 13px; font-weight: 600; }
-.source-card-note { font-size: 11.5px; color: var(--pc-sub); }
-.source-card-amount { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; small { color: var(--pc-sub); font-size: 10.5px; margin-left: 3px; } }
 
 .stake-empty {
   padding: 22px 20px;
@@ -1486,6 +1474,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 @media (max-width: 680px) {
   .sidebar-foot .wallet-chip { display: none; }
   .main { padding: 16px 14px 40px; }
+  .hero { padding: 20px; }
   .field-w-lg { width: 100%; }
   .confirm { min-width: 0; }
   .hero-value { font-size: 30px; line-height: 36px; }
@@ -1494,15 +1483,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 }
 
 .browser-wallet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wallet-approval {
-  position: fixed; z-index: 10000; bottom: 24px; right: 24px;
-  width: min(400px, calc(100vw - 48px)); padding: 20px;
-  border: 1px solid var(--pc-line-strong); border-radius: 12px;
-  background: var(--pc-panel); color: var(--pc-ink); box-shadow: var(--pc-shadow-float);
-  display: grid; gap: 12px;
-  > strong { font-size: 13px; font-weight: 600; line-height: 18px; }
-  > span { font-size: 12px; color: var(--pc-sub); line-height: 17px; overflow-wrap: anywhere; }
-}
 
 .volume-bars { display: grid; gap: 10px; margin: 16px 0; }
 .volume-bar-row { display: grid; grid-template-columns: 70px 1fr 120px; gap: 10px; align-items: center; font-size: 12px; }

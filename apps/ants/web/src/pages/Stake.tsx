@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { OverviewView, PoolView, PoolsView } from '../../../src/api-types';
 import { api } from '../api';
 import { useConfig } from '../app-context';
-import { ErrorBox, Skeleton } from '../components/Feedback';
+import { ErrorBox } from '../components/Feedback';
 import { Panel } from '../components/Panel';
 import { PoolDrawer, PoolsTable, sortPools } from '../components/Pools';
 import { StakeForm } from '../components/StakeForm';
@@ -39,7 +39,11 @@ export function StakePage() {
     });
   };
   const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
-  const openPool = openPoolId !== null ? (sortedPools.find((p) => p.agentId === openPoolId) ?? null) : null;
+  // Keep the open sheet mounted while the pool list refetches; a reload must not flash the page behind it.
+  const lastOpen = useRef<{ pool: PoolView; view: PoolsView } | null>(null);
+  const listedPool = openPoolId !== null ? sortedPools.find((p) => p.agentId === openPoolId) : undefined;
+  if (listedPool && pools.data) lastOpen.current = { pool: listedPool, view: pools.data };
+  const open = openPoolId !== null && lastOpen.current?.pool.agentId === openPoolId ? lastOpen.current : null;
   const openSeller = (pool: PoolView) => {
     poolTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpenPoolId(pool.agentId);
@@ -58,7 +62,6 @@ export function StakePage() {
     rewards: rewards.data,
     rewardsError: rewards.error,
     walletReady,
-    onStarted: closePool,
   };
 
   return (
@@ -70,7 +73,6 @@ export function StakePage() {
       ) : null}
       {overview.error && !data ? <ErrorBox error={overview.error} onRetry={overview.refresh} /> : null}
       {overview.error && data ? <div className="status-line">Refresh failed: {overview.error}</div> : null}
-      {!data && overview.loading ? <Skeleton rows={4} /> : null}
       {data && data.phase !== 'active' ? <PhaseBanner data={data} /> : null}
       {notices.length > 0 ? (
         <Alert tone="info">
@@ -127,7 +129,7 @@ export function StakePage() {
         </Modal>
       ) : null}
 
-      {openPool && pools.data ? <PoolDrawer pool={openPool} view={pools.data} onClose={closePool} stake={stakePanel} /> : null}
+      {open ? <PoolDrawer pool={open.pool} view={open.view} onClose={closePool} stake={stakePanel} /> : null}
     </>
   );
 }

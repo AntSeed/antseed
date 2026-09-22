@@ -28,6 +28,7 @@ export interface WalletSummary {
   address: string;
   ants: string;
   eth: string;
+  signingWalletEth?: string;
   transfersEnabled: boolean;
   whitelisted: boolean;
   canTransfer: boolean;
@@ -87,7 +88,9 @@ export interface PositionView {
   projectedSlashBps: number;
   slashedAmount: string;
   returnedAmount: string;
-  pendingReward: string;
+  pendingReward: string | null;
+  power?: string | null;
+  nextPower?: string | null;
   epochsRemaining: number;
 }
 
@@ -104,12 +107,12 @@ export interface PoolConfigView {
 export type DataSource = 'indexer' | 'chain' | 'local';
 
 export interface PositionsView {
+  rewardSource?: { indexedBlock?: number; indexedAt?: number; error?: string };
   displaySource?: DisplaySource;
   currentEpoch: number;
   config: PoolConfigView;
-  /** Indexed position records when fresh, otherwise chain records; rewards and withdrawal checks remain live. */
   positions: PositionView[];
-  totals: { activeStake: string; pendingStake: string; pendingRewards: string; open: number };
+  totals: { activeStake: string; pendingStake: string; pendingRewards: string | null; open: number };
   /** Where closed positions came from; 'chain' means only open positions are listed. */
   historySource: DataSource;
 }
@@ -127,12 +130,12 @@ export interface RewardsView {
   historySource?: DataSource;
   currentEpoch: number;
   firstRewardedEpoch: number | null;
-  staker: { total: string; positions: Array<{ id: number; agentId: number; amount: string; closed: boolean }>; };
+  staker: { total: string | null; positions: Array<{ id: number; agentId: number; amount: string; closed: boolean }>; source?: { indexedBlock?: number; indexedAt?: number; error?: string }; };
   sellerUsage: { total: string; agentId: number; epochs: EpochAmount[]; claimable: boolean };
   buyerUsage: { total: string; epochs: EpochAmount[]; operator: string | null; claimable: boolean; recipient: string | null };
   legacy: { seller: string; buyer: string; contract: string | null; buyerClaimable: boolean; sellerPayout?: LegacySellerPayout };
   locked: { locked: string; claimable: string; policy: string | null; pool: string | null };
-  total: string;
+  total: string | null;
 }
 
 /** One epoch's settled USDC volume for a seller (6 decimals). */
@@ -282,6 +285,50 @@ export interface UsageView {
 
 /** `shareBps` is a share of the epoch emission in `EmissionsView.shareDenominator` units (100,000 = 100%). */
 export interface MinterView { name: string; id: string; controller: string; shareBps: number; editable: boolean; epochBudget: string; }
+
+export interface NetworkStakerConfig {
+  minShareBps: number;
+  maxShareBps: number;
+  stakeShareTarget: string;
+}
+
+export interface NetworkUsageConfig {
+  buyerMinShareBps: number;
+  buyerMaxShareBps: number;
+  sellerMinShareBps: number;
+  sellerMaxShareBps: number;
+  volumeShareTarget: string;
+}
+
+export interface NetworkSnapshot {
+  chainId: string;
+  evmChainId: number;
+  blockNumber: number;
+  blockTimestamp: number;
+  fetchedAt: number;
+  activation: 'active' | 'not-active' | 'unverified';
+  epoch: EpochInfo;
+  shareDenominator: number;
+  initialEmission: string;
+  halvingInterval: number;
+  emission: string | null;
+  nextEmission: string | null;
+  cumulativeScheduled: string | null;
+  totalSupply: string | null;
+  maxSupply: string | null;
+  totalActiveStake: string | null;
+  totalPowerWeight: string | null;
+  usageVolume: string | null;
+  buckets: Array<{ name: string; id: string; controller: string | null; budget: string | null; nextBudget: string | null }>;
+  budgets: { staker: string | null; buyer: string | null; seller: string | null };
+  stakerConfig: NetworkStakerConfig | null;
+  nextStakerConfig: NetworkStakerConfig | null;
+  scaledStakeTarget: string | null;
+  usageConfig: NetworkUsageConfig | null;
+  nextUsageConfig: NetworkUsageConfig | null;
+  contracts: Record<string, string>;
+  errors: string[];
+}
 
 export interface EmissionsView {
   currentEpoch: number;

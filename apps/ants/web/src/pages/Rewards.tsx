@@ -9,7 +9,7 @@ import { ActionButton } from '../components/Confirm';
 import { ErrorBox, Skeleton } from '../components/Feedback';
 import { Field, Select } from '../components/Field';
 import { LockSlider } from '../components/LockSlider';
-import { poolLabel, poolName } from '../components/Pools';
+import { poolName } from '../components/Pools';
 import { usePageData } from '../data';
 import { formatAnts, isZero, sumBig, toBigInt } from '../format';
 
@@ -58,7 +58,9 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
   const [authorizing, setAuthorizing] = useState(false);
   const amount = sumBig([data.buyerUsage.total, data.legacy.buyer]);
   const operator = data.buyerUsage.operator;
-  const authorized = !!operator && operator.toLowerCase() === dashboard.address.toLowerCase() && !dashboard.readOnly;
+  const authorized = !!operator && operator.toLowerCase() === (dashboard.walletAddress ?? dashboard.address).toLowerCase() && !dashboard.readOnly;
+  const showAuthorization = !operator && dashboard.canAuthorize;
+  const showWalletConnection = operator && !authorized && dashboard.browserWallet;
   const stakeUnavailable = isZero(data.buyerUsage.total)
     ? 'No current buyer rewards are available to stake yet.'
     : !authorized
@@ -77,10 +79,11 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
     <div className="hero-value"><RewardAmount>{formatAnts(amount, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>
     {isZero(amount) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : null}
     {!operator ? <p className="hint">Authorize a wallet to claim or stake this buyer’s rewards.</p> : !authorized ? <p className="hint">Connect the authorized wallet <AddressLink value={operator} /> on {dashboard.chainId} to claim or stake.</p> : null}
-    <div className="hero-actions">
-      {!operator && dashboard.canAuthorize ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
-      {operator && !authorized && dashboard.browserWallet ? <BuyerWalletAction /> : null}
-    </div>
+    {authorized && dashboard.selectedAddress && operator?.toLowerCase() !== dashboard.selectedAddress.toLowerCase() ? <p className="hint">Buyer rewards and positions created by staking them belong to operator <AddressLink value={operator!} />. Select that address to manage those positions.</p> : null}
+    {showAuthorization || showWalletConnection ? <div className="hero-actions">
+      {showAuthorization ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
+      {showWalletConnection ? <BuyerWalletAction /> : null}
+    </div> : null}
     {authorizationError ? <p role="alert" className="hint">{authorizationError}</p> : null}
     <div className="buckets">
       <BucketRow visible name="Current buyer rewards" amount={data.buyerUsage.total}
@@ -117,12 +120,13 @@ function RewardsBody({ data, onRefresh }: { data: RewardsView; onRefresh: () => 
   return (
     <>
       <Card className="hero" aria-label="Staking rewards">
-        {data.historySource === 'chain' ? <p className="status-line status-line--muted">Closed-position history is unavailable (no indexer configured, or the indexer is unreachable). These are known rewards; rewards from closed positions may be missing. Refresh to retry.</p> : null}
-        {data.historySource === 'local' ? <p className="status-line status-line--muted">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
+        {data.historySource === 'chain' ? <p className="status-line status-line--muted">Closed-position history is unavailable. Without an indexer, some rewards may be missing. Refresh to retry.</p> : null}
+        {data.historySource === 'local' ? <p className="status-line status-line--muted">Local transaction history included. Older closed positions—and their rewards—may be missing without an indexer.</p> : null}
         <div className="tile-label">Staking rewards</div>
-        <p className="hint">Earned from staking ANTS in seller pools for <AddressLink value={dashboard.address} />. These are unclaimed rewards, not your wallet balance.</p>
+        <p className="hint">Unclaimed staking rewards for <AddressLink value={dashboard.address} />—not your wallet balance.</p>
         <div className="hero-value"><RewardAmount>{formatAnts(data.staker.total, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>
-        {isZero(data.staker.total) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : (
+        {data.staker.source?.indexedBlock !== undefined ? <p className="hint">Estimated by Antscan at block {data.staker.source.indexedBlock}. Claims and restaking are checked live.</p> : null}
+        {data.staker.total === null ? <p role="status" className="hint">Staking rewards unavailable: {data.staker.source?.error ?? 'Antscan has not finished indexing these rewards.'} <button className="link-button" onClick={onRefresh}>Retry</button></p> : isZero(data.staker.total) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : (
           <div className="hero-actions">
             <ClaimButton bucket="staker" amount={data.staker.total} />
             <RestakeButton kind="staker" data={data} maxEpochs={maxEpochs} />
@@ -132,7 +136,7 @@ function RewardsBody({ data, onRefresh }: { data: RewardsView; onRefresh: () => 
 
       <Card className="hero" aria-label="Seller rewards">
         <div className="tile-label">Seller rewards</div>
-        <p className="hint">Earned from providing AI services for <AddressLink value={dashboard.address} />. These are unclaimed rewards, not your wallet balance.</p>
+        <p className="hint">Unclaimed AI selling rewards for <AddressLink value={dashboard.address} />—not your wallet balance.</p>
         <div className="hero-value">
           <RewardAmount>{formatAnts(sellerTotal, 4)}</RewardAmount>
           <span className="unit">ANTS</span>
@@ -306,7 +310,7 @@ function RestakeButton({ kind, data, maxEpochs }: { kind: 'staker' | 'seller' | 
             <Select value={stakeAgent} onChange={(e) => setStakeAgent(e.target.value)}>
               {poolList.map((p) => (
                 <option key={p.agentId} value={p.agentId}>
-                  {poolLabel(p)}
+                  {p.profile?.name?.trim() || `Agent ID ${p.agentId}`}
                 </option>
               ))}
             </Select>

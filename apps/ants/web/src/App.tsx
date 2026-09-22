@@ -66,7 +66,7 @@ function AuthGate() {
           ANTS<span>staking</span>
         </div>
         <p>
-          Open this dashboard from <code>antseed ants</code>.
+          Open this dashboard with <code>antseed ants</code>.
         </p>
         <p className="muted small">
           The CLI starts the local server and opens the browser with a one-time session token. This page has no token (or the server rejected it), so it cannot read
@@ -84,7 +84,7 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
 
   const refreshOverview = overview.refresh;
   useEffect(() => {
-    const timer = window.setInterval(refreshOverview, OVERVIEW_POLL_MS);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') refreshOverview(); }, OVERVIEW_POLL_MS);
     return () => window.clearInterval(timer);
   }, [refreshOverview]);
 

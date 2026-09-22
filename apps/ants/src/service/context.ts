@@ -1,6 +1,7 @@
 import { FetchRequest, JsonRpcProvider, ZeroAddress, type AbstractProvider, type AbstractSigner } from 'ethers';
 import { RotatingJsonRpcProvider } from './rpc-provider.js';
 import { createIndexer, type Indexer } from './indexer.js';
+import { invalidateNetwork } from './network.js';
 import {
   ANTSTokenClient,
   DepositsClient,
@@ -101,8 +102,10 @@ export class MissingContractError extends Error {
 export class AntsContext {
   chain: AntsChainConfig;
   address: string;
-  readonly buyerAddress: string;
+  /** The buyer account whose usage rewards are shown; a browser session re-resolves it per connected wallet. */
+  buyerAddress: string;
   readonly localPositionIds = new Map<number, string>();
+  readonly positionReadBarriers = new Map<string, { block: number; at: number }>();
   signer: AbstractSigner | undefined;
   private readonly stackTtlMs: number;
   private stackCache: ResolvedStack | null = null;
@@ -304,6 +307,7 @@ export class AntsContext {
   }
 
   invalidate(): void {
+    invalidateNetwork(this);
     this.stackGeneration++;
     this.stackCache = null;
     this.stackInflight = null;

@@ -13,6 +13,7 @@ import { href } from '../router';
 export function PositionsPage() {
   const config = useConfig();
   const walletReady = !config.browserWallet || !config.readOnly;
+  const canViewPositions = walletReady || (!!(config.selectedAddress || config.walletAddress) && !/^0x0{40}$/i.test(config.address));
   const overview = usePageData('overview', api.overview);
   const rewards = usePageData('rewards', api.rewards, 5 * 60_000);
   const pools = usePageData('pools', api.pools, 5 * 60_000);
@@ -70,7 +71,7 @@ export function PositionsPage() {
           sub={data ? (canTransfer ? 'transfers enabled · stakeable' : 'transfers not enabled · stake from rewards') : undefined}
         />
       </Tiles>
-      <PositionsCard pools={sortedPools} enabled={walletReady} />
+      <PositionsCard pools={sortedPools} enabled={canViewPositions} />
     </>
   );
 }
