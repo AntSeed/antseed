@@ -41,6 +41,7 @@ import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@
 import type { ImageRequestFacts } from '@antseed/api-adapter';
 import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { buyerFault, faultCodeOf } from './errors.js';
+import { parseMicroUsdc, type FixedFeeOffer } from '@antseed/protocol/fixed-fee';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -147,6 +148,80 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
  * with cumulative authorization, bytes/4 cost verification, and overdraft control.
  */
 export class BuyerPaymentManager {
+  private readonly _paymentOperations = new Map<string, Promise<unknown>>();
+  private readonly _fixedFeePeers = new Set<string>();
+  private readonly _fixedFeeRequests = new Map<string, {
+    peerId: string; offer: FixedFeeOffer; observed: boolean | undefined;
+    payload?: SpendingAuthPayload; channelId?: string; createdAt: number;
+  }>();
+
+  private _serializePayment<Result>(peerId: string, operation: () => Promise<Result>): Promise<Result> {
+    const previous = this._paymentOperations.get(peerId);
+    const next = previous && this._fixedFeePeers.has(peerId) ? previous.catch(() => undefined).then(operation) : operation();
+    const pending = Promise.allSettled([previous, next]).then(() => undefined);
+    this._paymentOperations.set(peerId, pending);
+    void pending.then(() => {
+      if (this._paymentOperations.get(peerId) === pending) this._paymentOperations.delete(peerId);
+    });
+    return next;
+  }
+
+  trackFixedFeeRequest(peerId: string, requestId: string, offer: FixedFeeOffer): void {
+    if (parseMicroUsdc(offer.priceMicroUsdc) > this.maxPerRequestUsdc) throw new Error('Fixed fee exceeds buyer per-request budget');
+    for (const [key, entry] of this._fixedFeeRequests) {
+      if (entry.observed !== undefined && Date.now() - entry.createdAt > REQUEST_BILLING_TTL_MS) this._fixedFeeRequests.delete(key);
+    }
+    if (this._fixedFeeRequests.has(requestId)) throw new Error('Fixed-fee request ID already used');
+    if (this._fixedFeeRequests.size >= MAX_REQUEST_BILLING_ENTRIES) {
+      for (const [key, entry] of this._fixedFeeRequests) {
+        if (entry.payload || entry.observed === false || (entry.observed === true && entry.offer.priceMicroUsdc === '0')) {
+          this._fixedFeeRequests.delete(key);
+          break;
+        }
+      }
+    }
+    if (this._fixedFeeRequests.size >= MAX_REQUEST_BILLING_ENTRIES) throw new Error('Too many fixed-fee requests');
+    this._fixedFeePeers.add(peerId);
+    this._fixedFeeRequests.set(requestId, { peerId, offer: { ...offer }, observed: undefined, createdAt: Date.now() });
+  }
+
+  observeFixedFeeResponse(peerId: string, requestId: string, accepted: boolean): void {
+    const entry = this._fixedFeeRequests.get(requestId);
+    if (!entry || entry.peerId !== peerId) throw new Error('Unknown fixed-fee request');
+    if (entry.observed === undefined) {
+      entry.observed = accepted;
+      entry.channelId = this.getActiveSession(peerId)?.sessionId;
+    }
+  }
+
+  async authorizeFixedFeeResponse(peerId: string, requestId: string, paymentMux: PaymentMux): Promise<void> {
+    await this._serializePayment(peerId, async () => {
+      const payload = await this._signFixedFeeResponse(peerId, requestId);
+      if (payload) paymentMux.sendSpendingAuth(payload);
+      if (payload && this._needsTopUp(peerId)) await this._topUpAfterSpendAuthBestEffort(peerId, paymentMux, 'handleNeedAuth');
+    });
+  }
+
+  private async _signFixedFeeResponse(peerId: string, requestId: string): Promise<SpendingAuthPayload | undefined> {
+    const entry = this._fixedFeeRequests.get(requestId);
+    if (!entry || entry.peerId !== peerId || entry.observed !== true) return undefined;
+    const fee = parseMicroUsdc(entry.offer.priceMicroUsdc);
+    if (fee === 0n) return undefined;
+    const session = this.getActiveSession(peerId);
+    if (!session || session.sessionId !== entry.channelId || !this._confirmedPeers.has(peerId)) throw new Error('Fixed-fee payment session unavailable');
+    if (entry.payload) return entry.payload;
+    const amount = (this._cumulativeAmount.get(peerId) ?? 0n) + fee;
+    if (amount > this._getCeiling(peerId)) throw new Error('Fixed-fee charge exceeds confirmed reserve');
+    const metadata = this._advanceUsageMetadata(this._metadata.get(peerId), entry.offer.service, {
+      amount: fee, inputTokens: 0n, cachedInputTokens: 0n, outputTokens: 0n, requests: 1n, outputImages: 0n,
+    });
+    const payload = await this._commitUpdatedSpendingAuth({ ...session, requestCount: Number(metadata.cumulativeRequestCount) }, peerId, amount, metadata);
+    this._metadata.set(peerId, metadata);
+    this._verifiedCost.set(peerId, (this._verifiedCost.get(peerId) ?? 0n) + fee);
+    entry.payload = payload;
+    this._reportSpend({ sellerPeerId: peerId, requestId, amountUsdc: fee.toString(), inputTokens: '0', cachedInputTokens: '0', outputTokens: '0', outputImages: '0' });
+    return payload;
+  }
   private readonly _identity: BuyerIdentity;
   private _signer: AbstractSigner;
   private readonly _depositsClient: DepositsClient;
@@ -1163,6 +1238,13 @@ export class BuyerPaymentManager {
    */
   async signPerRequestAuth(
     sellerPeerId: string,
+    responseStats: Parameters<BuyerPaymentManager['_signPerRequestAuth']>[1],
+  ): Promise<PerRequestAuthResult> {
+    return this._serializePayment(sellerPeerId, () => this._signPerRequestAuth(sellerPeerId, responseStats));
+  }
+
+  private async _signPerRequestAuth(
+    sellerPeerId: string,
     responseStats: {
       inputBytes: Uint8Array;
       outputBytes: Uint8Array;
@@ -1175,6 +1257,9 @@ export class BuyerPaymentManager {
       requestId?: string;
     },
   ): Promise<PerRequestAuthResult> {
+    if (responseStats.requestId && this._fixedFeeRequests.has(responseStats.requestId)) {
+      throw new Error('Fixed-fee requests require validated response authorization');
+    }
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw buyerFault(
@@ -1408,12 +1493,31 @@ export class BuyerPaymentManager {
     payload: NeedAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
+    return this._serializePayment(sellerPeerId, () => this._handleNeedAuth(sellerPeerId, payload, paymentMux));
+  }
+
+  private async _handleNeedAuth(
+    sellerPeerId: string,
+    payload: NeedAuthPayload,
+    paymentMux: PaymentMux,
+  ): Promise<void> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] NeedAuth for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
 
+    const fixedFee = payload.requestId ? this._fixedFeeRequests.get(payload.requestId) : undefined;
+    if (fixedFee) {
+      if (fixedFee.peerId !== sellerPeerId || payload.channelId !== session.sessionId || payload.billingUsage
+        || payload.lastRequestCost === undefined || !/^(0|[1-9]\d*)$/.test(payload.lastRequestCost)
+        || BigInt(payload.lastRequestCost) > parseMicroUsdc(fixedFee.offer.priceMicroUsdc)
+        || [payload.inputTokens, payload.outputTokens, payload.cachedInputTokens, payload.freshInputTokens].some(value => value !== undefined && value !== '0')) return;
+      const auth = await this._signFixedFeeResponse(sellerPeerId, payload.requestId!);
+      if (auth) paymentMux.sendSpendingAuth(auth);
+      return;
+    }
+    if (this._fixedFeePeers.has(sellerPeerId) && !this._requestService.get(payload.requestId)) return;
     const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);

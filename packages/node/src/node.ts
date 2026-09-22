@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { FIXED_FEE_CAPABILITY, fixedFeeOffering, parseMicroUsdc, resolveFixedFeeOffer } from '@antseed/protocol/fixed-fee';
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IDENTITY_HISTORY_TTL_MS, IdentityHistoryCollector } from './reputation/identity-history.js';
@@ -424,6 +425,15 @@ export class AntseedNode extends EventEmitter {
   }
 
   registerProvider(provider: Provider): void {
+    const fixedServices = new Set<string>();
+    for (const offer of provider.fixedFeeServices ?? []) {
+      fixedFeeOffering({ ...offer, provider: provider.name });
+      if (!offer.path.startsWith('/') || offer.path.startsWith('//') || /[?#\s]/.test(offer.path)) throw new Error('Invalid fixed-fee endpoint');
+      if (!provider.services.includes(offer.service) || fixedServices.has(offer.service) || provider.serviceUnitBillingModels?.[offer.service]) {
+        throw new Error('Fixed-fee services must be unique, served, and separate from unit billing');
+      }
+      fixedServices.add(offer.service);
+    }
     this._providers.push(provider);
   }
 
@@ -1393,6 +1403,22 @@ export class AntseedNode extends EventEmitter {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
+    if (options?.fixedFee) {
+      const agreed = { ...options.fixedFee };
+      const maximum = options.maxFeeMicroUsdc;
+      const acceptResponse = options.acceptResponse;
+      const snapshot = structuredClone(peer);
+      const request = structuredClone(req);
+      const metadata = snapshot.metadata;
+      if (!metadata || metadata.peerId !== snapshot.peerId || !this._peerLookup
+        || !await this._peerLookup.verifyMetadataSignature(metadata)
+        || !metadata.capabilities?.includes(FIXED_FEE_CAPABILITY)) throw new Error('Verified fixed-fee metadata required');
+      const offer = resolveFixedFeeOffer(metadata.offerings, agreed.provider, agreed.service);
+      if (offer.contract !== agreed.contract || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Fixed-fee offer changed');
+      if (maximum === undefined || parseMicroUsdc(offer.priceMicroUsdc) > parseMicroUsdc(maximum)) throw new Error('Fixed fee exceeds buyer limit');
+      if (!acceptResponse) throw new Error('Fixed-fee requests require response acceptance');
+      return this._buyerHandler.sendRequest(snapshot, request, undefined, { ...options, fixedFee: offer, acceptResponse });
+    }
     return this._buyerHandler.sendRequest(peer, req, undefined, options);
   }
 
@@ -1623,27 +1649,34 @@ export class AntseedNode extends EventEmitter {
     // Set up announcer for providers
     if (this._providers.length > 0) {
       const extraCapabilities = [
+        ...(this._providers.some(provider => provider.fixedFeeServices?.length) ? [FIXED_FEE_CAPABILITY] : []),
         ...(this._connectionManager.supportsWebRtc ? [CONNECTION_CAPABILITY_WEBRTC_V1] : []),
         ...(this._config.capabilities ?? []),
       ];
+      const getFixedFeeOfferings = () => this._advertisingPausedReason !== null ? [] : this._providers
+        .filter(provider => provider.healthCheckAvailable !== false)
+        .flatMap(provider => (provider.fixedFeeServices ?? []).map(offer => fixedFeeOffering({ ...offer, provider: provider.name })));
       const announcerConfig: AnnouncerConfig = {
         identity,
         dht: this._dht,
-        providers: this._providers.map((p) => ({
+        get offerings() { return getFixedFeeOfferings(); },
+        providers: this._providers.filter(provider => !provider.fixedFeeServices?.length || provider.services.some(service => !provider.fixedFeeServices!.some(offer => offer.service === service))).map((p) => ({
           provider: p.name,
-          services: p.services,
+          get services() { return p.fixedFeeServices?.length ? p.services.filter(service => !p.fixedFeeServices!.some(offer => offer.service === service)) : p.services; },
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
           ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
-          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false,
+          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false
+            && (!p.fixedFeeServices?.length || p.services.some(service => !p.fixedFeeServices!.some(offer => offer.service === service))),
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
               outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
             },
-            ...(p.pricing.services ? { services: { ...p.pricing.services } } : {}),
+            ...(p.pricing.services ? { services: Object.fromEntries(Object.entries(p.pricing.services)
+              .filter(([service]) => !p.fixedFeeServices?.some(offer => offer.service === service))) } : {}),
           },
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),

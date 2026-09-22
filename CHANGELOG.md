@@ -8,6 +8,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- `@antseed/provider-levanto`: a thin seller adapter (`levanto`) and buyer router (`levanto-router`) in one package. Explicit auto-routing requests purchase a validated recommendation through normal `sendRequest`, then execute inference using existing buyer policy and transport. Response fees reuse existing channels and SpendingAuth with an explicit fee cap and acceptance callback. Signed v12 offerings preserve ordinary token/image discovery and billing. Requires a per-response Levanto backend; day passes, new reasoning capabilities, and desktop UI are not included.
+- CLI paid routing: try accepted ranked destinations after explicit retryable inference errors without purchasing another recommendation. Recheck eligibility and required verification, use distinct inference billing IDs, and attribute attempts to one conversation turn. Keep exact peer choices exact and support model-only recommendations in the shared hook. Stop on buyer faults, payment-required responses, timeouts, ambiguous transport failures, cancellation, and started streams; ordinary image/token routing is unchanged.
+- CLI paid routing: include signed routing-service charges in the originating conversation's spend, even when inference fails or authorization arrives later. Register purchases before dispatch without adding inference tokens or extra request counts. Payment wire formats, image billing, and ordinary request accounting are unchanged.
+
 - ANTS dashboard: add a local Anvil wallet-flow fixture setup and testing guide, with optional authenticated test controls for epoch changes, transfer restrictions, and chain resets.
 
 - ANTS dashboard: open the connected wallet automatically for newly initiated transaction requests in the same tab. Keep explicit wallet approval, cross-tab request locking, manual recovery for resumed requests, and no automatic rebroadcasts or retries after rejection.
