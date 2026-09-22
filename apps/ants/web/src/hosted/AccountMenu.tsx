@@ -11,6 +11,14 @@ import { shortAddress } from '../format';
 import type { BuyerAuthorization, BuyerList } from './buyers';
 import type { TransactionRecord } from './activity';
 
+function chainLabel(unsupported: boolean, chainId: string): string {
+  if (unsupported) return 'Switch network';
+  return chainId === 'base-mainnet' ? 'Base' : chainId;
+}
+
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+/** Wallet connection, saved buyer accounts and transaction recovery for the standalone dashboard. */
 export function HostedAccountMenu() {
   const config = useConfig();
   const { running } = useJobs();
@@ -42,7 +50,7 @@ export function HostedAccountMenu() {
     if (!mounted) return null;
     if (!account) return <button className="btn" onClick={openConnectModal}>Connect wallet</button>;
     return <div className="hosted-account" ref={ref}>
-      <button className="btn secondary" disabled={running} onClick={openChainModal}>{chain?.unsupported ? 'Switch network' : config.chainId === 'base-mainnet' ? 'Base' : config.chainId}</button>
+      <button className="btn secondary" disabled={running} onClick={openChainModal}>{chainLabel(chain?.unsupported ?? false, config.chainId)}</button>
       <button className="btn secondary" ref={trigger} aria-expanded={open} aria-controls="hosted-account-menu" onClick={() => setOpen(value => !value)}>{shortAddress(account.address)} ▾</button>
       {open && <div className="hosted-account-menu stack" id="hosted-account-menu">
         <div className="section-label">Connected wallet</div>
@@ -67,7 +75,7 @@ export function HostedAccountMenu() {
         <form className="stack" onSubmit={event => { event.preventDefault(); void mutate(editing ? 'rename' : 'add', { address, label }).then(saved => { if (saved) setEditing(undefined); }); }}>
           <Input label="Buyer address" value={address} required disabled={!!editing || busy} onChange={event => setAddress(event.target.value)} hint="Copy the buyer address from your AntSeed app. This is not necessarily your connected wallet." />
           <Input label="Local label (optional)" value={label} maxLength={60} disabled={busy} onChange={event => setLabel(event.target.value)} placeholder="Work laptop" />
-          {/^0x[0-9a-fA-F]{40}$/.test(address) && <BuyerStatus address={address} />}
+          {ADDRESS.test(address) && <BuyerStatus address={address} />}
           {error && <p role="alert">{error}</p>}
           <button className="btn" type="submit" disabled={busy || running}>{busy ? 'Saving…' : 'Save buyer account'}</button>
           {editing && <><p className="hint">Removing this entry does not revoke on-chain authorization.</p><button className="link-button" type="button" disabled={busy || running} onClick={() => void mutate('remove', { address: editing }).then(saved => { if (saved) setEditing(undefined); })}>Remove saved buyer</button></>}
@@ -85,13 +93,14 @@ export function BuyerStatus({ address }: { address: string }) {
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
   }, [state.refresh]);
-  if (state.error) return <p className="hint" role="alert">Could not verify authorization. <button className="link-button" onClick={state.refresh}>Retry</button></p>;
+  const retry = <p className="hint" role="alert">Could not verify authorization. <button className="link-button" onClick={state.refresh}>Retry</button></p>;
+  if (state.error) return retry;
   if (!state.data || state.loading) return <p className="hint">Checking buyer authorization…</p>;
   switch (state.data.status) {
     case 'authorized': return <p className="hint">Authorized · rewards are paid to your connected wallet.</p>;
     case 'view-only': return <p className="hint">View only · connect <AddressLink value={state.data.operator} /> to claim.</p>;
     case 'unlinked': return <p className="hint">Authorization required. Open the existing AntSeed app holding this buyer identity and authorize your wallet there. Then return here and refresh.</p>;
-    case 'error': return <p className="hint" role="alert">Could not verify authorization. <button className="link-button" onClick={state.refresh}>Retry</button></p>;
+    case 'error': return retry;
   }
 }
 

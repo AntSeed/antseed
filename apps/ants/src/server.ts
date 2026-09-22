@@ -12,9 +12,9 @@ import { AntsContext, type AntsChainConfig } from './service/context.js';
 import { JobRunner } from './jobs.js';
 import { registerRoutes } from './routes.js';
 import { BrowserSigning } from './browser-signer.js';
-import { getAddress, ZeroAddress, id as eventId } from 'ethers';
+import { getAddress, ZeroAddress } from 'ethers';
 import { ViewCache } from './view-cache.js';
-import { mergePositionBarrier, parsePositionBarrier } from './service/position-barrier.js';
+import { mergePositionBarrier, parsePositionBarrier, positionIdsInReceipt } from './service/position-barrier.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -136,9 +136,9 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
     const checkpointTemporary = `${barrierPath}.${randomBytes(8).toString('hex')}.tmp`;
     await writeFile(checkpointTemporary, JSON.stringify([...context.positionReadBarriers]), { mode: 0o600 });
     await rename(checkpointTemporary, barrierPath);
-    const ids = receipt.logs.filter(log => log.address.toLowerCase() === chain.sellerPoolsAddress?.toLowerCase() && log.topics.length === 4 && log.topics[0] === eventId('Transfer(address,address,uint256)')).map(log => Number(BigInt(log.topics[3]!)));
+    const ids = positionIdsInReceipt(receipt, chain.sellerPoolsAddress);
     if (!ids.length) return;
-    const positions = await context.requirePools().positionsBatch([...new Set(ids)]);
+    const positions = await context.requirePools().positionsBatch(ids);
     for (const position of positions) if (position.owner.toLowerCase() === context.address.toLowerCase()) context.localPositionIds.set(position.id, position.owner);
     await mkdir(path.dirname(historyPath), { recursive: true, mode: 0o700 });
     const temporary = `${historyPath}.${randomBytes(8).toString('hex')}.tmp`;

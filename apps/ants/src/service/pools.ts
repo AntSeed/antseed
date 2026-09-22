@@ -126,10 +126,14 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
   const openRows = own.filter((position) => position.owner.toLowerCase() === ctx.address.toLowerCase() && !position.withdrawn && (position.closedAtEpoch === 0 || position.closedAtEpoch > epoch));
   const [totalActiveStake, ownSummary] = await Promise.all([
     current ? Promise.resolve(BigInt(current.totalActiveStake)) : safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
-    live ? Promise.resolve(new Map(live.summary.map(row => [row.agentId, { positionIds: row.positionIds, power: BigInt(row.power), stake: BigInt(row.activeStake), pending: BigInt(row.pendingStake) }]))) : ownPools(ctx, openRows, epoch),
+    live ? Promise.resolve(ownPoolsFromLive(live)) : ownPools(ctx, openRows, epoch),
   ]);
   if (liveError) display.source = { ...display.source, error: [display.source.error, liveError].filter(Boolean).join('; ') };
   return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary };
+}
+
+function ownPoolsFromLive(live: LivePositions): Map<number, OwnPool> {
+  return new Map(live.summary.map(row => [row.agentId, { positionIds: row.positionIds, power: BigInt(row.power), stake: BigInt(row.activeStake), pending: BigInt(row.pendingStake) }]));
 }
 
 /**

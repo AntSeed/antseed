@@ -8,13 +8,14 @@ import { StatTile, Tiles } from '../components/StatTile';
 import { usePageData } from '../data';
 import { formatAnts, formatBps, formatInt, toBigInt } from '../format';
 import { href } from '../router';
+import { isHostedDisconnected } from '../runtime';
 import { BuyerWalletAction } from '../wallet';
 import { Panel } from '../components/Panel';
 
 /** Your wallet: stake, power and rewards at a glance, then every position with its actions. */
 export function PositionsPage() {
   const config = useConfig();
-  const disconnected = config.mode === 'hosted' && /^0x0{40}$/i.test(config.address);
+  const disconnected = isHostedDisconnected(config);
   const walletReady = !config.browserWallet || !config.readOnly;
   const overview = usePageData(disconnected ? null : 'overview', api.overview);
   const rewards = usePageData(disconnected ? null : 'rewards', api.rewards, 5 * 60_000);

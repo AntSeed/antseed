@@ -35,7 +35,8 @@ async function usageEpochsOf(ctx: AntsContext, recognized: number[]): Promise<nu
     const participant = sameAddress(ctx.address, ZeroAddress)
       ? { seller: [], buyer: [] }
       : await indexer.participant(ctx.address, recognized.length);
-    const buyer = !ctx.buyerAddress ? { seller: [], buyer: [] } : ctx.address.toLowerCase() === ctx.buyerAddress.toLowerCase() ? participant : await indexer.participant(ctx.buyerAddress, recognized.length);
+    let buyer = { seller: [], buyer: [] } as typeof participant;
+    if (ctx.buyerAddress) buyer = sameAddress(ctx.address, ctx.buyerAddress) ? participant : await indexer.participant(ctx.buyerAddress, recognized.length);
     const active = new Set([...participant.seller.map((row) => row.epoch), ...buyer.buyer.map((row) => row.epoch)]);
     return recognized.filter((epoch) => active.has(epoch));
   } catch (error) {
@@ -66,7 +67,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   const walletConnected = !sameAddress(ctx.address, ZeroAddress);
   const agentId = walletConnected ? await agentIdOf(ctx) : 0;
 
-  // Indexed reward failures stay unavailable; the no-indexer path retains live previews.
+  // With a reward feed, a rejected snapshot leaves staker rewards unknown (null) rather than zero; without one they are previewed live.
   let historySource: RewardsView['historySource'];
   let stakerSource: RewardsView['staker']['source'];
   let stakerPositions: Array<{ id: number; agentId: number; amount: bigint; closedAtEpoch: number }> = [];
@@ -119,10 +120,10 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
         if (buyerAddress && (row.buyerAmount > 0n || row.buyerClaimed)) buyerEpochs.push({ epoch: row.epoch, amount: row.buyerAmount.toString(), claimed: row.buyerClaimed });
         buyerTotal += row.buyerAmount;
       }
-    } else if (usageRewards) {
-      for (const epoch of buyerAddress ? candidates : []) {
-        if (!ctx.buyerAddress || await usageRewards.buyerEpochClaimed(ctx.buyerAddress, epoch)) continue;
-        buyerTotal += await usageRewards.pendingBuyerReward(ctx.buyerAddress, epoch);
+    } else if (usageRewards && buyerAddress) {
+      for (const epoch of candidates) {
+        if (await usageRewards.buyerEpochClaimed(buyerAddress, epoch)) continue;
+        buyerTotal += await usageRewards.pendingBuyerReward(buyerAddress, epoch);
       }
     }
   }
@@ -137,7 +138,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
         return 0n;
       }
       const result = await legacy.pendingEmissions(ctx.address, batch);
-      if (buyerAddress) legacyBuyer += buyerAddress.toLowerCase() === ctx.address.toLowerCase() ? result.buyer : (await legacy.pendingEmissions(buyerAddress, batch)).buyer;
+      if (buyerAddress) legacyBuyer += sameAddress(buyerAddress, ctx.address) ? result.buyer : (await legacy.pendingEmissions(buyerAddress, batch)).buyer;
       return result.seller;
     });
     legacySeller = pending;

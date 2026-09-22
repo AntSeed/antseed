@@ -8,6 +8,26 @@ export interface TransactionRecord extends BrowserTransaction {
   resolved?: boolean;
 }
 
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const HEX_DATA = /^0x(?:[0-9a-fA-F]{2})*$/;
+const TRANSACTION_HASH = /^0x[0-9a-fA-F]{64}$/;
+
+function isRecordFor(record: TransactionRecord | null | undefined, wallet: string, chainId: number): boolean {
+  if (!record || record.chainId !== chainId || typeof record.id !== 'string' || !Number.isFinite(record.at)) return false;
+  if (typeof record.from !== 'string' || record.from.toLowerCase() !== wallet.toLowerCase()) return false;
+  if (!ADDRESS.test(record.to) || !HEX_DATA.test(record.data) || !/^\d+$/.test(record.value)) return false;
+  return record.submittedHash === undefined || TRANSACTION_HASH.test(record.submittedHash);
+}
+
+/** Whether a mined transaction is the one the saved approval described (same sender, target, calldata, value and nonce window). */
+function matchesRecord(transaction: { chainId: bigint; from: string; to: string | null; data: string; value: bigint; nonce: number }, record: TransactionRecord, chainId: number): boolean {
+  if (transaction.chainId !== BigInt(chainId) || getAddress(transaction.from) !== getAddress(record.from)) return false;
+  if (!transaction.to || getAddress(transaction.to) !== getAddress(record.to)) return false;
+  if (transaction.data.toLowerCase() !== record.data.toLowerCase() || transaction.value !== BigInt(record.value)) return false;
+  return transaction.nonce >= (record.nonceFloor ?? 0);
+}
+
+/** Per-wallet browser storage: signing intents and their outcome, locally confirmed positions, and the indexer read barrier. */
 export class ActivityStore {
   constructor(private readonly storage: Storage | null, private readonly chainId: number) {}
   key(wallet: string, kind: string): string {
@@ -24,7 +44,7 @@ export class ActivityStore {
   }
   transactions(wallet: string): TransactionRecord[] {
     const records = this.read<TransactionRecord[]>(wallet, 'transactions', []);
-    if (!Array.isArray(records) || records.some(record => !record || record.chainId !== this.chainId || typeof record.from !== 'string' || record.from.toLowerCase() !== wallet.toLowerCase() || typeof record.id !== 'string' || !Number.isFinite(record.at) || !/^0x[0-9a-fA-F]{40}$/.test(record.to) || !/^0x(?:[0-9a-fA-F]{2})*$/.test(record.data) || !/^\d+$/.test(record.value) || (record.submittedHash !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(record.submittedHash)))) throw new Error('Invalid saved transactions. Check your wallet before continuing.');
+    if (!Array.isArray(records) || !records.every(record => isRecordFor(record, wallet, this.chainId))) throw new Error('Invalid saved transactions. Check your wallet before continuing.');
     return records;
   }
   record(request: BrowserTransaction, buyer: string | null): void {
@@ -50,7 +70,7 @@ export class ActivityStore {
     const receipt = await provider.getTransactionReceipt(record.submittedHash);
     if (!receipt) return 'pending';
     const transaction = await provider.getTransaction(record.submittedHash);
-    if (!transaction || transaction.chainId !== BigInt(this.chainId) || getAddress(transaction.from) !== getAddress(record.from) || !transaction.to || getAddress(transaction.to) !== getAddress(record.to) || transaction.data.toLowerCase() !== record.data.toLowerCase() || transaction.value !== BigInt(record.value) || transaction.nonce < (record.nonceFloor ?? 0)) throw new Error('Transaction does not match the saved approval.');
+    if (!transaction || !matchesRecord(transaction, record, this.chainId)) throw new Error('Transaction does not match the saved approval.');
     if (receipt.status === 1) this.confirmPositionRead(record.from, receipt.blockNumber);
     this.resolve(record.from, record.id);
     return receipt.status === 1 ? 'confirmed' : 'reverted';

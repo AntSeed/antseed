@@ -13,12 +13,13 @@ import { poolLabel, poolName } from '../components/Pools';
 import { usePageData } from '../data';
 import { formatAnts, isZero, sumBig, toBigInt } from '../format';
 import { BuyerStatus } from '../hosted/AccountMenu';
+import { isHostedDisconnected } from '../runtime';
 
 const RewardRefreshContext = createContext({ updating: false, stale: false });
 
 export function RewardsPage() {
   const config = useConfig();
-  const disconnected = config.mode === 'hosted' && config.address === '0x0000000000000000000000000000000000000000';
+  const disconnected = isHostedDisconnected(config);
   const page = usePageData(disconnected ? null : 'rewards', api.rewards, 5 * 60_000);
   const data = page.data;
   if (disconnected) return <Card><h2>Your rewards</h2><p>Connect your wallet to view staking and seller rewards, then select a saved buyer account for buyer rewards.</p><BuyerWalletAction /></Card>;

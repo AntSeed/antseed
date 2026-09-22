@@ -17,6 +17,10 @@ export async function verifyBuyer(buyer: string, wallet: string, getOperator: (a
   }
 }
 
+const EMPTY: BuyerList = { buyers: [], selected: null };
+const cleanLabel = (label: unknown) => String(label ?? '').trim().slice(0, 60);
+
+/** Buyer accounts a wallet has saved, per chain; falls back to memory when browser storage is unusable. */
 export class BuyerStore {
   private memory = new Map<string, BuyerList>();
   persistent = true;
@@ -28,10 +32,10 @@ export class BuyerStore {
   }
   load(chainId: number, wallet: string): BuyerList {
     const key = this.key(chainId, wallet);
-    if (!this.storage || !this.persistent) return this.memory.get(key) ?? { buyers: [], selected: null };
+    if (!this.storage || !this.persistent) return this.memory.get(key) ?? EMPTY;
     try {
       const raw = this.storage.getItem(key);
-      if (!raw) return this.memory.get(key) ?? { buyers: [], selected: null };
+      if (!raw) return this.memory.get(key) ?? EMPTY;
       const parsed = JSON.parse(raw) as BuyerList;
       if (!Array.isArray(parsed.buyers)) throw new Error('Invalid saved buyer accounts.');
       const buyers: SavedBuyer[] = [];
@@ -44,7 +48,7 @@ export class BuyerStore {
       return list;
     } catch {
       this.persistent = false;
-      return this.memory.get(key) ?? { buyers: [], selected: null };
+      return this.memory.get(key) ?? EMPTY;
     }
   }
   save(chainId: number, wallet: string, list: BuyerList): void {
@@ -62,7 +66,7 @@ export class BuyerStore {
     const address = this.address(value);
     const list = this.load(chainId, wallet);
     if (list.buyers.some(buyer => buyer.address === address)) throw new Error('This buyer is already saved. Select it from the list.');
-    const next = { buyers: [...list.buyers, { address, label: label.trim().slice(0, 60) }], selected: address };
+    const next = { buyers: [...list.buyers, { address, label: cleanLabel(label) }], selected: address };
     this.save(chainId, wallet, next);
     return next;
   }
@@ -75,7 +79,7 @@ export class BuyerStore {
   }
   rename(chainId: number, wallet: string, address: string, label: string): BuyerList {
     const list = this.load(chainId, wallet);
-    const next = { ...list, buyers: list.buyers.map(buyer => buyer.address === address ? { ...buyer, label: label.trim().slice(0, 60) } : buyer) };
+    const next = { ...list, buyers: list.buyers.map(buyer => buyer.address === address ? { ...buyer, label: cleanLabel(label) } : buyer) };
     this.save(chainId, wallet, next);
     return next;
   }

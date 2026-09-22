@@ -11,12 +11,13 @@ import { StakeForm } from '../components/StakeForm';
 import { usePageData } from '../data';
 import { epochStartAt, formatAnts, formatDuration, formatInt, formatUsdcCompact, formatUtc, shortAddress } from '../format';
 import { useNow } from '../hooks';
+import { isHostedDisconnected } from '../runtime';
 import { BuyerWalletAction } from '../wallet';
 
 export function StakePage() {
   const config = useConfig();
   const walletReady = !config.browserWallet || !config.readOnly;
-  const hostedDisconnected = config.mode === 'hosted' && /^0x0{40}$/i.test(config.address);
+  const hostedDisconnected = isHostedDisconnected(config);
   // Buyer rewards are readable before connection; wallet positions are not.
   const overview = usePageData('overview', api.overview);
   const positions = usePageData(walletReady ? 'positions:current' : null, api.positions);

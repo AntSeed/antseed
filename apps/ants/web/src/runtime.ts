@@ -16,3 +16,8 @@ export function dashboardTransport(): DashboardTransport | null {
 export function isHosted(): boolean {
   return transport?.mode === 'hosted';
 }
+
+/** The standalone dashboard before a wallet connects: the address is the zero address placeholder. */
+export function isHostedDisconnected(config: { mode?: 'local' | 'hosted'; address: string }): boolean {
+  return config.mode === 'hosted' && /^0x0{40}$/i.test(config.address);
+}
