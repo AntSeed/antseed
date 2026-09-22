@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- CLI: add `antseed buyer set-authorized-wallet` to open the AI VPN browser flow, where a connected external wallet becomes the buyer's initial authorized wallet and submits the transaction. Add `--self` for explicitly authorizing the buyer hot wallet instead, plus `--no-open` for printing the secure local URL. Skip redundant self-authorization, reject replacement of a different existing wallet, and document withdrawal authority and transfer limitations.
+
 - ANTS dashboard: add a local Anvil wallet-flow fixture setup and testing guide, with optional authenticated test controls for epoch changes, transfer restrictions, and chain resets.
 
 - ANTS dashboard: open the connected wallet automatically for newly initiated transaction requests in the same tab. Keep explicit wallet approval, cross-tab request locking, manual recovery for resumed requests, and no automatic rebroadcasts or retries after rejection.
