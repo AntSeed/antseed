@@ -54,6 +54,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Payments: reconnect to retained channels without adding the seller's minimum budget to buyer-signed spend. Sellers safely acknowledge replayed authorizations and restore request access while preserving earned payments and zero-spend closure without buyer withdrawal or ghost penalties.
+
 - ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
 
 - ANTS dashboard: separate buyer, staking, and seller rewards; show actual seller names and per-pool amounts when restaking; and animate reward amounts only after confirmed transactions while disabling stale actions. Preserve wallet prompts and displayed balances while approval is pending, and support retrying failed refreshes.
