@@ -89,7 +89,7 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
-import { eligibleRouterCandidates, executeRouterSelection } from './router-execution.js'
+import { eligibleRouterCandidates, executeRouterSelection, requestForRouterCandidate } from './router-execution.js'
 import type { DepositWatcher } from './deposit-watcher.js'
 import {
   recordPeerFailureEntry,
@@ -169,6 +169,7 @@ export interface BuyerProxyConfig {
 // because model_not_found already has dedicated unadvertise handling while a
 // generic 404 would repeat identically on every peer.
 const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
+const ROUTER_FALLBACK_STATUS_CODES = new Set([401, 403, 429, 500, 502, 503])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
@@ -843,7 +844,7 @@ export class BuyerProxy {
    * `counted` guards requestCount: one request can produce several spend
    * deltas (buyer- and seller-initiated auth both advance the cumulative).
    */
-  private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
+  private readonly _requestConversations = new Map<string, { convId: string; counted: boolean; purpose?: 'routing' }>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -915,17 +916,18 @@ export class BuyerProxy {
     if (!event.requestId) return
     const entry = this._requestConversations.get(event.requestId)
     if (!entry) return
+    const routing = entry.purpose === 'routing'
     this._conversations.addSpend(
       entry.convId,
       {
         amountUsdc: event.amountUsdc,
-        inputTokens: event.inputTokens,
-        cachedInputTokens: event.cachedInputTokens,
-        outputTokens: event.outputTokens,
+        inputTokens: routing ? '0' : event.inputTokens,
+        cachedInputTokens: routing ? '0' : event.cachedInputTokens,
+        outputTokens: routing ? '0' : event.outputTokens,
       },
-      !entry.counted,
+      !routing && !entry.counted,
     )
-    entry.counted = true
+    if (!routing) entry.counted = true
   }
 
   /**
@@ -933,8 +935,12 @@ export class BuyerProxy {
    * a grace window — the seller-initiated auth path can land just after the
    * response is returned. Bounded so a leaked id can't grow the map forever.
    */
-  private _trackRequestConversation(requestId: string, convId: string): void {
-    this._requestConversations.set(requestId, { convId, counted: false })
+  private _trackRequestConversation(requestId: string, convId: string, parentRequestId?: string, purpose?: 'routing'): void {
+    if (purpose && this._requestConversations.has(requestId)) throw new Error('Routing request ID already tracked')
+    const parent = parentRequestId ? this._requestConversations.get(parentRequestId) : undefined
+    this._requestConversations.set(requestId, purpose
+      ? { convId, counted: false, purpose }
+      : parent?.convId === convId ? parent : { convId, counted: false })
     while (this._requestConversations.size > MAX_TRACKED_REQUEST_CONVERSATIONS) {
       const oldest = this._requestConversations.keys().next().value
       if (oldest === undefined) break
@@ -2310,23 +2316,40 @@ export class BuyerProxy {
       if (!res.writableEnded) onClientAbort()
     })
     const selectedRouter = this._node.router
-    let routerSelected = false
+    let routerSelection: Awaited<ReturnType<typeof executeRouterSelection>> | null = null
+    const originalRoutingRequest = serializedReq
     const rawService = extractRequestedService(serializedReq)
     const autoRequested = selectedRouter?.selectRoute && (rawService === selectedRouter.autoRouteServiceId || rawService === ROUTED_MODEL_ALIAS)
     if (autoRequested && storedConversation?.peerSource === 'user' && chatPinnedModel) {
       serializedReq = withRoutedModel(serializedReq, chatPinnedModel)
     } else if (autoRequested && !getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)) {
       try {
+        if (conversationIdentity?.isUserThread && trackedConversationKey
+          && (storedConversation || !isTitleGenerationRequest(conversationBody))) {
+          const tracked = this._conversations.touch({
+            tool: conversationIdentity.tool,
+            sessionKey: trackedConversationKey,
+            snippet: storedConversation?.snippet ? null : extractFirstUserSnippet(conversationBody),
+            lastModel: null,
+          })
+          trackedConversationId = tracked.id
+          this._trackRequestConversation(serializedReq.requestId, tracked.id)
+        }
         const routingPeers = await this._getPeers({ forceRefresh: true })
         const candidates = eligibleRouterCandidates(serializedReq, routingPeers, requiredParameters, this._routingPreferences,
           (request, peer) => peerAllowedByPolicy(selectedRouter as BuyerPolicyRouter, request, peer)
             && !isCoolingDown(this._peerHealth.get(peer.peerId), this._now()))
-        serializedReq = await executeRouterSelection({
+        routerSelection = await executeRouterSelection({
           node: this._node, router: selectedRouter, request: serializedReq, peers: routingPeers, candidates,
           conversationKey: conversationIdentity && trackedConversationKey ? `${conversationIdentity.tool}:${trackedConversationKey}` : null,
           signal: AbortSignal.any([clientAbortController.signal, AbortSignal.timeout(120_000)]),
+          onRoutingRequest: requestId => {
+            if (conversationIdentity?.isUserThread && trackedConversationId) {
+              this._trackRequestConversation(requestId, trackedConversationId, undefined, 'routing')
+            }
+          },
         })
-        routerSelected = true
+        serializedReq = routerSelection.request
       } catch (error) {
         if (!res.destroyed) {
           res.writeHead(502, { 'content-type': 'application/json' })
@@ -2419,6 +2442,12 @@ export class BuyerProxy {
         // payment layer signs for it (see _attributeSpend).
         this._trackRequestConversation(serializedReq.requestId, tracked.id)
       }
+    }
+
+    if (routerSelection) {
+      await this._dispatchRouterRecommendations(res, originalRoutingRequest, routerSelection, requiredParameters,
+        trackedConversationId, clientAbortController.signal)
+      return
     }
 
     const {
@@ -2832,14 +2861,6 @@ export class BuyerProxy {
       return
     }
     const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
-    if (routerSelected && !eligibleRouterCandidates(pinnedRequest, [selectedPeer], requiredParameters, this._routingPreferences,
-      (request, peer) => peerAllowedByPolicy(policyRouter, request, peer)
-        && !isCoolingDown(this._peerHealth.get(peer.peerId), this._now()))
-      .some(candidate => candidate.serviceId === pinnedServiceId && candidate.provider === selectedPlan?.provider)) {
-      res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { type: 'routing_error', message: 'Recommended destination is no longer eligible' } }))
-      return
-    }
     if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
@@ -2895,6 +2916,59 @@ export class BuyerProxy {
       // peer for an explicit pin, so surface the error to the client.
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
+    }
+  }
+
+  private async _dispatchRouterRecommendations(
+    res: ServerResponse,
+    originalRequest: SerializedHttpRequest,
+    selection: Awaited<ReturnType<typeof executeRouterSelection>>,
+    requiredParameters: readonly string[],
+    conversationId: string | null,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const router = this._node.router
+    const protocol = detectRequestServiceApiProtocol(originalRequest)
+    let lastFailure: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
+    for (const recommendation of selection.candidates) {
+      if (signal.aborted || res.destroyed || res.writableEnded) return
+      const peers = await this._getPeers({ forceRefresh: true })
+      const candidate = eligibleRouterCandidates(originalRequest, peers, requiredParameters, this._routingPreferences,
+        (request, peer) => peerAllowedByPolicy(router as BuyerPolicyRouter | null, request, peer)
+          && !isCoolingDown(this._peerHealth.get(peer.peerId), this._now()))
+        .find(candidate => candidate.peerId === recommendation.peerId
+          && candidate.provider === recommendation.provider && candidate.serviceId === recommendation.serviceId)
+      if (!candidate) continue
+      const plan = resolvePeerRoutePlan(candidate.peer, protocol, candidate.serviceId, candidate.provider, 'strict')
+      if (!plan) continue
+      if (this._verifier) {
+        const outcome = await this._verifyPeer(candidate.peer,
+          chosenId => makeVerifierReach(this._node, candidate.peer, chosenId, signal), signal)
+        if (!outcome.ok) continue
+      }
+      if (signal.aborted || res.destroyed || res.writableEnded) return
+      const request = { ...requestForRouterCandidate(originalRequest, candidate), requestId: randomUUID() }
+      if (conversationId) this._trackRequestConversation(request.requestId, conversationId, originalRequest.requestId)
+      const result = await this._dispatchToPeer(res, request, candidate.peer,
+        new Map([[candidate.peerId, plan]]), protocol, candidate.serviceId, candidate.provider,
+        router, ROUTER_FALLBACK_STATUS_CODES, false, signal)
+      if (result.done) {
+        if (conversationId && res.statusCode >= 200 && res.statusCode < 300) {
+          this._conversations.recordRoutedModel(conversationId, `${candidate.peerId}@${candidate.serviceId}`)
+        }
+        return
+      }
+      lastFailure = result
+      if (signal.aborted || res.destroyed || res.writableEnded) return
+      if (result.errorMessage !== null || result.responseHeaders[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() === 'buyer') break
+    }
+    if (signal.aborted || res.destroyed || res.writableEnded) return
+    if (lastFailure && !lastFailure.done) {
+      res.writeHead(lastFailure.statusCode, lastFailure.responseHeaders)
+      res.end(lastFailure.responseBody)
+    } else {
+      res.writeHead(502, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { type: 'routing_error', message: 'No eligible, verified recommended destination remains' } }))
     }
   }
 

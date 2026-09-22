@@ -100,6 +100,27 @@ completed entries; unresolved entries are not evicted to make room. This is not
 durable exactly-once execution across restarts. SpendingAuth itself retains the
 existing durable channel-store behavior. No database migration is introduced.
 
+## Ranked inference fallback
+
+The buyer proxy can use additional destinations from an already accepted router
+response without another routing purchase. Each inference attempt has a distinct
+request ID and is billed separately through normal inference execution. Attempts
+are linked to the originating conversation without counting extra user turns.
+Routing-service requests are linked to that conversation before dispatch, using
+the existing local request-ID-to-conversation map and signed-spend events. Their
+fees contribute to conversation spend, but not inference token totals or request
+counts. An accepted routing fee remains attributed if inference subsequently
+fails. Late authorizations use the same bounded tracking map; no new wire fields,
+payment API, or database migration is introduced.
+
+Fallback only uses accepted destinations that still satisfy current buyer policy
+and required verification. Exact peer recommendations never expand to other peers;
+model-only recommendations use the eligible sellers resolved for that model.
+Duplicate destinations are removed. Cancellation, buyer faults, payment-required
+responses, HTTP timeouts, ambiguous transport failures, and started streams stop
+fallback. Neither another router call nor an unlisted destination is used when
+the list is exhausted. No changes apply to ordinary token/image routing.
+
 ## Compatibility verification
 
 After building the SDK, run `node scripts/check-response-fee-compatibility.mjs`.

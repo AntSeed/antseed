@@ -15,6 +15,7 @@ import {
   computeTrustScore,
   type ModelRoutingPreferences,
   type Router,
+  type RouteRecommendation,
   type SerializedHttpRequest,
   type PeerInfo,
   type SerializedHttpResponse,
@@ -90,6 +91,340 @@ test('selected router failure never silently uses an inference seller', async ()
   const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
   assert.equal(response.statusCode, 502)
   assert.match(response.body, /Routing service unavailable/)
+})
+
+function makeRankedRoutingFixture(statuses: number[] = [503, 200], recommendations?: RouteRecommendation[]) {
+  const peers = ['a', 'b', 'c'].map(seed => {
+    const peer = makePeer(seed, ['openai'])
+    peer.reputationScore = 90
+    const services = Object.fromEntries(['model-a', 'model-b'].map(service => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]))
+    peer.providerPricing = { openai: { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services } }
+    peer.providerServiceApiProtocols = { openai: { services: { 'model-a': ['openai-chat-completions'], 'model-b': ['openai-chat-completions'] } } }
+    return peer
+  })
+  const calls = { routing: 0, requests: [] as Array<{ peer: PeerInfo; request: SerializedHttpRequest }> }
+  const router: Router = {
+    ...permissiveRouter(), selectPeer: () => peers[0]!, autoRouteServiceId: 'levanto-auto',
+    async selectRoute(_request, _peers, context) {
+      calls.routing += 1
+      const routes = recommendations ?? [
+        { serviceId: 'model-a', peerId: peers[0]!.peerId },
+        { serviceId: 'model-b', peerId: peers[1]!.peerId },
+      ]
+      assert.equal(context.acceptRecommendations(routes), true)
+      return routes
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers(peers, peers, router)
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    const statusCode = statuses[calls.requests.length] ?? 200
+    calls.requests.push({ peer, request })
+    return { requestId: request.requestId, statusCode, headers: { 'content-type': 'application/json' },
+      body: Buffer.from(statusCode >= 400 ? '{"error":{"message":"upstream unavailable"}}' : '{"choices":[]}') }
+  }
+  return { proxy, peers, calls }
+}
+
+for (const status of [401, 403, 429, 500, 502, 503]) {
+  test(`ranked routing falls back after ${status} with one routing call and separate inference IDs`, async () => {
+    const { proxy, peers, calls } = makeRankedRoutingFixture([status, 200])
+    const body = { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }], temperature: 0.2 }
+    const response = await invokeProxy(proxy, makeProxyRequest({ body }))
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(calls.routing, 1)
+    assert.deepEqual(calls.requests.map(entry => entry.peer.peerId), [peers[0]!.peerId, peers[1]!.peerId])
+    assert.equal(new Set(calls.requests.map(entry => entry.request.requestId)).size, 2)
+    assert.deepEqual(calls.requests.map(entry => JSON.parse(Buffer.from(entry.request.body).toString())), [
+      { ...body, model: 'model-a' }, { ...body, model: 'model-b' },
+    ])
+  })
+}
+
+for (const status of [400, 402, 404, 408, 422, 504]) {
+  test(`ranked routing stops on ${status} without another purchase or inference attempt`, async () => {
+    const { proxy, calls } = makeRankedRoutingFixture([status, 200])
+    const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+    assert.equal(response.statusCode, status, response.body)
+    assert.equal(calls.routing, 1)
+    assert.equal(calls.requests.length, 1)
+  })
+}
+
+test('ranked routing exhausts only listed destinations and never purchases another decision', async () => {
+  const { proxy, peers, calls } = makeRankedRoutingFixture([503, 503])
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 503)
+  assert.equal(calls.routing, 1)
+  assert.deepEqual(calls.requests.map(entry => entry.peer.peerId), [peers[0]!.peerId, peers[1]!.peerId])
+})
+
+test('ranked routing rechecks eligibility before fallback', async () => {
+  const { proxy, peers, calls } = makeRankedRoutingFixture()
+  const sendRequest = (proxy as any)._node.sendRequest
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    peers[1]!.maxConcurrency = 1
+    peers[1]!.currentLoad = 1
+    return sendRequest(peer, request)
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 503)
+  assert.equal(calls.requests.length, 1)
+})
+
+test('ranked routing skips a recommendation that fails required verification', async () => {
+  const { proxy, peers, calls } = makeRankedRoutingFixture([200])
+  ;(proxy as any)._verifier = { require: true, prefer: ['antseed-verifier'] }
+  const verifiedPeers: string[] = []
+  ;(proxy as any)._verifyPeer = async (peer: PeerInfo) => {
+    verifiedPeers.push(peer.peerId)
+    return { ok: peer.peerId === peers[1]!.peerId, verified: peer.peerId === peers[1]!.peerId }
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(verifiedPeers, [peers[0]!.peerId, peers[1]!.peerId])
+  assert.deepEqual(calls.requests.map(entry => entry.peer.peerId), [peers[1]!.peerId])
+})
+
+test('ranked routing can try another recommended model on the same peer with a new billing ID', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture([503, 200], [
+    { serviceId: 'model-a', peerId: 'a'.repeat(40) },
+    { serviceId: 'model-b', peerId: 'a'.repeat(40) },
+    { serviceId: 'model-b', peerId: 'a'.repeat(40) },
+  ])
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(calls.requests.length, 2)
+  assert.equal(calls.requests[0]!.peer.peerId, calls.requests[1]!.peer.peerId)
+  assert.notEqual(calls.requests[0]!.request.requestId, calls.requests[1]!.request.requestId)
+})
+
+test('ranked routing expands a model-only entry without widening an exact entry', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture([503, 503, 200], [
+    { serviceId: 'model-a', peerId: 'b'.repeat(40) },
+    { serviceId: 'model-b' },
+  ])
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(calls.requests.map(entry => [entry.peer.peerId, JSON.parse(Buffer.from(entry.request.body).toString()).model]), [
+    ['b'.repeat(40), 'model-a'], ['a'.repeat(40), 'model-b'], ['b'.repeat(40), 'model-b'],
+  ])
+})
+
+test('ranked routing stops on buyer-attributed failures', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture()
+  const sendRequest = (proxy as any)._node.sendRequest
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    const response = await sendRequest(peer, request)
+    response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER] = 'buyer'
+    return response
+  }
+  await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(calls.requests.length, 1)
+})
+
+test('ranked routing never retries an ambiguous transport failure', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture()
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    calls.requests.push({ peer, request })
+    throw new Error('Connection closed after dispatch')
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }))
+  assert.equal(response.statusCode, 502)
+  assert.equal(calls.requests.length, 1)
+})
+
+test('ranked routing never falls back after streaming has started', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture()
+  ;(proxy as any)._node.sendRequestStream = async (peer: PeerInfo, request: SerializedHttpRequest, callbacks: {
+    onResponseStart: (response: SerializedHttpResponse, metadata: { streaming: boolean }) => void;
+  }) => {
+    calls.requests.push({ peer, request })
+    callbacks.onResponseStart({ requestId: request.requestId, statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' }, body: Buffer.from('data: partial\n\n') }, { streaming: true })
+    throw new Error('Stream disconnected')
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [], stream: true } }))
+  assert.equal(response.statusCode, 200)
+  assert.match(response.body, /partial/)
+  assert.equal(calls.requests.length, 1)
+})
+
+test('ranked routing can fall back before a requested stream starts', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture()
+  ;(proxy as any)._node.sendRequestStream = async (peer: PeerInfo, request: SerializedHttpRequest, callbacks: {
+    onResponseStart: (response: SerializedHttpResponse, metadata: { streaming: boolean }) => void;
+  }) => {
+    calls.requests.push({ peer, request })
+    const response = { requestId: request.requestId, statusCode: calls.requests.length === 1 ? 503 : 200,
+      headers: { 'content-type': 'text/event-stream' }, body: Buffer.from('data: response\n\n') }
+    callbacks.onResponseStart(response, { streaming: response.statusCode === 200 })
+    return response
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [], stream: true } }))
+  assert.equal(response.statusCode, 200)
+  assert.equal(calls.requests.length, 2)
+  assert.equal(calls.routing, 1)
+})
+
+test('ranked routing stops on cancellation between attempts', async () => {
+  const { proxy, calls } = makeRankedRoutingFixture()
+  const response = makeProxyResponse()
+  let close: (() => void) | undefined
+  response.once = (...args: unknown[]) => { close = args[1] as () => void; return response }
+  const sendRequest = (proxy as any)._node.sendRequest
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    const result = await sendRequest(peer, request)
+    close!()
+    return result
+  }
+  await (proxy as any)._handleRequest(makeProxyRequest({ body: { model: 'levanto-auto', messages: [] } }), response)
+  assert.equal(calls.requests.length, 1)
+})
+
+test('ranked inference attempts share conversation spend attribution without counting extra turns', async () => {
+  const { proxy, calls, peers } = makeRankedRoutingFixture()
+  const session = randomUUID()
+  const sendRequest = (proxy as any)._node.sendRequest
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    const result = await sendRequest(peer, request)
+    ;(proxy as any)._attributeSpend({ sellerPeerId: peer.peerId, requestId: request.requestId, amountUsdc: '1000',
+      inputTokens: '1', cachedInputTokens: '0', outputTokens: '1', outputImages: '0' })
+    return result
+  }
+  const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 200)
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(conversation.spentUsdc, '2000')
+  assert.equal(conversation.requestCount, 1)
+  assert.equal(conversation.lastModel, `${peers[1]!.peerId}@model-b`)
+  assert.equal(calls.requests.length, 2)
+})
+
+function makeRoutingSpendFixture(options: { late?: boolean; rejected?: boolean; inferenceStatuses?: number[]; routingRequestId?: string } = {}) {
+  const fixture = makeRankedRoutingFixture(options.inferenceStatuses ?? [200])
+  const node = (fixture.proxy as any)._node
+  const selectRoute = node.router.selectRoute.bind(node.router)
+  const sendRequest = node.sendRequest
+  const spend = (requestId: string, amountUsdc: string, inputTokens: string) => {
+    ;(fixture.proxy as any)._attributeSpend({ sellerPeerId: fixture.peers[0]!.peerId, requestId, amountUsdc,
+      inputTokens, cachedInputTokens: '0', outputTokens: inputTokens, outputImages: '0' })
+  }
+  const pendingFees: string[] = []
+  const snapshots: Array<{ spentUsdc: string; requestCount: number }> = []
+  node.router.selectRoute = async (request: SerializedHttpRequest, peers: PeerInfo[], context: Parameters<NonNullable<Router['selectRoute']>>[2]) => {
+    await context.sendRequest(peers[0]!, { ...request, requestId: options.routingRequestId ?? randomUUID(), path: '/_antseed/route' }, {})
+    if (options.rejected) throw new Error('Recommendation rejected')
+    return selectRoute(request, peers, context)
+  }
+  node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    if (request.path === '/_antseed/route') {
+      pendingFees.push(request.requestId)
+      if (!options.late && !options.rejected) spend(request.requestId, '1000', '9')
+      const tracked = (fixture.proxy as any)._requestConversations.get(request.requestId)
+      if (tracked) {
+        const conversation = (fixture.proxy as any)._conversations.get(tracked.convId)
+        snapshots.push({ spentUsdc: conversation.spentUsdc, requestCount: conversation.requestCount })
+      }
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: new Uint8Array() }
+    }
+    const response = await sendRequest(peer, request)
+    if (response.statusCode === 200) spend(request.requestId, '20000', '4')
+    return response
+  }
+  return { ...fixture, pendingFees, snapshots, spend }
+}
+
+test('routing fees are attributed before inference without inflating turns or inference tokens', async () => {
+  const { proxy, snapshots } = makeRoutingSpendFixture()
+  const session = randomUUID()
+  const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(snapshots, [{ spentUsdc: '1000', requestCount: 0 }])
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(conversation.spentUsdc, '21000')
+  assert.equal(conversation.requestCount, 1)
+  assert.equal(conversation.inputTokens, '4')
+  assert.equal(conversation.outputTokens, '4')
+})
+
+test('late routing authorization is still attributed after inference finishes', async () => {
+  const { proxy, pendingFees, spend } = makeRoutingSpendFixture({ late: true })
+  const session = randomUUID()
+  await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal((proxy as any)._conversations.get(`vpr:${session}`).spentUsdc, '20000')
+  spend(pendingFees[0]!, '1000', '0')
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(conversation.spentUsdc, '21000')
+  assert.equal(conversation.requestCount, 1)
+})
+
+test('routing spend stays on the conversation when all inference destinations fail', async () => {
+  const { proxy } = makeRoutingSpendFixture({ inferenceStatuses: [503, 503] })
+  const session = randomUUID()
+  const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 503)
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(conversation.spentUsdc, '1000')
+  assert.equal(conversation.requestCount, 0)
+  assert.equal(conversation.inputTokens, '0')
+})
+
+test('rejected routing responses do not invent a conversation charge', async () => {
+  const { proxy, calls } = makeRoutingSpendFixture({ rejected: true })
+  const session = randomUUID()
+  const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 502)
+  assert.equal(calls.requests.length, 0)
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(conversation.spentUsdc, '0')
+  assert.equal(conversation.requestCount, 0)
+})
+
+test('simultaneous routing purchases on one seller remain attributed to separate chats', async () => {
+  const { proxy } = makeRoutingSpendFixture()
+  const sessions = [randomUUID(), randomUUID()]
+  await Promise.all(sessions.map(session => invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))))
+  for (const session of sessions) {
+    const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+    assert.equal(conversation.spentUsdc, '21000')
+    assert.equal(conversation.requestCount, 1)
+  }
+})
+
+test('subagent routing fees roll up to the parent conversation', async () => {
+  const { proxy } = makeRoutingSpendFixture()
+  const parent = randomUUID()
+  const child = randomUUID()
+  await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-session-id': child, 'x-parent-session-id': parent },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  const conversations = (proxy as any)._conversations.list().filter((conversation: { sessionKey: string }) => conversation.sessionKey === parent)
+  assert.equal(conversations.length, 1)
+  assert.equal(conversations[0].spentUsdc, '21000')
+  assert.equal(conversations[0].requestCount, 1)
+})
+
+test('reused routing IDs cannot move a late payment into another conversation', async () => {
+  const { proxy, spend } = makeRoutingSpendFixture({ late: true, routingRequestId: randomUUID() })
+  const first = randomUUID()
+  const second = randomUUID()
+  const firstResponse = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': first },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(firstResponse.statusCode, 200)
+  const routingId = [...(proxy as any)._requestConversations.entries()]
+    .find(([, entry]: any) => entry.convId === `vpr:${first}` && entry.purpose === 'routing')![0]
+  const secondResponse = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': second },
+    body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(secondResponse.statusCode, 502)
+  assert.match(secondResponse.body, /already tracked/)
+  spend(routingId, '1000', '0')
+  assert.equal((proxy as any)._conversations.get(`vpr:${first}`).spentUsdc, '21000')
+  assert.equal((proxy as any)._conversations.get(`vpr:${second}`).spentUsdc, '0')
 })
 
 test('existing required CLI verification rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {

@@ -38,8 +38,15 @@ does not require `LEVANTO_BASE_URL` or `LEVANTO_API_KEY`.
 
 `LEVANTO_SELLER_PEER_ID` optionally restricts the routing-service seller;
 otherwise the adapter chooses the cheapest compatible advertised offer within
-the fee cap. `LEVANTO_CQT` accepts 1, 3, 5, 7, or 9 and defaults to 5. Existing
+the fee cap. `ANTSEED_MAX_ROUTING_FEE_MICRO_USDC` is required and has no default;
+the example's 1000 is a buyer limit, not a default or the amount automatically
+charged. The seller's exact advertised fee is charged for an accepted response.
+`LEVANTO_CQT` accepts 1, 3, 5, 7, or 9 and defaults to 5. Existing
 local-router reputation, pricing, failure, and staleness policies also apply.
+The buyer hook additionally enforces `buyer.routingPreferences.maxInputUsdPerMillion`
+(CLI default: 25) against discovered inference input prices. This is an existing
+AntSeed preference, not the recommendation price. The adapter sends eligible peer
+IDs to Levanto; the buyer checks the returned model/peer against its eligible offers.
 
 The buyer calls the routing service through normal `sendRequest`. Its acceptance
 callback parses Levanto's response and requires an eligible inference destination
@@ -47,10 +54,25 @@ before authorizing the fee. Estimated prices returned by Levanto do not establis
 the actual inference price. The original messages, tools, and streaming settings
 then go through normal inference execution against the selected seller/model.
 
+The buyer tries eligible ranked destinations in order, without another routing
+purchase. Each inference attempt starts from the original payload with a new
+billing request ID and freshly checked buyer policy, availability, and required
+verification. Explicit retryable responses (401, 403, 429, 500, 502, 503) can
+advance to the next destination, but buyer-attributed errors, payment-required
+responses, HTTP timeouts (408/504), ambiguous transport failures, cancellation,
+and started streams stop fallback. Exhausting the list returns an error; the
+buyer never adds an unlisted model or switches routers. Each exact destination
+is attempted at most once per inference request. Already-incurred inference
+charges are not refunded by fallback.
+
+The shared buyer hook also accepts model-only recommendations and orders eligible
+sellers using the existing buyer policy. Levanto's current contract still requires
+both `model` and `peer`; its plugin owns any future vendor-format changes.
+
 Recommendations are reused for unchanged latest user text within the same
 identified conversation, subject to current eligibility. The cache is in memory
 and bounded to 500 conversations. Unidentified conversations route each request.
-There is no new ranked failover, day-pass logic, usage-observation ledger, UI, or
+There is no day-pass logic, usage-observation ledger, UI, or
 reasoning-capability metadata. Router-added reasoning overrides fail closed until
 the selected seller's exact supported choices can be verified. The original
 client's inference parameters are preserved by normal request adaptation.
@@ -59,6 +81,10 @@ This initial adapter accepts `messages` with user text, not Responses API `input
 Unsupported input fails before a paid routing call. Routing failures do not
 silently switch to another router. An accepted recommendation is billed even
 if the subsequent, separately billed inference fails.
+Routing charges are included in the originating conversation's spend, including
+late authorization and inference-failure cases. They do not add inference tokens
+or count as another inference request. Requests without a tracked user conversation
+remain billed normally without creating a synthetic chat.
 
 ## Seller setup
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo, Router, SerializedHttpRequest } from '@antseed/node'
-import { eligibleRouterCandidates, executeRouterSelection, resolveRouterRecommendation } from './router-execution.js'
+import { eligibleRouterCandidates, executeRouterSelection, resolveRouterRecommendation, resolveRouterRecommendations } from './router-execution.js'
 
 const peer = {
   peerId: 'a'.repeat(40) as PeerInfo['peerId'], providers: ['openai'], lastSeen: Date.now(), reputationScore: 90,
@@ -45,11 +45,44 @@ test('buyer handoff preserves inference payload and sets the resolved seller/pro
     node: { sendRequest: async () => { throw new Error('unexpected network request') } },
     router, request, peers: [peer], candidates: candidates(), conversationKey: 'conversation', signal: new AbortController().signal,
   })
-  assert.equal(result.requestId, 'original')
-  assert.equal(result.headers['x-antseed-pin-peer'], peer.peerId)
-  assert.equal(result.headers['x-antseed-provider'], 'openai')
-  assert.deepEqual(JSON.parse(Buffer.from(result.body).toString()), { model: 'model-a', messages: [{ role: 'user', content: 'Hello' }], stream: true })
+  assert.equal(result.request.requestId, 'original')
+  assert.equal(result.request.headers['x-antseed-pin-peer'], peer.peerId)
+  assert.equal(result.request.headers['x-antseed-provider'], 'openai')
+  assert.deepEqual(JSON.parse(Buffer.from(result.request.body).toString()), { model: 'model-a', messages: [{ role: 'user', content: 'Hello' }], stream: true })
+  assert.equal(result.candidates.length, 1)
   assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'levanto-auto')
+})
+
+test('ranked recommendations expand model-only entries in policy order and deduplicate exact destinations', () => {
+  const first = candidates()[0]!
+  const second = { ...first, peerId: 'b'.repeat(40) as PeerInfo['peerId'] }
+  const third = { ...first, serviceId: 'model-b' }
+  const available = [first, second, third]
+  const resolved = resolveRouterRecommendations([
+    { serviceId: 'model-a', peerId: second.peerId },
+    { serviceId: 'model-b' },
+    { serviceId: 'model-a' },
+    { serviceId: 'model-a', peerId: second.peerId },
+  ], available)
+  assert.deepEqual(resolved, [second, third, first])
+  assert.deepEqual(resolveRouterRecommendations([{ serviceId: 'model-a', peerId: second.peerId }], available), [second])
+})
+
+test('a plugin cannot change fallback destinations after response acceptance', async () => {
+  const available = candidates()
+  available.push({ ...available[0]!, serviceId: 'model-b' })
+  const router: Router = {
+    selectPeer: () => null, onResult: () => {},
+    async selectRoute(_request, _peers, context) {
+      assert.equal(context.acceptRecommendations([{ serviceId: 'model-a' }, { serviceId: 'model-b' }]), true)
+      assert.equal(context.acceptRecommendations([{ serviceId: 'model-a' }]), false)
+      return [{ serviceId: 'model-a' }]
+    },
+  }
+  await assert.rejects(executeRouterSelection({
+    node: { sendRequest: async () => { throw new Error('unused') } }, router, request, peers: [peer],
+    candidates: available, conversationKey: null, signal: new AbortController().signal,
+  }), /no eligible/)
 })
 
 test('explicit routing fails closed on decline and respects cancellation even if plugin ignores it', async () => {
@@ -61,4 +94,41 @@ test('explicit routing fails closed on decline and respects cancellation even if
   const pending = executeRouterSelection({ ...args, signal: abort.signal })
   abort.abort(new Error('client disconnected'))
   await assert.rejects(pending, /client disconnected/)
+})
+
+test('routing purchases are registered before dispatch and retain their own immutable request ID', async () => {
+  const tracked: string[] = []
+  const router: Router = {
+    selectPeer: () => null, onResult: () => {},
+    async selectRoute(_request, _peers, context) {
+      const serviceRequest = { ...request, requestId: 'routing-purchase' }
+      const pending = context.sendRequest(peer, serviceRequest, {})
+      serviceRequest.requestId = 'changed-after-dispatch'
+      await pending
+      return [{ serviceId: 'model-a' }]
+    },
+  }
+  await executeRouterSelection({
+    node: { sendRequest: async (_peer, serviceRequest) => {
+      assert.deepEqual(tracked, ['routing-purchase'])
+      await Promise.resolve()
+      assert.equal(serviceRequest.requestId, 'routing-purchase')
+      return { requestId: serviceRequest.requestId, statusCode: 200, headers: {}, body: new Uint8Array() }
+    } }, router, request, peers: [peer], candidates: candidates(), conversationKey: 'chat',
+    signal: new AbortController().signal, onRoutingRequest: requestId => tracked.push(requestId),
+  })
+})
+
+test('routing purchases cannot reuse the parent inference request ID', async () => {
+  const router: Router = {
+    selectPeer: () => null, onResult: () => {},
+    async selectRoute(_request, _peers, context) {
+      await context.sendRequest(peer, request, {})
+      return [{ serviceId: 'model-a' }]
+    },
+  }
+  await assert.rejects(executeRouterSelection({
+    node: { sendRequest: async () => { throw new Error('must not dispatch') } }, router, request,
+    peers: [peer], candidates: candidates(), conversationKey: null, signal: new AbortController().signal,
+  }), /distinct request ID/)
 })

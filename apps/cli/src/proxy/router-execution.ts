@@ -39,15 +39,34 @@ export function eligibleRouterCandidates(
 }
 
 export function resolveRouterRecommendation(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate | null {
-  if (!Array.isArray(routes) || routes.length === 0 || routes.length > 512) return null
+  return resolveRouterRecommendations(routes, candidates)[0] ?? null
+}
+
+export function resolveRouterRecommendations(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate[] {
+  if (!Array.isArray(routes) || routes.length === 0 || routes.length > 512) return []
+  const resolved: ExecutionCandidate[] = []
+  const seen = new Set<string>()
   for (const route of routes) {
     if (!route || typeof route.serviceId !== 'string' || !route.serviceId || route.inference !== undefined
       || (route.peerId !== undefined && (typeof route.peerId !== 'string' || !/^[0-9a-f]{40}$/.test(route.peerId)))) continue
-    const candidate = candidates.find(candidate => candidate.serviceId === route.serviceId
-      && (route.peerId === undefined || candidate.peerId === route.peerId))
-    if (candidate) return candidate
+    for (const candidate of candidates) {
+      if (candidate.serviceId !== route.serviceId || (route.peerId !== undefined && candidate.peerId !== route.peerId)) continue
+      const key = JSON.stringify([candidate.peerId, candidate.provider, candidate.serviceId])
+      if (seen.has(key)) continue
+      seen.add(key)
+      resolved.push(candidate)
+    }
   }
-  return null
+  return resolved
+}
+
+export function requestForRouterCandidate(request: SerializedHttpRequest, candidate: ExecutionCandidate): SerializedHttpRequest {
+  const rewritten = overrideRoutedModelInBody(request.body, request.headers, candidate.serviceId)
+  if (!rewritten.overridden) throw new Error('Could not apply router recommendation')
+  return {
+    ...request, body: rewritten.body,
+    headers: { ...rewritten.headers, 'x-antseed-pin-peer': candidate.peerId, 'x-antseed-provider': candidate.provider },
+  }
 }
 
 export async function executeRouterSelection(args: {
@@ -58,11 +77,13 @@ export async function executeRouterSelection(args: {
   candidates: ExecutionCandidate[];
   conversationKey: string | null;
   signal: AbortSignal;
-}): Promise<SerializedHttpRequest> {
+  onRoutingRequest?: (requestId: string) => void;
+}): Promise<{ request: SerializedHttpRequest; candidates: ExecutionCandidate[] }> {
   const { node, router, request, peers, candidates, conversationKey, signal } = args
   if (!router.selectRoute) throw new Error('Selected router does not support model selection')
   signal.throwIfAborted()
-  let accepted: ExecutionCandidate | null = null
+  let acceptedKeys: string | null = null
+  const candidateKeys = (resolved: readonly ExecutionCandidate[]) => JSON.stringify(resolved.map(candidate => [candidate.peerId, candidate.provider, candidate.serviceId]))
   let onAbort: () => void = () => {}
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = () => reject(signal.reason ?? new Error('Routing aborted'))
@@ -74,22 +95,30 @@ export async function executeRouterSelection(args: {
       candidates: candidates.map(({ peer: _peer, effectiveReputationScore: _score, ...candidate }) => ({ ...candidate })),
       acceptRecommendations: recommendations => {
         if (signal.aborted) return false
-        accepted = resolveRouterRecommendation(recommendations, candidates)
-        return accepted !== null
+        const resolved = resolveRouterRecommendations(recommendations, candidates)
+        if (!resolved.length) return false
+        const keys = candidateKeys(resolved)
+        if (acceptedKeys !== null && acceptedKeys !== keys) return false
+        acceptedKeys = keys
+        return true
       },
-      sendRequest: (peer, serviceRequest, options) => node.sendRequest(peer, serviceRequest, { ...options, signal }),
+      sendRequest: (peer, serviceRequest, options) => {
+        const snapshot = structuredClone(serviceRequest)
+        if (typeof snapshot.requestId !== 'string' || !snapshot.requestId || snapshot.requestId === request.requestId) {
+          throw new Error('Routing purchases require a distinct request ID')
+        }
+        args.onRoutingRequest?.(snapshot.requestId)
+        return node.sendRequest(peer, snapshot, { ...options, signal })
+      },
     })])
     signal.throwIfAborted()
-    const resolved = routes ? resolveRouterRecommendation(routes, candidates) : null
-    const selected = accepted as ExecutionCandidate | null
-    if (!resolved || (selected && (selected.peerId !== resolved.peerId || selected.serviceId !== resolved.serviceId || selected.provider !== resolved.provider))) {
+    const resolved = routes ? resolveRouterRecommendations(routes, candidates) : []
+    if (!resolved.length || (acceptedKeys !== null && acceptedKeys !== candidateKeys(resolved))) {
       throw new Error('Selected router returned no eligible recommendation')
     }
-    const rewritten = overrideRoutedModelInBody(request.body, request.headers, resolved.serviceId)
-    if (!rewritten.overridden) throw new Error('Could not apply router recommendation')
     return {
-      ...request, body: rewritten.body,
-      headers: { ...rewritten.headers, 'x-antseed-pin-peer': resolved.peerId, 'x-antseed-provider': resolved.provider },
+      request: requestForRouterCandidate(request, resolved[0]!),
+      candidates: resolved,
     }
   } finally {
     signal.removeEventListener('abort', onAbort)
