@@ -73,6 +73,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop: replace the legacy VPR artwork in the chat welcome screen and title bar with a font-independent AI VPN SVG wordmark matching the original lettering, preserving the ant icon and installer/update compatibility.
+
 - Payments: reconnect to retained channels without adding the seller's minimum budget to buyer-signed spend. Sellers safely acknowledge replayed authorizations and restore request access while preserving earned payments and zero-spend closure without buyer withdrawal or ghost penalties.
 
 - ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
