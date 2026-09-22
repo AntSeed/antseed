@@ -368,18 +368,24 @@ it prints, so no other page can act with your wallet. Pass `--no-open` to
 print the URL only, or `--port` to change the port.
 
 Pool statistics, volume history, and closed positions come from the Antscan
-indexer (`payments.crypto.explorerApiUrl`). Position displays also use its
-fresh live-status feed, and staking rewards use its paginated indexed-reward
-feed, including closed positions with unclaimed rewards. Claims and restaking
-still validate positions and reward amounts on-chain before sending transactions.
+indexer (`payments.crypto.explorerApiUrl`). Positions, personal pool totals, and
+staking rewards share its paginated `/api/staking/positions?include=rewards`
+response, including closed positions with unclaimed rewards. Power and status
+are included by default; there is no separate live-mode request. Wallet totals
+are calculated across all pages rather than treating page totals as wallet totals.
+Claims and restaking still validate positions and amounts on-chain.
 
-The configured Antscan deployment must support the staking positions endpoint's
-`include=live` and `include=rewards` feeds. Stale, incomplete, or unsupported
-indexed rewards appear as unavailable, not zero; JSON reward amounts can be
-`null`. Position state falls back to the display snapshot or chain reads when
-the live feed is unavailable. With no indexer configured, staking rewards
-retain on-chain previews. The local dashboard and CLI share confirmed-transaction
-checkpoints to reject older indexed snapshots after a restart.
+The configured Antscan deployment must include Antscan PR #8 and complete its
+reward backfill. Stale or incomplete rewards appear as unavailable, not zero;
+JSON reward amounts can be `null`. Live-state failures do not discard usable
+indexed rewards. Position/personal-pool reads show an error instead of repeating
+per-position RPC calls when the configured indexer is unavailable. An explicitly
+unconfigured indexer retains direct chain reads for local setups.
+
+During a dashboard session, confirmed transactions temporarily block older
+position/reward snapshots until Antscan catches up. This marker is in memory,
+not saved to disk or shared with later CLI invocations. After a restart, indexed
+amounts remain estimates at the displayed source block, not transaction quotes.
 
 Everything the dashboard does is also a command under `antseed ants`, so the
 dashboard is optional:

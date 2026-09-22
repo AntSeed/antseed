@@ -73,7 +73,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
   if (walletConnected && pools && poolRewards) {
     if (ctx.indexer()?.rewardPositions) {
       try {
-        const snapshot = await indexedWalletRewards(ctx, stack.currentEpoch, true);
+        const snapshot = await indexedWalletRewards(ctx, stack.currentEpoch);
         historySource = 'indexer';
         stakerSource = { indexedBlock: snapshot.source.indexedBlock, indexedAt: snapshot.source.indexedAt };
         stakerPositions = snapshot.positions.map(row => ({ id: row.id, agentId: row.agentId, amount: BigInt(row.rewards.pending!), closedAtEpoch: row.closedAtEpoch }));

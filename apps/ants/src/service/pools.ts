@@ -9,7 +9,7 @@ import { explorerSellers, type ExplorerSellers } from './explorer.js';
 import { mergePools, sortPools } from './pool-merge.js';
 import { IndexerError, type IndexedPoolEpoch, type IndexedPools } from './indexer.js';
 import { stakeEligibility } from './stake-eligibility.js';
-import { displayData, indexedPositions, type DisplayData } from './display-snapshot.js';
+import { displayData, type DisplayData } from './display-snapshot.js';
 import { liveWalletPositions } from './indexed-wallet.js';
 import type { LivePositions } from './position-feed.js';
 
@@ -99,11 +99,7 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
   const epoch = stack.currentEpoch;
   const display = await displayData(ctx, stack);
   let live: LivePositions | undefined;
-  let liveError: string | undefined;
-  if (ctx.address !== ZeroAddress && ctx.indexer()?.livePositions) {
-    try { live = await liveWalletPositions(ctx, epoch); }
-    catch (error) { liveError = error instanceof Error ? error.message : String(error); }
-  }
+  if (ctx.address !== ZeroAddress && ctx.indexer()) live = await liveWalletPositions(ctx, epoch);
   const current = display.snapshot?.epochs.find(row => row.epoch === epoch) ?? (display.source.error ? null : indexed?.currentEpoch === epoch && indexed.network.current?.epoch === epoch && indexed.network.current.complete !== false ? indexed.network.current : null);
   const last = display.snapshot?.epochs.find(row => row.epoch === epoch - 1) ?? (display.source.error ? null : indexed?.currentEpoch === epoch && indexed.network.last?.epoch === epoch - 1 && indexed.network.last.complete !== false ? indexed.network.last : null);
   const epochs = Array.from({ length: VOLUME_EPOCHS }, (_, index) => epoch - index).filter((value) => value >= 0);
@@ -117,7 +113,6 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
     (async () => {
       if (ctx.address === ZeroAddress) return [];
       if (live) return live.positions.map(row => ({ ...row, amount: BigInt(row.amount), weightAmount: BigInt(row.weightAmount) }));
-      if (display.snapshot) return (await indexedPositions(ctx, display.snapshot)).positions;
       const [open, closed] = await Promise.all([pools.allStakerPositionIds(ctx.address), closedPositionIds(ctx)]);
       return pools.positionsBatch([...new Set([...open, ...closed.ids])]);
     })(),
@@ -128,7 +123,6 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
     current ? Promise.resolve(BigInt(current.totalActiveStake)) : safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
     live ? Promise.resolve(ownPoolsFromLive(live)) : ownPools(ctx, openRows, epoch),
   ]);
-  if (liveError) display.source = { ...display.source, error: [display.source.error, liveError].filter(Boolean).join('; ') };
   return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary };
 }
 
@@ -136,26 +130,14 @@ function ownPoolsFromLive(live: LivePositions): Map<number, OwnPool> {
   return new Map(live.summary.map(row => [row.agentId, { positionIds: row.positionIds, power: BigInt(row.power), stake: BigInt(row.activeStake), pending: BigInt(row.pendingStake) }]));
 }
 
-/**
- * Your open positions grouped by agent. Stake splits into active and pending
- * from the position records themselves; each position's live power comes from
- * the explorer's positions endpoint, and only ids it could not price (or a
- * missing explorer) are read from the chain.
- */
 export async function ownPools(ctx: AntsContext, rows: SellerPoolPosition[], epoch: number): Promise<Map<number, OwnPool>> {
   const power = new Map<number, bigint>();
-  const indexer = ctx.indexer();
-  if (indexer && rows.length > 0) {
-    const indexed = await indexer.positions(ctx.address, false).catch((error: unknown) => { if (error instanceof IndexerError) return []; throw error; });
-    for (const row of indexed) if (row.power != null && rows.some((position) => position.id === row.id)) power.set(row.id, BigInt(row.power));
-  }
-  const missing = rows.filter((position) => !power.has(position.id));
-  if (missing.length > 0) {
+  if (rows.length > 0) {
     const poolsAddress = ctx.requirePools().contractAddress;
     const batch = new Batch();
-    const reads = missing.map((position) => batch.add(poolsAddress, POOLS_IFACE, 'positionWeightAtEpoch', [position.id, epoch]));
+    const reads = rows.map((position) => batch.add(poolsAddress, POOLS_IFACE, 'positionWeightAtEpoch', [position.id, epoch]));
     await batch.run(ctx);
-    missing.forEach((position, index) => power.set(position.id, big(reads[index]!)));
+    rows.forEach((position, index) => power.set(position.id, big(reads[index]!)));
   }
   const own = new Map<number, OwnPool>();
   for (const position of rows) {

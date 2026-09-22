@@ -59,7 +59,7 @@ describe('closed-position rewards', () => {
     const { ctx, poolRewards, rewardPositions } = indexedFixture();
     const preview = vi.spyOn(poolRewards, 'previewStakerRewards');
     expect(await rewards(ctx)).toMatchObject({ staker: { total: '99', positions: [{ id: 7, amount: '99', closed: true }], source: { indexedBlock: 100 } } });
-    expect(rewardPositions).toHaveBeenCalledWith(address, true);
+    expect(rewardPositions).toHaveBeenCalledWith(address, false);
     expect(preview).not.toHaveBeenCalled();
   });
 

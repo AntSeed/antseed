@@ -12,10 +12,10 @@ export interface LivePositions {
   summary: Array<StakeTotals & { agentId: number; positionIds: number[] }>;
   totals: StakeTotals;
   currentEpoch: number;
-  liveSource: { fetchedAt: number; stale: boolean; complete: boolean };
+  liveSource: { currentEpoch: number; fetchedAt: number; stale: boolean; complete: boolean };
   liveError?: string;
 }
-export interface RewardPosition extends IndexedPosition {
+export interface RewardPosition extends LivePosition {
   rewards: { status: 'available' | 'unavailable'; pending: string | null; claimedThroughEpoch: number | null; calculatedThroughEpoch: number | null; requiresPoolIndexing: boolean | null };
 }
 export interface RewardSource {
@@ -31,7 +31,7 @@ export interface RewardSource {
   historyComplete: boolean;
   historyFromBlock: number;
 }
-export interface RewardPositions { positions: RewardPosition[]; source: RewardSource; currentEpoch: number; }
+export interface RewardPositions extends LivePositions { positions: RewardPosition[]; source: RewardSource; }
 
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Antscan position response');
@@ -81,39 +81,6 @@ function position(value: unknown, owner: string): IndexedPosition {
 function unique(positions: IndexedPosition[]): void {
   if (new Set(positions.map(row => row.id)).size !== positions.length) throw new Error('Duplicate Antscan positions');
 }
-function totals(value: unknown): StakeTotals {
-  const row = object(value);
-  return { activeStake: decimal(row.activeStake), pendingStake: decimal(row.pendingStake), power: decimal(row.power) };
-}
-export function parseLivePositions(value: unknown, owner: string): LivePositions {
-  const raw = object(value);
-  if (address(raw.owner) !== owner.toLowerCase() || raw.pagination !== undefined) throw new Error('Expected whole-wallet live position response');
-  if (!raw.liveSource) throw new Error('Antscan deployment does not provide live position freshness metadata');
-  const source = object(raw.liveSource);
-  const currentEpoch = integer(raw.currentEpoch);
-  if (integer(source.currentEpoch) !== currentEpoch) throw new Error('Antscan live epochs disagree');
-  const positions = array(raw.positions).map((value): LivePosition => {
-    const row = object(value);
-    if (!POSITION_STATES.includes(String(row.state))) throw new Error('Invalid position state');
-    return {
-      ...position(row, owner),
-      state: row.state as LivePosition['state'],
-      power: nullable(row.power, decimal),
-      nextPower: nullable(row.nextPower, decimal),
-      withdrawableEpoch: nullable(row.withdrawableEpoch, integer),
-      maxLockedNext: nullable(row.maxLockedNext, boolean),
-      changePending: nullable(row.changePending, boolean),
-    };
-  });
-  unique(positions);
-  const summary = array(raw.summary).map(value => {
-    const row = object(value);
-    return { ...totals(row), agentId: integer(row.agentId), positionIds: array(row.positionIds).map(integer) };
-  });
-  const liveSource = { fetchedAt: source.fetchedAt === null ? 0 : integer(source.fetchedAt), stale: boolean(source.stale), complete: boolean(source.complete) };
-  return { positions, currentEpoch, summary, totals: totals(raw.totals), liveSource, ...(raw.liveError ? { liveError: String(raw.liveError) } : {}) };
-}
-
 function rewardSource(value: unknown): RewardSource {
   const source = object(value);
   const contracts = object(source.contracts);
@@ -162,12 +129,33 @@ export function parseRewardPage(value: unknown, owner: string) {
   if (address(raw.owner) !== owner.toLowerCase()) throw new Error('Invalid reward response identity');
   const source = rewardSource(raw.source);
   const currentEpoch = integer(raw.currentEpoch);
+  const live = object(raw.liveSource);
+  const liveSource = { currentEpoch: integer(live.currentEpoch), fetchedAt: live.fetchedAt === null ? 0 : integer(live.fetchedAt), stale: boolean(live.stale), complete: boolean(live.complete) };
   const positions = array(raw.positions).map((value): RewardPosition => {
     const row = object(value);
-    return { ...position(row, owner), rewards: positionRewards(row.rewards, currentEpoch) };
+    if (!POSITION_STATES.includes(String(row.state))) throw new Error('Invalid position state');
+    return { ...position(row, owner), state: row.state as LivePosition['state'], power: nullable(row.power, decimal), nextPower: nullable(row.nextPower, decimal),
+      withdrawableEpoch: nullable(row.withdrawableEpoch, integer), maxLockedNext: nullable(row.maxLockedNext, boolean), changePending: nullable(row.changePending, boolean),
+      rewards: positionRewards(row.rewards, currentEpoch) };
   });
   unique(positions);
-  return { positions, source, currentEpoch, ...pagination(raw.pagination, positions.length) };
+  return { positions, source, currentEpoch, liveSource, ...(raw.liveError ? { liveError: String(raw.liveError) } : {}), ...pagination(raw.pagination, positions.length) };
+}
+
+function summarize(snapshot: RewardPositions): RewardPositions {
+  const summary = new Map<number, LivePositions['summary'][number]>();
+  for (const position of snapshot.positions) {
+    if (position.withdrawn || (position.closedAtEpoch !== 0 && position.closedAtEpoch <= snapshot.liveSource.currentEpoch)) continue;
+    const pool = summary.get(position.agentId) ?? { agentId: position.agentId, positionIds: [], activeStake: '0', pendingStake: '0', power: '0' };
+    pool.positionIds.push(position.id);
+    const bucket = position.stakeStartEpoch > snapshot.liveSource.currentEpoch ? 'pendingStake' : 'activeStake';
+    pool[bucket] = (BigInt(pool[bucket]) + BigInt(position.amount)).toString();
+    pool.power = (BigInt(pool.power) + BigInt(position.power ?? '0')).toString();
+    summary.set(position.agentId, pool);
+  }
+  snapshot.summary = [...summary.values()];
+  for (const field of ['activeStake', 'pendingStake', 'power'] as const) snapshot.totals[field] = snapshot.summary.reduce((total, pool) => total + BigInt(pool[field]), 0n).toString();
+  return snapshot;
 }
 
 export async function fetchRewardPositions(owner: string, outstanding: boolean, get: (path: string) => Promise<unknown>): Promise<RewardPositions> {
@@ -179,10 +167,14 @@ export async function fetchRewardPositions(owner: string, outstanding: boolean, 
     if (cursor) query.set('cursor', cursor);
     const next = parseRewardPage(await get(`/api/staking/positions?${query}`), owner);
     if (snapshot && (JSON.stringify(snapshot.source) !== JSON.stringify(next.source) || snapshot.currentEpoch !== next.currentEpoch)) throw new Error('Antscan reward snapshot changed between pages');
-    snapshot ??= { positions: [], source: next.source, currentEpoch: next.currentEpoch };
+    snapshot ??= { positions: [], source: next.source, currentEpoch: next.currentEpoch, liveSource: { ...next.liveSource }, summary: [], totals: { activeStake: '0', pendingStake: '0', power: '0' } };
+    snapshot.liveSource.fetchedAt = Math.min(snapshot.liveSource.fetchedAt, next.liveSource.fetchedAt);
+    snapshot.liveSource.stale ||= next.liveSource.stale;
+    snapshot.liveSource.complete &&= next.liveSource.complete && snapshot.liveSource.currentEpoch === next.liveSource.currentEpoch;
+    if (next.liveError) snapshot.liveError = next.liveError;
     snapshot.positions.push(...next.positions);
     unique(snapshot.positions);
-    if (!next.hasMore) return snapshot;
+    if (!next.hasMore) return summarize(snapshot);
     cursor = next.nextCursor!;
     if (cursors.has(cursor)) throw new Error('Repeated Antscan reward cursor');
     cursors.add(cursor);

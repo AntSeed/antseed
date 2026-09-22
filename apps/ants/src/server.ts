@@ -12,10 +12,8 @@ import { AntsContext, type AntsChainConfig } from './service/context.js';
 import { JobRunner } from './jobs.js';
 import { registerRoutes } from './routes.js';
 import { BrowserSigning } from './browser-signer.js';
-import { getAddress, ZeroAddress } from 'ethers';
+import { getAddress, ZeroAddress, id as eventId } from 'ethers';
 import { ViewCache } from './view-cache.js';
-import { positionIdsInReceipt } from './service/position-barrier.js';
-import { loadPositionCheckpoints, recordPositionCheckpoint } from './service/position-checkpoints.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -119,7 +117,6 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
 
   const views = new ViewCache();
   const historyPath = path.join(dataDir, 'ants-activity', `${chain.evmChainId}-positions.json`);
-  await loadPositionCheckpoints(context, dataDir);
   try {
     const saved = JSON.parse(await readFile(historyPath, 'utf8')) as Array<[number, string]>;
     for (const [positionId, owner] of saved) if (Number.isSafeInteger(positionId) && positionId > 0 && /^0x[0-9a-fA-F]{40}$/.test(owner)) context.localPositionIds.set(positionId, owner);
@@ -127,10 +124,12 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
   const rememberTransaction = async (hash: string) => {
     const receipt = await context.provider().getTransactionReceipt(hash);
     if (!receipt || receipt.status !== 1) return;
-    await recordPositionCheckpoint(context, dataDir, receipt);
-    const ids = positionIdsInReceipt(receipt, chain.sellerPoolsAddress);
+    const wallet = receipt.from.toLowerCase();
+    const previous = context.positionReadBarriers.get(wallet);
+    context.positionReadBarriers.set(wallet, { block: Math.max(previous?.block ?? 0, receipt.blockNumber), at: Math.max(previous?.at ?? 0, Math.floor(Date.now() / 1000)) });
+    const ids = receipt.logs.filter(log => log.address.toLowerCase() === chain.sellerPoolsAddress?.toLowerCase() && log.topics.length === 4 && log.topics[0] === eventId('Transfer(address,address,uint256)')).map(log => Number(BigInt(log.topics[3]!)));
     if (!ids.length) return;
-    const positions = await context.requirePools().positionsBatch(ids);
+    const positions = await context.requirePools().positionsBatch([...new Set(ids)]);
     for (const position of positions) if (position.owner.toLowerCase() === context.address.toLowerCase()) context.localPositionIds.set(position.id, position.owner);
     await mkdir(path.dirname(historyPath), { recursive: true, mode: 0o700 });
     const temporary = `${historyPath}.${randomBytes(8).toString('hex')}.tmp`;

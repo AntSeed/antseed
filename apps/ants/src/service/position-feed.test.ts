@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AntscanIndexer } from './indexer.js';
-import { parseLivePositions, parseRewardPage, fetchRewardPositions } from './position-feed.js';
+import { parseRewardPage, fetchRewardPositions } from './position-feed.js';
 import { indexedWalletRewards, liveWalletPositions } from './indexed-wallet.js';
 import type { AntsContext } from './context.js';
 
@@ -11,28 +11,28 @@ const position = (id = 7) => ({ id: String(id), owner, agentId: '1', amount: '10
 const rewards = { status: 'available', pending: '15', claimedThroughEpoch: '1', calculatedThroughEpoch: '21', requiresPoolIndexing: true };
 function rewardPage(ids = [7], nextCursor: string | null = null) {
   return { owner, currentEpoch: '22', requiresLiveValidation: true,
-    positions: ids.map(id => ({ ...position(id), rewards })),
+    positions: ids.map(id => ({ ...position(id), state: 'active', power: '200', nextPower: '190', withdrawableEpoch: '1', maxLockedNext: false, changePending: false, rewards })),
+    liveSource: { currentEpoch: '22', fetchedAt: Math.floor(Date.now() / 1000), stale: false, complete: true, cacheTtlSeconds: 15 },
     source: { schemaVersion: 1, chainId: 8453, contracts: { sellerPools: owner, sellerPoolsRewards: owner }, indexedBlock: 100, indexedBlockHash: blockHash, indexedAt: Math.floor(Date.now() / 1000), revision: `${blockHash}:22`, stale: false, complete: true, historyComplete: true, historyFromBlock: 1 },
     pagination: { limit: 100, hasMore: nextCursor !== null, nextCursor } };
-}
-function livePage() {
-  const totals = { activeStake: '100', pendingStake: '0', power: '200' };
-  return { owner, currentEpoch: '22', positions: [{ ...position(), state: 'active', power: '200', nextPower: '190', withdrawableEpoch: '1', maxLockedNext: false, changePending: false }],
-    summary: [{ agentId: '1', positionIds: ['7'], ...totals }], totals,
-    liveSource: { currentEpoch: '22', fetchedAt: Math.floor(Date.now() / 1000), stale: false, complete: true, cacheTtlSeconds: 15 } };
 }
 function context() {
   return { address: owner, chain: { evmChainId: 8453, sellerPoolsAddress: owner, sellerPoolsRewardsAddress: owner }, localPositionIds: new Map(), positionReadBarriers: new Map() } as unknown as AntsContext;
 }
 
 describe('Antscan position feeds', () => {
-  it('requests unpaginated live positions and keeps PR9 totals and status', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(livePage())));
+  it('shares one additive response between live state and rewards', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(rewardPage())));
     const indexer = new AntscanIndexer('https://scan', fetcher);
-    expect(await indexer.livePositions(owner)).toMatchObject({ totals: { activeStake: '100', power: '200' }, positions: [{ id: 7, nextPower: '190', maxLockedNext: false, changePending: false }], summary: [{ agentId: 1, positionIds: [7] }] });
-    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://scan/api/staking/positions?owner=${owner}&include=live&includeClosed=1`);
+    const ctx = context();
+    ctx.indexer = () => indexer;
+    const [live, reward] = await Promise.all([liveWalletPositions(ctx, 22), indexedWalletRewards(ctx, 22)]);
+    expect(live).toBe(reward);
+    expect(live).toMatchObject({ totals: { activeStake: '100', power: '200' }, positions: [{ id: 7, nextPower: '190', maxLockedNext: false, changePending: false }], summary: [{ agentId: 1, positionIds: [7] }] });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://scan/api/staking/positions?owner=${owner}&include=rewards&includeClosed=1&limit=100`);
   });
-  it('exhausts reward-only pagination including closed positions and coalesces reads', async () => {
+  it('exhausts combined pagination including closed positions and coalesces reads', async () => {
     const first = rewardPage(Array.from({ length: 100 }, (_, index) => 200 - index), 'next');
     const last = rewardPage([100]);
     last.positions[0]!.closedAtEpoch = '20';
@@ -42,6 +42,7 @@ describe('Antscan position feeds', () => {
     expect(result.positions).toHaveLength(101);
     expect(result).toBe(duplicate);
     expect(result.positions.at(-1)).toMatchObject({ id: 100, closedAtEpoch: 20, rewards: { pending: '15' } });
+    expect(result.totals).toEqual({ activeStake: '10000', pendingStake: '0', power: '20000' });
     expect(fetcher).toHaveBeenCalledTimes(2);
     const query = new URL(String(fetcher.mock.calls[0]![0])).searchParams;
     expect(Object.fromEntries(query)).toEqual({ owner, include: 'rewards', includeClosed: '1', limit: '100', rewardStatus: 'outstanding' });
@@ -96,13 +97,27 @@ describe('Antscan position feeds', () => {
       return raw;
     })).rejects.toThrow('changed between pages');
   });
-  it('rejects paginated live data as whole-wallet totals', () => {
-    expect(() => parseLivePositions({ ...livePage(), pagination: { hasMore: false } }, owner)).toThrow('whole-wallet');
+  it('computes wallet totals across every page instead of trusting page-scoped totals', async () => {
+    const first = { ...rewardPage([8], 'next'), pageTotals: { activeStake: '999', pendingStake: '999', power: '999' } };
+    const last = rewardPage([7]);
+    last.positions[0]!.stakeStartEpoch = '23';
+    last.positions[0]!.power = '0';
+    const data = await fetchRewardPositions(owner, false, async path => path.includes('cursor=') ? last : first);
+    expect(data.totals).toEqual({ activeStake: '100', pendingStake: '100', power: '200' });
+    expect(data.summary).toMatchObject([{ positionIds: [8, 7], activeStake: '100', pendingStake: '100' }]);
+  });
+  it('keeps live freshness separate from reward freshness across pages', async () => {
+    const first = rewardPage([8], 'next');
+    const last = rewardPage([7]);
+    last.liveSource.currentEpoch = '23';
+    const data = await fetchRewardPositions(owner, false, async path => path.includes('cursor=') ? last : first);
+    expect(data.liveSource.complete).toBe(false);
+    expect(data.source.complete).toBe(true);
   });
 });
 
 describe('snapshot eligibility', () => {
-  it.each(['stale', 'incomplete', 'history', 'chain', 'contracts', 'epoch', 'old', 'future', 'barrier', 'missing-position', 'unknown'])('rejects %s rewards', async kind => {
+  it.each(['stale', 'incomplete', 'history', 'chain', 'contracts', 'epoch', 'old', 'future', 'barrier', 'unknown'])('rejects %s rewards', async kind => {
     const ctx = context();
     const raw = rewardPage();
     if (kind === 'stale') raw.source.stale = true;
@@ -114,7 +129,6 @@ describe('snapshot eligibility', () => {
     if (kind === 'old') raw.source.indexedAt -= 3601;
     if (kind === 'future') raw.source.indexedAt += 31;
     if (kind === 'barrier') ctx.positionReadBarriers.set(owner, { block: 101, at: 0 });
-    if (kind === 'missing-position') ctx.localPositionIds.set(8, owner);
     if (kind === 'unknown') raw.positions[0]!.rewards = { ...rewards, status: 'unavailable' };
     ctx.indexer = () => ({ rewardPositions: async () => parseRewardPage(raw, owner) }) as never;
     await expect(indexedWalletRewards(ctx, 22)).rejects.toThrow();
@@ -125,22 +139,41 @@ describe('snapshot eligibility', () => {
     ctx.indexer = () => ({ rewardPositions: async () => parseRewardPage(rewardPage(), owner) }) as never;
     expect((await indexedWalletRewards(ctx, 22, true)).positions).toHaveLength(1);
   });
-  it.each(['stale', 'incomplete', 'epoch', 'old', 'barrier', 'missing-position', 'null-field'])('rejects %s live data', async kind => {
+  it.each(['stale', 'incomplete', 'epoch', 'old', 'barrier', 'chain', 'contracts', 'null-field'])('rejects %s live data', async kind => {
     const ctx = context();
-    const raw = livePage();
+    const raw = rewardPage();
     if (kind === 'stale') raw.liveSource.stale = true;
     if (kind === 'incomplete') raw.liveSource.complete = false;
     if (kind === 'epoch') raw.currentEpoch = raw.liveSource.currentEpoch = '23';
     if (kind === 'old') raw.liveSource.fetchedAt -= 15;
     if (kind === 'barrier') ctx.positionReadBarriers.set(owner, { block: 100, at: raw.liveSource.fetchedAt });
-    if (kind === 'missing-position') ctx.localPositionIds.set(8, owner);
+    if (kind === 'chain') raw.source.chainId = 1;
+    if (kind === 'contracts') raw.source.contracts.sellerPools = other;
     if (kind === 'null-field') Object.assign(raw.positions[0]!, { nextPower: null });
-    ctx.indexer = () => ({ livePositions: async () => parseLivePositions(raw, owner) }) as never;
+    ctx.indexer = () => ({ rewardPositions: async () => fetchRewardPositions(owner, false, async () => raw) }) as never;
     await expect(liveWalletPositions(ctx, 22)).rejects.toThrow();
   });
   it('accepts complete fresh live state', async () => {
     const ctx = context();
-    ctx.indexer = () => ({ livePositions: async () => parseLivePositions(livePage(), owner) }) as never;
+    ctx.indexer = () => ({ rewardPositions: async () => fetchRewardPositions(owner, false, async () => rewardPage()) }) as never;
     expect((await liveWalletPositions(ctx, 22)).totals.power).toBe('200');
+  });
+  it('retains indexed rewards when live RPC enrichment fails', async () => {
+    const ctx = context();
+    const raw = rewardPage();
+    Object.assign(raw.liveSource, { fetchedAt: null, stale: true, complete: false });
+    Object.assign(raw.positions[0]!, { power: null, nextPower: null, withdrawableEpoch: null, maxLockedNext: null, changePending: null });
+    ctx.indexer = () => new AntscanIndexer('https://scan', async () => new Response(JSON.stringify({ ...raw, liveError: 'RPC failed' })));
+    expect((await indexedWalletRewards(ctx, 22)).positions[0]!.rewards.pending).toBe('15');
+    await expect(liveWalletPositions(ctx, 22)).rejects.toThrow('RPC failed');
+  });
+  it('keeps live state usable when reward epochs lag or rewards are unavailable', async () => {
+    const ctx = context();
+    const raw = rewardPage();
+    raw.currentEpoch = '21';
+    Object.assign(raw.positions[0]!.rewards = { ...rewards }, { status: 'unavailable', pending: null });
+    ctx.indexer = () => new AntscanIndexer('https://scan', async () => new Response(JSON.stringify(raw)));
+    expect((await liveWalletPositions(ctx, 22)).totals.power).toBe('200');
+    await expect(indexedWalletRewards(ctx, 22)).rejects.toThrow('stale');
   });
 });

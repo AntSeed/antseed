@@ -17,7 +17,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it('persists monotonic per-wallet position checkpoints across local server restarts', async () => {
+it('remembers the latest confirmed transaction in the current dashboard session', async () => {
   vi.spyOn(AntsContext.prototype, 'selectRpc').mockResolvedValue();
   const registration = vi.spyOn(routes, 'registerRoutes');
   const dataDir = await mkdtemp(path.join(tmpdir(), 'ants-checkpoint-test-'));
@@ -40,7 +40,7 @@ it('persists monotonic per-wallet position checkpoints across local server resta
   servers.pop();
   const restarted = await createAntsServer(options);
   servers.push(restarted);
-  expect([...restarted.context.positionReadBarriers]).toEqual([[address.toLowerCase(), barrier]]);
+  expect([...restarted.context.positionReadBarriers]).toEqual([]);
 });
 
 it.each([true, false])('correlates a wallet request only with its running owner job (active=%s)', async active => {

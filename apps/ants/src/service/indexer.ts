@@ -7,7 +7,7 @@
  */
 
 import { fetchDisplaySnapshot, type DisplaySnapshot } from './display-snapshot.js';
-import { fetchRewardPositions, parseLivePositions, type LivePositions, type RewardPositions } from './position-feed.js';
+import { fetchRewardPositions, type RewardPositions } from './position-feed.js';
 
 const FETCH_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 15_000;
@@ -118,7 +118,6 @@ export interface IndexedParticipant { address: string; currentEpoch: number; sel
 export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; requests: string; }
 
 export interface Indexer {
-  livePositions?(owner: string): Promise<LivePositions>;
   rewardPositions?(owner: string, outstanding?: boolean): Promise<RewardPositions>;
   displaySnapshot?(epoch: number, owner: string): Promise<DisplaySnapshot>;
   invalidate?(): void;
@@ -317,10 +316,6 @@ export class AntscanIndexer implements Indexer {
   async positions(owner: string, includeClosed = true): Promise<IndexedPosition[]> {
     const raw = await this.get<{ positions: Record<string, unknown>[] }>(`/api/staking/positions?owner=${owner.toLowerCase()}${includeClosed ? '&includeClosed=1' : ''}`);
     return (raw.positions ?? []).map(toPosition);
-  }
-
-  async livePositions(owner: string): Promise<LivePositions> {
-    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&include=live&includeClosed=1`), owner);
   }
 
   rewardPositions(owner: string, outstanding = false): Promise<RewardPositions> {

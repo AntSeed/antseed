@@ -1,5 +1,4 @@
 import { ZeroAddress } from 'ethers';
-import type { SellerPoolPosition } from '@antseed/node/payments';
 import type { DisplaySource } from '../api-types.js';
 import type { AntsContext, ResolvedStack } from './context.js';
 import { IndexerError, type IndexedPosition, type IndexedStakingEpoch } from './indexer.js';
@@ -173,21 +172,4 @@ export async function displayData(ctx: AntsContext, stack: ResolvedStack): Promi
     if (!(error instanceof IndexerError) && !(error instanceof Error)) throw error;
     return { snapshot: null, source: { source: 'chain', error: error.message } };
   }
-}
-
-export async function indexedPositions(ctx: AntsContext, snapshot: DisplaySnapshot): Promise<{ positions: SellerPoolPosition[]; maxLocks: Map<number, boolean> }> {
-  const rows = new Map(snapshot.positions.map(row => [row.id, {
-    id: row.id, owner: row.owner, agentId: row.agentId, amount: BigInt(row.amount), weightAmount: BigInt(row.weightAmount),
-    stakeStartEpoch: row.stakeStartEpoch, stakeEndEpoch: row.stakeEndEpoch, closedAtEpoch: row.closedAtEpoch, withdrawn: row.withdrawn,
-  }]));
-  const maxLocks = new Map(snapshot.positions.map(row => [row.id, row.maxLocked]));
-  const localIds = [...ctx.localPositionIds].filter(([, owner]) => owner.toLowerCase() === ctx.address.toLowerCase()).map(([id]) => id);
-  if (localIds.length) {
-    for (const position of await ctx.requirePools().positionsBatch(localIds)) {
-      if (position.owner.toLowerCase() === ctx.address.toLowerCase()) rows.set(position.id, position);
-      else rows.delete(position.id);
-      maxLocks.delete(position.id);
-    }
-  }
-  return { positions: [...rows.values()], maxLocks };
 }

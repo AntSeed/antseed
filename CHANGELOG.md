@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- ANTS dashboard and CLI: use Antscan's live position feed and paginated staking-reward feed to reduce RPC reads, including closed positions with unclaimed rewards. Keep transaction checks on-chain and show stale or incomplete rewards as unavailable. Share persisted confirmed-transaction checkpoints so older indexed snapshots cannot restore pre-transaction balances.
+- ANTS dashboard and CLI: share Antscan PR #8's paginated positions-with-rewards response for position status, personal pool totals, and staking rewards, including closed positions. Remove separate live-feed requests and per-position RPC display fallbacks when Antscan is configured; keep live transaction validation and direct reads for explicitly unconfigured local setups. Display unavailable rewards distinctly from zero. Keep only an in-memory post-transaction freshness marker during dashboard sessions, with no checkpoint files or cross-process persistence.
 - Payments: add a Disconnect button to the wallet authorization dialog. Disconnection does not revoke on-chain authorization and is disabled while authorization is in progress.
 
 ### Added
