@@ -118,10 +118,10 @@ function RewardsBody({ data, onRefresh }: { data: RewardsView; onRefresh: () => 
   return (
     <>
       <Card className="hero" aria-label="Staking rewards">
-        {data.historySource === 'chain' ? <p className="status-line status-line--muted">Closed-position history is unavailable (no indexer configured, or the indexer is unreachable). These are known rewards; rewards from closed positions may be missing. Refresh to retry.</p> : null}
-        {data.historySource === 'local' ? <p className="status-line status-line--muted">Includes positions from verified local transactions. Older closed positions may be missing without an indexer.</p> : null}
+        {data.historySource === 'chain' ? <p className="status-line status-line--muted">Closed-position history is unavailable. Without an indexer, some rewards may be missing. Refresh to retry.</p> : null}
+        {data.historySource === 'local' ? <p className="status-line status-line--muted">Local transaction history included. Older closed positions—and their rewards—may be missing without an indexer.</p> : null}
         <div className="tile-label">Staking rewards</div>
-        <p className="hint">Earned from staking ANTS in seller pools for <AddressLink value={dashboard.address} />. These are unclaimed rewards, not your wallet balance.</p>
+        <p className="hint">Unclaimed staking rewards for <AddressLink value={dashboard.address} />—not your wallet balance.</p>
         <div className="hero-value"><RewardAmount>{formatAnts(data.staker.total, 4)}</RewardAmount><span className="unit">ANTS</span><RewardRefreshStatus /></div>
         {data.staker.source?.indexedBlock !== undefined ? <p className="hint">Estimated by Antscan at block {data.staker.source.indexedBlock}. Claims and restaking are checked live.</p> : null}
         {data.staker.total === null ? <p role="status" className="hint">Staking rewards unavailable: {data.staker.source?.error ?? 'Antscan has not finished indexing these rewards.'} <button className="link-button" onClick={onRefresh}>Retry</button></p> : isZero(data.staker.total) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : (
@@ -134,7 +134,7 @@ function RewardsBody({ data, onRefresh }: { data: RewardsView; onRefresh: () => 
 
       <Card className="hero" aria-label="Seller rewards">
         <div className="tile-label">Seller rewards</div>
-        <p className="hint">Earned from providing AI services for <AddressLink value={dashboard.address} />. These are unclaimed rewards, not your wallet balance.</p>
+        <p className="hint">Unclaimed AI selling rewards for <AddressLink value={dashboard.address} />—not your wallet balance.</p>
         <div className="hero-value">
           <RewardAmount>{formatAnts(sellerTotal, 4)}</RewardAmount>
           <span className="unit">ANTS</span>

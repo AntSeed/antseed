@@ -1,5 +1,6 @@
 import type {
   EmissionsView,
+  NetworkSnapshot,
   JobView,
   OverviewView,
   PoolView,
@@ -145,6 +146,8 @@ export const api = {
   pool: (agentId: number) => get<PoolDetail>(`/api/pools/${agentId}`),
   usage: (epochs: number) => get<UsageView>(`/api/usage?epochs=${epochs}`),
   emissions: () => get<EmissionsView>('/api/emissions'),
+  network: () => get<NetworkSnapshot>('/api/network'),
+  networkLegacy: () => get<EmissionsView['legacy']>('/api/network/legacy'),
   verification: (seller?: string) =>
     get<VerificationView>(`/api/verification${seller ? `?seller=${encodeURIComponent(seller)}` : ''}`),
   proofStatus: (proofId: string) => get<ProofStatusView>(`/api/verification/proofs/${encodeURIComponent(proofId)}`),

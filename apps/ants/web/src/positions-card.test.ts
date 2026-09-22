@@ -125,6 +125,16 @@ describe('seller directory', () => {
 });
 
 describe('positions table', () => {
+  it('shows estimated position APY with help and an unavailable fallback', () => {
+    mocks.epoch.mockReturnValue({ current: 27, genesis: 1775728461, epochDuration: 604800 });
+    const seller = { ...pool('Alpha'), weight: '125000000000000000000', yield: { epoch: 26, startsAt: 0, endsAt: 604800, reward: '0', power: '125000000000000000000', apr: 0, apy: 0, status: 'settled' as const } };
+    const html = renderPosition({ power: '125000000000000000000' }, [seller]);
+    expect(html).toContain('Est. APY');
+    expect(html).toContain('aria-label="About position APY"');
+    expect(html).toContain('>0.00%</span>');
+    expect(html).toContain('pool rewards in epoch 26');
+    expect(renderPosition()).toContain('title="APY unavailable for this position.">—</span>');
+  });
   it('shows seller names instead of position and pool IDs', () => {
     const html = renderPosition({}, [pool('Anvil Seller Alpha')]);
     expect(html).toContain('>Seller<');
@@ -188,7 +198,7 @@ describe('positions table', () => {
     expect(html).toContain('Select position 29');
     expect(html).not.toContain('bulk-bar');
     expect(html).not.toContain('>clear<');
-    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['select', 'seller', 'amount', 'unlocks', 'state', 'reward', 'actions']);
+    expect(props.columns.map((column: { key: string }) => column.key)).toEqual(['select', 'seller', 'amount', 'apy', 'unlocks', 'state', 'reward', 'actions']);
   });
 
   it('does not offer selection on closed positions', () => {

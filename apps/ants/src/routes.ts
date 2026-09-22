@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { ZeroAddress } from 'ethers';
+import { networkSnapshot, networkLegacy } from './service/network.js';
 import type { AntsContext } from './service/context.js';
 import { JobRunner, describeError } from './jobs.js';
 import type { ViewCache } from './view-cache.js';
@@ -67,6 +68,8 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));
+  app.get('/api/network', (_request, reply) => respond(reply, () => networkSnapshot(ctx)));
+  app.get('/api/network/legacy', (_request, reply) => respond(reply, () => views.read('network:legacy', () => networkLegacy(ctx), 300_000)));
   app.get<{ Querystring: { seller?: string } }>('/api/verification', (request, reply) => respond(reply, () => cached(`verification:${(request.query.seller ?? '').toLowerCase()}`, () => verification(ctx, request.query.seller || undefined))));
   app.get<{ Params: { proofId: string } }>('/api/verification/proofs/:proofId', (request, reply) => respond(reply, () => proofStatus(ctx, request.params.proofId)));
   app.get('/api/seller', (_request, reply) => respond(reply, () => cached('seller', () => seller(ctx))));

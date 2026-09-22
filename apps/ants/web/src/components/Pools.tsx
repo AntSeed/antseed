@@ -409,7 +409,7 @@ function yieldDescription(pool: PoolView): string {
   const range = poolApyRange(info);
   const duration = info.endsAt - info.startsAt;
   const lockLabel = (epochs: number | null) => epochs === null ? 'unavailable' : `${epochs} epoch(s), ${epochs * duration / 86400} days`;
-  return `10,000 ANTS reference stake. 1 week: ${lockLabel(range.oneWeek.epochs)}; 2 years: ${lockLabel(range.twoYears.epochs)}. Source epoch ${info.epoch}: ${formatUtc(info.startsAt)} – ${formatUtc(info.endsAt)}. Initial earning rates include the reference stake's added power and assume an unchanged pool reward budget. APY assumes the rates repeat and compound every epoch; compounding is not automatic. Power decreases as the lock runs down, activation delays are excluded, and future activity changes returns. Missing data or unsupported locks show —.${info.status === 'estimated' ? ' Rewards are estimated until settled.' : ''}`;
+  return `10,000 ANTS reference stake, including added pool power. 1 week: ${lockLabel(range.oneWeek.epochs)}; 2 years: ${lockLabel(range.twoYears.epochs)}. Source epoch ${info.epoch}: ${formatUtc(info.startsAt)} – ${formatUtc(info.endsAt)}. Assumes rewards and initial rates repeat each epoch; compounding is not automatic. Excludes declining power and activation delays. Returns aren’t guaranteed. — means unavailable.${info.status === 'estimated' ? ' Rewards not yet settled.' : ''}`;
 }
 
 export function PoolApy({ pool }: { pool: PoolView }): ReactNode {

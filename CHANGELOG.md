@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- ANTS Network page: lead with current contract-calculated staker, buyer, and seller reward budgets, separate emission bucket allowances from actual rewards, and explain remainder settlement to the burn destination and Reserve beyond its base allowance. Share a block-pinned, batched network snapshot with Overview; show next-epoch changes separately, identify Anvil and stale/unavailable data, and load historical usage, legacy emissions, and verification details only when expanded. Remove the Editable column.
 - ANTS dashboard and CLI: share Antscan PR #8's paginated positions-with-rewards response for position status, personal pool totals, and staking rewards, including closed positions. Remove separate live-feed requests and per-position RPC display fallbacks when Antscan is configured; keep live transaction validation and direct reads for explicitly unconfigured local setups. Display unavailable rewards distinctly from zero. Keep only an in-memory post-transaction freshness marker during dashboard sessions, with no checkpoint files or cross-process persistence.
 - Payments: add a Disconnect button to the wallet authorization dialog. Disconnection does not revoke on-chain authorization and is disabled while authorization is in progress.
 

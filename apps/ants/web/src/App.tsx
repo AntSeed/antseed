@@ -84,7 +84,7 @@ function Shell({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => void }
 
   const refreshOverview = overview.refresh;
   useEffect(() => {
-    const timer = window.setInterval(refreshOverview, OVERVIEW_POLL_MS);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') refreshOverview(); }, OVERVIEW_POLL_MS);
     return () => window.clearInterval(timer);
   }, [refreshOverview]);
 

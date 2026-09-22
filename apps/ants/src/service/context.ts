@@ -1,6 +1,7 @@
 import { FetchRequest, JsonRpcProvider, ZeroAddress, type AbstractProvider, type AbstractSigner } from 'ethers';
 import { RotatingJsonRpcProvider } from './rpc-provider.js';
 import { createIndexer, type Indexer } from './indexer.js';
+import { invalidateNetwork } from './network.js';
 import {
   ANTSTokenClient,
   DepositsClient,
@@ -305,6 +306,7 @@ export class AntsContext {
   }
 
   invalidate(): void {
+    invalidateNetwork(this);
     this.stackGeneration++;
     this.stackCache = null;
     this.stackInflight = null;

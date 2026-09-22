@@ -445,19 +445,71 @@ describe('reward staking modal', () => {
     sellerUsage: { total: '0', claimable: false, agentId: 0 },
     staker: { total: '0', positions: [] },
   } as unknown as RewardsView;
+  it.each([1, 52])('shows the APY for the selected amount at a %s-epoch lock', minStakeEpochs => {
+    const app = { ...context, config: { ...context.config, readOnly: false }, overview: { ...context.overview, wallet: { eth: '1000000', canTransfer: false } } } as AppValue;
+    const html = renderToStaticMarkup(createElement(AppContext.Provider, { value: app }, createElement(StakeForm, {
+      config: { minStakeEpochs, maxStakeEpochs: 104, restakedRewardWeightBonusBps: 0, stakeActivationDelay: 1, minEarlyExitSlashBps: 500, maxSlashBps: 5000, moveWeightPenaltyBps: 0 },
+      pools: [{ agentId: 42, yield: { epoch: 20, startsAt: 0, endsAt: 604800, status: 'settled', reward: '1000000000000000000', power: '10000000000000000000000', minLockEpochs: 1, maxLockEpochs: 104 } }] as PoolView[],
+      rewards: rewardData,
+    })));
+    const expected = formatYieldPercent(Math.expm1(Math.log1p(minStakeEpochs / (10000 + 5 * minStakeEpochs)) * (365 / 7)) * 100);
+    expect(html).toContain(`Estimated APY <strong class="mono">${expected}</strong>`);
+    expect(html).toContain('aria-label="About estimated APY"');
+    expect(html).toContain('aria-label="About staking and early withdrawal"');
+    expect(html).not.toContain('Based on');
+    expect(html).not.toContain('compounding is not automatic');
+    expect(html).not.toContain('Longer locks earn more staking power');
+    expect(html).not.toContain('Stakes all eligible rewards from this source');
+  });
+  it('shows seller names without agent IDs and keeps an ID fallback for unnamed pools', () => {
+    const app = { ...context, config: { ...context.config, readOnly: false }, overview: { ...context.overview, wallet: { eth: '1000000', canTransfer: false } } } as AppValue;
+    const html = renderToStaticMarkup(createElement(AppContext.Provider, { value: app }, createElement(StakeForm, {
+      config: null, pools: [{ agentId: 42, profile: { name: ' Alpha ' } }, { agentId: 43 }] as PoolView[], rewards: rewardData,
+    })));
+    expect(html).toContain('<option value="42" selected="">Alpha</option>');
+    expect(html).toContain('<option value="43">Agent ID 43</option>');
+    expect(html).not.toContain('agent 42');
+    expect(html).not.toContain('Fixed seller pool');
+  });
+  it.each([
+    { kind: 'seller', lockedPool: false }, { kind: 'staker', lockedPool: false },
+    { kind: 'seller', lockedPool: true }, { kind: 'staker', lockedPool: true },
+  ])('keeps source-bound rewards in a fixed seller dropdown outside the seller sheet: %j', ({ kind, lockedPool }) => {
+    const app = { ...context, config: { ...context.config, readOnly: false }, overview: { ...context.overview, wallet: { eth: '1000000', canTransfer: false } } } as AppValue;
+    const rewards = {
+      ...rewardData,
+      buyerUsage: { ...rewardData.buyerUsage, total: '0' },
+      sellerUsage: { ...rewardData.sellerUsage, total: kind === 'seller' ? '1000000000000000000' : '0', agentId: 42, claimable: true },
+      staker: { total: '1000000000000000000', positions: kind === 'staker' ? [{ id: 25, agentId: 42, amount: '1000000000000000000', closed: false }] : [] },
+    } as RewardsView;
+    const html = renderToStaticMarkup(createElement(AppContext.Provider, { value: app }, createElement(StakeForm, {
+      config: null, pools: [{ agentId: 42, profile: { name: 'Alpha' } }] as PoolView[], rewards, lockedPool, defaultAgentId: 42,
+    })));
+    expect(html).not.toContain('stake-destination');
+    expect(html).not.toContain('Destination:');
+    expect(html.match(/<select\b/g)).toHaveLength(lockedPool ? 1 : 2);
+    if (lockedPool) expect(html).not.toContain('value="42"');
+    else {
+      expect(html).toMatch(/<select[^>]*disabled=""[^>]*><option value="42" selected="">Alpha<\/option><\/select>/);
+      expect(html).toContain('These rewards can only be staked into this seller pool.');
+    }
+    expect(html).not.toContain('agent 42');
+  });
   it('enables direct rewards while disabling restricted wallet balance', () => {
     const app = { ...context, config: { ...context.config, readOnly: false }, overview: { ...context.overview, wallet: { eth: '1000000', canTransfer: false } } } as AppValue;
     const html = renderToStaticMarkup(createElement(AppContext.Provider, {value: app}, createElement(StakeForm, {
       config: null, pools: [{ agentId: 42, name: 'Test pool' } as unknown as PoolView], balance: '1000000000000000000', rewards: rewardData,
     })));
     expect(html).toContain('Unclaimed buyer rewards');
-    expect(html).toContain('aria-checked="true"');
-    expect(html).toContain('<span class="source-card-amount">5<small>ANTS</small></span>');
+    expect(html).toContain('<option value="buyer" selected="">Unclaimed buyer rewards · 5 ANTS</option>');
+    expect(html).not.toContain('role="radiogroup"');
+    expect(html).toContain('AI buying rewards. Choose any seller; no claim needed.');
     // The restricted wallet balance is not offered at all, not merely disabled.
     expect(html).not.toContain('Wallet balance');
     expect(html).not.toContain('transfers restricted');
-    expect(html).toContain('Wallet ANTS are not listed: transfers are not enabled for this wallet, so only rewards can be staked.');
+    expect(html).toContain('Rewards only: wallet ANTS transfers are disabled.');
     expect(html).not.toContain('Projected APY');
+    expect(html).toContain('Estimated APY <strong class="mono">—</strong>');
     expect(html).not.toContain('Estimated first-epoch reward');
     expect(html).not.toContain('New stakes are unavailable');
     expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Stake rewards/);
@@ -469,8 +521,8 @@ describe('reward staking modal', () => {
       config: null, pools: [{ agentId: 42 } as PoolView], balance: '1000000000000000000', rewards: rewardData,
     })));
     expect(html).toContain('Wallet balance');
-    expect(html).toContain('<span class="source-card-amount">1<small>ANTS</small></span>');
-    expect(html).not.toContain('Wallet ANTS are not listed');
+    expect(html).toContain('<option value="wallet">Wallet balance · 1 ANTS</option>');
+    expect(html).not.toContain('Rewards only: wallet ANTS transfers are disabled.');
   });
   it('explains the empty state under transfer restrictions instead of showing a disabled wallet row', () => {
     const app = { ...context, config: { ...context.config, readOnly: false }, overview: { ...context.overview, wallet: { eth: '1000000', canTransfer: false } } } as AppValue;

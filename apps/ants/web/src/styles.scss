@@ -1305,6 +1305,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   &:focus-visible { outline: none; &::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--pc-panel), 0 0 0 5px var(--pc-accent); } }
 }
 .stake-lock-settings { flex: 1 1 280px; min-width: 0; .lock-slider { width: 100%; } }
+.stake-apy { display: grid; gap: 4px; margin-top: 12px; strong { margin-left: 6px; } }
 
 /* Lock presets under the slider */
 .lock-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -1316,40 +1317,6 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   &[aria-pressed="true"] { background: var(--pc-accent-bg); border-color: var(--pc-accent-line); color: var(--pc-accent); }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
 }
-
-/* ── Stake source picker ── */
-
-.source-grid { display: grid; gap: 8px; }
-.source-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--pc-line-strong);
-  border-radius: 10px;
-  background: var(--pc-bg);
-  color: var(--pc-ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
-  &:hover:not(:disabled) { border-color: var(--pc-accent-line); }
-  &[aria-pressed="true"] { border-color: var(--pc-accent); background: var(--pc-accent-bg); box-shadow: 0 0 0 1px var(--pc-accent-line); }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
-  &:focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 2px; }
-}
-.source-card-radio {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 1.5px solid var(--pc-line-strong);
-  display: grid; place-items: center;
-  &::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pc-accent); opacity: 0; transition: opacity 0.12s; }
-}
-.source-card[aria-pressed="true"] .source-card-radio { border-color: var(--pc-accent); &::after { opacity: 1; } }
-.source-card-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.source-card-name { font-size: 13px; font-weight: 600; }
-.source-card-note { font-size: 11.5px; color: var(--pc-sub); }
-.source-card-amount { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; small { color: var(--pc-sub); font-size: 10.5px; margin-left: 3px; } }
 
 .stake-empty {
   padding: 22px 20px;

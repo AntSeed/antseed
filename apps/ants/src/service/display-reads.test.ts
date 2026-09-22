@@ -5,11 +5,14 @@ import type { RewardPositions } from './position-feed.js';
 import type { DisplaySnapshot } from './display-snapshot.js';
 import { IndexerError, type IndexedPools } from './indexer.js';
 import { overviewReads } from './overview-reads.js';
+import { networkSnapshot } from './network.js';
+import type { NetworkSnapshot } from '../api-types.js';
 import { positions, move } from './positions.js';
 import { poolsView, singlePool } from './pools.js';
 import { poolYield } from './yield.js';
 
 vi.mock('@antseed/node/payments', async original => ({ ...await original<object>(), multicallRead: vi.fn() }));
+vi.mock('./network.js', () => ({ networkSnapshot: vi.fn() }));
 vi.mock('./explorer.js', () => ({ explorerSellers: async () => ({ byAddress: new Map(), byAgent: new Map() }) }));
 vi.mock('./stake-eligibility.js', () => ({ stakeEligibility: async (_ctx: unknown, ids: number[]) => new Map(ids.map(id => [id, { owner, stakeable: true }])) }));
 const owner = '0x0000000000000000000000000000000000000001';
@@ -73,7 +76,10 @@ function fixture() {
   return { ctx, stack, snapshot, indexer, pools, rewards, accounting, requests, livePosition, feed };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(networkSnapshot).mockResolvedValue({ totalSupply: '100', maxSupply: '100', totalActiveStake: '1000', totalPowerWeight: '2000', emission: '100', budgets: { staker: '100', buyer: '7', seller: '8' }, errors: [] } as unknown as NetworkSnapshot);
+});
 
 describe('indexed display / live financial read boundary', () => {
   function positionFeeds() {
@@ -141,21 +147,23 @@ describe('indexed display / live financial read boundary', () => {
     expect(pools.positionStatusesBatch).not.toHaveBeenCalled();
   });
 
-  it('removes three overview network calls but keeps wallet state and permissions live', async () => {
+  it('shares the coherent live network snapshot while keeping wallet state and permissions live', async () => {
     const { ctx, stack, requests } = fixture();
     const result = await overviewReads(ctx, stack);
-    expect(result).toMatchObject({ networkStake: 1000n, networkWeight: 2000n, stakerBudget: 100n, ants: 100n, eth: 9n, networkSource: { source: 'indexer', indexedBlock: 100 } });
-    expect(requests).toHaveLength(11);
-    expect(requests.map(row => row.method)).toEqual(expect.arrayContaining(['balanceOf', 'transferWhitelist', 'stakerTotalActiveStake', 'stakerPositionCount', 'getEpochEmission', 'usageEpochBudgets']));
+    expect(result).toMatchObject({ networkAvailable: true, networkStake: 1000n, networkWeight: 2000n, stakerBudget: 100n, ants: 100n, eth: 9n, networkSource: { source: 'chain' } });
+    expect(requests).toHaveLength(7);
+    expect(requests.map(row => row.method)).toEqual(expect.arrayContaining(['balanceOf', 'transferWhitelist', 'stakerTotalActiveStake', 'stakerPositionCount']));
     expect(requests.map(row => row.method)).not.toEqual(expect.arrayContaining(['totalActiveStakeAtEpoch', 'totalPowerWeightAtEpoch', 'stakerEpochBudget']));
   });
 
-  it('falls back to live overview network reads with an explicit stale warning', async () => {
-    const { ctx, stack, snapshot, requests } = fixture();
-    snapshot.indexedAt -= 121;
+  it('does not replace a failed live snapshot with mixed indexed statistics', async () => {
+    const { ctx, stack, indexer, requests } = fixture();
+    vi.mocked(networkSnapshot).mockRejectedValueOnce(new Error('Snapshot unavailable'));
     const result = await overviewReads(ctx, stack);
-    expect(result.networkSource).toMatchObject({ source: 'chain', error: expect.stringContaining('stale') });
-    expect(requests).toHaveLength(14);
+    expect(result.networkSource).toMatchObject({ source: 'chain', error: 'Snapshot unavailable' });
+    expect(result.networkAvailable).toBe(false);
+    expect(indexer.displaySnapshot).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(7);
   });
 
   it('retains direct reads when the indexer is explicitly unconfigured', async () => {

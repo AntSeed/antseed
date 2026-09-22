@@ -287,6 +287,50 @@ export interface UsageView {
 /** `shareBps` is a share of the epoch emission in `EmissionsView.shareDenominator` units (100,000 = 100%). */
 export interface MinterView { name: string; id: string; controller: string; shareBps: number; editable: boolean; epochBudget: string; }
 
+export interface NetworkStakerConfig {
+  minShareBps: number;
+  maxShareBps: number;
+  stakeShareTarget: string;
+}
+
+export interface NetworkUsageConfig {
+  buyerMinShareBps: number;
+  buyerMaxShareBps: number;
+  sellerMinShareBps: number;
+  sellerMaxShareBps: number;
+  volumeShareTarget: string;
+}
+
+export interface NetworkSnapshot {
+  chainId: string;
+  evmChainId: number;
+  blockNumber: number;
+  blockTimestamp: number;
+  fetchedAt: number;
+  activation: 'active' | 'not-active' | 'unverified';
+  epoch: EpochInfo;
+  shareDenominator: number;
+  initialEmission: string;
+  halvingInterval: number;
+  emission: string | null;
+  nextEmission: string | null;
+  cumulativeScheduled: string | null;
+  totalSupply: string | null;
+  maxSupply: string | null;
+  totalActiveStake: string | null;
+  totalPowerWeight: string | null;
+  usageVolume: string | null;
+  buckets: Array<{ name: string; id: string; controller: string | null; budget: string | null; nextBudget: string | null }>;
+  budgets: { staker: string | null; buyer: string | null; seller: string | null };
+  stakerConfig: NetworkStakerConfig | null;
+  nextStakerConfig: NetworkStakerConfig | null;
+  scaledStakeTarget: string | null;
+  usageConfig: NetworkUsageConfig | null;
+  nextUsageConfig: NetworkUsageConfig | null;
+  contracts: Record<string, string>;
+  errors: string[];
+}
+
 export interface EmissionsView {
   currentEpoch: number;
   effectiveEpoch: number | null;
