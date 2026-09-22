@@ -124,6 +124,50 @@ describe('selected account browser sessions', () => {
     finish();
     await vi.waitFor(() => expect(server.busy).toBe(false));
   });
+
+  it.each(['unopened', 'opened', 'submitted'])('handles disconnect during an %s wallet request safely', async phase => {
+    const { server, selected, connect, headers } = await setup();
+    const destination = Wallet.createRandom().address;
+    const hash = `0x${'ab'.repeat(32)}`;
+    let confirm!: (receipt: { status: number }) => void;
+    const provider = {
+      getNetwork: async () => ({ chainId: 31337n }),
+      getTransactionCount: async () => 0,
+      call: async () => '0x',
+      waitForTransaction: () => new Promise(resolve => { confirm = resolve; }),
+      getTransaction: async () => ({ from: selected.address, to: destination, chainId: 31337n, nonce: 0, data: '0x', value: 0n, hash }),
+    };
+    vi.spyOn(server.context, 'provider').mockReturnValue(provider as never);
+    vi.spyOn(service, 'registerBinding').mockImplementation(async () => {
+      const transaction = await server.context.requireSigner().sendTransaction({ to: destination });
+      return { hash: transaction.hash } as never;
+    });
+    await connect(selected.address);
+    const response = await server.app.inject({ method: 'POST', url: '/api/seller/register', headers, payload: {} });
+    const jobId = response.json().data.id;
+    let requestId = '';
+    await vi.waitFor(async () => {
+      const pending = (await server.app.inject({ url: '/api/wallet/request', headers })).json().data;
+      expect(pending).not.toBeNull();
+      requestId = pending.id;
+    });
+    if (phase !== 'unopened') await server.app.inject({ method: 'POST', url: '/api/wallet/begin', headers, payload: { id: requestId } });
+    if (phase === 'submitted') await server.app.inject({ method: 'POST', url: '/api/wallet/result', headers, payload: { id: requestId, hash } });
+    const disconnected = await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { disconnect: true } });
+    expect(disconnected.statusCode).toBe(200);
+    expect(server.context.signer).toBeUndefined();
+    expect(server.context.address).toBe(selected.address);
+    if (phase !== 'unopened') {
+      expect(server.busy).toBe(true);
+      if (phase === 'opened') await server.app.inject({ method: 'POST', url: '/api/wallet/result', headers, payload: { id: requestId, hash } });
+      await vi.waitFor(() => expect(confirm).toBeTypeOf('function'));
+      confirm({ status: 1 });
+    }
+    await vi.waitFor(() => expect(server.busy).toBe(false));
+    const job = (await server.app.inject({ url: `/api/jobs/${jobId}`, headers })).json().data;
+    expect(job.status).toBe(phase === 'unopened' ? 'failed' : 'done');
+    if (phase === 'unopened') expect(job.error).toContain('Wallet or network changed');
+  });
 });
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
@@ -235,4 +279,7 @@ it('browser sessions ignore host signing keys and retain the original buyer acro
   expect(await server.context.signer?.getAddress()).toBe(external.address);
   await server.app.inject({ method: 'POST', url: '/api/wallet', headers, payload: { disconnect: true } });
   expect(server.context.signer).toBeUndefined();
+  expect(server.context.address).toBe(external.address);
+  const disconnectedConfig = (await server.app.inject({ url: '/api/config', headers })).json().data;
+  expect(disconnectedConfig).toMatchObject({ readOnly: true, address: external.address });
 });

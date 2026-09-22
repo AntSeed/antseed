@@ -137,7 +137,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
       await jobs.start(request.path, request.body);
       onStarted?.();
     } catch (err) {
-      setError(describeError(err));
+      jobs.pushToast({ tone: 'danger', title: `${isWallet ? 'Stake' : 'Stake rewards'} failed`, body: describeError(err), sticky: true });
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -252,7 +252,7 @@ export function StakeForm({ config, pools, balance, rewards = null, rewardsError
       {error ? <div className="error-text" role="alert">{error}</div> : null}
       {source ? (
         <div className="stake-form-actions">
-          <button type="submit" className="btn btn--primary btn--md" disabled={blocked || busy}>{busy ? 'Sending…' : isWallet ? 'Stake' : 'Stake rewards'}</button>
+          <button type="submit" className="btn btn--primary btn--md" disabled={blocked || busy}>{busy ? 'Sending…' : block.label ?? (isWallet ? 'Stake' : 'Stake rewards')}</button>
           {onClose ? (
             <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           ) : null}

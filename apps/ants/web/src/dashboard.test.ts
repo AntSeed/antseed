@@ -7,6 +7,7 @@ import { RewardsPage } from './pages/Rewards';
 import { SellerPage } from './pages/Seller';
 import { StakePage } from './pages/Stake';
 import { PositionsPage } from './pages/Positions';
+import { AddressesPage } from './pages/Addresses';
 import { Layout } from './components/Layout';
 import { nearestIndex, slotIndex } from './components/chart-hover';
 import { parseRoute } from './router';
@@ -35,6 +36,19 @@ function render(child: ReturnType<typeof createElement>): string {
 }
 
 describe('staking dashboard displays', () => {
+  it('shows protocol addresses without the environment section', () => {
+    const previousOverview = state.data.overview;
+    const contractAddress = '0x0000000000000000000000000000000000000042';
+    state.data.overview = { addresses: { ANTSToken: contractAddress }, rpcUrl: 'http://127.0.0.1:54304' };
+    try {
+      const html = render(createElement(AddressesPage));
+      expect(html).toContain('Protocol contracts');
+      expect(html).toContain('ANTSToken');
+      expect(html).toContain(contractAddress);
+      for (const label of ['Environment', 'EVM chain id', 'RPC URL', 'Wallet', 'Data dir', 'Mode']) expect(html).not.toContain(label);
+      expect(html).not.toContain('http://127.0.0.1:54304');
+    } finally { state.data.overview = previousOverview; }
+  });
   it('omits the explorer loading message while seller statistics load', () => {
     const previousPools = state.data.pools;
     state.data.pools = null;
@@ -217,7 +231,7 @@ describe('staking dashboard displays', () => {
       expect(html).toContain('Connect the authorized wallet');
       expect(html).toContain(context.config.buyerAddress);
       expect(html).toContain('Legacy buyer rewards');
-      const claimButtons = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).filter(button => button.includes('>Claim to wallet</span>'));
+      const claimButtons = (html.match(/<button[^>]*>.*?<\/button>/g) ?? []).filter(button => button.includes('>Connect wallet</span>'));
       expect(claimButtons).toHaveLength(2);
       for (const button of claimButtons) expect(button).toContain('disabled=""');
       expect(state.keys).not.toContain('positions:current');
@@ -236,9 +250,20 @@ describe('staking dashboard displays', () => {
       const html = render(createElement(RewardsPage));
       expect(html).toContain('Authorize wallet ↗');
       expect(html).toContain('Authorize a wallet to claim or stake');
-      const claim = html.match(/<button[^>]*>.*?Claim to wallet.*?<\/button>/)?.[0];
+      const claim = html.match(/<button[^>]*>.*?Connect wallet<\/span>.*?<\/button>/)?.[0];
       expect(claim).toContain('disabled=""');
     } finally { state.data.rewards = previousData; context.config = previousConfig; }
+  });
+
+  it('keeps remembered positions viewable after disconnect without enabling signing', () => {
+    const previousConfig = context.config;
+    context.config = { ...context.config, browserWallet: true, readOnly: true, walletAddress: context.config.address };
+    state.keys = [];
+    try {
+      const html = render(createElement(PositionsPage));
+      expect(state.keys).toContain('positions:current');
+      expect(html).not.toContain('Connect a wallet to see your positions.');
+    } finally { context.config = previousConfig; }
   });
 
   it('uses the activation epoch for new locks and the existing end for extensions', () => {

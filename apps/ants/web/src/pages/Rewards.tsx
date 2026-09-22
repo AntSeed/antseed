@@ -59,6 +59,8 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
   const amount = sumBig([data.buyerUsage.total, data.legacy.buyer]);
   const operator = data.buyerUsage.operator;
   const authorized = !!operator && operator.toLowerCase() === (dashboard.walletAddress ?? dashboard.address).toLowerCase() && !dashboard.readOnly;
+  const showAuthorization = !operator && dashboard.canAuthorize;
+  const showWalletConnection = operator && !authorized && dashboard.browserWallet;
   const stakeUnavailable = isZero(data.buyerUsage.total)
     ? 'No current buyer rewards are available to stake yet.'
     : !authorized
@@ -78,10 +80,10 @@ function BuyerRewardsCard({ data }: { data: RewardsView }) {
     {isZero(amount) ? <p className="hero-sub muted">Nothing to claim yet. Rewards accrue at each epoch boundary.</p> : null}
     {!operator ? <p className="hint">Authorize a wallet to claim or stake this buyer’s rewards.</p> : !authorized ? <p className="hint">Connect the authorized wallet <AddressLink value={operator} /> on {dashboard.chainId} to claim or stake.</p> : null}
     {authorized && dashboard.selectedAddress && operator?.toLowerCase() !== dashboard.selectedAddress.toLowerCase() ? <p className="hint">Buyer rewards and positions created by staking them belong to operator <AddressLink value={operator!} />. Select that address to manage those positions.</p> : null}
-    <div className="hero-actions">
-      {!operator && dashboard.canAuthorize ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
-      {operator && !authorized && dashboard.browserWallet ? <BuyerWalletAction /> : null}
-    </div>
+    {showAuthorization || showWalletConnection ? <div className="hero-actions">
+      {showAuthorization ? <button className="btn" disabled={authorizing} onClick={() => void authorize()}>{authorizing ? 'Opening…' : 'Authorize wallet ↗'}</button> : null}
+      {showWalletConnection ? <BuyerWalletAction /> : null}
+    </div> : null}
     {authorizationError ? <p role="alert" className="hint">{authorizationError}</p> : null}
     <div className="buckets">
       <BucketRow visible name="Current buyer rewards" amount={data.buyerUsage.total}

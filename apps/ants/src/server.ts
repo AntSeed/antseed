@@ -169,9 +169,9 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
           return { ok: true, data: { changed: false } };
         }
         // Check before cancelling: a refused switch must not poison the running job's signer.
-        if (jobs.busy) return reply.code(409).send({ ok: false, error: 'Waiting for the previous wallet action to finish. Submitted transactions are still tracked.' });
+        if (jobs.busy && !(next === null && body.disconnect)) return reply.code(409).send({ ok: false, error: 'Waiting for the previous wallet action to finish. Submitted transactions are still tracked.' });
         browserSigning.cancel();
-        context.address = selectedAddress ?? next ?? ZeroAddress;
+        context.address = selectedAddress ?? next ?? context.address;
         context.signer = next ? browserSigning.signer(next, context.provider()) : undefined;
         context.invalidate(); views.invalidate();
         return { ok: true, data: { changed: true } };

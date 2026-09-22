@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { safeWalletFailure } from './wallet-errors.js';
 import { AbstractSigner, getAddress, isError, resolveProperties, type Provider, type TransactionReceipt, type TransactionRequest, type TransactionResponse, type TypedDataDomain, type TypedDataField } from 'ethers';
 
 function isTimeout(err: unknown): boolean {
@@ -104,7 +105,7 @@ export class BrowserSigning {
     }
     if (error) {
       clearTimeout(pending.timer); this.pending = null;
-      pending.reject(new Error('Wallet request rejected or failed. Check your wallet before retrying.'));
+      pending.reject(new Error(safeWalletFailure(error)));
       return;
     }
     if (!hash || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Invalid transaction hash.');

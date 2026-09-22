@@ -27,4 +27,16 @@ describe('transaction toasts', () => {
     mocks.jobs.mockReturnValue({ dismissToast: vi.fn(), toasts: [] });
     expect(renderToStaticMarkup(createElement(Toasts))).toBe('');
   });
+
+  it('shows approval as progress, not as a confirmed transaction', () => {
+    mocks.jobs.mockReturnValue({ dismissToast: vi.fn(), toasts: [
+      { id: 1, tone: 'info', title: 'Withdraw · position #26 · Awaiting wallet approval', sticky: true },
+    ] });
+    const html = renderToStaticMarkup(createElement(Toasts));
+    expect(html).toContain('status-icon--running');
+    expect(html).not.toContain('status-icon--done');
+    expect(html).toContain('Awaiting wallet approval');
+    expect(html).not.toContain('Open wallet');
+    expect(html).not.toContain('Track submission');
+  });
 });

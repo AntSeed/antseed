@@ -23,7 +23,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **ANTS staking** | |
 | `antseed ants` | Require explicit account selection; print the two dashboard launch options and exit with an error |
 | `antseed ants --local-address` | Select the existing local AntSeed identity’s address; keep signing in the browser wallet |
-| `antseed ants --address 0x...` | Select an explicit account; connect its wallet for seller/staking actions or its authorized operator for buyer actions |
+| `antseed ants --address 0x...` | View/manage the specified account. Transactions require the matching browser wallet, or its authorized operator for buyer actions. Does not use the local wallet. |
 | `antseed ants status` | Protocol phase, epoch countdown, balances, stake, claimable rewards |
 | `antseed ants stake <ants> --agent <id> --epochs <n>` | Stake ANTS into any registered seller pool |
 | `antseed ants positions` | List open lANTS positions with state, pending rewards, and exit slash |
@@ -377,8 +377,9 @@ launch options before loading an identity or starting a server. The selected acc
 seller and position actions require that account's wallet, while buyer reward
 actions require its current deposits operator on the configured network.
 
-`--local-address` fails if no local identity exists. `--address` does not
-load or create a local identity and does not offer the local authorization flow;
+`--local-address` fails if no local identity exists. `--address` only selects
+the account to view/manage; it does not use the local wallet, load or create a
+local identity, or offer the local authorization flow;
 authorize that buyer separately first. Buyer rewards and positions created by
 staking them belong to the authorized operator. Select the operator's address
 with `--address` to manage those positions.

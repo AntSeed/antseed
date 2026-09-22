@@ -26,7 +26,9 @@ antseed ants --local-address --port 4000
 
 Choose exactly one account-selection flag: `--local-address` selects the existing
 local identity in your data directory; `--address 0x...` selects an explicit
-account. Plain `antseed ants` exits with an error showing both options, without
+account to view/manage without loading or using the local wallet. Transactions
+require the matching browser wallet, or its authorized operator for buyer actions.
+Plain `antseed ants` exits with an error showing both options, without
 starting a server. The default port is `3119`; `--no-open` prints the URL without
 opening a browser, and `--port` changes the port. Help and CLI subcommands do not
 require these dashboard flags.

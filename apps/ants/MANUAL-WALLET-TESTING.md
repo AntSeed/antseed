@@ -61,6 +61,27 @@ Rejecting approval must leave reward amounts unchanged. After a transaction
 confirms, the amounts shimmer while fresh values load and reward actions remain
 disabled; background refreshes alone should not trigger this animation.
 
+## Wallet connection and transaction feedback
+
+- Disconnect the browser wallet while the backend still remembers its address.
+  Position previews remain available, but submission must be disabled and show
+  **Connect wallet**. Switching to another chain must show **Switch network**.
+- Open an action form, then disconnect or change accounts before submitting.
+  The shared submission guard must block the old form from starting a job.
+- For a new action, bottom-right toasts distinguish **Awaiting wallet approval**
+  (no hash yet), **Submitted** (a hash exists), and **Confirmed**. The action and
+  position IDs identify the current operation; each new phase replaces that
+  operation's previous toast. There is no separate wallet-opening or tracking button.
+- Reject an approval: the toast must identify rejection, not report a generic
+  wallet failure. Disconnection, wrong network, and contract simulation failures
+  have separate messages. Unknown failures explicitly advise checking wallet
+  activity rather than claiming that nothing was submitted.
+- Disconnect before wallet approval opens: the unsigned job must stop. Once
+  approval has opened, or a hash has been returned, the existing request remains
+  tracked without automatically resubmitting it. Test this with a delayed wallet;
+  Anvil normally confirms too quickly to exercise the submitted phase manually.
+- Reload: historical failed jobs must not reappear as failures of a new action.
+
 ## Anvil test controls
 
 The controls are hidden by default. To show the **Anvil test controls** panel at

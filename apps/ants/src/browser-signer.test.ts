@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type Provider, type TransactionResponse } from 'ethers';
 import { BrowserSigning } from './browser-signer.js';
+import { WALLET_ERRORS } from './wallet-errors.js';
 const from = '0x0000000000000000000000000000000000000001';
 const to = '0x0000000000000000000000000000000000000002';
 const hash = `0x${'ab'.repeat(32)}`;
@@ -98,11 +99,11 @@ it('keeps polling through an ethers TIMEOUT and tolerates a lagging endpoint on 
 it('rejects a wallet cancellation after the prompt was opened so a reloaded tab is not stuck', async () => {
   const { bridge, signer } = fixture();
   const sent = signer.sendTransaction({ to, data: '0x1234', value: 2n });
-  const rejected = expect(sent).rejects.toThrow('rejected or failed');
+  const rejected = expect(sent).rejects.toThrow(WALLET_ERRORS.rejected);
   await vi.waitFor(() => expect(bridge.request).not.toBeNull());
   const id = bridge.request!.id;
   bridge.begin(id);
-  await bridge.complete(id, undefined, 'Cancelled');
+  await bridge.complete(id, undefined, WALLET_ERRORS.rejected);
   await rejected;
   expect(bridge.request).toBeNull();
 });

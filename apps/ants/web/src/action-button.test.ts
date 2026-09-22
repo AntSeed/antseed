@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionButton, ActionDialog, type ActionButtonProps } from './components/Confirm';
 
-const mocks = vi.hoisted(() => ({ app: vi.fn(), jobs: vi.fn(), start: vi.fn(), button: vi.fn(), close: undefined as (() => void) | undefined }));
+const mocks = vi.hoisted(() => ({ app: vi.fn(), jobs: vi.fn(), start: vi.fn(), pushToast: vi.fn(), button: vi.fn(), close: undefined as (() => void) | undefined }));
 vi.mock('./app-context', () => ({ useApp: mocks.app }));
 vi.mock('./jobs', () => ({ useJobs: mocks.jobs }));
 vi.mock('./components/ui', async original => ({
@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.close = undefined;
   mocks.app.mockReturnValue({ config: { readOnly: false }, overview: { wallet: { eth: '1' } } });
-  mocks.jobs.mockReturnValue({ start: mocks.start, running: false });
+  mocks.jobs.mockReturnValue({ start: mocks.start, pushToast: mocks.pushToast, running: false });
   mocks.start.mockResolvedValue({ id: 'move-job' });
 });
 
@@ -128,6 +128,7 @@ describe('direct action submission', () => {
     await button.onClick();
     expect(mocks.start).toHaveBeenCalledOnce();
     expect(onStarted).not.toHaveBeenCalled();
+    expect(mocks.pushToast).toHaveBeenCalledWith({ tone: 'danger', title: 'Move allocation failed', body: 'Request failed', sticky: true });
     await button.onClick();
     expect(mocks.start).toHaveBeenCalledTimes(2);
     expect(onStarted).toHaveBeenCalledOnce();

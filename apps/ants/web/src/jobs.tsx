@@ -4,6 +4,7 @@ import { api } from './api';
 import { invalidateAll } from './data';
 import { describeError } from './format';
 import { readStartedJobs, rememberStartedJob } from './job-session';
+import { useWalletReadiness } from './wallet-readiness';
 
 /*
  * Session transaction state, modelled on Uniswap's transaction UX: a pending
@@ -16,10 +17,11 @@ import { readStartedJobs, rememberStartedJob } from './job-session';
 const POLL_MS = 2000;
 const TOAST_MS = 8000;
 
-export type ToastTone = 'success' | 'danger';
+export type ToastTone = 'success' | 'danger' | 'info';
 
 export interface Toast {
   id: number;
+  jobId?: string;
   tone: ToastTone;
   title: string;
   /** Free text under the title (error message). */
@@ -43,6 +45,7 @@ export interface JobsValue {
   setDrawerOpen: (open: boolean) => void;
   dismissToast: (id: number) => void;
   pushToast: (toast: Omit<Toast, 'id'>) => void;
+  titleForJob: (id: string) => string;
   /** POST an action; resolves with the running job (throws on 403/409/other errors). */
   start: (path: string, body: unknown) => Promise<JobView>;
 }
@@ -80,6 +83,13 @@ export function jobTitle(kind: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Transaction';
 }
 
+export function actionTitle(kind: string, body: unknown): string {
+  const input = body as { positionId?: unknown; positionIds?: unknown } | null;
+  const ids = Array.isArray(input?.positionIds) ? input.positionIds : [input?.positionId];
+  const positions = ids.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+  return `${jobTitle(kind)}${positions.length ? ` · position${positions.length > 1 ? 's' : ''} ${positions.map(id => `#${id}`).join(', ')}` : ''}`;
+}
+
 interface Seen {
   hashes: Set<string>;
   terminal: boolean;
@@ -90,6 +100,11 @@ function sortNewestFirst(jobs: JobView[]): JobView[] {
 }
 
 export function JobsProvider({ children }: { children: ReactNode }) {
+  const wallet = useWalletReadiness();
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
+  const labels = useRef(new Map<string, string>());
+  const titleForJob = useCallback((id: string) => labels.current.get(id) ?? 'Transaction', []);
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [locallyStartedJobIds, setLocallyStartedJobIds] = useState(readStartedJobs);
   const localJobIdsRef = useRef(locallyStartedJobIds);
@@ -112,7 +127,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const pushToast = useCallback(
     (toast: Omit<Toast, 'id'>) => {
       const id = ++toastIdRef.current;
-      setToasts((list) => [...list, { ...toast, id }]);
+      setToasts((list) => [...list.filter(existing => !toast.jobId || existing.jobId !== toast.jobId), { ...toast, id }]);
       if (!toast.sticky) {
         timersRef.current.set(
           id,
@@ -141,32 +156,34 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       let finished = false;
       let confirmed = false;
       for (const job of list) {
+        if (!labels.current.has(job.id)) labels.current.set(job.id, jobTitle(job.kind));
         let seen = seenRef.current.get(job.id);
         if (!seen) {
-          seen = { hashes: new Set(), terminal: silent && job.status !== 'running' };
-          if (silent) for (const step of job.steps) if (step.hash) seen.hashes.add(step.hash);
+          const historical = silent || (job.status !== 'running' && !localJobIdsRef.current.has(job.id));
+          seen = { hashes: new Set(), terminal: historical && job.status !== 'running' };
+          if (historical) for (const step of job.steps) if (step.hash) seen.hashes.add(step.hash);
           seenRef.current.set(job.id, seen);
         }
         for (const step of job.steps) {
           if (!step.hash || seen.hashes.has(step.hash)) continue;
           seen.hashes.add(step.hash);
-          if (!silent) pushToast({ tone: 'success', title: step.label, hash: step.hash, sticky: false });
+          if (!silent) pushToast({ tone: 'success', jobId: job.id, title: `${titleForJob(job.id)} · Confirmed`, body: step.label, hash: step.hash, sticky: false });
         }
         if (job.status !== 'running' && !seen.terminal) {
           seen.terminal = true;
           finished = true;
           confirmed ||= job.steps.some(step => !!step.hash);
           if (job.status === 'failed') {
-            pushToast({ tone: 'danger', title: `${jobTitle(job.kind)} failed`, body: job.error ?? 'The transaction did not complete.', sticky: true });
+            pushToast({ tone: 'danger', jobId: job.id, title: `${titleForJob(job.id)} · ${job.error?.startsWith('You rejected') ? 'Rejected' : 'Failed'}`, body: job.error ?? 'The transaction did not complete.', sticky: true });
           } else if (!silent) {
-            pushToast({ tone: 'success', title: `${jobTitle(job.kind)} complete`, sticky: false });
+            pushToast({ tone: 'success', jobId: job.id, title: `${titleForJob(job.id)} · ${job.steps.some(step => !!step.hash) ? 'Confirmed' : 'Complete'}`, hash: [...job.steps].reverse().find(step => !!step.hash)?.hash, sticky: false });
           }
         }
       }
       setJobs(sortNewestFirst(list));
       if (finished && !silent) invalidateAll({ confirmed });
     },
-    [pushToast],
+    [pushToast, titleForJob],
   );
 
   const silentRef = useRef(true);
@@ -210,7 +227,9 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, [drawerOpen, running, refresh]);
 
   const start = useCallback(async (path: string, body: unknown) => {
+    walletRef.current?.assertReady();
     const job = await api.startJob(path, body);
+    labels.current.set(job.id, actionTitle(job.kind, body));
     localJobIdsRef.current = rememberStartedJob(localJobIdsRef.current, job.id);
     setLocallyStartedJobIds(localJobIdsRef.current);
     // A freshly started job is never silent: every hashed step it reports from here on is toasted.
@@ -222,8 +241,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<JobsValue>(
-    () => ({ jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, pushToast, start }),
-    [jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, dismissToast, pushToast, start],
+    () => ({ jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, setDrawerOpen, dismissToast, pushToast, titleForJob, start }),
+    [jobs, locallyStartedJobIds, pending, running, drawerOpen, pollError, toasts, dismissToast, pushToast, titleForJob, start],
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

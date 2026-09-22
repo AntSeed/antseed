@@ -1190,6 +1190,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
   flex-direction: column;
   gap: 8px;
 }
+.hero > .hint, .hero > .hero-sub { margin: 0; }
 .hero-value {
   display: flex;
   align-items: baseline;
@@ -1453,6 +1454,7 @@ table.table { border-collapse: collapse; width: 100%; font-size: 13px; line-heig
 @media (max-width: 680px) {
   .sidebar-foot .wallet-chip { display: none; }
   .main { padding: 16px 14px 40px; }
+  .hero { padding: 20px; }
   .field-w-lg { width: 100%; }
   .confirm { min-width: 0; }
   .hero-value { font-size: 30px; line-height: 36px; }

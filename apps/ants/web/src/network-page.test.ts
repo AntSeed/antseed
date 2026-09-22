@@ -67,6 +67,7 @@ describe('network facts', () => {
 
   it('places an accessible budget-finality info button next to the heading', () => {
     const html = renderToStaticMarkup(createElement(EmissionsSection, { data: state.data! }));
+    expect(html).not.toContain('Capped by the allowances below. Shares need not total 100%.');
     expect(html).toMatch(/<h3>Current epoch reward budgets · epoch 25 <span[^>]*><button[^>]*type="button"[^>]*aria-label="When reward budgets become final"[^>]*>i<\/button><\/span><\/h3>/);
   });
 

@@ -39,7 +39,6 @@ export function EmissionsSection({ data }: { data: NetworkSnapshot }) {
         { key: 'budget', label: 'Calculated epoch budget', align: 'right', mono: true, render: row => networkAnts(row.budget) },
         { key: 'share', label: 'Share of epoch emission', align: 'right', mono: true, render: row => emissionPercent(row.budget, data.emission) },
       ]} rows={rewardRows} rowKey={row => row.name} />
-      <p className="hint mt">Capped by the allowances below. Shares need not total 100%.</p>
       <Details summary="How these budgets are calculated">
         <div className="section-label">Staker rewards</div>
         {staker ? <Facts items={[

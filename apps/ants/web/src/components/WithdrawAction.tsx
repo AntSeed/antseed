@@ -79,7 +79,7 @@ export function WithdrawAction({ positionId, positionIds, size, autoOpen = false
       setOpen(false);
       onStarted?.();
     } catch (err) {
-      setError(describeError(err));
+      jobs.pushToast({ tone: 'danger', title: `Withdraw · position${ids.length > 1 ? 's' : ''} ${ids.map(id => `#${id}`).join(', ')} failed`, body: describeError(err), sticky: true });
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -102,7 +102,7 @@ export function WithdrawAction({ positionId, positionIds, size, autoOpen = false
         <Confirm
           title={ids.length > 1 ? `Withdraw ${ids.length} positions` : 'Withdraw position'}
           hideTitle={autoOpen}
-          confirmLabel={preview?.earlyExit ? 'Withdraw and burn slashed principal' : 'Withdraw'}
+          confirmLabel={block.label ?? (preview?.earlyExit ? 'Withdraw and burn slashed principal' : 'Withdraw')}
           danger={preview?.earlyExit === true}
           disabled={!canConfirm}
           busy={busy}

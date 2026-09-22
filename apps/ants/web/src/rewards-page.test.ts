@@ -63,6 +63,21 @@ beforeEach(() => {
 });
 
 describe('reward row actions and confirmations', () => {
+  it('omits the buyer action row when no authorization or connection action is available', () => {
+    state.rewards!.scope = 'buyer';
+    state.rewards!.buyerUsage.operator = null;
+    expect(render()).not.toContain('class="hero-actions"');
+  });
+
+  it('keeps the buyer authorization action when available', () => {
+    state.rewards!.scope = 'buyer';
+    state.rewards!.buyerUsage.operator = null;
+    const authorizationContext = { ...context, config: { ...context.config, canAuthorize: true } };
+    const html = renderToStaticMarkup(createElement(AppContext.Provider, { value: authorizationContext }, createElement(RewardsPage)));
+    expect(html).toContain('class="hero-actions"');
+    expect(html).toContain('Authorize wallet');
+  });
+
   it('shows seller names in the staking dropdown and falls back to agent IDs when names are missing', () => {
     state.pools = [
       { agentId: 42, profile: { name: ' Seller Alpha ' } },

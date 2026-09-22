@@ -6,6 +6,8 @@ import { defineChain, http } from 'viem';
 import { ApiError, request, type DashboardConfig } from './api';
 import { invalidateAll } from './data';
 import { useJobs } from './jobs';
+import { WalletReadinessContext, walletReadiness } from './wallet-readiness';
+import { walletFailure } from '../../src/wallet-errors';
 import { WalletPromptGate } from './wallet-prompt';
 import { WalletResultDelivery } from './wallet-result';
 import type { BrowserTransaction } from '../../src/browser-signer';
@@ -24,19 +26,30 @@ export function WalletProvider({ config, children }: { config: DashboardConfig; 
     transports: { [config.evmChainId]: http() },
   }), [config.chainId, config.evmChainId, config.walletRpcUrl]);
   if (!config.browserWallet) return <>{children}</>;
-  return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider theme={walletTheme}>{children}</RainbowKitProvider></QueryClientProvider></WalletRoot>;
+  return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider theme={walletTheme}><WalletSession config={config}>{children}</WalletSession></RainbowKitProvider></QueryClientProvider></WalletRoot>;
+}
+
+function WalletSession({ config, children }: { config: DashboardConfig; children: ReactNode }) {
+  const account = useAccount();
+  const { data: wallet } = useWalletClient();
+  const readiness = walletReadiness(config, { status: account.status, address: account.address, chainId: account.chainId, clientAddress: wallet?.account.address, clientChainId: wallet?.chain.id });
+  const current = useRef(readiness);
+  current.current = readiness;
+  const assertReady = useCallback(() => { if (current.current.reason) throw new Error(current.current.reason); }, []);
+  return <WalletReadinessContext.Provider value={{ ...readiness, assertReady }}>{children}</WalletReadinessContext.Provider>;
 }
 
 /** Sync wallet identity before enabling jobs. Every transaction has an explicit wallet approval. */
 export function WalletControls({ config }: { config: DashboardConfig }) {
   const account = useAccount();
-  const { running, locallyStartedJobIds, pushToast } = useJobs();
+  const { jobs, running, locallyStartedJobIds, pushToast, titleForJob } = useJobs();
   const { data: wallet } = useWalletClient();
   const [pending, setPending] = useState<BrowserTransaction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const processing = useRef(false);
   const promptGate = useRef(new WalletPromptGate());
+  const announced = useRef(new Map<string, string>());
   const syncedIdentity = useRef<string | null>(null);
   const syncQueue = useRef<Promise<void>>(Promise.resolve());
   const delivery = useRef(new WalletResultDelivery(result => request('/api/wallet/result', { method: 'POST', body: result })));
@@ -106,6 +119,16 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
     void poll();
     return () => { stopped = true; clearTimeout(timer); };
   }, [running, pending !== null]);
+  useEffect(() => {
+    if (!pending?.jobId) return;
+    const job = jobs.find(item => item.id === pending.jobId);
+    if (!job || job.status !== 'running') return;
+    const stage = pending.submittedHash ? 'Submitted' : 'Awaiting wallet approval';
+    if (announced.current.get(pending.id) === stage) return;
+    if (announced.current.get(pending.id) === 'Submitted') return;
+    announced.current.set(pending.id, stage);
+    pushToast({ tone: 'info', jobId: pending.jobId, title: `${titleForJob(pending.jobId)} · ${stage}`, body: pending.submittedHash ? 'Waiting for on-chain confirmation.' : 'No transaction has been submitted yet.', hash: pending.submittedHash, sticky: true });
+  }, [pending, jobs, pushToast, titleForJob]);
   const approve = useCallback(async () => {
     if (!pending || !wallet || processing.current || pending.submittedHash) return;
     processing.current = true; setBusy(true); setError(null);
@@ -116,16 +139,17 @@ export function WalletControls({ config }: { config: DashboardConfig }) {
       startedHere = true;
       const hash = await wallet.sendTransaction({ account: wallet.account, chain: wallet.chain, to: pending.to as `0x${string}`, data: pending.data as `0x${string}`, value: BigInt(pending.value) });
       delivery.current.enqueue({ id: pending.id, hash });
+      announced.current.set(pending.id, 'Submitted');
+      pushToast({ tone: 'info', jobId: pending.jobId, title: `${titleForJob(pending.jobId ?? '')} · Submitted`, body: 'Waiting for on-chain confirmation.', hash, sticky: true });
       await delivery.current.deliver(pending.id);
     } catch (e) {
-      const short = e && typeof e === 'object' && 'shortMessage' in e ? e.shortMessage : undefined;
-      const message = typeof short === 'string' ? short : (e instanceof Error ? e.message : String(e)).split('\n')[0]!;
+      const message = walletFailure(e);
       if (startedHere) {
         delivery.current.enqueue({ id: pending.id, error: message });
         await delivery.current.deliver(pending.id);
       } else setError(message);
     } finally { processing.current = false; setBusy(false); }
-  }, [pending, wallet, account.address, account.chainId, config.evmChainId]);
+  }, [pending, wallet, account.address, account.chainId, config.evmChainId, pushToast, titleForJob]);
   const promptContext = useMemo(() => ({ transaction: pending, locallyStartedJobIds, accountAddress: account.address, accountChainId: account.chainId, walletAddress: wallet?.account.address, walletChainId: wallet?.chain.id, expectedChainId: config.evmChainId, busy, settling }), [pending, locallyStartedJobIds, account.address, account.chainId, wallet, config.evmChainId, busy, settling]);
   useEffect(() => {
     if (promptGate.current.claim(promptContext)) void approve();
