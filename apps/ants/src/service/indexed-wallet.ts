@@ -1,8 +1,10 @@
 import type { AntsContext } from './context.js';
 import type { LivePositions, RewardPositions } from './position-feed.js';
 
-/** Live position status older than this is rejected; Antscan refreshes it every 15s. */
-const LIVE_MAX_AGE_SECONDS = 15;
+/** Live position status older than this is rejected. Antscan caches it for 15s and this client for another 15s; anything beyond a minute is a stalled feed. */
+const LIVE_MAX_AGE_SECONDS = 60;
+/** Antscan serves a stale snapshot while refreshing in the background; one re-read after this pause picks up the fresh one. */
+const STALE_RETRY_MS = 1_500;
 const REWARDS_MAX_AGE_SECONDS = 3600;
 /** Tolerated clock skew between Antscan and this machine. */
 const CLOCK_SKEW_SECONDS = 30;
@@ -20,7 +22,11 @@ function coversLocalPositions(ctx: AntsContext, positions: Array<{ id: number }>
 export async function liveWalletPositions(ctx: AntsContext, epoch: number): Promise<LivePositions> {
   const indexer = ctx.indexer();
   if (!indexer?.livePositions) throw new Error('Antscan live positions are unavailable');
-  const data = await indexer.livePositions(ctx.address);
+  let data = await indexer.livePositions(ctx.address);
+  if (data.liveSource.stale) {
+    await new Promise((resolve) => setTimeout(resolve, STALE_RETRY_MS));
+    data = await indexer.livePositions(ctx.address, { refresh: true });
+  }
   const { liveSource } = data;
   const now = nowSeconds();
   const fresh = now - liveSource.fetchedAt < LIVE_MAX_AGE_SECONDS && liveSource.fetchedAt <= now + CLOCK_SKEW_SECONDS;

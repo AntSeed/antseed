@@ -118,7 +118,8 @@ export interface IndexedParticipant { address: string; currentEpoch: number; sel
 export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; requests: string; }
 
 export interface Indexer {
-  livePositions?(owner: string): Promise<LivePositions>;
+  /** `refresh` bypasses the client cache; used to re-read after the explorer served a stale snapshot. */
+  livePositions?(owner: string, options?: { refresh?: boolean }): Promise<LivePositions>;
   rewardPositions?(owner: string, outstanding?: boolean): Promise<RewardPositions>;
   displaySnapshot?(epoch: number, owner: string): Promise<DisplaySnapshot>;
   invalidate?(): void;
@@ -319,8 +320,8 @@ export class AntscanIndexer implements Indexer {
     return (raw.positions ?? []).map(toPosition);
   }
 
-  async livePositions(owner: string): Promise<LivePositions> {
-    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&includeClosed=1`), owner);
+  async livePositions(owner: string, options: { refresh?: boolean } = {}): Promise<LivePositions> {
+    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&includeClosed=1`, !options.refresh), owner);
   }
 
   rewardPositions(owner: string, outstanding = false): Promise<RewardPositions> {

@@ -131,13 +131,23 @@ describe('snapshot eligibility', () => {
     if (kind === 'stale') raw.liveSource.stale = true;
     if (kind === 'incomplete') raw.liveSource.complete = false;
     if (kind === 'epoch') raw.currentEpoch = raw.liveSource.currentEpoch = '23';
-    if (kind === 'old') raw.liveSource.fetchedAt -= 15;
+    if (kind === 'old') raw.liveSource.fetchedAt -= 61;
     if (kind === 'barrier') ctx.positionReadBarriers.set(owner, { block: 100, at: raw.liveSource.fetchedAt });
     if (kind === 'missing-position') ctx.localPositionIds.set(8, owner);
     if (kind === 'null-field') Object.assign(raw.positions[0]!, { nextPower: null });
     ctx.indexer = () => ({ livePositions: async () => parseLivePositions(raw, owner) }) as never;
     await expect(liveWalletPositions(ctx, 22)).rejects.toThrow();
   });
+  it('re-reads once, bypassing the client cache, when the explorer served a stale snapshot', async () => {
+    const ctx = context();
+    const stale = livePage(); stale.liveSource.stale = true; stale.liveSource.fetchedAt -= 40;
+    const calls: unknown[] = [];
+    ctx.indexer = () => ({ livePositions: async (_owner: string, options?: unknown) => { calls.push(options); return parseLivePositions(calls.length === 1 ? stale : livePage(), owner); } }) as never;
+    const data = await liveWalletPositions(ctx, 22);
+    expect(data.liveSource.stale).toBe(false);
+    expect(calls).toEqual([undefined, { refresh: true }]);
+  });
+
   it('accepts complete fresh live state', async () => {
     const ctx = context();
     ctx.indexer = () => ({ livePositions: async () => parseLivePositions(livePage(), owner) }) as never;
