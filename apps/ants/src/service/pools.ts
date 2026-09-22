@@ -162,7 +162,9 @@ export async function ownPools(ctx: AntsContext, rows: SellerPoolPosition[], epo
     const entry = own.get(position.agentId) ?? { positionIds: [], power: 0n, stake: 0n, pending: 0n };
     entry.positionIds.push(position.id);
     entry.power += power.get(position.id) ?? 0n;
-    if (position.stakeStartEpoch <= epoch) entry.stake += position.amount; else entry.pending += position.amount;
+    if (position.stakeStartEpoch <= epoch) entry.stake += position.amount;
+    // A split/merge/move source that closes next epoch keeps its power until then, but its principal already lives in the replacement.
+    else if (position.closedAtEpoch === 0) entry.pending += position.amount;
     own.set(position.agentId, entry);
   }
   return own;

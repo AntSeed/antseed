@@ -247,11 +247,13 @@ describe('indexed display / live financial read boundary', () => {
   it('prices your positions from the explorer and reads the chain only for ids it could not price', async () => {
     const { ctx, snapshot, requests, indexer } = fixture();
     snapshot.positions.push({ ...snapshot.positions[0]!, id: 8, stakeStartEpoch: 23, amount: '40' });
-    indexer.positions.mockResolvedValueOnce([{ ...snapshot.positions[0]!, power: '150' }, { ...snapshot.positions[1]!, power: null }]);
+    // A merge source closing next epoch still holds power but its principal is not pending.
+    snapshot.positions.push({ ...snapshot.positions[0]!, id: 9, stakeStartEpoch: 23, closedAtEpoch: 23, amount: '500' });
+    indexer.positions.mockResolvedValueOnce([{ ...snapshot.positions[0]!, power: '150' }, { ...snapshot.positions[1]!, power: null }, { ...snapshot.positions[2]!, power: '0' }]);
     const result = await poolsView(ctx);
     expect(indexer.positions).toHaveBeenCalledWith(snapshot.positions[0]!.owner, false);
     expect(requests.filter(row => row.method === 'positionWeightAtEpoch').map(row => row.args)).toEqual([[8, 22]]);
-    expect(result.pools[0]).toMatchObject({ yourStake: '100', yourPendingStake: '40', yourPower: '250', yourPositionIds: [7, 8] });
+    expect(result.pools[0]).toMatchObject({ yourStake: '100', yourPendingStake: '40', yourPower: '250', yourPositionIds: [7, 8, 9] });
     expect(result.yourPendingStake).toBe('40');
   });
 

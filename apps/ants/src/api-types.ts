@@ -284,7 +284,7 @@ export interface UsageView {
 }
 
 /** `shareBps` is a share of the epoch emission in `EmissionsView.shareDenominator` units (100,000 = 100%). */
-export interface MinterView { name: string; id: string; controller: string; shareBps: number; editable: boolean; epochBudget: string; }
+export interface MinterView { name: string; id: string; controller: string; shareBps: number; epochBudget: string; }
 
 export interface EmissionsView {
   currentEpoch: number;
@@ -299,6 +299,8 @@ export interface EmissionsView {
   minters: MinterView[];
   emissionsReserve: string | null;
   legacyEscrow: string | null;
+  /** Settled USDC volume so far this epoch (the usage contracts' dynamic-share input); null without an explorer. */
+  epochVolumeUsdc: string | null;
   /** Share values below use `shareDenominator` units of the epoch emission, not basis points. */
   dynamicStaker: { minShareBps: number; maxShareBps: number; stakeShareTarget: string } | null;
   dynamicUsage: { buyerMinShareBps: number; buyerMaxShareBps: number; sellerMinShareBps: number; sellerMaxShareBps: number; volumeShareTarget: string } | null;

@@ -143,7 +143,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
       if (!state.loading) retryCount.current = 0;
       return;
     }
-    if (key === null || retryCount.current >= 2 || !/rate limit|network error|HTTP 5\d\d|timeout/i.test(state.error)) return;
+    if (key === null || retryCount.current >= 2 || !/rate limit|network error|failed to fetch|HTTP 5\d\d|timeout/i.test(state.error)) return;
     const timer = window.setTimeout(() => {
       retryCount.current += 1;
       load(key);

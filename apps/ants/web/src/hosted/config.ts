@@ -1,6 +1,10 @@
 import { resolveChainConfig } from '@antseed/node/payments/browser';
 import type { AntsChainConfig } from '../../../src/service/context';
 
+/** Public gateways that answer the CLI but reject browser (CORS) requests; each attempt would only cool the rotation down. */
+const BROWSER_BLOCKED_HOSTS = new Set(['base-public.nodies.app']);
+const browserReachable = (url: string) => !BROWSER_BLOCKED_HOSTS.has(new URL(url).hostname);
+
 export function hostedConfig(env: Record<string, string | boolean | undefined>): { chain: AntsChainConfig; projectId: string } {
   const test = env.MODE === 'hosted-test';
   const chainId = test ? String(env.VITE_ANTS_CHAIN ?? 'base-sepolia') : 'base-mainnet';
@@ -10,7 +14,7 @@ export function hostedConfig(env: Record<string, string | boolean | undefined>):
   const rpcUrl = String(env.VITE_ANTS_RPC_URL || overrides.rpcUrl || base.rpcUrl);
   const fallbackRpcUrls = env.VITE_ANTS_RPC_FALLBACKS !== undefined
     ? String(env.VITE_ANTS_RPC_FALLBACKS).split(',').map(value => value.trim()).filter(Boolean)
-    : overrides.fallbackRpcUrls ?? base.fallbackRpcUrls;
+    : (overrides.fallbackRpcUrls ?? base.fallbackRpcUrls ?? []).filter(browserReachable);
   const explorerApiUrl = String(env.VITE_ANTS_EXPLORER_URL ?? overrides.explorerApiUrl ?? base.explorerApiUrl ?? '');
   if (!test) for (const endpoint of [rpcUrl, ...(fallbackRpcUrls ?? []), explorerApiUrl].filter(Boolean)) {
     const url = new URL(endpoint);

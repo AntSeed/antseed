@@ -175,3 +175,5 @@ For disposable Anvil tests only, use `vite build --mode hosted-test`,
 chain configuration JSON. Set `VITE_ANTS_RPC_URL` to that fork and disable
 fallbacks/indexing. Never deploy a `hosted-test` artifact; test overrides are
 ignored by the normal standalone production build.
+
+Public Base RPC gateways rate-limit a connected wallet's reads within minutes (429s on every endpoint in testing); the `base-public.nodies.app` gateway rejects browser requests outright and is skipped in browser builds. Treat `VITE_ANTS_RPC_URL` with a dedicated, origin-restricted key as required for any real deployment.

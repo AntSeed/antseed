@@ -22,7 +22,9 @@ export function WalletProvider({ config, children }: { config: DashboardConfig; 
     chains: [defineChain({ id: config.evmChainId, name: config.chainId, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
       rpcUrls: { default: { http: [config.walletRpcUrl ?? (config.evmChainId === 8453 ? 'https://mainnet.base.org' : config.evmChainId === 84532 ? 'https://sepolia.base.org' : 'http://127.0.0.1:8545')] } } })],
     transports: { [config.evmChainId]: http() },
-  }), [config.chainId, config.evmChainId, config.walletRpcUrl, config.walletConnectProjectId]);
+    // The standalone build shares one public gateway with the dashboard's own reads; wagmi's 4s block polling is not worth the rate-limit budget.
+    ...(config.mode === 'hosted' ? { pollingInterval: 30_000 } : {}),
+  }), [config.chainId, config.evmChainId, config.walletRpcUrl, config.walletConnectProjectId, config.mode]);
   if (!config.browserWallet) return <>{children}</>;
   return <WalletRoot config={wagmi}><QueryClientProvider client={queries}><RainbowKitProvider theme={walletTheme}>{children}</RainbowKitProvider></QueryClientProvider></WalletRoot>;
 }

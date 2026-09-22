@@ -64,7 +64,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
         return (
           <span className="cell-stack" title={pool?.seller ?? undefined}>
             <span>{pool?.profile?.name?.trim() || (pool?.seller ? shortAddress(pool.seller) : 'Unknown seller')}</span>
-            <span className="cell-sub">#{p.id}{maxLockLabel(p)}{p.changePending ? ' · change pending' : ''}</span>
+            <span className="cell-sub">#{p.id}{maxLockLabel(p)}{hasPendingChange(p) ? ' · change pending' : ''}</span>
           </span>
         );
       },
@@ -89,7 +89,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
             <Menu
               label={`More actions for position ${p.id}`}
               items={[
-                { label: 'Split', onSelect: () => openRowAction(p.id, 'split'), disabled: p.changePending, title: p.changePending ? 'A change is pending until the next epoch.' : undefined },
+                { label: 'Split', onSelect: () => openRowAction(p.id, 'split'), disabled: p.changePending, title: changeProblem(p, 'be split') ?? undefined },
                 { label: 'Extend lock', onSelect: () => openRowAction(p.id, 'extend'), disabled: willBeMaxLocked(p), title: willBeMaxLocked(p) ? 'Max-locked positions already hold the maximum lock.' : undefined },
                 { label: willBeMaxLocked(p) ? 'Disable max lock' : 'Enable max lock', onSelect: () => openRowAction(p.id, 'max-lock') },
                 { label: 'Move allocation', onSelect: () => openRowAction(p.id, 'move') },
@@ -158,6 +158,7 @@ export function mergeEligibility(positions: PositionView[]): string | null {
   if (new Set(positions.map((p) => p.agentId)).size !== 1) return 'Merged positions must stake the same seller.';
   if (new Set(positions.map((p) => p.stakeEndEpoch)).size !== 1) return 'Merged positions must share the same unlock epoch. Extend the shorter ones first.';
   if (positions.some((p) => p.maxLocked)) return 'Disable max lock on every selected position before merging.';
+  if (positions.some((p) => p.state === 'pending')) return 'A selected position has not activated yet. Wait for its activation epoch.';
   if (positions.some((p) => p.changePending)) return 'A selected position changed this epoch. Wait for the next epoch.';
   return null;
 }
@@ -196,8 +197,14 @@ function StateBadge({ state }: { state: PositionView['state'] }) {
 /** Why a position cannot change right now; null when it can. */
 function changeProblem(position: PositionView, action: string): string | null {
   if (!isOpen(position)) return `Only open positions can ${action}.`;
+  if (position.state === 'pending') return `This position activates at epoch ${position.stakeStartEpoch}; lock changes are possible from then.`;
   if (position.changePending) return 'A position change is pending. Wait until it takes effect.';
   return null;
+}
+
+/** The contract blocks changes until the activation epoch too, but that is not a pending change worth labelling. */
+function hasPendingChange(position: PositionView): boolean {
+  return position.changePending && position.state !== 'pending';
 }
 
 function allocationSellerName(agentId: number, pools: PoolView[]): string {
@@ -386,7 +393,7 @@ export function RowActionPanel({ kind, position, config, pools = [], onClose }: 
       </div> : null}
       {kind === 'withdraw' ? (
         <div className="stack">
-          {position.changePending ? <div className="error-text">This position changed this epoch; the preview will be rejected until the next epoch.</div> : null}
+          {changeProblem(position, 'be withdrawn') ? <div className="error-text">{changeProblem(position, 'be withdrawn')}</div> : null}
           <WithdrawAction positionId={position.id} autoOpen onStarted={onClose} onCancel={onClose} />
         </div>
       ) : null}
@@ -444,7 +451,7 @@ export function BulkActionPanel({ kind, positions, pools, onClose, onStarted }: 
           </>
         ) : (
           <>
-            {positions.some((p) => p.changePending) ? <div className="error-text">A selected position changed this epoch; the preview will be rejected until the next epoch.</div> : null}
+            {mergeEligibility(positions) && positions.some((p) => p.changePending) ? <div className="error-text">{positions.some((p) => p.state === 'pending') ? 'A selected position has not activated yet; withdrawal is possible from its activation epoch.' : 'A selected position changed this epoch; the preview will be rejected until the next epoch.'}</div> : null}
             <WithdrawAction positionIds={ids} autoOpen onStarted={onStarted} onCancel={onClose} />
           </>
         )}

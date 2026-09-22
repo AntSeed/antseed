@@ -11,7 +11,7 @@ export async function emissions(ctx: AntsContext): Promise<EmissionsView> {
   const poolRewards = ctx.poolRewards();
   const usageRewards = ctx.usageRewards();
 
-  let view: Omit<EmissionsView, 'legacy' | 'dynamicStaker' | 'dynamicUsage'>;
+  let view: Omit<EmissionsView, 'legacy' | 'dynamicStaker' | 'dynamicUsage' | 'epochVolumeUsdc'>;
   if (gate) {
     const epoch = stack.currentEpoch;
     const [halvingInterval, initialEmission, currentRate, cumulative, shareDenominator, emissionsReserve, legacyEscrow] = await Promise.all([
@@ -24,7 +24,7 @@ export async function emissions(ctx: AntsContext): Promise<EmissionsView> {
         gate.minter(id),
         gate.minterEpochBudget(id, Math.max(epoch, stack.effectiveEpoch ?? epoch)),
       ]);
-      return { name: minter.name, id, controller: info.controller, shareBps: info.shareBps, editable: info.editable, epochBudget: budget.toString() };
+      return { name: minter.name, id, controller: info.controller, shareBps: info.shareBps, epochBudget: budget.toString() };
     }));
     view = {
       currentEpoch: epoch, effectiveEpoch: stack.effectiveEpoch, genesis: stack.genesis, epochDuration: stack.epochDuration, halvingInterval,
@@ -49,10 +49,23 @@ export async function emissions(ctx: AntsContext): Promise<EmissionsView> {
     const config = await usageRewards.dynamicUsageConfigAt(stack.currentEpoch);
     return { ...config, volumeShareTarget: config.volumeShareTarget.toString() };
   })() : null;
+  const epochVolumeUsdc = await currentEpochVolume(ctx, stack.currentEpoch);
   const legacyView = legacy && stack.legacyEmissions ? await (async () => {
     const [shares, info] = await Promise.all([legacy.getShares(), legacy.getEpochInfo()]);
     return { contract: stack.legacyEmissions!, sellerPct: shares.sellerSharePct, buyerPct: shares.buyerSharePct, reservePct: shares.reserveSharePct, teamPct: shares.teamSharePct, currentEpoch: info.epoch };
   })() : null;
 
-  return toJson({ ...view, dynamicStaker, dynamicUsage, legacy: legacyView });
+  return toJson({ ...view, epochVolumeUsdc, dynamicStaker, dynamicUsage, legacy: legacyView });
+}
+
+/** Network settled volume for the current epoch from the explorer; null when it is unavailable or lags. */
+async function currentEpochVolume(ctx: AntsContext, epoch: number): Promise<string | null> {
+  const indexer = ctx.indexer();
+  if (!indexer) return null;
+  try {
+    const { network } = await indexer.pools();
+    return network.current?.epoch === epoch ? network.current.volumeUsdc : null;
+  } catch {
+    return null;
+  }
 }
