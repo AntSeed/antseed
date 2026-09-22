@@ -42,7 +42,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer activity` | Activity summary: tokens, spend history, savings, channels, claimable ANTS |
 | `antseed buyer deposit --onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
-| `antseed buyer set-operator <address>` | Set the initial authorized withdrawal wallet (hot wallet pays ETH gas) |
+| `antseed buyer set-authorized-wallet [--self]` | Authorize an external wallet in the browser, or authorize the buyer wallet itself |
 | `antseed buyer balance` | Check wallet and deposit balance |
 | `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
 | **Session** | |
@@ -499,14 +499,25 @@ While `antseed buyer start` is running, this sweeping happens automatically in t
 ### Set an authorized wallet
 
 ```bash
-antseed buyer set-operator 0xYourWalletAddress
+# Recommended: open the secure local page, connect an external wallet,
+# and approve the transaction from that wallet.
+antseed buyer set-authorized-wallet
+
+# Print the secure local URL without opening the browser automatically.
+antseed buyer set-authorized-wallet --no-open
+
+# Alternatively, make the buyer hot wallet its own authorized wallet.
+antseed buyer set-authorized-wallet --self
+
 # Select the same buyer identity/config used for your deposits:
-antseed --data-dir ~/.antseed-buyer --config ~/.antseed-buyer/config.json buyer set-operator 0xYourWalletAddress
+antseed --data-dir ~/.antseed-buyer --config ~/.antseed-buyer/config.json buyer set-authorized-wallet
 ```
 
-Replace the placeholder with a valid, non-zero Ethereum address. This is the CLI equivalent of **Set authorized wallet** in AI VPN: it signs the deposits contract's EIP-712 operator authorization with the buyer identity and submits `setOperator`. Unlike the browser flow (where the connected wallet pays gas), this command submits from the buyer hot wallet, which needs ETH on the configured chain. It respects the selected data directory, identity environment override, and payment chain/contract configuration, and prints the confirmed transaction hash.
+By default, the command opens the same **Set authorized wallet** browser flow used by AI VPN. The local buyer identity signs the deposits contract's EIP-712 authorization, then the connected external wallet submits `setOperator` and pays ETH gas. The CLI prints the localhost URL as a fallback and waits for confirmation before shutting down the local server. Use `--no-open` to print the URL without launching the browser.
 
-**The authorized wallet gains control of withdrawals and future authorization transfers.** Choose a wallet you control. Initial authorization is only possible when no operator is set. Repeating the same address sends no transaction; a different existing operator is rejected. Changing it later requires `transferOperator` from the current authorized wallet, not the buyer identity.
+With `--self`, the CLI makes the buyer hot wallet its own authorized wallet. The buyer signs and submits the transaction, so it must have ETH on the configured chain. Both modes respect the selected data directory, identity environment override, and payment chain/contract configuration. The command does not accept an arbitrary address: connect an external wallet to prove control, or explicitly choose the buyer wallet with `--self`.
+
+**The authorized wallet gains control of withdrawals and future authorization transfers.** Choose a wallet you control. Initial authorization is only possible when no authorized wallet is set. Self-authorization sends no transaction when the buyer wallet is already authorized and rejects replacement of a different existing wallet. Changing it later requires an operator-transfer transaction from the current authorized wallet, not the buyer identity.
 
 `antseed buyer withdraw` still submits from the buyer identity. If you authorize an external wallet, withdraw from that wallet through AI VPN's payments UI (for the same buyer identity) or the deposits contract, not through the current CLI withdrawal command. To use CLI withdrawal, the buyer identity itself must be the authorized wallet. Setting an operator does not resolve other withdrawal constraints, such as reserved funds or insufficient available balance.
 
