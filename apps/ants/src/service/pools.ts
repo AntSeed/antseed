@@ -143,7 +143,8 @@ export async function ownPools(ctx: AntsContext, rows: SellerPoolPosition[], epo
     const entry = own.get(position.agentId) ?? { positionIds: [], power: 0n, stake: 0n, pending: 0n };
     entry.positionIds.push(position.id);
     entry.power += power.get(position.id) ?? 0n;
-    if (position.stakeStartEpoch <= epoch) entry.stake += position.amount; else entry.pending += position.amount;
+    if (position.stakeStartEpoch <= epoch) entry.stake += position.amount;
+    else if (position.closedAtEpoch === 0) entry.pending += position.amount;
     own.set(position.agentId, entry);
   }
   return own;

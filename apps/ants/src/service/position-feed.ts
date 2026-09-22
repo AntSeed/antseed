@@ -148,8 +148,9 @@ function summarize(snapshot: RewardPositions): RewardPositions {
     if (position.withdrawn || (position.closedAtEpoch !== 0 && position.closedAtEpoch <= snapshot.liveSource.currentEpoch)) continue;
     const pool = summary.get(position.agentId) ?? { agentId: position.agentId, positionIds: [], activeStake: '0', pendingStake: '0', power: '0' };
     pool.positionIds.push(position.id);
-    const bucket = position.stakeStartEpoch > snapshot.liveSource.currentEpoch ? 'pendingStake' : 'activeStake';
-    pool[bucket] = (BigInt(pool[bucket]) + BigInt(position.amount)).toString();
+    // A split/merge/move source closing next epoch keeps its power until then, but its principal already lives in the replacement.
+    if (position.stakeStartEpoch <= snapshot.liveSource.currentEpoch) pool.activeStake = (BigInt(pool.activeStake) + BigInt(position.amount)).toString();
+    else if (position.closedAtEpoch === 0) pool.pendingStake = (BigInt(pool.pendingStake) + BigInt(position.amount)).toString();
     pool.power = (BigInt(pool.power) + BigInt(position.power ?? '0')).toString();
     summary.set(position.agentId, pool);
   }

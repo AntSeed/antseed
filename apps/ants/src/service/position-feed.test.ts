@@ -97,6 +97,15 @@ describe('Antscan position feeds', () => {
       return raw;
     })).rejects.toThrow('changed between pages');
   });
+  it('does not count a source closing next epoch as pending stake', async () => {
+    const page = rewardPage([7, 8, 9]);
+    page.positions[1] = { ...page.positions[1]!, stakeStartEpoch: '23', state: 'pending' };
+    page.positions[2] = { ...page.positions[2]!, stakeStartEpoch: '23', closedAtEpoch: '23', state: 'closed', power: '0' };
+    const data = await fetchRewardPositions(owner, false, async () => page);
+    expect(data.summary).toMatchObject([{ positionIds: [7, 8, 9], activeStake: '100', pendingStake: '100' }]);
+    expect(data.totals).toEqual({ activeStake: '100', pendingStake: '100', power: '400' });
+  });
+
   it('computes wallet totals across every page instead of trusting page-scoped totals', async () => {
     const first = { ...rewardPage([8], 'next'), pageTotals: { activeStake: '999', pendingStake: '999', power: '999' } };
     const last = rewardPage([7]);
