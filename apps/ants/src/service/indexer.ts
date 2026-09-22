@@ -320,7 +320,7 @@ export class AntscanIndexer implements Indexer {
   }
 
   async livePositions(owner: string): Promise<LivePositions> {
-    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&include=live&includeClosed=1`), owner);
+    return parseLivePositions(await this.get(`/api/staking/positions?owner=${owner.toLowerCase()}&includeClosed=1`), owner);
   }
 
   rewardPositions(owner: string, outstanding = false): Promise<RewardPositions> {

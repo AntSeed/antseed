@@ -30,7 +30,7 @@ describe('Antscan position feeds', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(livePage())));
     const indexer = new AntscanIndexer('https://scan', fetcher);
     expect(await indexer.livePositions(owner)).toMatchObject({ totals: { activeStake: '100', power: '200' }, positions: [{ id: 7, nextPower: '190', maxLockedNext: false, changePending: false }], summary: [{ agentId: 1, positionIds: [7] }] });
-    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://scan/api/staking/positions?owner=${owner}&include=live&includeClosed=1`);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://scan/api/staking/positions?owner=${owner}&includeClosed=1`);
   });
   it('exhausts reward-only pagination including closed positions and coalesces reads', async () => {
     const first = rewardPage(Array.from({ length: 100 }, (_, index) => 200 - index), 'next');
