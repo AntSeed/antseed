@@ -36,6 +36,11 @@ const CONFIRMATION_MAX_MS = 30 * 60_000;
 const TRANSACTION_LOOKUP_ATTEMPTS = 5;
 const TRANSACTION_LOOKUP_DELAY_MS = 2_000;
 
+/** EIP-7702 delegation designator: the account's code points at a delegate contract. */
+async function isDelegatedAccount(provider: Provider, address: string): Promise<boolean> {
+  return (await provider.getCode(address)).toLowerCase().startsWith('0xef0100');
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => { const t = setTimeout(resolve, ms); t.unref?.(); });
 
 /** One wallet approval at a time. No private key or local transaction signer is held here. */
@@ -119,7 +124,12 @@ export class BrowserSigning {
         const tx = await this.lookupTransaction(pending.provider, hash);
         const expected = pending.request;
         if (!tx) throw new Error(`Transaction ${hash} confirmed but could not be read back from the RPC endpoints. Check it in the explorer before retrying.`);
-        if (tx.nonce < pending.nonceFloor || tx.chainId !== BigInt(expected.chainId) || getAddress(tx.from) !== expected.from || !tx.to || getAddress(tx.to) !== expected.to || tx.data.toLowerCase() !== expected.data.toLowerCase() || tx.value !== BigInt(expected.value)) {
+        const sameSender = tx.nonce >= pending.nonceFloor && tx.chainId === BigInt(expected.chainId) && getAddress(tx.from) === expected.from;
+        const verbatim = sameSender && !!tx.to && getAddress(tx.to) === expected.to && tx.data.toLowerCase() === expected.data.toLowerCase() && tx.value === BigInt(expected.value);
+        // An EIP-7702 smart account (MetaMask's delegator) routes the call through its delegation
+        // framework, so the outer transaction targets that framework instead of our contract.
+        // Accept it when the same account sent it and the reviewed contract emitted an event in the receipt.
+        if (!verbatim && !(sameSender && await isDelegatedAccount(pending.provider, expected.from) && receipt.logs.some(log => getAddress(log.address) === expected.to))) {
           throw new Error('Submitted transaction does not match the reviewed wallet request.');
         }
         if (receipt.status !== 1) throw new Error('Transaction failed on-chain. Check the transaction before retrying.');
