@@ -28,14 +28,16 @@ async function agentIdOf(ctx: AntsContext): Promise<number> {
 }
 
 /** Recognized epochs in which this wallet has indexed buyer or seller points; all of them without an indexer. */
-async function usageEpochsOf(ctx: AntsContext, recognized: number[]): Promise<number[]> {
+async function usageEpochsOf(ctx: AntsContext, recognized: number[], currentEpoch: number): Promise<number[]> {
   const indexer = ctx.indexer();
   if (!indexer || recognized.length === 0) return recognized;
+  // The indexer counts epochs back from the current one, so the window must reach the earliest recognized epoch.
+  const window = currentEpoch - Math.min(...recognized) + 1;
   try {
     const participant = sameAddress(ctx.address, ZeroAddress)
       ? { seller: [], buyer: [] }
-      : await indexer.participant(ctx.address, recognized.length);
-    const buyer = ctx.address.toLowerCase() === ctx.buyerAddress.toLowerCase() ? participant : await indexer.participant(ctx.buyerAddress, recognized.length);
+      : await indexer.participant(ctx.address, window);
+    const buyer = ctx.address.toLowerCase() === ctx.buyerAddress.toLowerCase() ? participant : await indexer.participant(ctx.buyerAddress, window);
     const active = new Set([...participant.seller.map((row) => row.epoch), ...buyer.buyer.map((row) => row.epoch)]);
     return recognized.filter((epoch) => active.has(epoch));
   } catch (error) {
@@ -100,7 +102,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
     sellerTotal = pending;
     // Only epochs where this wallet actually earned points are checked per
     // epoch; the indexer knows which, so the loop stays bounded.
-    const candidates = await usageEpochsOf(ctx, epochs.recognized);
+    const candidates = await usageEpochsOf(ctx, epochs.recognized, stack.currentEpoch);
     if (usageRewards && candidates.length <= MAX_EPOCH_BREAKDOWN) {
       const breakdown = await Promise.all(candidates.map(async (epoch) => {
         const [sellerClaimed, buyerClaimed] = await Promise.all([

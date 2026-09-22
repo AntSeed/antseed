@@ -177,7 +177,7 @@ describe('buyer rewards before browser wallet connection', () => {
       legacy: { seller: '0', buyer: '5000000000000000000', buyerClaimable: false },
       locked: { claimable: '0' },
     });
-    expect(f.participant).toHaveBeenCalledWith(address, 1);
+    expect(f.participant).toHaveBeenCalledWith(address, 2);
     expect(f.getOperator).toHaveBeenCalledWith(address);
     expect(f.buyerClaimed).toHaveBeenCalledWith(address, 22);
     expect(f.buyerReward).toHaveBeenCalledWith(address, 22);
