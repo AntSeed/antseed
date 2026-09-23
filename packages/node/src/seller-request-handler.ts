@@ -244,7 +244,11 @@ export class SellerRequestHandler {
         const requestedService = this._extractRequestedService(request) ?? 'unknown';
         let decision: FreeTierDecision;
         try {
-          decision = this._deps.sellerFreeTierLimiter.consume(buyerPeerId, requestedService);
+          decision = this._deps.sellerFreeTierLimiter.consume({
+            buyerPeerId,
+            service: requestedService,
+            remoteIp: conn.remoteAddress ?? null,
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           debugWarn(`[SellerHandler] Free-tier accounting failed for ${buyerPeerId.slice(0, 12)}...: ${message}`);
@@ -264,9 +268,12 @@ export class SellerRequestHandler {
         }
         if (!decision.allowed) {
           const retryAfterSeconds = Math.max(1, Math.ceil(decision.retryAfterMs / 1000));
+          const limiter = this._deps.sellerFreeTierLimiter;
+          const limitedBy = decision.limitedBy ?? 'address';
+          const limit = limitedBy === 'ip' ? limiter.maxRequestsPerIp : limiter.maxRequestsPerAddress;
           debugLog(
-            `[SellerHandler] Free tier exhausted for ${decision.buyerAddress} ` +
-            `(limit=${this._deps.sellerFreeTierLimiter.maxRequestsPerAddress}, windowMs=${this._deps.sellerFreeTierLimiter.windowMs})`,
+            `[SellerHandler] Free tier exhausted for ${decision.buyerAddress} ip=${decision.remoteIp ?? 'unknown'} ` +
+            `(limitedBy=${limitedBy}, limit=${limit}, windowMs=${limiter.windowMs})`,
           );
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -277,12 +284,15 @@ export class SellerRequestHandler {
             },
             body: new TextEncoder().encode(JSON.stringify({
               error: {
-                message: 'This seller free tier has been exhausted for your buyer address.',
+                message: limitedBy === 'ip'
+                  ? 'This seller free tier has been exhausted for your IP address.'
+                  : 'This seller free tier has been exhausted for your buyer address.',
                 type: 'rate_limit_error',
                 code: 'free_tier_exhausted',
               },
-              limit: this._deps.sellerFreeTierLimiter.maxRequestsPerAddress,
-              windowMs: this._deps.sellerFreeTierLimiter.windowMs,
+              limitedBy,
+              limit,
+              windowMs: limiter.windowMs,
               retryAfterSeconds,
             })),
           });

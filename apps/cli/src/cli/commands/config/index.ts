@@ -344,6 +344,7 @@ const DYNAMIC_KEY_PREFIXES = [
 
 const DYNAMIC_KEYS = new Set([
   'seller.freeTier.maxRequestsPerAddress',
+  'seller.freeTier.maxRequestsPerIp',
   'seller.freeTier.windowMs',
 ]);
 

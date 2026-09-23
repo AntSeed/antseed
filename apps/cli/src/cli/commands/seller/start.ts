@@ -14,7 +14,7 @@ import {
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
   DEFAULT_GAS_CHECK_INTERVAL_MS,
   DEFAULT_MIN_GAS_BALANCE_WEI,
-  DEFAULT_FREE_TIER_WINDOW_MS,
+  SellerFreeTierLimiter,
   formatEther,
   parseEther,
   type Provider,
@@ -627,8 +627,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       if (effectiveSellerConfig.freeTier) {
-        const windowMs = effectiveSellerConfig.freeTier.windowMs ?? DEFAULT_FREE_TIER_WINDOW_MS
-        console.log(chalk.dim(`  free tier: ${effectiveSellerConfig.freeTier.maxRequestsPerAddress} request(s) per buyer address every ${windowMs}ms`))
+        console.log(chalk.dim(`  free tier: ${new SellerFreeTierLimiter(effectiveSellerConfig.freeTier).describe()}`))
       } else {
         console.log(chalk.dim('  free tier: unlimited for fully zero-priced services'))
       }

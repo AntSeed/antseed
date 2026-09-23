@@ -34,13 +34,15 @@ test('setConfigValue creates nested seller provider paths for dynamic keys', () 
 
 test('seller free-tier fields can be created before the optional block exists', () => {
   assert.equal(isDynamicKey('seller.freeTier.maxRequestsPerAddress'), true);
+  assert.equal(isDynamicKey('seller.freeTier.maxRequestsPerIp'), true);
   assert.equal(isDynamicKey('seller.freeTier.windowMs'), true);
   assert.equal(isDynamicKey('seller.freeTier.typo'), false);
   const config = createDefaultConfig() as unknown as Record<string, unknown>;
   setConfigValue(config, 'seller.freeTier.maxRequestsPerAddress', '100');
+  setConfigValue(config, 'seller.freeTier.maxRequestsPerIp', '300');
   setConfigValue(config, 'seller.freeTier.windowMs', '86400000');
   const seller = config['seller'] as Record<string, unknown>;
-  assert.deepEqual(seller['freeTier'], { maxRequestsPerAddress: 100, windowMs: 86400000 });
+  assert.deepEqual(seller['freeTier'], { maxRequestsPerAddress: 100, maxRequestsPerIp: 300, windowMs: 86400000 });
 });
 
 test('redactConfig returns a detached clone of the config object', () => {

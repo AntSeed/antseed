@@ -342,7 +342,8 @@ function cloneSellerFreeTier(
 ): AntseedConfig['seller']['freeTier'] {
   if (!value) return undefined;
   return {
-    maxRequestsPerAddress: value.maxRequestsPerAddress,
+    ...(value.maxRequestsPerAddress !== undefined ? { maxRequestsPerAddress: value.maxRequestsPerAddress } : {}),
+    ...(value.maxRequestsPerIp !== undefined ? { maxRequestsPerIp: value.maxRequestsPerIp } : {}),
     ...(value.windowMs !== undefined ? { windowMs: value.windowMs } : {}),
   };
 }
@@ -357,7 +358,12 @@ function normalizeSellerFreeTier(
   }
   return {
     freeTier: {
-      maxRequestsPerAddress: toFiniteOrNaN(value['maxRequestsPerAddress']),
+      ...(value['maxRequestsPerAddress'] !== undefined
+        ? { maxRequestsPerAddress: toFiniteOrNaN(value['maxRequestsPerAddress']) }
+        : {}),
+      ...(value['maxRequestsPerIp'] !== undefined
+        ? { maxRequestsPerIp: toFiniteOrNaN(value['maxRequestsPerIp']) }
+        : {}),
       ...(value['windowMs'] !== undefined ? { windowMs: toFiniteOrNaN(value['windowMs']) } : {}),
     },
   };

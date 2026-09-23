@@ -132,7 +132,9 @@ export interface SellerGasCheckCLIConfig {
 
 export interface SellerFreeTierCLIConfig {
   /** Maximum zero-priced requests accepted from one buyer address per window. */
-  maxRequestsPerAddress: number;
+  maxRequestsPerAddress?: number;
+  /** Maximum zero-priced requests accepted from one remote IP per window (IPv6 grouped by /64). */
+  maxRequestsPerIp?: number;
   /** Sliding-window duration in milliseconds. Default: 86400000 (24 hours). */
   windowMs?: number;
 }

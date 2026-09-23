@@ -1687,10 +1687,7 @@ export class AntseedNode extends EventEmitter {
       ? new SellerFreeTierLimiter(this._config.freeTier, this._metering)
       : null;
     if (sellerFreeTierLimiter) {
-      debugLog(
-        `[Node] Seller free tier enabled: ${sellerFreeTierLimiter.maxRequestsPerAddress} request(s) ` +
-        `per buyer address every ${sellerFreeTierLimiter.windowMs}ms`,
-      );
+      debugLog(`[Node] Seller free tier enabled: ${sellerFreeTierLimiter.describe()}`);
       if (!this._metering) {
         debugWarn('[Node] Seller free-tier limits are using in-memory accounting because metering storage is unavailable; counters reset on restart.');
       }

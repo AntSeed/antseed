@@ -253,8 +253,8 @@ describe('MeteringStorage — Pruning', () => {
     storage.insertVerification(makeVerification({ receiptId: 'new-v', verifiedAt: recent, disputed: true }));
     storage.upsertSession(makeSession({ sessionId: 'old-s', startedAt: old }));
     storage.upsertSession(makeSession({ sessionId: 'new-s', startedAt: recent }));
-    storage.consumeFreeTierRequest({ buyerAddress: '0x1', service: 'free', maxRequests: 10, windowMs: 200000, nowMs: old });
-    storage.consumeFreeTierRequest({ buyerAddress: '0x1', service: 'free', maxRequests: 10, windowMs: 200000, nowMs: recent });
+    storage.consumeFreeTierRequest({ buyerAddress: '0x1', remoteIp: null, service: 'free', maxRequestsPerAddress: 10, maxRequestsPerIp: null, windowMs: 200000, nowMs: old });
+    storage.consumeFreeTierRequest({ buyerAddress: '0x1', remoteIp: null, service: 'free', maxRequestsPerAddress: 10, maxRequestsPerIp: null, windowMs: 200000, nowMs: recent });
 
     const cutoff = now - 50000;
     const result = storage.pruneOlderThan(cutoff);

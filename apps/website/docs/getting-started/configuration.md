@@ -163,6 +163,7 @@ Everything a seller announces lives under `seller.providers[name]`. The key unde
     "maxConcurrentBuyers": 50,
     "freeTier": {
       "maxRequestsPerAddress": 100,
+      "maxRequestsPerIp": 300,
       "windowMs": 86400000
     },
     "providers": {
@@ -300,27 +301,34 @@ antseed config seller set providers.together.services.deepseek-v3.1.capabilities
 
 ## Free-Tier Limits
 
-A service is free only when its token prices and any unit-billing components are all zero. By default, free services remain unlimited for backward compatibility. Sellers can apply one persistent request allowance across all fully zero-priced services for each authenticated buyer address:
+A service is free only when its token prices and any unit-billing components are all zero. By default, free services remain unlimited for backward compatibility. Sellers can apply a persistent request allowance across all fully zero-priced services, keyed by buyer address, by remote IP, or both:
 
 ```json
 {
   "seller": {
     "freeTier": {
       "maxRequestsPerAddress": 100,
+      "maxRequestsPerIp": 300,
       "windowMs": 86400000
     }
   }
 }
 ```
 
-This example allows each buyer address 100 free requests in a sliding 24-hour window. The counter is seller-wide, so switching between free models or reconnecting does not reset it. Usage is stored in the seller's `metering.db` and survives restarts. Once exhausted, the seller returns HTTP `429` with `code: "free_tier_exhausted"` and a `Retry-After` header; paid services are unaffected.
+This example allows each buyer address 100 free requests, and each remote IP 300 free requests, in a sliding 24-hour window. A request is served only while every configured limit still has headroom, and only served requests count. The counters are seller-wide, so switching between free models or reconnecting does not reset them. Usage is stored in the seller's `metering.db` and survives restarts. Once exhausted, the seller returns HTTP `429` with `code: "free_tier_exhausted"`, a `limitedBy` field (`"address"` or `"ip"`), and a `Retry-After` header; paid services are unaffected.
 
-The limit is per buyer identity address, not per IP address. A user can create another identity, so this controls repeated use by one address rather than providing Sybil resistance. Use nonzero service pricing when stronger economic gating is required.
+| Limit | Keyed on | Strength | Caveat |
+|-------|----------|----------|--------|
+| `maxRequestsPerAddress` | The buyer's identity address | Precise per user | A user can create another identity to get a fresh allowance |
+| `maxRequestsPerIp` | The connecting IP (IPv6 grouped by /64) | Survives identity rotation | Users behind one NAT or carrier-grade NAT share the allowance; VPN pools spread it |
+
+At least one of the two must be set. When using both, set the IP limit higher than the address limit so shared networks are not cut off by a single heavy user. Neither replaces economic gating: use nonzero service pricing when stronger protection is required. The IP limit only sees the address that connects to the seller, so a seller behind a proxy or relay sees the proxy's IP instead of the buyer's.
 
 Configure it from the CLI or edit `config.json` directly:
 
 ```bash
 antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.maxRequestsPerIp 300
 antseed config seller set freeTier.windowMs 86400000
 ```
 
