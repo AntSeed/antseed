@@ -191,6 +191,21 @@ export function VprCreditsView({ onSelectView }: Props) {
             </button>
           </div> */}
         </VprCard>
+
+        <VprCard className={styles.rewardsCard}>
+          <span className={styles.rewardsText}>
+            <strong>Help &amp; support</strong>{' '}
+            Guides, troubleshooting, and diagnostics.
+          </span>
+          <button
+            type="button"
+            className={styles.rewardsLink}
+            onClick={() => onSelectView?.('help')}
+          >
+            <span>Help</span>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+          </button>
+        </VprCard>
       </div>
       </VprPage>
       <ExportSignerKeyDialog isOpen={exportKeyOpen} onClose={() => setExportKeyOpen(false)} />
