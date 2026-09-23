@@ -135,13 +135,13 @@ export class ChannelStore {
           nonce, auth_max, deadline, previous_session_id, previous_consumption,
           tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
           status, latest_buyer_sig, latest_metadata_auth_sig, latest_metadata,
-          created_at, updated_at
+          created_at, updated_at, initial_reserve_amount
         ) VALUES (
           @sessionId, @peerId, @role, @channelKind, @sellerEvmAddr, @buyerEvmAddr,
           @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
           @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
           @status, @latestBuyerSig, @latestSpendingAuthSig, @latestMetadata,
-          @createdAt, @updatedAt
+          @createdAt, @updatedAt, @initialReserveAmount
         )
         ON CONFLICT(session_id) DO UPDATE SET
           channel_kind = @channelKind,
@@ -155,6 +155,7 @@ export class ChannelStore {
           latest_buyer_sig = @latestBuyerSig,
           latest_metadata_auth_sig = @latestSpendingAuthSig,
           latest_metadata = @latestMetadata,
+          initial_reserve_amount = COALESCE(payment_channels.initial_reserve_amount, @initialReserveAmount),
           updated_at = @updatedAt
       `),
       getById: this._db.prepare(
@@ -267,6 +268,7 @@ export class ChannelStore {
       latestBuyerSig: channel.latestBuyerSig ?? null,
       latestSpendingAuthSig: channel.latestSpendingAuthSig ?? null,
       latestMetadata: channel.latestMetadata ?? null,
+      initialReserveAmount: channel.initialReserveAmount ?? null,
       createdAt: channel.createdAt,
       updatedAt: channel.updatedAt,
     });
@@ -619,6 +621,7 @@ interface ChannelRow {
   latest_buyer_sig: string | null;
   latest_metadata_auth_sig: string | null;
   latest_metadata: string | null;
+  initial_reserve_amount: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -668,6 +671,7 @@ function rowToChannel(row: ChannelRow): StoredChannel {
     latestBuyerSig: row.latest_buyer_sig,
     latestSpendingAuthSig: row.latest_metadata_auth_sig,
     latestMetadata: row.latest_metadata,
+    initialReserveAmount: row.initial_reserve_amount,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

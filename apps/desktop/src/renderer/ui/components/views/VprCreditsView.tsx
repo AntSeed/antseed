@@ -9,6 +9,7 @@ import { BalanceSummaryCard } from './BalanceSummaryCard';
 import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
 import { recordUserAction } from '../../../modules/telemetry/actions';
+import { formatChannelCount } from './vpr-activity-close';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
 
@@ -27,6 +28,7 @@ export function VprCreditsView({ onSelectView }: Props) {
     evmAddress: state.creditsEvmAddress,
     operatorAddress: state.creditsOperatorAddress,
     usage: state.creditsBuyerUsage,
+    channels: state.creditsChannels,
     rewards: state.creditsRewards,
   }), shallowEqual);
   // Local to the button: background pollers (floating pill, payment events)
@@ -130,7 +132,7 @@ export function VprCreditsView({ onSelectView }: Props) {
         <VprCard className={styles.rewardsCard}>
           <span className={styles.rewardsText}>
             <strong>Payment channels</strong>{' '}
-            {`${snap.usage?.activeChannels ?? 0} active — see settlements or close a channel.`}
+            {`${formatChannelCount(snap.channels)} — see settlements or close a channel.`}
           </span>
           <button
             type="button"

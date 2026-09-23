@@ -889,6 +889,12 @@ export class BuyerPaymentNegotiator {
     });
   }
 
+  onChannelRetired(peerId: string): void {
+    this._lockedPeers.delete(peerId);
+    this._firstRequestSent.delete(peerId);
+    this._lastResponseCost.delete(peerId);
+  }
+
   onPeerDisconnect(peerId: PeerId): void {
     this._muxes.delete(peerId);
     this._bufferedPaymentRequired.delete(peerId);
