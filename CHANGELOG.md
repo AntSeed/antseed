@@ -16,7 +16,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Website: blog post "Introducing the ANTS staking dashboard" (`/blog/ants-staking-dashboard`) covering the two ways to earn ANTS, how to compare providers, staking positions, and how to open the dashboard from the AI VPN or with `antseed ants`.
+- Website: blog post "ANTS staking is live" (`/blog/ants-staking-dashboard`) covering the ways to earn ANTS as a buyer, provider, or staker, how to compare providers, staking positions, and how to open the dashboard from the AI VPN or with `antseed ants`.
 - Sellers: add an optional persistent free tier for fully zero-priced services with `seller.freeTier.maxRequestsPerAddress`, `seller.freeTier.maxRequestsPerIp` (IPv6 grouped by /64), and a configurable sliding `windowMs`. Limits apply across all free services, are enforced together when both are set, survive reconnects and restarts, return HTTP 429 with retry timing and the binding limit (`limitedBy`) when exhausted, and leave paid traffic unchanged.
 
 - ANTS dashboard: transactions signed by an EIP-7702 smart account (for example a MetaMask smart account, which routes calls through its delegation framework) are now accepted when the same account sent them and the reviewed contract emitted an event; previously the job was reported as failed although the transaction succeeded.
