@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
 
-test('levanto resolves to a paid-service provider, not a buyer router', () => {
-  assert.equal(resolvePluginPackage('levanto'), '@antseed/provider-levanto')
-  assert.equal(resolvePluginPackage('levanto-router'), '@antseed/provider-levanto')
+test('levanto is a buyer-only router package', () => {
+  assert.equal(resolvePluginPackage('levanto-router'), '@antseed/router-levanto')
+  assert.ok(!TRUSTED_PROVIDER_PLUGINS.some((plugin) => plugin.name === 'levanto'))
   assert.ok(TRUSTED_ROUTER_PLUGINS.some((plugin) => plugin.name === 'levanto-router'))
   assert.ok(!TRUSTED_ROUTER_PLUGINS.some((plugin) => plugin.name === 'levanto'))
 })

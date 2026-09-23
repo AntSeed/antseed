@@ -1,6 +1,8 @@
 import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
 import type { RequestExecutionOptions } from '@antseed/buyer-core';
+import type { RoutingPreferences, RoutingServiceMetadataV1 } from '@antseed/protocol';
+import type { RoutingServiceTarget } from '../routing/selection.js';
 
 export type RouteRecommendation = {
   serviceId: string;
@@ -17,12 +19,25 @@ export type RouteCandidate = {
 };
 
 export interface RouteSelectionContext {
+  preferences?: RoutingPreferences;
+  preferencesSchemaHash?: string;
+  routingService?: RoutingServiceTarget;
   signal: AbortSignal;
   conversationKey: string | null;
   candidates: readonly RouteCandidate[];
   acceptRecommendations: (routes: readonly RouteRecommendation[]) => boolean;
   sendRequest: (peer: PeerInfo, request: SerializedHttpRequest, options: RequestExecutionOptions) => Promise<SerializedHttpResponse>;
 }
+
+export type RoutingUsageObservation = {
+  conversationKey: string;
+  requestId: string;
+  peerId: string;
+  provider: string;
+  serviceId: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+};
 
 /**
  * Interface that buyer nodes implement for peer selection.
@@ -35,6 +50,10 @@ export interface RouteSelectionContext {
  * the cheapest peer with reputation above a minimum threshold.
  */
 export interface Router {
+  routingMetadata?: RoutingServiceMetadataV1;
+  defaultRoutingService?: RoutingServiceTarget;
+  recordUsage?(observation: RoutingUsageObservation): void;
+  resetRouting?(): void;
   autoRouteServiceId?: string;
   selectRoute?(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null>;
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null;

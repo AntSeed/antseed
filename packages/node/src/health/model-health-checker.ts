@@ -169,7 +169,7 @@ export class ModelHealthChecker {
       }
 
       for (const service of services) {
-        if (provider.fixedFeeServices?.some(offer => offer.service === service)) continue;
+        if (provider.serviceExecution?.[service]) continue;
         if (this._stopped) return;
         await this._probeService(target, service);
       }
@@ -318,9 +318,7 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  // Image generations cost real money per probe; everything else has a
-  // near-free minimal request shape.
-  return protocol !== 'openai-images';
+  return protocol !== 'openai-images' && protocol !== 'levanto-routing';
 }
 
 /**
@@ -371,6 +369,8 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       break;
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
+    case 'levanto-routing':
+      throw new Error('Health probes are not supported for levanto-routing services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

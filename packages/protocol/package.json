@@ -61,9 +61,9 @@
       "import": "./dist/billing.js",
       "types": "./dist/billing.d.ts"
     },
-    "./fixed-fee": {
-      "import": "./dist/fixed-fee.js",
-      "types": "./dist/fixed-fee.d.ts"
+    "./service-billing": {
+      "import": "./dist/service-billing.js",
+      "types": "./dist/service-billing.d.ts"
     },
     "./capability": {
       "import": "./dist/capability.js",

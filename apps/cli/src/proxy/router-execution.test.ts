@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo, Router, SerializedHttpRequest } from '@antseed/node'
 import { eligibleRouterCandidates, executeRouterSelection, resolveRouterRecommendation, resolveRouterRecommendations } from './router-execution.js'
+import { createRoutingServiceMetadata } from '@antseed/node'
 
 const peer = {
   peerId: 'a'.repeat(40) as PeerInfo['peerId'], providers: ['openai'], lastSeen: Date.now(), reputationScore: 90,
@@ -21,6 +22,44 @@ test('recommendations resolve models or exact peers, never unsupported reasoning
   assert.equal(resolveRouterRecommendation([{ serviceId: 'model-a', peerId: 'b'.repeat(40) }], available), null)
   assert.equal(resolveRouterRecommendation([{ serviceId: 'model-a', inference: { reasoningEffort: 'high' } }], available), null)
   assert.equal(resolveRouterRecommendation([{ serviceId: 'missing' }, { serviceId: 'model-a' }], available)?.serviceId, 'model-a')
+})
+
+test('generic preferences are validated before invoking a router', async () => {
+  let calls = 0
+  const metadata = createRoutingServiceMetadata({ type: 'object', additionalProperties: false,
+    properties: { policy: { type: 'string', enum: ['cost', 'quality'], default: 'cost' } } })
+  const router: Router = {
+    selectPeer: () => null, onResult: () => {}, routingMetadata: metadata,
+    async selectRoute(_request, _peers, context) {
+      calls++
+      assert.deepEqual(context.preferences, { policy: 'quality' })
+      assert.equal(context.preferencesSchemaHash, metadata.preferencesSchemaHash)
+      return [{ serviceId: 'model-a' }]
+    },
+  }
+  const args = { node: { sendRequest: async () => { throw new Error('unused') } }, router, request,
+    peers: [peer], candidates: candidates(), conversationKey: null, signal: new AbortController().signal }
+  await assert.rejects(executeRouterSelection({ ...args, selection: { kind: 'router', preferences: { policy: 'invalid' } } }), /enum/)
+  assert.equal(calls, 0)
+  await executeRouterSelection({ ...args, selection: { kind: 'router', preferences: { policy: 'quality' } } })
+  assert.equal(calls, 1)
+})
+
+test('routing purchases cannot substitute a different routing-service peer', async () => {
+  let sent = false
+  const router: Router = {
+    selectPeer: () => null, onResult: () => {},
+    async selectRoute(_request, _peers, context) {
+      await context.sendRequest(peer, { ...request, requestId: 'routing-request' }, {})
+      return [{ serviceId: 'model-a' }]
+    },
+  }
+  await assert.rejects(executeRouterSelection({
+    node: { sendRequest: async () => { sent = true; throw new Error('must not send') } }, router, request,
+    peers: [peer], candidates: candidates(), conversationKey: null, signal: new AbortController().signal,
+    selection: { kind: 'router', service: { peerId: 'b'.repeat(40), provider: 'levanto', serviceId: 'levanto-route' } },
+  }), /selected routing-service peer/)
+  assert.equal(sent, false)
 })
 
 test('candidate construction enforces buyer restrictions, capacity, and required parameters', () => {

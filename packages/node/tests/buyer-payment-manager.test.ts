@@ -133,7 +133,7 @@ describe('BuyerPaymentManager', () => {
   });
 
   // ── authorizeSpending ──────────────────────────────────────────
-  describe('fixed-fee responses', () => {
+  describe('completed-request responses', () => {
     const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
     const peer = 'a'.repeat(40);
     async function open() {
@@ -144,37 +144,37 @@ describe('BuyerPaymentManager', () => {
     }
     it('does not charge before observation or after cancellation', async () => {
       await open();
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
-      await manager.authorizeFixedFeeResponse(peer, 'fixed', mux);
-      manager.observeFixedFeeResponse(peer, 'fixed', false);
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
-      await manager.authorizeFixedFeeResponse(peer, 'fixed', mux);
+      manager.trackUnitRequest(peer, 'fixed', offer);
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
+      manager.observeUnitResponse(peer, 'fixed', false);
+      manager.observeUnitResponse(peer, 'fixed', true);
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
     });
     it('enforces the local fee budget and prevents token-path double charging', async () => {
       await open();
-      expect(() => manager.trackFixedFeeRequest(peer, 'expensive', { ...offer, priceMicroUsdc: '100001' })).toThrow('budget');
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
+      expect(() => manager.trackUnitRequest(peer, 'expensive', { ...offer, priceMicroUsdc: '100001' })).toThrow('budget');
+      manager.trackUnitRequest(peer, 'fixed', offer);
       await expect(manager.signPerRequestAuth(peer, { requestId: 'fixed', inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT })).rejects.toThrow('validated response');
     });
-    it('does not replay an old fixed-fee authorization into a new session', async () => {
+    it('does not replay an old completed-request authorization into a new session', async () => {
       await open();
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
-      await manager.authorizeFixedFeeResponse(peer, 'fixed', mux);
+      manager.trackUnitRequest(peer, 'fixed', offer);
+      manager.observeUnitResponse(peer, 'fixed', true);
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
       manager.cleanupSession(peer);
-      await expect(manager.authorizeFixedFeeResponse(peer, 'fixed', mux)).rejects.toThrow('session unavailable');
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
       expect(mux.sentSpendingAuths).toHaveLength(1);
     });
     it('snapshots the fee and signs it once across concurrent duplicate paths', async () => {
       const channelId = await open();
       const mutable = { ...offer };
-      manager.trackFixedFeeRequest(peer, 'fixed', mutable);
+      manager.trackUnitRequest(peer, 'fixed', mutable);
       mutable.priceMicroUsdc = '9000';
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
+      manager.observeUnitResponse(peer, 'fixed', true);
       await Promise.all([
-        manager.authorizeFixedFeeResponse(peer, 'fixed', mux),
-        manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', requiredCumulativeAmount: '9999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux),
+        manager.authorizeUnitResponse(peer, 'fixed', mux),
+        manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '9999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux),
       ]);
       expect(mux.sentSpendingAuths).toHaveLength(2);
       for (const auth of mux.sentSpendingAuths as Array<{ cumulativeAmount: string; metadata: string }>) {
@@ -183,44 +183,68 @@ describe('BuyerPaymentManager', () => {
         expect(decodeMetadataServices(auth.metadata)[0]?.cumulativeRequestCount).toBe(1n);
       }
     });
+    it('cannot transfer an in-flight completion to a different confirmed channel', async () => {
+      await open();
+      manager.trackUnitRequest(peer, 'in-flight', offer);
+      const original = manager.getActiveSession(peer)!;
+      const sessionLookup = vi.spyOn(manager, 'getActiveSession').mockReturnValue({ ...original, sessionId: 'different-channel' });
+      try {
+        expect(() => manager.bindUnitRequestChannel(peer, 'in-flight')).toThrow('channel changed');
+        manager.observeUnitResponse(peer, 'in-flight', true);
+        await expect(manager.authorizeUnitResponse(peer, 'in-flight', mux)).rejects.toThrow('original channel');
+        expect(mux.sentSpendingAuths).toHaveLength(0);
+      } finally {
+        sessionLookup.mockRestore();
+      }
+    });
     it('handles NeedAuth before response without signing until delivery', async () => {
       const channelId = await open();
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
-      await manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+      manager.trackUnitRequest(peer, 'fixed', offer);
+      await manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
-      await manager.authorizeFixedFeeResponse(peer, 'fixed', mux);
+      manager.observeUnitResponse(peer, 'fixed', true);
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
       expect(mux.sentSpendingAuths).toHaveLength(1);
     });
     it('rejects overcharges, uncorrelated claims, wrong channels, and token surcharges', async () => {
       const channelId = await open();
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
-      const payload = { channelId, requestId: 'fixed', lastRequestCost: '1000', requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' };
-      for (const patch of [{ lastRequestCost: '1001' }, { requestId: 'unknown' }, { channelId: 'wrong' }, { inputTokens: '1' }]) {
+      manager.trackUnitRequest(peer, 'fixed', offer);
+      manager.observeUnitResponse(peer, 'fixed', true);
+      const payload = { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2 as const, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' };
+      for (const patch of [{ lastRequestCost: '1001' }, { requestId: 'unknown' }, { channelId: 'wrong' }, { inputTokens: '1' }, { billingUsage: undefined }, { billingUsage: { version: 1 as const, units: { output_images: '1' } } }]) {
         await manager.handleNeedAuth(peer, { ...payload, ...patch }, mux);
       }
       await manager.handleNeedAuth(peer, { channelId, requiredCumulativeAmount: '10000000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
     });
+    it('does not raise the selected price when the seller reports a new price after execution', async () => {
+      const channelId = await open();
+      manager.trackUnitRequest(peer, 'price-change', offer);
+      manager.observeUnitResponse(peer, 'price-change', true);
+      await manager.handleNeedAuth(peer, { channelId, requestId: 'price-change', lastRequestCost: '2000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '2000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+      expect(mux.sentSpendingAuths).toHaveLength(0);
+      await manager.authorizeUnitResponse(peer, 'price-change', mux);
+      expect(mux.sentSpendingAuths).toHaveLength(1);
+      expect(mux.sentSpendingAuths[0]).toMatchObject({ cumulativeAmount: '1000' });
+    });
     it('serializes concurrent fees with ordinary token payments', async () => {
       await open();
       for (const requestId of ['first', 'second']) {
-        manager.trackFixedFeeRequest(peer, requestId, offer);
-        manager.observeFixedFeeResponse(peer, requestId, true);
+        manager.trackUnitRequest(peer, requestId, offer);
+        manager.observeUnitResponse(peer, requestId, true);
       }
       await Promise.all([
-        manager.authorizeFixedFeeResponse(peer, 'first', mux),
+        manager.authorizeUnitResponse(peer, 'first', mux),
         manager.signPerRequestAuth(peer, { requestId: 'tokens', service: 'chat', inputBytes: new Uint8Array(), outputBytes: new Uint8Array(), reportedInputTokens: 1000n, reportedOutputTokens: 0n }),
-        manager.authorizeFixedFeeResponse(peer, 'second', mux),
+        manager.authorizeUnitResponse(peer, 'second', mux),
       ]);
       expect((mux.sentSpendingAuths.at(-1) as { cumulativeAmount: string }).cumulativeAmount).toBe('5000');
     });
     it('preserves image billing v1 on a channel also used for fixed fees', async () => {
       await open();
-      manager.trackFixedFeeRequest(peer, 'fixed', offer);
-      manager.observeFixedFeeResponse(peer, 'fixed', true);
-      await manager.authorizeFixedFeeResponse(peer, 'fixed', mux);
+      manager.trackUnitRequest(peer, 'fixed', offer);
+      manager.observeUnitResponse(peer, 'fixed', true);
+      await manager.authorizeUnitResponse(peer, 'fixed', mux);
       manager.trackRequestBilling('image', {
         context: { sellerPeerId: peer, provider: 'images', service: 'image-model', serviceApiProtocol: 'openai-images', attributes: { model: 'image-model' }, unitLimits: { output_images: 1 } },
         requestFacts: { model: 'image-model', requestedImages: 1 },

@@ -13,9 +13,9 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/pro
 import type {
   UnitBillingContext,
   UnitBillingMatchKeyV1,
-  UnitBillingModelV1,
+  UnitBillingModel,
   UnitBillingUsage,
-  UnitBillingUsageReportV1,
+  UnitBillingUsageReport,
 } from '@antseed/protocol/billing';
 import {
   evaluateUnitBilling,
@@ -40,16 +40,46 @@ export interface FinalUnitBillingResult {
   usage: UnitBillingUsage;
   tokenUsage: TokenUsage;
   costUsdc: bigint;
-  billingUsage: UnitBillingUsageReportV1;
+  billingUsage: UnitBillingUsageReport;
 }
+
+export interface MeasurementAdapter {
+  measure(response: SerializedHttpResponse, facts?: ImageRequestFacts, accepted?: boolean): { usage: UnitBillingUsage; tokenUsage: TokenUsage };
+}
+
+export const imageMeasurementAdapter: MeasurementAdapter = {
+  measure: (response, facts) => extractUnitResponseUsage(response, facts),
+};
+
+export function completedRequestUsage(accepted: boolean): UnitBillingUsage {
+  return { units: { completed_requests: accepted ? 1 : 0 } };
+}
+
+export const completedRequestMeasurementAdapter: MeasurementAdapter = {
+  measure(response, _facts, accepted) {
+    if (response.statusCode >= 200 && response.statusCode < 300 && accepted === undefined) throw new Error('Completed-request measurement requires response acceptance');
+    return {
+      usage: completedRequestUsage(response.statusCode >= 200 && response.statusCode < 300 && accepted === true),
+      tokenUsage: { ...ZERO_TOKEN_USAGE },
+    };
+  },
+};
 
 export function captureUnitBillingContext(args: {
   sellerPeerId: string;
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
+  unitModel?: UnitBillingModel;
   request: SerializedHttpRequest;
 }): CapturedUnitBillingContext {
+  if (args.unitModel?.version === 2) {
+    return {
+      context: { sellerPeerId: args.sellerPeerId, provider: args.provider, service: args.service,
+        serviceApiProtocol: args.serviceApiProtocol, unitLimits: { completed_requests: 1 } },
+      requestUsage: { units: { completed_requests: 1 } }, requestFacts: {},
+    };
+  }
   const parsed = extractRequestBodyFields(args.request.headers, args.request.body);
   const requestFacts = extractImageRequestFacts({
     path: args.request.path,
@@ -97,12 +127,14 @@ export function extractUnitResponseUsage(
 }
 
 export function computeFinalUnitBilling(
-  model: UnitBillingModelV1,
+  model: UnitBillingModel,
   context: UnitBillingContext,
   response: SerializedHttpResponse,
   requestFacts?: ImageRequestFacts,
+  accepted?: boolean,
 ): FinalUnitBillingResult {
-  const responseUsage = extractUnitResponseUsage(response, requestFacts);
+  const adapter = model.version === 2 ? completedRequestMeasurementAdapter : imageMeasurementAdapter;
+  const responseUsage = adapter.measure(response, requestFacts, accepted);
   const costUsdc = evaluateUnitBilling(model, context, responseUsage.usage);
   return {
     usage: responseUsage.usage,

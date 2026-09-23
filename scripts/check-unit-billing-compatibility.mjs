@@ -6,13 +6,13 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { Wallet } from 'ethers';
-import { fixedFeeOffering, FIXED_FEE_CAPABILITY } from '../packages/protocol/dist/fixed-fee.js';
+import { serviceBillingOffering, COMPLETED_REQUESTS_CAPABILITY } from '../packages/protocol/dist/service-billing.js';
 import { signData, verifySignature } from '../packages/protocol/dist/signing.js';
 import { encodeMetadata, encodeMetadataForSigning } from '../packages/node/dist/discovery/metadata-codec.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const baseline = '172e4fc986484c9c1adbbfccd076427850dd57c7';
-const temporary = await mkdtemp(join(tmpdir(), 'antseed-response-fee-legacy-'));
+const temporary = await mkdtemp(join(tmpdir(), 'antseed-unit-billing-legacy-'));
 const source = file => execFileSync('git', ['show', `${baseline}:${file}`], { cwd: root, encoding: 'utf8' });
 
 async function legacyModule(file) {
@@ -49,8 +49,8 @@ try {
     version: 12, peerId: wallet.address.slice(2).toLowerCase(), region: 'us', timestamp: Date.now(), signature: '',
     providers: [{ provider: 'openai', services: ['image'], defaultPricing: pricing, maxConcurrency: 5, currentLoad: 0,
       serviceApiProtocols: { image: ['openai-images'] }, serviceUnitBillingModels: { image: { 'openai-images': imageModel } } }],
-    capabilities: [FIXED_FEE_CAPABILITY],
-    offerings: [fixedFeeOffering({ provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' })],
+    capabilities: [COMPLETED_REQUESTS_CAPABILITY],
+    offerings: [serviceBillingOffering({ provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' })],
   };
   metadata.signature = Buffer.from(signData(wallet, encodeMetadataForSigning(metadata))).toString('hex');
   const decoded = codec.decodeMetadata(encodeMetadata(metadata));
@@ -80,7 +80,7 @@ try {
       cancelProxyRequest() {},
       sendProxyRequest(outgoing, onResponse) {
         sent += 1;
-        assert.equal(outgoing.headers['x-antseed-fixed-fee-contract'], undefined);
+        assert.equal(outgoing.headers['x-antseed-service-contract'], undefined);
         onResponse({ requestId: outgoing.requestId, statusCode: 200, headers: {},
           body: Buffer.from(JSON.stringify({ data: [{ url: 'https://example.test/image-1' }, { url: 'https://example.test/image-2' }] })) }, { streamingStart: false });
       },

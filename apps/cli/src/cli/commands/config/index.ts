@@ -343,7 +343,7 @@ const DYNAMIC_KEY_PREFIXES = [
 ];
 
 function isDynamicKey(key: string): boolean {
-  return DYNAMIC_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
+  return key === 'buyer.selection' || DYNAMIC_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
 function getValidConfigKeys(config: AntseedConfig, prefix = ''): string[] {

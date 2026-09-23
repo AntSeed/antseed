@@ -34,6 +34,16 @@ test('deriveDisplayNameFromPeerId returns deterministic peer-specific names', ()
   assert.equal(shouldDeriveDisplayName('custom seller'), false);
 });
 
+test('buyer selection preserves generic enum preferences and the exact routing target', async () => {
+  const selection = { kind: 'router', service: { peerId: 'a'.repeat(40), provider: 'levanto', serviceId: 'levanto-route' }, preferences: { cqt: '9' } };
+  await withTempConfig(JSON.stringify({ buyer: { selection } }), async path => {
+    assert.deepEqual((await loadConfig(path)).buyer.selection, selection);
+  });
+  await withTempConfig(JSON.stringify({ buyer: { selection: { ...selection, preferences: { cqt: 9 } } } }), async path => {
+    await assert.rejects(loadConfig(path), /buyer.selection/);
+  });
+});
+
 test('createDefaultConfig includes a Base mainnet crypto payment default', () => {
   const config = createDefaultConfig();
 

@@ -8,7 +8,6 @@ import { stripRelayRequestHeaders, stripRelayResponseHeaders } from './http-head
 export const DEFAULT_HTTP_TIMEOUT_MS = 5 * 60_000;
 
 export interface RelayConfig {
-  preserveServicePayload?: boolean;
   baseUrl: string;
   authHeaderName: string;
   authHeaderValue: string;
@@ -269,7 +268,7 @@ export class HttpRelay {
             }
 
             // Normalize: if client sent "service" without "model", copy to "model" for upstream API compat.
-            if (!this._config.preserveServicePayload && transformed.service !== undefined && transformed.model === undefined) {
+            if (transformed.service !== undefined && transformed.model === undefined) {
               transformed.model = transformed.service;
             }
             // Remove the "service" field — upstream APIs don't understand it.

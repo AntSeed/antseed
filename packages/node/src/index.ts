@@ -11,7 +11,7 @@ export {
   type BuyerUsageServicePoint,
   type BuyerChannelSummary,
 } from './node.js';
-export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export type { Provider, ProviderStreamCallbacks, ServiceExecution } from './interfaces/seller-provider.js';
 export {
   ModelHealthChecker,
   DEFAULT_HEALTH_CHECK_INTERVAL_MS,
@@ -34,6 +34,9 @@ export {
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
 export type { Router, RouteRecommendation, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
+export type { RoutingUsageObservation } from './interfaces/buyer-router.js';
+export * from './routing/selection.js';
+export { assertRoutingPreferences, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingServiceMetadata, type RoutingPreferences, type RoutingPreferenceSchema, type RoutingServiceMetadataV1 } from '@antseed/protocol';
 
 // Types (re-export everything)
 export * from './types/index.js';
@@ -363,4 +366,4 @@ export {
   type LoadedProvider,
   type LoadedRouter,
 } from './config/plugin-loader.js'
-export * from '@antseed/protocol/fixed-fee';
+export * from '@antseed/protocol/service-billing';

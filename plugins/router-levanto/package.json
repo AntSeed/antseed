@@ -1,7 +1,7 @@
 {
-  "name": "@antseed/provider-levanto",
+  "name": "@antseed/router-levanto",
   "version": "0.1.0",
-  "description": "Levanto routing service provider with per-response AntSeed payments",
+  "description": "Buyer-side Levanto routing over AntSeed",
   "type": "module",
   "files": ["dist"],
   "main": "dist/index.js",
@@ -16,7 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@antseed/provider-core": "workspace:*",
     "@antseed/router-local": "workspace:*"
   },
   "peerDependencies": { "@antseed/node": ">=0.1.0" },

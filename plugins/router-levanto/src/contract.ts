@@ -1,5 +1,5 @@
 export const LEVANTO_ROUTING_CONTRACT = 'levanto-routing-v1';
-export const LEVANTO_ROUTING_PATH = '/_antseed/route';
+export const LEVANTO_ROUTING_PATH = '/_antseed/levanto-route';
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -13,13 +13,8 @@ function peerId(value: unknown): boolean {
   return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 }
 
-function fixedFeePath(contract: string): string {
-  if (contract !== LEVANTO_ROUTING_CONTRACT) throw new Error('Unsupported fixed-fee contract');
-  return LEVANTO_ROUTING_PATH;
-}
-
-export function validateFixedFeeRequest(contract: string, input: unknown): asserts input is Record<string, unknown> {
-  fixedFeePath(contract);
+export function validateRoutingRequest(contract: string, input: unknown): asserts input is Record<string, unknown> {
+  if (contract !== LEVANTO_ROUTING_CONTRACT) throw new Error('Unsupported routing contract');
   if (!object(input) || input.v !== 1 || ![1, 3, 5, 7, 9].includes(input.cqt as number)
     || typeof input.inputMessage !== 'string' || !input.inputMessage.trim()
     || !Number.isSafeInteger(input.promptTokens) || (input.promptTokens as number) < 0
@@ -40,24 +35,28 @@ export function validateFixedFeeRequest(contract: string, input: unknown): asser
   }
 }
 
-export function validateFixedFeeResponse(contract: string, input: unknown, request: unknown): void {
-  validateFixedFeeRequest(contract, request);
+export function validateRoutingResponse(contract: string, input: unknown, request: unknown): Array<{ model: string; peer: string }> {
+  validateRoutingRequest(contract, request);
   if (!object(input) || input.v !== 1 || input.error !== undefined || input.renewalDue !== undefined
-    || typeof input.router !== 'string' || !input.router || !Array.isArray(input.ranked) || !input.ranked.length) {
+    || typeof input.router !== 'string' || !input.router || !Array.isArray(input.ranked) || !input.ranked.length || input.ranked.length > 512) {
     throw new Error('Invalid Levanto routing response; per-response backend required');
   }
   const constraints = request.constraints as Record<string, unknown>;
+  const accepted: Array<{ model: string; peer: string }> = [];
   for (const entry of input.ranked) {
     if (!object(entry) || typeof entry.model !== 'string' || !entry.model || !peerId(entry.peer) || entry.inference !== undefined
       || !object(entry.estimate) || !object(entry.price)
       || !['costUsd', 'inputTokens', 'cachedInputTokens', 'outputTokens'].every(key => nonnegative(entry.estimate && (entry.estimate as Record<string, unknown>)[key]))
       || !['inUsdPerM', 'outUsdPerM', 'cachedInUsdPerM'].every(key => nonnegative(entry.price && (entry.price as Record<string, unknown>)[key]))) {
-      throw new Error('Malformed ranked recommendation');
+      continue;
     }
     if ((Array.isArray(constraints.allowedPeerIds) && constraints.allowedPeerIds.length > 0 && !constraints.allowedPeerIds.includes(entry.peer))
       || (Array.isArray(constraints.blockedPeerIds) && constraints.blockedPeerIds.includes(entry.peer))
       || (typeof constraints.maxInputUsdPerMillion === 'number' && (entry.price.inUsdPerM as number) > constraints.maxInputUsdPerMillion)) {
-      throw new Error('Recommendation violates routing constraints');
+      continue;
     }
+    accepted.push({ model: entry.model as string, peer: entry.peer as string });
   }
+  if (!accepted.length) throw new Error('No valid recommendations satisfy routing constraints');
+  return accepted;
 }

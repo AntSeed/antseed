@@ -1,8 +1,14 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
-import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
+import type { ServiceUnitBillingModels } from '../types/billing.js';
 import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
-import type { FixedFeeService } from '@antseed/protocol/fixed-fee';
+
+export interface ServiceExecution {
+  kind: 'routing' | 'custom';
+  contract: string;
+  path: string;
+  acceptResponse(request: SerializedHttpRequest, response: SerializedHttpResponse): boolean;
+}
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -24,7 +30,7 @@ export interface ProviderPricing {
  * You just handle the HTTP request → response conversion.
  */
 export interface Provider {
-  fixedFeeServices?: Array<FixedFeeService & { path: string }>;
+  serviceExecution?: Record<string, ServiceExecution>;
   /** Unique name for this provider (e.g., 'anthropic', 'openai', 'my-local-llm') */
   name: string;
 
@@ -49,7 +55,7 @@ export interface Provider {
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Optional per-service/protocol unit billing model support advertised via discovery metadata. */
-  serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+  serviceUnitBillingModels?: ServiceUnitBillingModels;
 
   /** Optional per-service model capability hints advertised via discovery metadata. */
   serviceCapabilities?: Record<string, ServiceCapabilities>;

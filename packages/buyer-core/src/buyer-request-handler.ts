@@ -11,7 +11,7 @@ import type { BuyerPeerView } from './interfaces.js';
 import type { BuyerConnection } from './interfaces.js';
 import type { ProxyMux } from './proxy-mux.js';
 import { PaymentMux } from './payment-mux.js';
-import { FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER, parseMicroUsdc, type FixedFeeOffer } from '@antseed/protocol/fixed-fee';
+import { SERVICE_CONTRACT_HEADER, parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { ConnectionState } from '@antseed/protocol/connection-state';
 import type { BuyerPaymentNegotiator, SelectedBillingRoute } from './buyer-payment-negotiator.js';
 import { debugLog, debugWarn } from './debug.js';
@@ -48,7 +48,7 @@ export interface RequestStreamCallbacks {
 }
 
 export interface RequestExecutionOptions {
-  fixedFee?: FixedFeeOffer;
+  unitBilling?: ServiceBillingOffer;
   maxFeeMicroUsdc?: string;
   acceptResponse?: (response: SerializedHttpResponse) => boolean;
   signal?: AbortSignal;
@@ -115,19 +115,24 @@ export class BuyerRequestHandler {
     const mux = this._deps.getMux(peer.peerId, conn);
     const verificationMux = this._deps.getVerificationMux(peer.peerId, conn);
     const negotiator = options?.controlPlane ? null : this._deps.negotiator;
-    const fixedFee = options?.fixedFee;
-    if (!fixedFee && Object.keys(req.headers).some(header => [FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER].includes(header.toLowerCase()))) {
-      throw new Error('Fixed-fee headers require an explicit fixed-fee request');
+    const unitBilling = options?.unitBilling;
+    if (!unitBilling && Object.keys(req.headers).some(header => header.toLowerCase() === SERVICE_CONTRACT_HEADER)) {
+      throw new Error('Completed-request headers require an explicit completed-request request');
     }
-    if (fixedFee) {
-      if (callbacks || options?.controlPlane || externalAuthPresent(req)) throw new Error('Fixed-fee requests require ordinary non-streaming SDK payments');
-      if (!options?.acceptResponse) throw new Error('Fixed-fee requests require response acceptance');
-      const fixedFeeBody = JSON.parse(new TextDecoder().decode(req.body)) as Record<string, unknown> | null;
-      if (!fixedFeeBody || req.method !== 'POST'
-        || fixedFeeBody.service !== fixedFee.service || req.headers['x-antseed-provider'] !== fixedFee.provider) throw new Error('Fixed-fee request does not match agreed service');
-      if (req.headers[FIXED_FEE_CONTRACT_HEADER] !== fixedFee.contract || req.headers[FIXED_FEE_PRICE_HEADER] !== fixedFee.priceMicroUsdc) throw new Error('Fixed-fee request does not match agreed offer');
-      if (!negotiator && parseMicroUsdc(fixedFee.priceMicroUsdc) > 0n) throw new Error('Buyer payments must be enabled');
-      negotiator?.bpm.trackFixedFeeRequest(peer.peerId, req.requestId, fixedFee);
+    if (unitBilling) {
+      if (callbacks || options?.controlPlane || externalAuthPresent(req)) throw new Error('Completed-request requests require ordinary non-streaming SDK payments');
+      if (!options?.acceptResponse) throw new Error('Completed-request requests require response acceptance');
+      const unitBillingBody = JSON.parse(new TextDecoder().decode(req.body)) as Record<string, unknown> | null;
+      if (!unitBillingBody || req.method !== 'POST'
+        || unitBillingBody.service !== unitBilling.service) throw new Error('Completed-request request does not match agreed service');
+      const agreementHeaders = { 'x-antseed-provider': unitBilling.provider, [SERVICE_CONTRACT_HEADER]: unitBilling.contract };
+      for (const [header, value] of Object.entries(req.headers)) {
+        const expected = agreementHeaders[header.toLowerCase() as keyof typeof agreementHeaders];
+        if (expected !== undefined && value !== expected) throw new Error('Completed-request request does not match agreed offer');
+      }
+      req = { ...req, headers: { ...req.headers, ...agreementHeaders } };
+      if (!negotiator && parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n) throw new Error('Buyer payments must be enabled');
+      negotiator?.bpm.trackUnitRequest(peer.peerId, req.requestId, unitBilling);
     }
     if (negotiator) {
       this._deps.registerPaymentMux(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
@@ -147,16 +152,16 @@ export class BuyerRequestHandler {
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
-    const requestProtocol = options?.controlPlane || fixedFee ? null : detectRequestServiceApiProtocol(req);
+    const requestProtocol = options?.controlPlane || unitBilling ? null : detectRequestServiceApiProtocol(req);
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
-    const isFreeService = fixedFee ? parseMicroUsdc(fixedFee.priceMicroUsdc) === 0n : requestedService
+    const isFreeService = unitBilling ? parseMicroUsdc(unitBilling.priceMicroUsdc) === 0n : requestedService
       ? (billingRoute ? isBillingRouteFree(billingRoute) : isPeerServiceFree(peer, requestedService))
       : false;
-    if (negotiator && requestedService && !fixedFee) {
+    if (negotiator && requestedService && !unitBilling) {
       if (isFreeService) {
         negotiator.trackFreeUsageRequestService(req.requestId, requestedService);
         try {
@@ -179,7 +184,7 @@ export class BuyerRequestHandler {
         }
         negotiator.trackRequestBillingContext(req, requestedService, billingRoute);
       }
-    } else if (!fixedFee && requestedService && isFreeService && this._deps.freeUsageManager) {
+    } else if (!unitBilling && requestedService && isFreeService && this._deps.freeUsageManager) {
       this._deps.freeUsageManager.trackRequestService(req.requestId, requestedService);
       try {
         this._prepareDirectFreeUsageOpen(peer, conn);
@@ -374,30 +379,33 @@ export class BuyerRequestHandler {
       );
     });
 
-    const executeFixedFeeSafe = async (): Promise<SerializedHttpResponse> => {
-      try { return await executeRequest(); } catch (error) {
-        if (fixedFee) negotiator?.bpm.observeFixedFeeResponse(peer.peerId, req.requestId, false);
+    const executeUnitBillingSafe = async (): Promise<SerializedHttpResponse> => {
+      try {
+        if (unitBilling) negotiator?.bpm.bindUnitRequestChannel(peer.peerId, req.requestId);
+        return await executeRequest();
+      } catch (error) {
+        if (unitBilling) negotiator?.bpm.observeUnitResponse(peer.peerId, req.requestId, false);
         throw error;
       }
     };
-    const finishFixedFee = async (response: SerializedHttpResponse): Promise<SerializedHttpResponse> => {
-      if (!fixedFee) return response;
+    const finishUnitBilling = async (response: SerializedHttpResponse): Promise<SerializedHttpResponse> => {
+      if (!unitBilling) return response;
       let accepted = false;
       try {
         if (response.statusCode >= 200 && response.statusCode < 300 && !options?.signal?.aborted) {
           accepted = options?.acceptResponse?.(structuredClone(response)) === true;
           if (!accepted || options?.signal?.aborted) {
             accepted = false;
-            throw new Error('Fixed-fee response was not accepted');
+            throw new Error('Completed-request response was not accepted');
           }
         }
       } finally {
-        negotiator?.bpm.observeFixedFeeResponse(peer.peerId, req.requestId, accepted);
+        negotiator?.bpm.observeUnitResponse(peer.peerId, req.requestId, accepted);
       }
-      if (accepted && negotiator) await negotiator.bpm.authorizeFixedFeeResponse(peer.peerId, req.requestId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
+      if (accepted && negotiator) await negotiator.bpm.authorizeUnitResponse(peer.peerId, req.requestId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
       return response;
     };
-    const response = await executeFixedFeeSafe();
+    const response = await executeUnitBillingSafe();
 
     // A seller demanded payment while this buyer runs no payment machinery
     // (payments disabled or unconfigured). Forwarding the raw seller 402 would
@@ -419,36 +427,36 @@ export class BuyerRequestHandler {
     }
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
-      if (fixedFee) {
+      if (unitBilling) {
         try {
-          const retry = await negotiator.negotiateFixedFeePayment(peer, conn);
-          const finalResponse = retry ? await executeFixedFeeSafe() : response;
+          const retry = await negotiator.negotiateUnitBillingPayment(peer, conn);
+          const finalResponse = retry ? await executeUnitBillingSafe() : response;
           this._recordResponseAuth(peer, req, finalResponse, requestedService, verificationMux);
-          return adaptPeerResponse(await finishFixedFee(finalResponse));
+          return adaptPeerResponse(await finishUnitBilling(finalResponse));
         } catch (error) {
-          negotiator.bpm.observeFixedFeeResponse(peer.peerId, req.requestId, false);
+          negotiator.bpm.observeUnitResponse(peer.peerId, req.requestId, false);
           throw error;
         }
       }
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') {
-        return adaptPeerResponse(await finishFixedFee(result.response));
+        return adaptPeerResponse(await finishUnitBilling(result.response));
       }
       startTime = Date.now();
-      const retriedResponse = await executeFixedFeeSafe();
-      if (!isFreeService && !fixedFee) {
+      const retriedResponse = await executeUnitBillingSafe();
+      if (!isFreeService && !unitBilling) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return adaptPeerResponse(await finishFixedFee(retriedResponse));
+      return adaptPeerResponse(await finishUnitBilling(retriedResponse));
     }
 
-    if (negotiator && !isFreeService && !fixedFee) {
+    if (negotiator && !isFreeService && !unitBilling) {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
-    return adaptPeerResponse(await finishFixedFee(response));
+    return adaptPeerResponse(await finishUnitBilling(response));
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {

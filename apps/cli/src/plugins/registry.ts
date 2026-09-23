@@ -9,12 +9,6 @@ export interface TrustedPlugin {
 
 export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
   {
-    name: 'levanto',
-    type: 'provider',
-    description: 'Levanto routing recommendations (fixed fee per response)',
-    package: '@antseed/provider-levanto',
-  },
-  {
     name: 'anthropic',
     type: 'provider',
     description: 'Anthropic API provider (API key)',
@@ -63,7 +57,7 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
     name: 'levanto-router',
     type: 'router',
     description: 'Levanto paid model recommendations with existing inference execution',
-    package: '@antseed/provider-levanto',
+    package: '@antseed/router-levanto',
   },
   {
     name: 'local',

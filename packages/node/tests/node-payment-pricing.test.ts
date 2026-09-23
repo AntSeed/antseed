@@ -6,18 +6,21 @@ import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-code
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
-import { FIXED_FEE_CAPABILITY, FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER } from '@antseed/protocol/fixed-fee';
+import { COMPLETED_REQUESTS_CAPABILITY, SERVICE_CONTRACT_HEADER } from '@antseed/protocol/service-billing';
 
 const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
 
-describe('fixed-fee seller payments', () => {
+describe('completed-request seller payments', () => {
   const body = { service: 'levanto-route', v: 1, cqt: 5, inputMessage: 'Help with code', promptTokens: 3, expectedCachedTokens: [], constraints: {} };
   const result = { v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: 'a'.repeat(40), estimate: { costUsd: 0.01, inputTokens: 3, cachedInputTokens: 0, outputTokens: 30 }, price: { inUsdPerM: 1, outUsdPerM: 3, cachedInUsdPerM: 0 } }] };
   function setup(overrides: Record<string, unknown> = {}, capable = true) {
     let spend = 0n;
     const provider = makeProvider(10, 10, { name: 'levanto', services: ['levanto-route', 'image'] });
-    provider.fixedFeeServices = [{ service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000', path: '/_antseed/route' }];
+    provider.serviceExecution = { 'levanto-route': { kind: 'routing', contract: 'levanto-routing-v1', path: '/_antseed/levanto-route', acceptResponse: (_request, response) => response.statusCode === 200 } };
+    provider.serviceApiProtocols = { 'levanto-route': ['levanto-routing'] };
+    provider.serviceUnitBillingModels = { 'levanto-route': { 'levanto-routing': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } } };
+    provider.pricing = { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, services: { 'levanto-route': { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } } };
     provider.handleRequest = vi.fn(async request => ({ requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(result)) }));
     provider.handleRequestStream = vi.fn();
     const spm = makeSpmMock({
@@ -27,11 +30,11 @@ describe('fixed-fee seller payments', () => {
     const frames: Uint8Array[] = [];
     const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() };
     const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: spm, sessionTracker: null, channelsClient: {} as any, announcer: null, emit: () => false });
-    const { mux } = handler.handleConnection({ ...makeConn(frames), hasRemoteCapability: (capability: string) => capable && capability === FIXED_FEE_CAPABILITY }, 'b'.repeat(40), paymentMux as any);
+    const { mux } = handler.handleConnection({ ...makeConn(frames), hasRemoteCapability: (capability: string) => capable && capability === COMPLETED_REQUESTS_CAPABILITY }, 'b'.repeat(40), paymentMux as any);
     const send = async (requestId = 'fixed', patch: Partial<SerializedHttpRequest> = {}) => {
       await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({
-        requestId, method: 'POST', path: '/_antseed/route',
-        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto', [FIXED_FEE_CONTRACT_HEADER]: 'levanto-routing-v1', [FIXED_FEE_PRICE_HEADER]: '1000' },
+        requestId, method: 'POST', path: '/_antseed/levanto-route',
+        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto', [SERVICE_CONTRACT_HEADER]: 'levanto-routing-v1' },
         body: new TextEncoder().encode(JSON.stringify(body)), ...patch,
       }) });
       return decodeHttpResponse(decodeFrame(frames.at(-1)!).message!.payload);
@@ -42,8 +45,19 @@ describe('fixed-fee seller payments', () => {
     const harness = setup();
     expect((await harness.send()).statusCode).toBe(200);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
-    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '1000', inputTokens: '0', outputTokens: '0', billingUsage: undefined }));
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '1000', inputTokens: '0', outputTokens: '0', billingUsage: { version: 2, units: { completed_requests: '1' } } }));
     expect(harness.provider.handleRequestStream).not.toHaveBeenCalled();
+  });
+  it('uses completed-request measurement for a TypeSafe service without a price header', async () => {
+    const harness = setup();
+    harness.provider.serviceApiProtocols!['levanto-route'] = ['typesafe-systemone'];
+    harness.provider.serviceUnitBillingModels!['levanto-route'] = { 'typesafe-systemone': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } };
+    harness.provider.serviceExecution!['levanto-route']!.path = '/v1/systemone';
+    harness.provider.serviceExecution!['levanto-route']!.kind = 'custom';
+    expect((await harness.send('typesafe', { path: '/v1/systemone' })).statusCode).toBe(200);
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
+    expect(vi.mocked(harness.provider.handleRequest).mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ billingUsage: { version: 2, units: { completed_requests: '1' } } }));
   });
   it('rejects legacy buyers and mismatched offers before execution', async () => {
     const legacy = setup({}, false);
@@ -72,9 +86,10 @@ describe('fixed-fee seller payments', () => {
   });
   it('does not charge responses rejected by the provider validator', async () => {
     const harness = setup();
-    vi.mocked(harness.provider.handleRequest).mockRejectedValue(new Error('Invalid service response'));
+    harness.provider.serviceExecution!['levanto-route']!.acceptResponse = () => false;
     expect((await harness.send()).statusCode).toBe(500);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 0n);
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '0', billingUsage: { version: 2, units: { completed_requests: '0' } } }));
   });
   it('keeps ordinary services discoverable to legacy model-list clients', async () => {
     const harness = setup({}, false);
@@ -104,8 +119,8 @@ describe('fixed-fee seller payments', () => {
   it('keeps legacy image charges and v1 reports unchanged on a mixed seller', async () => {
     const harness = setup({}, false);
     harness.provider.pricing = { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
-    harness.provider.serviceApiProtocols = { image: ['openai-images'] };
-    harness.provider.serviceUnitBillingModels = { image: { 'openai-images': {
+    harness.provider.serviceApiProtocols = { ...harness.provider.serviceApiProtocols, image: ['openai-images'] };
+    harness.provider.serviceUnitBillingModels = { ...harness.provider.serviceUnitBillingModels, image: { 'openai-images': {
       version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }],
     } } };
     harness.provider.handleRequestStream = undefined;

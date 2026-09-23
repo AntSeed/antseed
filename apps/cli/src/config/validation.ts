@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
 import { parseHostPort } from './public-address.js';
+import { isRoutingSelection } from '@antseed/node';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -287,6 +288,7 @@ function validateBuyerVerification(
  */
 export function validateConfig(config: AntseedConfig): string[] {
   const errors: string[] = [];
+  if (config.buyer.selection !== undefined && !isRoutingSelection(config.buyer.selection)) errors.push('buyer.selection must select a model or a router with string-enum preferences');
 
   validateSellerProviders('seller.providers', config.seller.providers, errors);
   validateHierarchicalPricing('buyer.maxPricing', config.buyer.maxPricing, errors);

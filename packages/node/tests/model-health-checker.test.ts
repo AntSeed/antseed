@@ -111,11 +111,11 @@ describe('buildHealthProbeRequest', () => {
 });
 
 describe('ModelHealthChecker', () => {
-  it('does not probe fixed-fee services as inference models', async () => {
+  it('does not probe routing services as inference models even without unit pricing', async () => {
     const onRequest = vi.fn(async request => jsonResponse(request.requestId, 200));
     const provider = makeProvider({
       services: ['levanto-route', 'model-a'], onRequest,
-      fixedFeeServices: [{ service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000', path: '/_antseed/route' }],
+      serviceExecution: { 'levanto-route': { kind: 'routing', contract: 'levanto-routing-v1', path: '/_antseed/levanto-route', acceptResponse: () => true } },
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }] });
     await checker.runSweep();

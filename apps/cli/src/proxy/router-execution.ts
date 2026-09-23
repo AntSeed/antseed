@@ -2,6 +2,7 @@ import { buildNetworkServiceOffers, isModelRouteEligible, normalizedModelReputat
 import { detectRequestServiceApiProtocol } from './service-api-adapter.js'
 import { findMissingRequiredParameters, getExplicitProviderOverride, resolvePeerRoutePlan } from './routing.js'
 import { overrideRoutedModelInBody } from './request-utils.js'
+import { resolveRoutingPreferences, validateRoutingServiceMetadata, type RoutingSelection } from '@antseed/node'
 
 type ExecutionCandidate = RouteCandidate & { peer: PeerInfo; effectiveReputationScore: number | null }
 
@@ -76,11 +77,16 @@ export async function executeRouterSelection(args: {
   peers: PeerInfo[];
   candidates: ExecutionCandidate[];
   conversationKey: string | null;
+  selection?: Extract<RoutingSelection, { kind: 'router' }>;
   signal: AbortSignal;
   onRoutingRequest?: (requestId: string) => void;
 }): Promise<{ request: SerializedHttpRequest; candidates: ExecutionCandidate[] }> {
   const { node, router, request, peers, candidates, conversationKey, signal } = args
   if (!router.selectRoute) throw new Error('Selected router does not support model selection')
+  const metadata = router.routingMetadata
+  if (metadata) validateRoutingServiceMetadata(metadata)
+  const preferences = resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, args.selection?.preferences ?? {})
+  const routingService = args.selection?.service ?? router.defaultRoutingService
   signal.throwIfAborted()
   let acceptedKeys: string | null = null
   const candidateKeys = (resolved: readonly ExecutionCandidate[]) => JSON.stringify(resolved.map(candidate => [candidate.peerId, candidate.provider, candidate.serviceId]))
@@ -92,6 +98,8 @@ export async function executeRouterSelection(args: {
   try {
     const routes = await Promise.race([aborted, router.selectRoute(structuredClone(request), structuredClone(peers), {
       signal, conversationKey,
+      preferences, preferencesSchemaHash: metadata?.preferencesSchemaHash,
+      routingService: routingService ? structuredClone(routingService) : undefined,
       candidates: candidates.map(({ peer: _peer, effectiveReputationScore: _score, ...candidate }) => ({ ...candidate })),
       acceptRecommendations: recommendations => {
         if (signal.aborted) return false
@@ -103,6 +111,7 @@ export async function executeRouterSelection(args: {
         return true
       },
       sendRequest: (peer, serviceRequest, options) => {
+        if (routingService && peer.peerId !== routingService.peerId) throw new Error('Routing request must use the selected routing-service peer')
         const snapshot = structuredClone(serviceRequest)
         if (typeof snapshot.requestId !== 'string' || !snapshot.requestId || snapshot.requestId === request.requestId) {
           throw new Error('Routing purchases require a distinct request ID')

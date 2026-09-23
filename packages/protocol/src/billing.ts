@@ -25,13 +25,48 @@ export interface UnitBillingModelV1 {
   components: UnitBillingComponentV1[];
 }
 
+export interface UnitBillingModelV2 {
+  version: 2;
+  components: Array<{ unit: 'completed_requests'; priceMicroUsdc: string }>;
+}
+
+export type UnitBillingModel = UnitBillingModelV1 | UnitBillingModelV2;
+export type UnitBillingUnit = UnitBillingUnitV1 | 'completed_requests';
+
+export function parseMicroUsdc(value: string): bigint {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d{0,15})$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Price must be a canonical non-negative safe integer micro-USDC amount');
+  }
+  return BigInt(value);
+}
+
+export function completedRequestBillingModel(priceMicroUsdc: string): UnitBillingModelV2 {
+  parseMicroUsdc(priceMicroUsdc);
+  return { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc }] };
+}
+
+export function validateUnitBillingModel(model: UnitBillingModel): string[] {
+  if (model?.version === 1) return validateUnitBillingModelV1(model);
+  if (model?.version !== 2 || !Array.isArray(model.components) || model.components.length !== 1) {
+    return ['Completed-request billing requires one version 2 component'];
+  }
+  const component = model.components[0];
+  if (!component || component.unit !== 'completed_requests' || Object.keys(component).some(key => !['unit', 'priceMicroUsdc'].includes(key))) {
+    return ['Invalid completed-request billing component'];
+  }
+  try { parseMicroUsdc(component.priceMicroUsdc); } catch (error) { return [String(error)]; }
+  return [];
+}
+
 export type ServiceUnitBillingModelsV1 = Record<
   string,
   Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>
 >;
 
+export type ServiceUnitBillingModels = Record<string, Partial<Record<ServiceApiProtocol, UnitBillingModel>>>;
+
 export interface UnitBillingUsage {
-  units: Partial<Record<UnitBillingUnitV1, number>>;
+  units: Partial<Record<UnitBillingUnit, number>>;
 }
 
 export interface UnitBillingUsageReportV1 {
@@ -39,13 +74,29 @@ export interface UnitBillingUsageReportV1 {
   units: Partial<Record<UnitBillingUnitV1, string>>;
 }
 
+export interface UnitBillingUsageReportV2 {
+  version: 2;
+  units: { completed_requests: string };
+}
+
+export type UnitBillingUsageReport = UnitBillingUsageReportV1 | UnitBillingUsageReportV2;
+
+export function validateUnitBillingUsageReport(report: UnitBillingUsageReport): string[] {
+  if (report?.version === 1) return validateUnitBillingUsageReportV1(report);
+  if (report?.version !== 2 || !report.units || typeof report.units !== 'object'
+    || Object.keys(report.units).length !== 1 || !['0', '1'].includes(report.units.completed_requests)) {
+    return ['Completed-request usage requires version 2 and a completed_requests count of 0 or 1'];
+  }
+  return [];
+}
+
 export interface UnitBillingContext {
   sellerPeerId: string;
   provider: string;
   service: string;
-  serviceApiProtocol: ServiceApiProtocol;
+  serviceApiProtocol?: ServiceApiProtocol;
   attributes?: Partial<Record<UnitBillingMatchKeyV1, string>>;
-  unitLimits?: Partial<Record<UnitBillingUnitV1, number>>;
+  unitLimits?: Partial<Record<UnitBillingUnit, number>>;
 }
 
 export const GENERATED_IMAGE_OUTPUT_UNIT_V1 = 'output_images' satisfies UnitBillingUnitV1;
@@ -70,7 +121,11 @@ export function isValidUnitBillingComponentV1(component: UnitBillingComponentV1)
   return isUnitBillingUnitV1(component.unit);
 }
 
-export function unitUsageToBillingReport(usage: UnitBillingUsage): UnitBillingUsageReportV1 {
+export function unitUsageToBillingReport(usage: UnitBillingUsage): UnitBillingUsageReport {
+  if (usage.units.completed_requests !== undefined) {
+    if (Object.keys(usage.units).length !== 1 || ![0, 1].includes(usage.units.completed_requests)) throw new Error('Invalid completed-request measurement');
+    return { version: 2, units: { completed_requests: String(usage.units.completed_requests) } };
+  }
   const units: Partial<Record<UnitBillingUnitV1, string>> = {};
   for (const [unit, count] of Object.entries(usage.units)) {
     if (!isUnitBillingUnitV1(unit) || count === undefined) continue;
@@ -119,20 +174,29 @@ export function validateUnitBillingModelV1(model: UnitBillingModelV1): string[] 
   return errors;
 }
 
-export function isFreeUnitBillingModel(model: UnitBillingModelV1): boolean {
+export function isFreeUnitBillingModel(model: UnitBillingModel): boolean {
+  if (model.version === 2) return validateUnitBillingModel(model).length === 0 && model.components.every(component => parseMicroUsdc(component.priceMicroUsdc) === 0n);
   return model.components.length === 0
     || model.components.every((component) => Number.isFinite(component.priceUsd) && component.priceUsd <= 0);
 }
 
 export function evaluateUnitBilling(
-  model: UnitBillingModelV1,
+  model: UnitBillingModel,
   context: UnitBillingContext,
   usage: UnitBillingUsage,
 ): bigint {
-  const validationErrors = validateUnitBillingModelV1(model);
+  const validationErrors = validateUnitBillingModel(model);
   if (validationErrors.length > 0) {
     throw new Error(`Invalid unit billing model: ${validationErrors.join('; ')}`);
   }
+
+  if (model.version === 2) {
+    if (Object.keys(usage.units).some(unit => unit !== 'completed_requests')
+      || ![0, 1].includes(usage.units.completed_requests ?? -1)) throw new Error('Invalid completed-request measurement');
+    validateUsageWithinRequestLimits(usage, context);
+    return BigInt(usage.units.completed_requests!) * parseMicroUsdc(model.components[0]!.priceMicroUsdc);
+  }
+  if (usage.units.completed_requests !== undefined) throw new Error('Completed requests require a version 2 billing model');
 
   let totalUsd = 0;
   const matchedUnits = new Set<UnitBillingUnitV1>();
@@ -180,7 +244,10 @@ export function validateUnitBillingUsageReportV1(report: UnitBillingUsageReportV
   return errors;
 }
 
-export function unitUsageFromReport(report: UnitBillingUsageReportV1): UnitBillingUsage {
+export function unitUsageFromReport(report: UnitBillingUsageReport): UnitBillingUsage {
+  const errors = validateUnitBillingUsageReport(report);
+  if (errors.length) throw new Error(errors.join('; '));
+  if (report.version === 2) return { units: { completed_requests: Number(report.units.completed_requests) } };
   const units: Partial<Record<UnitBillingUnitV1, number>> = {};
   for (const [unit, value] of Object.entries(report.units)) {
     if (!isUnitBillingUnitV1(unit)) continue;
@@ -190,17 +257,18 @@ export function unitUsageFromReport(report: UnitBillingUsageReportV1): UnitBilli
 }
 
 export function validateUnitBillingUsage(
-  model: UnitBillingModelV1,
+  model: UnitBillingModel,
   context: UnitBillingContext,
-  report: UnitBillingUsageReportV1,
+  report: UnitBillingUsageReport,
   sellerCost: bigint,
   costToleranceMultiplier: number,
   observedUsage?: UnitBillingUsage,
 ): bigint {
-  const errors = validateUnitBillingUsageReportV1(report);
+  const errors = validateUnitBillingUsageReport(report);
   if (errors.length > 0) {
     throw new Error(errors.join('; '));
   }
+  if (model.version !== report.version) throw new Error('Usage report does not match the agreed billing model');
 
   const usage = unitUsageFromReport(report);
   validateUsageWithinRequestLimits(usage, context);
@@ -210,11 +278,12 @@ export function validateUnitBillingUsage(
     throw new Error('Positive unit billing cost claimed before the buyer observed the delivered response');
   }
   const buyerEstimate = evaluateUnitBilling(model, context, usage);
+  if (model.version === 2 && sellerCost !== buyerEstimate) throw new Error('Completed-request cost must equal the agreed unit price times measured usage');
   if (sellerCost > 0n && buyerEstimate <= 0n) {
     throw new Error('Positive unit billing cost recomputed to zero');
   }
 
-  const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * costToleranceMultiplier));
+  const maxAcceptable = model.version === 2 ? buyerEstimate : BigInt(Math.ceil(Number(buyerEstimate) * costToleranceMultiplier));
   if (sellerCost > maxAcceptable) {
     throw new Error(`Seller unit billing cost ${sellerCost} exceeds buyer estimate ${buyerEstimate}`);
   }
@@ -253,6 +322,10 @@ function componentMatchesContext(component: UnitBillingComponentV1, context: Uni
 }
 
 function validateUsageWithinRequestLimits(usage: UnitBillingUsage, context: UnitBillingContext): void {
+  const completedRequests = usage.units.completed_requests;
+  if (completedRequests !== undefined && completedRequests > (context.unitLimits?.completed_requests ?? 0)) {
+    throw new Error('Completed requests exceed the agreed request limit');
+  }
   const outputImageLimit = context.unitLimits?.output_images;
   const outputImages = usage.units.output_images;
   if (outputImageLimit !== undefined && outputImages !== undefined && outputImages > outputImageLimit) {
@@ -262,7 +335,7 @@ function validateUsageWithinRequestLimits(usage: UnitBillingUsage, context: Unit
 
 function validateUsageWithinObservedUsage(usage: UnitBillingUsage, observed: UnitBillingUsage): void {
   for (const [unit, claimed] of Object.entries(usage.units)) {
-    if (!isUnitBillingUnitV1(unit) || claimed === undefined || claimed <= 0) continue;
+    if ((!isUnitBillingUnitV1(unit) && unit !== 'completed_requests') || claimed === undefined || claimed <= 0) continue;
     const observedCount = observed.units[unit] ?? 0;
     if (claimed > observedCount) {
       throw new Error(`Seller reported ${unit}=${claimed} but response delivered ${observedCount}`);

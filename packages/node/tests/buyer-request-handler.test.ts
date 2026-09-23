@@ -8,20 +8,20 @@ import type {
   SerializedHttpResponseChunk,
 } from '../src/types/http.js';
 import type { PeerInfo } from '../src/types/peer.js';
-import { FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER } from '@antseed/protocol/fixed-fee';
+import { SERVICE_CONTRACT_HEADER } from '@antseed/protocol/service-billing';
 
-describe('explicit fixed-fee buyer requests', () => {
+describe('explicit completed-request buyer requests', () => {
   const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
   const peer = { peerId: 'a'.repeat(40) } as PeerInfo;
   const request = {
     requestId: 'fixed', method: 'POST', path: '/_antseed/route',
-    headers: { 'x-antseed-provider': offer.provider, [FIXED_FEE_CONTRACT_HEADER]: offer.contract, [FIXED_FEE_PRICE_HEADER]: offer.priceMicroUsdc },
+    headers: { 'x-antseed-provider': offer.provider, [SERVICE_CONTRACT_HEADER]: offer.contract },
     body: new TextEncoder().encode(JSON.stringify({ service: offer.service, v: 1, cqt: 5, inputMessage: 'Help', promptTokens: 1, expectedCachedTokens: [], constraints: {} })),
   };
   const validResponse = { v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: 'b'.repeat(40), estimate: { costUsd: 0.01, inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 }, price: { inUsdPerM: 1, outUsdPerM: 2, cachedInUsdPerM: 0 } }] };
   function setup(responses = [{ statusCode: 200, body: validResponse as unknown }], enabled = true) {
-    const bpm = { trackFixedFeeRequest: vi.fn(), observeFixedFeeResponse: vi.fn(), authorizeFixedFeeResponse: vi.fn(async () => {}) };
-    const negotiator = { bpm, getOrCreatePaymentMux: vi.fn(() => ({})), negotiateFixedFeePayment: vi.fn(async () => true), handle402: vi.fn(), estimateCostFromResponse: vi.fn(), trackRequestService: vi.fn() };
+    const bpm = { trackUnitRequest: vi.fn(), bindUnitRequestChannel: vi.fn(), observeUnitResponse: vi.fn(), authorizeUnitResponse: vi.fn(async () => {}) };
+    const negotiator = { bpm, getOrCreatePaymentMux: vi.fn(() => ({})), negotiateUnitBillingPayment: vi.fn(async () => true), handle402: vi.fn(), estimateCostFromResponse: vi.fn(), trackRequestService: vi.fn() };
     const mux = { cancelProxyRequest: vi.fn(), sendProxyRequest: vi.fn((req, onResponse) => {
       const response = responses.shift()!;
       onResponse({ requestId: req.requestId, statusCode: response.statusCode, headers: {}, body: new TextEncoder().encode(JSON.stringify(response.body)) }, { streamingStart: false });
@@ -33,14 +33,28 @@ describe('explicit fixed-fee buyer requests', () => {
       getVerificationMux: () => ({} as any), registerPaymentMux: vi.fn(),
     });
     const acceptResponse = vi.fn((response: SerializedHttpResponse) => JSON.stringify(JSON.parse(new TextDecoder().decode(response.body))) === JSON.stringify(validResponse));
-    return { handler, bpm, negotiator, mux, acceptResponse, send: (signal?: AbortSignal) => handler.sendRequest(peer, request, undefined, { fixedFee: offer, signal, acceptResponse }) };
+    return { handler, bpm, negotiator, mux, acceptResponse, send: (signal?: AbortSignal) => handler.sendRequest(peer, request, undefined, { unitBilling: offer, signal, acceptResponse }) };
   }
   it('validates delivery and authorizes without token estimates', async () => {
     const harness = setup();
     expect((await harness.send()).statusCode).toBe(200);
-    expect(harness.bpm.observeFixedFeeResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', true);
-    expect(harness.bpm.authorizeFixedFeeResponse).toHaveBeenCalledOnce();
+    expect(harness.bpm.observeUnitResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', true);
+    expect(harness.bpm.authorizeUnitResponse).toHaveBeenCalledOnce();
     expect(harness.negotiator.estimateCostFromResponse).not.toHaveBeenCalled();
+  });
+  it('adds service identity headers without sending a unit price', async () => {
+    const harness = setup();
+    await harness.handler.sendRequest(peer, { ...request, headers: { 'content-type': 'application/json' } }, undefined, { unitBilling: offer, acceptResponse: harness.acceptResponse });
+    expect(harness.mux.sendProxyRequest.mock.calls[0]![0].headers).toMatchObject({
+      'x-antseed-provider': offer.provider,
+      [SERVICE_CONTRACT_HEADER]: offer.contract,
+    });
+    expect(harness.mux.sendProxyRequest.mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
+  });
+  it('rejects conflicting agreement headers before execution', async () => {
+    const harness = setup();
+    await expect(harness.handler.sendRequest(peer, { ...request, headers: { 'X-Antseed-Service-Contract': 'wrong-contract' } }, undefined, { unitBilling: offer, acceptResponse: harness.acceptResponse })).rejects.toThrow('agreed offer');
+    expect(harness.mux.sendProxyRequest).not.toHaveBeenCalled();
   });
   it('executes a non-Levanto contract through the same request and payment path', async () => {
     const state = setup([{ statusCode: 200, body: { summary: 'Done' } }]);
@@ -48,15 +62,15 @@ describe('explicit fixed-fee buyer requests', () => {
     const response = await state.handler.sendRequest(peer, {
       ...request, path: '/summary',
       headers: { 'content-type': 'application/json', 'x-antseed-provider': summaryOffer.provider,
-        [FIXED_FEE_CONTRACT_HEADER]: summaryOffer.contract, [FIXED_FEE_PRICE_HEADER]: summaryOffer.priceMicroUsdc },
+        [SERVICE_CONTRACT_HEADER]: summaryOffer.contract },
       body: new TextEncoder().encode(JSON.stringify({ service: 'summary', text: 'Hello' })),
     }, undefined, {
-      fixedFee: summaryOffer,
+      unitBilling: summaryOffer,
       acceptResponse: response => JSON.parse(new TextDecoder().decode(response.body)).summary === 'Done',
     });
     expect(response.statusCode).toBe(200);
-    expect(state.bpm.trackFixedFeeRequest).toHaveBeenCalledWith(peer.peerId, 'fixed', summaryOffer);
-    expect(state.bpm.authorizeFixedFeeResponse).toHaveBeenCalledOnce();
+    expect(state.bpm.trackUnitRequest).toHaveBeenCalledWith(peer.peerId, 'fixed', summaryOffer);
+    expect(state.bpm.authorizeUnitResponse).toHaveBeenCalledOnce();
   });
   it('isolates validator mutations and rejects non-boolean asynchronous acceptance', async () => {
     const state = setup();
@@ -69,18 +83,18 @@ describe('explicit fixed-fee buyer requests', () => {
     const asynchronous = setup();
     asynchronous.acceptResponse.mockImplementation(() => Promise.resolve(true) as unknown as boolean);
     await expect(asynchronous.send()).rejects.toThrow('not accepted');
-    expect(asynchronous.bpm.authorizeFixedFeeResponse).not.toHaveBeenCalled();
+    expect(asynchronous.bpm.authorizeUnitResponse).not.toHaveBeenCalled();
   });
   it('requires an acceptance callback and respects cancellation during validation', async () => {
     const missing = setup();
-    await expect(missing.handler.sendRequest(peer, request, undefined, { fixedFee: offer })).rejects.toThrow('response acceptance');
+    await expect(missing.handler.sendRequest(peer, request, undefined, { unitBilling: offer })).rejects.toThrow('response acceptance');
     expect(missing.mux.sendProxyRequest).not.toHaveBeenCalled();
     const state = setup();
     const abort = new AbortController();
     state.acceptResponse.mockImplementation(() => { abort.abort(); return true; });
     await expect(state.send(abort.signal)).rejects.toThrow('not accepted');
-    expect(state.bpm.observeFixedFeeResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
-    expect(state.bpm.authorizeFixedFeeResponse).not.toHaveBeenCalled();
+    expect(state.bpm.observeUnitResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
+    expect(state.bpm.authorizeUnitResponse).not.toHaveBeenCalled();
   });
   it('retries only initial payment negotiation, not upstream errors', async () => {
     const harness = setup([{ statusCode: 402, body: {} }, { statusCode: 200, body: validResponse }]);
@@ -90,24 +104,24 @@ describe('explicit fixed-fee buyer requests', () => {
     const failed = setup([{ statusCode: 503, body: {} }]);
     expect((await failed.send()).statusCode).toBe(503);
     expect(failed.mux.sendProxyRequest).toHaveBeenCalledOnce();
-    expect(failed.bpm.authorizeFixedFeeResponse).not.toHaveBeenCalled();
+    expect(failed.bpm.authorizeUnitResponse).not.toHaveBeenCalled();
   });
   it('does not pay for invalid JSON schemas or day-pass responses', async () => {
     for (const body of [{}, { ...validResponse, renewalDue: true }, { ...validResponse, ranked: [] }]) {
       const harness = setup([{ statusCode: 200, body }]);
       await expect(harness.send()).rejects.toThrow();
-      expect(harness.bpm.observeFixedFeeResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
-      expect(harness.bpm.authorizeFixedFeeResponse).not.toHaveBeenCalled();
+      expect(harness.bpm.observeUnitResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
+      expect(harness.bpm.authorizeUnitResponse).not.toHaveBeenCalled();
     }
   });
   it('marks negotiation failures and cancellations unbillable', async () => {
     const harness = setup([{ statusCode: 402, body: {} }]);
-    harness.negotiator.negotiateFixedFeePayment.mockRejectedValue(new Error('negotiation failed'));
+    harness.negotiator.negotiateUnitBillingPayment.mockRejectedValue(new Error('negotiation failed'));
     await expect(harness.send()).rejects.toThrow('negotiation failed');
-    expect(harness.bpm.observeFixedFeeResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
+    expect(harness.bpm.observeUnitResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
     const cancelled = setup();
     await expect(cancelled.send(AbortSignal.abort())).rejects.toThrow('aborted');
-    expect(cancelled.bpm.observeFixedFeeResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
+    expect(cancelled.bpm.observeUnitResponse).toHaveBeenCalledWith(peer.peerId, 'fixed', false);
     expect(cancelled.mux.sendProxyRequest).not.toHaveBeenCalled();
   });
   it('requires payments and forbids streaming/external auth before dispatch', async () => {
@@ -115,8 +129,8 @@ describe('explicit fixed-fee buyer requests', () => {
     await expect(disabled.send()).rejects.toThrow('payments must be enabled');
     expect(disabled.mux.sendProxyRequest).not.toHaveBeenCalled();
     const harness = setup();
-    await expect(harness.handler.sendRequest(peer, request, {}, { fixedFee: offer })).rejects.toThrow('non-streaming');
-    await expect(harness.handler.sendRequest(peer, { ...request, headers: { ...request.headers, 'X-Antseed-Spending-Auth': 'external' } }, undefined, { fixedFee: offer })).rejects.toThrow('non-streaming');
+    await expect(harness.handler.sendRequest(peer, request, {}, { unitBilling: offer })).rejects.toThrow('non-streaming');
+    await expect(harness.handler.sendRequest(peer, { ...request, headers: { ...request.headers, 'X-Antseed-Spending-Auth': 'external' } }, undefined, { unitBilling: offer })).rejects.toThrow('non-streaming');
     expect(harness.mux.sendProxyRequest).not.toHaveBeenCalled();
   });
 });

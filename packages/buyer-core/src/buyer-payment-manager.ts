@@ -37,11 +37,12 @@ import {
   computeCostUsdc,
   type ServicePricing,
 } from './pricing.js';
-import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
+import type { UnitBillingContext, UnitBillingModel, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
-import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { completedRequestBillingModel, evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { completedRequestUsage } from './unit-billing.js';
 import { buyerFault, faultCodeOf } from './errors.js';
-import { parseMicroUsdc, type FixedFeeOffer } from '@antseed/protocol/fixed-fee';
+import { parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -61,7 +62,7 @@ function countOutputImages(usage: UnitBillingUsage | undefined): bigint {
 }
 
 function validateUnitNormalizedCost(
-  model: UnitBillingModelV1,
+  model: UnitBillingModel,
   context: UnitBillingContext,
   usage: UnitBillingUsage,
 ): bigint {
@@ -101,9 +102,12 @@ export interface PerRequestAuthResult {
 export interface BuyerRequestBillingEntry {
   context: UnitBillingContext;
   requestFacts: ImageRequestFacts;
-  unitModel?: UnitBillingModelV1;
+  unitModel?: UnitBillingModel;
   tokenPricing?: ServicePricing;
   observedUnitUsage?: UnitBillingUsage;
+  accepted?: boolean;
+  channelId?: string;
+  authorization?: SpendingAuthPayload;
 }
 
 interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
@@ -149,15 +153,11 @@ export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
  */
 export class BuyerPaymentManager {
   private readonly _paymentOperations = new Map<string, Promise<unknown>>();
-  private readonly _fixedFeePeers = new Set<string>();
-  private readonly _fixedFeeRequests = new Map<string, {
-    peerId: string; offer: FixedFeeOffer; observed: boolean | undefined;
-    payload?: SpendingAuthPayload; channelId?: string; createdAt: number;
-  }>();
+  private readonly _unitBillingPeers = new Set<string>();
 
   private _serializePayment<Result>(peerId: string, operation: () => Promise<Result>): Promise<Result> {
     const previous = this._paymentOperations.get(peerId);
-    const next = previous && this._fixedFeePeers.has(peerId) ? previous.catch(() => undefined).then(operation) : operation();
+    const next = previous && this._unitBillingPeers.has(peerId) ? previous.catch(() => undefined).then(operation) : operation();
     const pending = Promise.allSettled([previous, next]).then(() => undefined);
     this._paymentOperations.set(peerId, pending);
     void pending.then(() => {
@@ -166,61 +166,47 @@ export class BuyerPaymentManager {
     return next;
   }
 
-  trackFixedFeeRequest(peerId: string, requestId: string, offer: FixedFeeOffer): void {
-    if (parseMicroUsdc(offer.priceMicroUsdc) > this.maxPerRequestUsdc) throw new Error('Fixed fee exceeds buyer per-request budget');
-    for (const [key, entry] of this._fixedFeeRequests) {
-      if (entry.observed !== undefined && Date.now() - entry.createdAt > REQUEST_BILLING_TTL_MS) this._fixedFeeRequests.delete(key);
-    }
-    if (this._fixedFeeRequests.has(requestId)) throw new Error('Fixed-fee request ID already used');
-    if (this._fixedFeeRequests.size >= MAX_REQUEST_BILLING_ENTRIES) {
-      for (const [key, entry] of this._fixedFeeRequests) {
-        if (entry.payload || entry.observed === false || (entry.observed === true && entry.offer.priceMicroUsdc === '0')) {
-          this._fixedFeeRequests.delete(key);
-          break;
-        }
-      }
-    }
-    if (this._fixedFeeRequests.size >= MAX_REQUEST_BILLING_ENTRIES) throw new Error('Too many fixed-fee requests');
-    this._fixedFeePeers.add(peerId);
-    this._fixedFeeRequests.set(requestId, { peerId, offer: { ...offer }, observed: undefined, createdAt: Date.now() });
-  }
-
-  observeFixedFeeResponse(peerId: string, requestId: string, accepted: boolean): void {
-    const entry = this._fixedFeeRequests.get(requestId);
-    if (!entry || entry.peerId !== peerId) throw new Error('Unknown fixed-fee request');
-    if (entry.observed === undefined) {
-      entry.observed = accepted;
-      entry.channelId = this.getActiveSession(peerId)?.sessionId;
-    }
-  }
-
-  async authorizeFixedFeeResponse(peerId: string, requestId: string, paymentMux: PaymentMux): Promise<void> {
-    await this._serializePayment(peerId, async () => {
-      const payload = await this._signFixedFeeResponse(peerId, requestId);
-      if (payload) paymentMux.sendSpendingAuth(payload);
-      if (payload && this._needsTopUp(peerId)) await this._topUpAfterSpendAuthBestEffort(peerId, paymentMux, 'handleNeedAuth');
+  trackUnitRequest(peerId: string, requestId: string, offer: ServiceBillingOffer): void {
+    if (parseMicroUsdc(offer.priceMicroUsdc) > this.maxPerRequestUsdc) throw new Error('Unit price exceeds buyer per-request budget');
+    if (this._requestBillingEntries.has(requestId)) throw new Error('Request ID already used');
+    this._unitBillingPeers.add(peerId);
+    this.trackRequestBilling(requestId, {
+      context: { sellerPeerId: peerId, provider: offer.provider, service: offer.service, unitLimits: { completed_requests: 1 } },
+      requestFacts: {}, unitModel: completedRequestBillingModel(offer.priceMicroUsdc),
+      tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
     });
+    this.bindUnitRequestChannel(peerId, requestId);
   }
 
-  private async _signFixedFeeResponse(peerId: string, requestId: string): Promise<SpendingAuthPayload | undefined> {
-    const entry = this._fixedFeeRequests.get(requestId);
-    if (!entry || entry.peerId !== peerId || entry.observed !== true) return undefined;
-    const fee = parseMicroUsdc(entry.offer.priceMicroUsdc);
-    if (fee === 0n) return undefined;
+  bindUnitRequestChannel(peerId: string, requestId: string): void {
+    const entry = this._requestBillingEntries.get(requestId);
+    if (!entry || entry.context.sellerPeerId !== peerId || entry.unitModel?.version !== 2) throw new Error('Unknown unit-billed request');
     const session = this.getActiveSession(peerId);
-    if (!session || session.sessionId !== entry.channelId || !this._confirmedPeers.has(peerId)) throw new Error('Fixed-fee payment session unavailable');
-    if (entry.payload) return entry.payload;
-    const amount = (this._cumulativeAmount.get(peerId) ?? 0n) + fee;
-    if (amount > this._getCeiling(peerId)) throw new Error('Fixed-fee charge exceeds confirmed reserve');
-    const metadata = this._advanceUsageMetadata(this._metadata.get(peerId), entry.offer.service, {
-      amount: fee, inputTokens: 0n, cachedInputTokens: 0n, outputTokens: 0n, requests: 1n, outputImages: 0n,
+    if (!session || !this._confirmedPeers.has(peerId)) return;
+    if (entry.channelId && entry.channelId !== session.sessionId) throw new Error('Unit request channel changed before delivery');
+    entry.channelId = session.sessionId;
+  }
+
+  observeUnitResponse(peerId: string, requestId: string, accepted: boolean): void {
+    const entry = this._requestBillingEntries.get(requestId);
+    if (!entry || entry.context.sellerPeerId !== peerId || entry.unitModel?.version !== 2) throw new Error('Unknown unit-billed request');
+    if (entry.accepted !== undefined) return;
+    entry.accepted = accepted;
+    this.recordObservedUnitUsage(requestId, completedRequestUsage(accepted));
+  }
+
+  async authorizeUnitResponse(peerId: string, requestId: string, paymentMux: PaymentMux): Promise<void> {
+    await this._serializePayment(peerId, async () => {
+      const entry = this._requestBillingEntries.get(requestId);
+      if (!entry || entry.context.sellerPeerId !== peerId || entry.accepted !== true || !entry.unitModel || !entry.observedUnitUsage) return;
+      if (evaluateUnitBilling(entry.unitModel, entry.context, entry.observedUnitUsage) === 0n) return;
+      const result = await this._signPerRequestAuth(peerId, {
+        requestId, service: entry.context.service, inputBytes: new Uint8Array(), outputBytes: new Uint8Array(),
+        unitUsage: entry.observedUnitUsage, reportedInputTokens: 0n, reportedOutputTokens: 0n,
+      });
+      paymentMux.sendSpendingAuth(result.payload);
+      if (result.topUpNeeded) await this._topUpAfterSpendAuthBestEffort(peerId, paymentMux, 'handleNeedAuth');
     });
-    const payload = await this._commitUpdatedSpendingAuth({ ...session, requestCount: Number(metadata.cumulativeRequestCount) }, peerId, amount, metadata);
-    this._metadata.set(peerId, metadata);
-    this._verifiedCost.set(peerId, (this._verifiedCost.get(peerId) ?? 0n) + fee);
-    entry.payload = payload;
-    this._reportSpend({ sellerPeerId: peerId, requestId, amountUsdc: fee.toString(), inputTokens: '0', cachedInputTokens: '0', outputTokens: '0', outputImages: '0' });
-    return payload;
   }
   private readonly _identity: BuyerIdentity;
   private _signer: AbstractSigner;
@@ -816,7 +802,7 @@ export class BuyerPaymentManager {
 
   private _cleanupRequestBillingCache(now = Date.now()): void {
     for (const [requestId, entry] of this._requestBillingEntries) {
-      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS) {
+      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS && (entry.unitModel?.version !== 2 || entry.accepted === false || entry.authorization || (entry.accepted === true && entry.unitModel.components[0]?.priceMicroUsdc === '0'))) {
         this.clearRequestBilling(requestId);
       }
     }
@@ -824,8 +810,8 @@ export class BuyerPaymentManager {
 
   private _trimRequestBillingCache(): void {
     while (this._requestBillingEntries.size > MAX_REQUEST_BILLING_ENTRIES) {
-      const oldest = this._requestBillingEntries.keys().next().value;
-      if (oldest === undefined) break;
+      const oldest = [...this._requestBillingEntries].find(([, entry]) => entry.unitModel?.version !== 2 || entry.accepted === false || entry.authorization || (entry.accepted === true && entry.unitModel.components[0]?.priceMicroUsdc === '0'))?.[0];
+      if (oldest === undefined) throw new Error('Too many unresolved unit-billed requests');
       this.clearRequestBilling(oldest);
     }
   }
@@ -1257,9 +1243,7 @@ export class BuyerPaymentManager {
       requestId?: string;
     },
   ): Promise<PerRequestAuthResult> {
-    if (responseStats.requestId && this._fixedFeeRequests.has(responseStats.requestId)) {
-      throw new Error('Fixed-fee requests require validated response authorization');
-    }
+
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw buyerFault(
@@ -1287,6 +1271,15 @@ export class BuyerPaymentManager {
       : undefined;
 
     const unitBillingModel = requestBilling?.unitModel;
+    const completedRequest = unitBillingModel?.version === 2;
+    if (completedRequest && requestBilling) {
+      if (requestBilling.context.sellerPeerId !== sellerPeerId || requestBilling.accepted !== true
+        || requestBilling.channelId !== session.sessionId || !this._confirmedPeers.has(sellerPeerId)) throw new Error('Unit billing requires validated response authorization on its original channel');
+      if (requestBilling.authorization) return { payload: requestBilling.authorization, topUpNeeded: this._needsTopUp(sellerPeerId) };
+      if (!requestBilling.observedUnitUsage) throw new Error('Completed-request measurement unavailable');
+      responseStats = { ...responseStats, unitUsage: requestBilling.observedUnitUsage, service: requestBilling.context.service,
+        reportedInputTokens: 0n, reportedOutputTokens: 0n, reportedCachedInputTokens: 0n };
+    }
     if (responseStats.unitUsage && unitBillingModel && requestBilling) {
       // Hybrid image path: token cost is still computed from the token
       // counts; unit billing only validates non-token unit cost.
@@ -1371,7 +1364,10 @@ export class BuyerPaymentManager {
     // buyer doesn't underpay due to minor parsing differences. Only cap when the seller's
     // claim exceeds the tolerance threshold.
     let acceptedCost: bigint;
-    if (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost > 0n) {
+    if (completedRequest) {
+      if (responseStats.sellerClaimedCost !== undefined && responseStats.sellerClaimedCost !== buyerEstimatedRequestCost) throw new Error('Completed-request cost does not match the agreed price');
+      acceptedCost = buyerEstimatedRequestCost;
+    } else if (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost > 0n) {
       if (buyerEstimatedRequestCost > 0n) {
         const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimatedRequestCost) * this._costTolerance));
         if (responseStats.sellerClaimedCost > maxAcceptable) {
@@ -1401,6 +1397,8 @@ export class BuyerPaymentManager {
     const nextVerifiedCost = previousVerifiedCost + verifiedCostDelta;
     const maxSignable = this._maxSignableForVerified(sellerPeerId, nextVerifiedCost);
     let newAmount = prevAmount + acceptedCost;
+    if (completedRequest && newAmount > this._getCeiling(sellerPeerId)) throw new Error('Unit charge exceeds confirmed reserve');
+    if (completedRequest && newAmount > maxSignable) throw new Error('Unit charge exceeds signing limit');
     if (newAmount > maxSignable) newAmount = maxSignable;
     // A conservative recovery ceiling may temporarily be below an amount we
     // already signed. SpendingAuth is cumulative and must never move backward.
@@ -1476,6 +1474,8 @@ export class BuyerPaymentManager {
     };
 
     const topUpNeeded = this._needsTopUp(sellerPeerId);
+    const stored = responseStats.requestId ? this._requestBillingEntries.get(responseStats.requestId) : undefined;
+    if (completedRequest && stored) stored.authorization = payload;
 
     return { payload, topUpNeeded };
   }
@@ -1507,18 +1507,27 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const fixedFee = payload.requestId ? this._fixedFeeRequests.get(payload.requestId) : undefined;
-    if (fixedFee) {
-      if (fixedFee.peerId !== sellerPeerId || payload.channelId !== session.sessionId || payload.billingUsage
+    const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
+    if (requestBilling?.unitModel?.version === 2) {
+      if (requestBilling.context.sellerPeerId !== sellerPeerId || payload.channelId !== session.sessionId
         || payload.lastRequestCost === undefined || !/^(0|[1-9]\d*)$/.test(payload.lastRequestCost)
-        || BigInt(payload.lastRequestCost) > parseMicroUsdc(fixedFee.offer.priceMicroUsdc)
-        || [payload.inputTokens, payload.outputTokens, payload.cachedInputTokens, payload.freshInputTokens].some(value => value !== undefined && value !== '0')) return;
-      const auth = await this._signFixedFeeResponse(sellerPeerId, payload.requestId!);
-      if (auth) paymentMux.sendSpendingAuth(auth);
+        || !payload.billingUsage || [payload.inputTokens, payload.outputTokens, payload.cachedInputTokens, payload.freshInputTokens].some(value => value !== undefined && value !== '0')) return;
+      if (requestBilling.accepted !== true || !requestBilling.observedUnitUsage) return;
+      try {
+        const cost = validateUnitBillingUsage(requestBilling.unitModel, requestBilling.context, payload.billingUsage,
+          BigInt(payload.lastRequestCost), 1, requestBilling.observedUnitUsage);
+        if (cost !== BigInt(payload.lastRequestCost) || cost === 0n) return;
+        const result = await this._signPerRequestAuth(sellerPeerId, {
+          requestId: payload.requestId, service: requestBilling.context.service, inputBytes: new Uint8Array(), outputBytes: new Uint8Array(),
+          unitUsage: requestBilling.observedUnitUsage, sellerClaimedCost: cost, reportedInputTokens: 0n, reportedOutputTokens: 0n,
+        });
+        paymentMux.sendSpendingAuth(result.payload);
+        if (result.topUpNeeded) await this._topUpAfterSpendAuthBestEffort(sellerPeerId, paymentMux, 'handleNeedAuth');
+      } catch (error) { debugWarn('Unit billing authorization rejected: ' + String(error)); }
       return;
     }
-    if (this._fixedFeePeers.has(sellerPeerId) && !this._requestService.get(payload.requestId)) return;
-    const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
+    if (payload.billingUsage?.version === 2) return;
+    if (this._unitBillingPeers.has(sellerPeerId) && !this._requestService.get(payload.requestId)) return;
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);
     const buyerBillingContext = requestBilling?.context;
@@ -1924,10 +1933,10 @@ export class BuyerPaymentManager {
     this._cleanupRequestBillingCache();
     this._requestService.track(requestId, entry.context.service);
     this._requestBillingEntries.set(requestId, {
-      ...entry,
+      ...structuredClone(entry),
       createdAtMs: Date.now(),
     });
-    this._trimRequestBillingCache();
+    try { this._trimRequestBillingCache(); } catch (error) { this.clearRequestBilling(requestId); throw error; }
   }
 
   /** Record unit usage extracted from the response the buyer received, so

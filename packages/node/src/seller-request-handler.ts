@@ -1,4 +1,5 @@
 import type { PeerAnnouncer } from './discovery/announcer.js';
+import { completedRequestOffer } from './billing/service.js';
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -25,7 +26,7 @@ import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED 
 import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
-import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
+import type { UnitBillingContext, UnitBillingModel, UnitBillingUsage, UnitBillingUsageReport } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
 import type { ServiceApiProtocol } from './types/service-api.js';
@@ -35,7 +36,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
-import { FIXED_FEE_CAPABILITY, FIXED_FEE_CONTRACT_HEADER, FIXED_FEE_PRICE_HEADER, parseMicroUsdc } from '@antseed/protocol/fixed-fee';
+import { COMPLETED_REQUESTS_CAPABILITY, SERVICE_CONTRACT_HEADER, parseMicroUsdc } from '@antseed/protocol/service-billing';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -87,8 +88,8 @@ export class SellerRequestHandler {
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly _requestQueues = new Map<string, Promise<void>>();
   private readonly _requestQueueSizes = new Map<string, number>();
-  private readonly _fixedFeeBuyers = new Set<string>();
-  private readonly _fixedFeeExecuted = new Map<string, number>();
+  private readonly _unitBillingBuyers = new Set<string>();
+  private readonly _unitBillingExecuted = new Map<string, number>();
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
@@ -235,31 +236,33 @@ export class SellerRequestHandler {
         return;
       }
 
-      const fixedFee = provider.fixedFeeServices?.find(offer => offer.service === this._extractRequestedService(request));
-      const fixedFeeKey = `${buyerPeerId}:${request.requestId}`;
+      const service = this._extractRequestedService(request)!;
+      const execution = provider.serviceExecution?.[service];
+      const unitBilling = completedRequestOffer(provider, service);
+      const unitBillingKey = `${buyerPeerId}:${request.requestId}`;
       try {
-        if (fixedFee) {
-          if (!conn.hasRemoteCapability(FIXED_FEE_CAPABILITY) || request.method !== 'POST'
+        if (execution && (request.method !== 'POST' || request.path !== execution.path)) throw new Error('Request does not match service endpoint');
+        if (unitBilling) {
+          if (!conn.hasRemoteCapability(COMPLETED_REQUESTS_CAPABILITY) || request.method !== 'POST'
             || this._extractRequestedProvider(request) !== provider.name.toLowerCase()
-            || request.path !== fixedFee.path
-            || request.headers[FIXED_FEE_CONTRACT_HEADER] !== fixedFee.contract
-            || request.headers[FIXED_FEE_PRICE_HEADER] !== fixedFee.priceMicroUsdc) throw new Error('Fixed-fee capability and matching offer required');
-          if (this._fixedFeeExecuted.has(fixedFeeKey)) throw new Error('Fixed-fee request ID already executed');
-          if (parseMicroUsdc(fixedFee.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
-        } else if (request.headers[FIXED_FEE_CONTRACT_HEADER] !== undefined || request.headers[FIXED_FEE_PRICE_HEADER] !== undefined) {
-          throw new Error('Service does not support fixed-fee billing');
+            || request.path !== execution!.path
+            || request.headers[SERVICE_CONTRACT_HEADER] !== unitBilling.contract) throw new Error('Completed-request capability and matching contract required');
+          if (this._unitBillingExecuted.has(unitBillingKey)) throw new Error('Completed-request request ID already executed');
+          if (parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
+        } else if (request.headers[SERVICE_CONTRACT_HEADER] !== undefined) {
+          throw new Error('Service does not support completed-request billing');
         }
       } catch (error) {
         mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' },
           body: new TextEncoder().encode(JSON.stringify({ error: { message: String(error), type: 'invalid_request_error' } })) });
         return;
       }
-      const requestPricing = fixedFee ? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } : this.resolveProviderPricing(provider, request);
-      const requestBilling = fixedFee ? null : this._captureSellerBillingContext(provider, request);
+      const requestPricing = unitBilling ? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } : this.resolveProviderPricing(provider, request);
+      const requestBilling = this._captureSellerBillingContext(provider, request);
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
         : undefined;
-      const isFreeService = fixedFee ? parseMicroUsdc(fixedFee.priceMicroUsdc) === 0n : isZeroTokenPricing(requestPricing)
+      const isFreeService = unitBilling ? parseMicroUsdc(unitBilling.priceMicroUsdc) === 0n : isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
       // Reject with 402 if no active payment session and channels client is configured.
@@ -275,9 +278,9 @@ export class SellerRequestHandler {
             request.requestId, buyerPeerId, requestPricing,
           );
           if (requirements) {
-            if (fixedFee) {
-              requirements.minBudgetPerRequest = fixedFee.priceMicroUsdc;
-              if (BigInt(requirements.suggestedAmount) < parseMicroUsdc(fixedFee.priceMicroUsdc)) requirements.suggestedAmount = fixedFee.priceMicroUsdc;
+            if (unitBilling) {
+              requirements.minBudgetPerRequest = unitBilling.priceMicroUsdc;
+              if (BigInt(requirements.suggestedAmount) < parseMicroUsdc(unitBilling.priceMicroUsdc)) requirements.suggestedAmount = unitBilling.priceMicroUsdc;
             }
             debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
             const paymentBody = JSON.stringify({
@@ -367,7 +370,7 @@ export class SellerRequestHandler {
           }
           let requestCostEstimate: ReturnType<SellerRequestHandler['_estimateRequestCostUsdc']> = null;
           try {
-            requestCostEstimate = fixedFee ? { cost: parseMicroUsdc(fixedFee.priceMicroUsdc), inputTokens: 0, maxOutputTokens: 0 } : requestBilling
+            requestCostEstimate = requestBilling
               ? this._estimateRequestCostUsdc(request, requestBilling, requestPricing, unitBillingModel)
               : null;
           } catch (err) {
@@ -393,7 +396,7 @@ export class SellerRequestHandler {
           const effectiveEstimateLimit = reserveEstimateOverdraft != null
             ? remainingLockedReserve + reserveEstimateOverdraft
             : null;
-          const estimatedCostExceedsLockedReserve = fixedFee ? estimatedRequestCost > remainingLockedReserve : effectiveEstimateLimit != null
+          const estimatedCostExceedsLockedReserve = unitBilling ? estimatedRequestCost > remainingLockedReserve : effectiveEstimateLimit != null
             && reserveMax > 0n
             && estimatedRequestCost > 0n
             && estimatedRequestCost > effectiveEstimateLimit;
@@ -486,12 +489,12 @@ export class SellerRequestHandler {
         ...request,
         headers: { ...request.headers },
       };
-      if (fixedFee) {
-        for (const [key, timestamp] of this._fixedFeeExecuted) {
-          if (Date.now() - timestamp > 24 * 60 * 60_000) this._fixedFeeExecuted.delete(key);
+      if (unitBilling) {
+        for (const [key, timestamp] of this._unitBillingExecuted) {
+          if (Date.now() - timestamp > 24 * 60 * 60_000) this._unitBillingExecuted.delete(key);
         }
-        if (this._fixedFeeExecuted.size >= 10_000) {
-          mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Fixed-fee request limit reached') });
+        if (this._unitBillingExecuted.size >= 10_000) {
+          mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Completed-request request limit reached') });
           return;
         }
       }
@@ -513,7 +516,7 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
-      let billingUsageReport: UnitBillingUsageReportV1 | null = null;
+      let billingUsageReport: UnitBillingUsageReport | null = null;
       let unitCostUsdc = 0n;
       // Hold the channel open for the whole billable span — provider call,
       // spend recording, and NeedAuth — so a buyer-requested close can't land
@@ -532,11 +535,11 @@ export class SellerRequestHandler {
         return;
       }
       if (isBillable) spm!.beginBillableRequest(buyerPeerId);
-      if (fixedFee) this._fixedFeeExecuted.set(fixedFeeKey, Date.now());
+      if (unitBilling) this._unitBillingExecuted.set(unitBillingKey, Date.now());
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
-          const response = await this._executeRequest(provider, request, fixedFee ? undefined : {
+          const response = await this._executeRequest(provider, request, execution ? undefined : {
             onResponseStart: (streamResponseStart) => {
               streamedResponseStarted = true;
               responseStartedAt = Date.now();
@@ -555,6 +558,11 @@ export class SellerRequestHandler {
               mux.sendProxyChunk(chunk);
             },
           });
+          let accepted: boolean | undefined;
+          if (execution && response.statusCode >= 200 && response.statusCode < 300) {
+            accepted = execution.acceptResponse(structuredClone(request), structuredClone(response)) === true;
+            if (!accepted) throw new Error('Service response was not accepted');
+          }
           statusCode = response.statusCode;
           responseBody = response.body ?? new Uint8Array(0);
           responseForAuth = response;
@@ -564,15 +572,11 @@ export class SellerRequestHandler {
           } else {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
-          if (fixedFee) {
-            if (statusCode >= 200 && statusCode < 300) {
-              unitCostUsdc = parseMicroUsdc(fixedFee.priceMicroUsdc);
-            }
-          } else if (requestBilling && unitBillingModel) {
-            const unitBilling = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response, requestBilling.requestFacts);
-            responseUsage = unitBilling.tokenUsage;
-            billingUsageReport = unitBilling.billingUsage;
-            unitCostUsdc = unitBilling.costUsdc;
+          if (requestBilling && unitBillingModel) {
+            const measured = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response, requestBilling.requestFacts, accepted);
+            responseUsage = measured.tokenUsage;
+            billingUsageReport = measured.billingUsage;
+            unitCostUsdc = measured.costUsdc;
           } else {
             responseUsage = parseResponseUsage(response.body);
           }
@@ -590,7 +594,7 @@ export class SellerRequestHandler {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Internal error";
-          if (fixedFee) unitCostUsdc = 0n;
+          if (unitBilling) unitCostUsdc = 0n;
           debugWarn(`[SellerHandler] Provider exception: provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) ${message}`);
           responseBody = new TextEncoder().encode(message);
           if (streamedResponseStarted) {
@@ -723,22 +727,24 @@ export class SellerRequestHandler {
       }
     };
     mux.onProxyRequest(async request => {
-      if (!this._deps.providers.some(provider => provider.fixedFeeServices?.length)) return handleRequest(request);
-      if (conn.hasRemoteCapability(FIXED_FEE_CAPABILITY)
-        && this.matchProvider(request)?.fixedFeeServices?.some(offer => offer.service === this._extractRequestedService(request)
-          && request.method === 'POST' && request.path === offer.path
-          && request.headers[FIXED_FEE_CONTRACT_HEADER] === offer.contract
-          && request.headers[FIXED_FEE_PRICE_HEADER] === offer.priceMicroUsdc)) {
-        this._fixedFeeBuyers.add(buyerPeerId);
+      if (!this._deps.providers.some(provider => provider.services.some(service => completedRequestOffer(provider, service)))) return handleRequest(request);
+      const requestProvider = this.matchProvider(request);
+      const requestService = this._extractRequestedService(request);
+      const requestOffer = requestProvider && requestService ? completedRequestOffer(requestProvider, requestService) : undefined;
+      if (conn.hasRemoteCapability(COMPLETED_REQUESTS_CAPABILITY)
+        && requestOffer && this._extractRequestedProvider(request) === requestProvider!.name.toLowerCase()
+          && request.method === 'POST' && request.path === requestProvider!.serviceExecution?.[requestService!]!.path
+          && request.headers[SERVICE_CONTRACT_HEADER] === requestOffer.contract) {
+        this._unitBillingBuyers.add(buyerPeerId);
       }
       const count = this._requestQueueSizes.get(buyerPeerId) ?? 0;
-      if (this._fixedFeeBuyers.has(buyerPeerId) && count >= 32) {
+      if (this._unitBillingBuyers.has(buyerPeerId) && count >= 32) {
         mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Payment request queue full') });
         return;
       }
       this._requestQueueSizes.set(buyerPeerId, count + 1);
       const previous = this._requestQueues.get(buyerPeerId) ?? Promise.resolve();
-      const next = this._fixedFeeBuyers.has(buyerPeerId) ? previous.catch(() => undefined).then(() => handleRequest(request)) : handleRequest(request);
+      const next = this._unitBillingBuyers.has(buyerPeerId) ? previous.catch(() => undefined).then(() => handleRequest(request)) : handleRequest(request);
       const pending = Promise.allSettled([previous, next]).then(() => undefined);
       this._requestQueues.set(buyerPeerId, pending);
       try { await next; } finally {
@@ -759,7 +765,7 @@ export class SellerRequestHandler {
   // -- Local /v1/models handler --
 
   private _handleModelsRequest(request: SerializedHttpRequest): SerializedHttpResponse {
-    const allServices = this._deps.providers.flatMap(provider => provider.services.filter(service => !provider.fixedFeeServices?.some(offer => offer.service === service)));
+    const allServices = this._deps.providers.flatMap(provider => provider.services.filter(service => !provider.serviceExecution?.[service]));
     const now = Math.floor(Date.now() / 1000);
 
     // GET /v1/models/:id — single model lookup
@@ -841,8 +847,8 @@ export class SellerRequestHandler {
   resolveProviderUnitBillingModel(
     provider: Provider,
     context: UnitBillingContext,
-  ): UnitBillingModelV1 | undefined {
-    return provider.serviceUnitBillingModels?.[context.service]?.[context.serviceApiProtocol];
+  ): UnitBillingModel | undefined {
+    return context.serviceApiProtocol ? provider.serviceUnitBillingModels?.[context.service]?.[context.serviceApiProtocol] : undefined;
   }
 
   // -- Load tracking --
@@ -894,11 +900,13 @@ export class SellerRequestHandler {
   private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): SellerBillingContext | null {
     const service = this._extractRequestedService(request);
     if (!service) return null;
+    const serviceApiProtocol = this._selectSellerProtocolForService(provider, service, request);
     return captureUnitBillingContext({
       sellerPeerId: this._deps.identity.peerId,
       provider: provider.name,
       service,
-      serviceApiProtocol: this._selectSellerProtocolForService(provider, service, request),
+      serviceApiProtocol,
+      unitModel: provider.serviceUnitBillingModels?.[service]?.[serviceApiProtocol],
       request,
     });
   }
@@ -920,13 +928,9 @@ export class SellerRequestHandler {
 
   private _estimateUnitRequestCostUsdc(
     requestBilling: SellerBillingContext,
-    model: UnitBillingModelV1,
+    model: UnitBillingModel,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
-    const usage: UnitBillingUsage = {
-      units: {
-        output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
-      },
-    };
+    const usage = requestBilling.requestUsage;
     return {
       cost: evaluateUnitBilling(model, requestBilling.context, usage),
       inputTokens: 0,
@@ -938,7 +942,7 @@ export class SellerRequestHandler {
     request: SerializedHttpRequest,
     requestBilling: SellerBillingContext,
     pricing: ProviderTokenPricing,
-    unitModel: UnitBillingModelV1 | undefined,
+    unitModel: UnitBillingModel | undefined,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
     const tokenEstimate = this._estimateMaxTokenRequestCostUsdc(request, pricing);
     const unitEstimate = unitModel
