@@ -75,6 +75,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - Linux desktop: use space-free installation, executable, and icon names; install the Chromium sandbox helper with root-owned setuid permissions; and fix Debian package removal and upgrades, including recovery from the broken 0.2.44 maintainer script, without changing macOS or Windows upgrade identities.
 
+- ANTS dashboard: far fewer RPC calls against public Base gateways. The resolved protocol stack, network snapshot and staking eligibility now survive wallet connects and focus refreshes (they refresh on their own TTLs or after a transaction), Multicall3's code probe is cached, and staking eligibility is remembered per agent for ten minutes instead of re-reading every registered seller on each refresh. A focus refresh drops from 37 to 12 RPC calls and the periodic overview poll from 13 to at most 6.
 - Payments: reconnect to retained channels without adding the seller's minimum budget to buyer-signed spend. Sellers safely acknowledge replayed authorizations and restore request access while preserving earned payments and zero-spend closure without buyer withdrawal or ghost penalties.
 
 - ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
