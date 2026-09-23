@@ -177,7 +177,7 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
         if (next === current || (next === null && !body.disconnect)) {
           // A no-op initial sync must not discard reads already loading. An explicit
           // focus refresh still rechecks permissions after the authorization flow.
-          if (body.refresh) { context.invalidate(); views.invalidate(); }
+          if (body.refresh) { context.invalidate({ walletOnly: true }); views.invalidate(); }
           return { ok: true, data: { changed: false } };
         }
         // Check before cancelling: a refused switch must not poison the running job's signer.
@@ -186,13 +186,13 @@ export async function createAntsServer(options: AntsServerOptions): Promise<Ants
         context.address = selectedAddress ?? next ?? context.address;
         if (!selectedAddress) context.buyerAddress = await buyerAccountFor(next);
         context.signer = next ? browserSigning.signer(next, context.provider()) : undefined;
-        context.invalidate(); views.invalidate();
+        context.invalidate({ walletOnly: true }); views.invalidate();
         return { ok: true, data: { changed: true } };
       } catch (error) {
         if (selectedAddress && !jobs.busy) {
           browserSigning.cancel();
           context.signer = undefined;
-          context.invalidate(); views.invalidate();
+          context.invalidate({ walletOnly: true }); views.invalidate();
         }
         return reply.code(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }

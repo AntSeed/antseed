@@ -123,7 +123,7 @@ export class AntsContext {
     this.address = options.address;
     this.buyerAddress = options.buyerAddress ?? options.address;
     this.signer = options.signer;
-    this.stackTtlMs = options.stackTtlMs ?? 15_000;
+    this.stackTtlMs = options.stackTtlMs ?? 60_000;
     this.probeRpc = options.probeRpc ?? probeRpcEndpoint;
   }
 
@@ -306,13 +306,35 @@ export class AntsContext {
     return Object.fromEntries(entries.filter((entry): entry is [string, string] => !!entry[1]));
   }
 
-  invalidate(): void {
-    invalidateNetwork(this);
-    this.stackGeneration++;
-    this.stackCache = null;
-    this.stackInflight = null;
+  /**
+   * Drop cached reads. A wallet-only invalidation (connect, disconnect, focus refresh) keeps
+   * protocol-level caches that no wallet change can affect: the resolved stack, network
+   * snapshot and staking eligibility; those refresh on their own TTLs or after a transaction.
+   */
+  invalidate(options: { walletOnly?: boolean } = {}): void {
+    if (!options.walletOnly) {
+      invalidateNetwork(this);
+      this.stackGeneration++;
+      this.stackCache = null;
+      this.stackInflight = null;
+      this.memos.clear();
+    }
     this.sharedProvider?.invalidateReads();
     this.indexerClient?.invalidate?.();
+  }
+
+  private readonly memos = new Map<string, { value: unknown; at: number; ttl: number }>();
+
+  /** A protocol-level value cached for `ttlMs`, or undefined when missing or expired. */
+  memoGet<T>(key: string): T | undefined {
+    const entry = this.memos.get(key);
+    if (!entry || Date.now() - entry.at >= entry.ttl) return undefined;
+    return entry.value as T;
+  }
+
+  memoSet<T>(key: string, value: T, ttlMs: number): T {
+    this.memos.set(key, { value, at: Date.now(), ttl: ttlMs });
+    return value;
   }
 
   /** Determine which protocol phase the chain is in and where legacy claims live. */
