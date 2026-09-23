@@ -82,6 +82,15 @@ describe('ChannelStore', () => {
     expect(loaded!.settledAt).toBeTypeOf('number');
   });
 
+  it('persists the initial reserve ceiling and preserves it across legacy upserts and restarts', () => {
+    const channel = makeChannel({ initialReserveAmount: '123456' });
+    store.upsertChannel(channel);
+    store.upsertChannel({ ...channel, initialReserveAmount: undefined });
+    store.close();
+    store = new ChannelStore(tempDir);
+    expect(store.getChannel(channel.sessionId)!.initialReserveAmount).toBe('123456');
+  });
+
   it('test_updateTokensDelivered: increment tokens, verify', () => {
     const channel = makeChannel();
     store.upsertChannel(channel);

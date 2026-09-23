@@ -132,6 +132,23 @@ describe('BuyerPaymentNegotiator', () => {
   });
 
   describe('preparePreRequestAuth', () => {
+    it('clears retired channel auth state without disconnecting the payment transport', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      await negotiator.preparePreRequestAuth(peer, conn);
+      negotiator.estimateCostFromResponse(peer, {
+        requestId: 'req-retired', statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 50 } })),
+      });
+      const internals = negotiator as unknown as { _muxes: Map<string, unknown> };
+      const existingMux = internals._muxes.get(peer.peerId);
+      expect(existingMux).toBeDefined();
+      negotiator.onChannelRetired(peer.peerId);
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+      expect(internals._muxes.get(peer.peerId)).toBe(existingMux);
+    });
+
     it('no-ops when peer is not locked', async () => {
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();

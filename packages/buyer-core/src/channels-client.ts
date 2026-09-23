@@ -213,9 +213,9 @@ export class ChannelsClient extends BaseEvmClient {
     return this._execWrite(signer, CHANNELS_ABI, 'withdraw', channelId);
   }
 
-  async getSession(channelId: string): Promise<ChannelInfo> {
+  async getSession(channelId: string, blockTag?: number): Promise<ChannelInfo> {
     const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
-    const result = await contract.getFunction('channels')(channelId);
+    const result = await contract.getFunction('channels')(channelId, ...(blockTag == null ? [] : [{ blockTag }]));
     return {
       buyer: result[0],
       seller: result[1],

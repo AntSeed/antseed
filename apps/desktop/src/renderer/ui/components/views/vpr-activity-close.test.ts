@@ -9,8 +9,33 @@ import {
   formatChannelLockedAmount,
   isFundedCurrentChannel,
   isCurrentChannelStatus,
+  partitionCurrentChannels,
+  formatChannelCount,
   requestSellerAssistedClose,
 } from './vpr-activity-close';
+
+test('Credits and Activity share verified and unverified groups instead of the raw active counter', () => {
+  const channels = Array.from({ length: 33 }, (_, index) => ({
+    status: index < 26 ? 'settled' : 'active',
+    onChainStateKnown: index < 28,
+    onChainDeposit: index < 28 ? '1000000' : '0',
+    onChainSettled: '0',
+    cumulativeSigned: '0',
+  }));
+  const groups = partitionCurrentChannels(channels);
+  assert.equal(groups.confirmed.length, 2);
+  assert.equal(groups.unverified.length, 5);
+  assert.equal(formatChannelCount(channels), '2 confirmed active · 5 unverified');
+  assert.equal(formatChannelCount(channels.slice(0, 28)), '2 confirmed active');
+});
+
+test('verified exhausted and terminal channels do not inflate either screen', () => {
+  const channels = ['settled', 'ghost', 'timeout', 'active'].map((status) => ({
+    status, onChainStateKnown: true, onChainDeposit: '1000000', onChainSettled: '0', cumulativeSigned: '1000000',
+  }));
+  assert.deepEqual(partitionCurrentChannels(channels), { confirmed: [], unverified: [] });
+  assert.equal(formatChannelCount(channels), '0 confirmed active');
+});
 
 test('channelRecoverableBaseUnits counts signed-but-unsettled spend as spent', () => {
   // Seller has settled nothing on-chain yet, but the buyer already signed

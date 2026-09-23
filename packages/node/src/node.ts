@@ -98,6 +98,7 @@ import { parsePublicAddress } from "./discovery/public-address.js";
 import { sanitizePeerDisplayName } from "./discovery/display-name.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import { BuyerChannelReconciler } from "./payments/buyer-channel-reconciler.js";
 import { RpcHealthMonitor, type RpcHealthStatus } from "./payments/rpc-health.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
@@ -380,6 +381,7 @@ export class AntseedNode extends EventEmitter {
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  private _buyerChannelReconciler: BuyerChannelReconciler | null = null;
   /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
   private _buyerNegotiator: BuyerPaymentNegotiator | null = null;
   /** Background chain-RPC reachability monitor (created when payments are configured). */
@@ -702,6 +704,8 @@ export class AntseedNode extends EventEmitter {
       this._timeoutCheckerInterval = null;
     }
 
+    this._buyerChannelReconciler?.stop();
+    this._buyerChannelReconciler = null;
     if (this._channelStore) {
       try {
         this._channelStore.close();
@@ -1808,6 +1812,21 @@ export class AntseedNode extends EventEmitter {
           this._buyerFreeUsageManager,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);
+        if (this._channelsClient) {
+          this._buyerChannelReconciler = new BuyerChannelReconciler({
+            store: this._channelStore,
+            client: this._channelsClient,
+            buyerAddress: identity.wallet.address,
+            chainId: buyerPaymentConfig.chainId,
+            rpcUrl: buyerPaymentConfig.rpcUrl,
+            maxReserveAmountUsdc: buyerPaymentConfig.maxReserveAmountUsdc,
+            onCurrentChannelRetired: (peerId) => {
+              this._buyerPaymentManager?.cleanupSession(peerId);
+              this._buyerNegotiator?.onChannelRetired(peerId);
+            },
+          });
+          this._buyerChannelReconciler.start();
+        }
       }
     }
 

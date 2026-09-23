@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigrations, type Migration } from '../src/storage/migrate.js';
+import { channelMigrations } from '../src/storage/migrations/channels/index.js';
 
 describe('runMigrations', () => {
   let db: Database.Database;
@@ -17,6 +18,18 @@ describe('runMigrations', () => {
     runMigrations(db, []);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").all();
     expect(tables).toHaveLength(1);
+  });
+
+  it('upgrades legacy channel rows without inventing an initial reserve ceiling', () => {
+    runMigrations(db, channelMigrations.filter((migration) => migration.version < 6));
+    db.prepare(`INSERT INTO payment_channels (
+      session_id, peer_id, role, seller_evm_addr, buyer_evm_addr, nonce, auth_max,
+      deadline, previous_session_id, previous_consumption, reserved_at, created_at, updated_at
+    ) VALUES ('channel', 'peer', 'buyer', 'seller', 'buyer', 0, '0', 900, '', '0', 1, 1, 1)`).run();
+    runMigrations(db, channelMigrations);
+    runMigrations(db, channelMigrations);
+    expect(db.prepare('SELECT status, auth_max, initial_reserve_amount FROM payment_channels').get())
+      .toEqual({ status: 'active', auth_max: '0', initial_reserve_amount: null });
   });
 
   it('runs migrations in order', () => {

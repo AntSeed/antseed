@@ -25,6 +25,24 @@ export function isFundedCurrentChannel(row: {
   return !row.onChainStateKnown || channelRecoverableBaseUnits(row) > 0n;
 }
 
+export function partitionCurrentChannels<Channel extends Parameters<typeof isFundedCurrentChannel>[0]>(channels: readonly Channel[]): {
+  confirmed: Channel[];
+  unverified: Channel[];
+} {
+  const confirmed: Channel[] = [];
+  const unverified: Channel[] = [];
+  for (const channel of channels) {
+    if (!isFundedCurrentChannel(channel)) continue;
+    (channel.onChainStateKnown ? confirmed : unverified).push(channel);
+  }
+  return { confirmed, unverified };
+}
+
+export function formatChannelCount(channels: readonly Parameters<typeof isFundedCurrentChannel>[0][]): string {
+  const { confirmed, unverified } = partitionCurrentChannels(channels);
+  return `${confirmed.length} confirmed active${unverified.length > 0 ? ` · ${unverified.length} unverified` : ''}`;
+}
+
 /**
  * What the buyer can actually get back by closing: the on-chain reserve
  * minus spend already signed away. Sellers settle lazily (batched idle

@@ -13,7 +13,7 @@ import {
   channelRecoverableBaseUnits,
   compareChannelsByLockedAmount,
   formatChannelLockedAmount,
-  isFundedCurrentChannel,
+  partitionCurrentChannels,
   requestSellerAssistedClose,
   type ChannelCloseFeedback,
 } from './vpr-activity-close';
@@ -98,12 +98,11 @@ export function VprActivityView({ onSelectView }: Props) {
     () => [...snap.channels].sort((a, b) => (b.reservedAt || 0) - (a.reservedAt || 0)),
     [snap.channels],
   );
-  const rows = useMemo(
-    () => allRows
-      .filter(isFundedCurrentChannel)
-      .sort(compareChannelsByLockedAmount),
+  const groups = useMemo(
+    () => partitionCurrentChannels(allRows),
     [allRows],
   );
+  const rows = useMemo(() => [...groups.confirmed].sort(compareChannelsByLockedAmount), [groups.confirmed]);
   const totalSpent = sumBaseUnits(allRows.map((row) => row.cumulativeSigned));
   // Header total = what the displayed rows can actually recover, so it always
   // matches their sum. The Deposits contract's raw `reserved` overstates this:
@@ -174,14 +173,14 @@ export function VprActivityView({ onSelectView }: Props) {
 
         <div className={styles.sectionIntro}>
           <div className={styles.sectionHeader}>
-            <h2 className={styles.sectionTitle}>Active channels</h2>
+            <h2 className={styles.sectionTitle}>Confirmed active channels</h2>
             <span className={styles.sectionValue}>${baseUnitsToUsd(totalRowsLocked.toString())} locked</span>
           </div>
         </div>
 
         {rows.length === 0 ? (
           <VprCard className={styles.emptyCard}>
-            <span className={styles.emptyTitle}>{snap.loading ? 'Loading activity...' : 'No open channels'}</span>
+            <span className={styles.emptyTitle}>{snap.loading ? 'Loading activity...' : 'No confirmed active channels'}</span>
             <span className={styles.emptyHint}>
               Channels open automatically when you start using the network.
             </span>
@@ -246,6 +245,31 @@ export function VprActivityView({ onSelectView }: Props) {
               );
             })}
           </VprCard>
+        )}
+
+        {groups.unverified.length > 0 && (
+          <>
+            <div className={styles.sectionIntro}>
+              <div className={styles.sectionHeader}>
+                <h2 className={styles.sectionTitle}>Unverified channels</h2>
+                <span className={styles.sectionValue}>{groups.unverified.length}</span>
+              </div>
+            </div>
+            <VprCard className={styles.listCard}>
+              {groups.unverified.map((row) => (
+                <div key={row.channelId} className={styles.row}>
+                  <div className={styles.rowMain}>
+                    <span className={styles.rowSeller}>{row.sellerDisplayName || shortAddress(row.seller || row.peerId || null)}</span>
+                  </div>
+                  <span className={styles.rowLocked}>Awaiting on-chain verification</span>
+                </div>
+              ))}
+            </VprCard>
+            <p className={styles.channelFootnote}>
+              These may be pending openings or unavailable channel records. No locked amount is confirmed.
+              They are not included in the active count or locked total and will be checked again automatically.
+            </p>
+          </>
         )}
 
         {rows.length > 0 && (
