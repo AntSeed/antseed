@@ -53,13 +53,13 @@ Send this native request to the local buyer proxy with JSON content type:
 ```text
 POST /v1beta/models/veo-3.1-generate-preview:predictLongRunning
 
-{"instances":[{"prompt":"A cat in a garden"}],"parameters":{"durationSeconds":8,"sampleCount":1}}
+{"instances":[{"prompt":"A cat in a garden"}],"parameters":{"durationSeconds":"8","numberOfVideos":1}}
 ```
 
 Poll `GET /v1beta/{name}` using the returned operation `name`; do not replace it with the model ID. The proxy persists the originating seller automatically. Multiple concurrent jobs can use different sellers. Native bodies and identifiers are preserved.
 
 A successful acceptance is billable even if generation later fails. Polling and cancellation do not repeat the generation charge. No automatic submission retries occur after an uncertain send.
 
-The endpoint must enforce authenticated buyer ownership using `x-antseed-buyer-peer-id` supplied by the relay and return downloadable result URLs that do not require exposing seller credentials. No authenticated Files API download proxy is included.
+The AntSeed seller node records which buyer created each operation and rejects status requests from any other buyer with 404 before they reach the endpoint. The endpoint may add its own checks using `x-antseed-buyer-peer-id`. Gemini API result URIs require the API key, so the endpoint must return buyer-downloadable result URLs that do not expose seller credentials. No authenticated Files API download proxy is included.
 
 For persistence limits, failure recovery, and compatibility, see [native video integration](../../docs/protocol/spec/10-native-video.md).

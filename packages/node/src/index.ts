@@ -131,6 +131,8 @@ export {
   type NetworkServiceOffer,
 } from './discovery/service-catalog.js';
 export { MeteringStorage } from './metering/storage.js';
+export { ResourceOwnershipStore } from './resources/resource-ownership-store.js';
+export { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAY_HEADER } from './seller-request-handler.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export {
   computeCostUsdc,

@@ -48,4 +48,14 @@ describe('native video API contracts', () => {
     expect(nativeVideoFacts(request('/v1/text_to_video'))?.duration).toBeUndefined();
     expect(() => nativeVideoFacts(request('/v1/text_to_video', { duration: -1 }))).toThrow();
   });
+
+  it('follows the native Runway and Gemini API field shapes', () => {
+    const veo = (parameters: object) => nativeVideoFacts(request('/v1beta/models/veo:predictLongRunning', { instances: [{ prompt: 'cat' }], parameters }));
+    expect(veo({ durationSeconds: '6', numberOfVideos: 1 })).toMatchObject({ count: 1, duration: 6 });
+    expect(veo({ durationSeconds: 8, numberOfVideos: 2 })).toMatchObject({ count: 2, duration: 8 });
+    expect(() => veo({ numberOfVideos: 2, sampleCount: 1 })).toThrow(/disagree/);
+    expect(() => veo({ durationSeconds: '6.5' })).toThrow(/duration/);
+    expect(nativeVideoFacts(request('/v1/text_to_video', { model: 'seedance2', duration: 'auto' }))?.duration).toBeUndefined();
+    expect(() => nativeVideoFacts(request('/v1/text_to_video', { duration: 'soon' }))).toThrow(/duration/);
+  });
 });

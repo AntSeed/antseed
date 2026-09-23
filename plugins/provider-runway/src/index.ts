@@ -12,7 +12,22 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_SERVICE_CAPABILITIES_JSON', label: 'Capabilities', type: 'string' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Concurrency', type: 'number', default: 10 },
   ],
-  createProvider: config => createNativeVideoProvider('runway', config),
+  createProvider(config) {
+    const baseUrl = config['RUNWAY_BASE_URL']?.trim();
+    const apiKey = config['RUNWAY_API_KEY']?.trim();
+    if (!baseUrl) throw new Error('RUNWAY_BASE_URL must point to a seller-operated API');
+    if (!apiKey) throw new Error('RUNWAY_API_KEY is required');
+    return createNativeVideoProvider({
+      name: 'runway',
+      protocol: 'runway-video',
+      relay: {
+        baseUrl,
+        authHeaderName: 'authorization',
+        authHeaderValue: `Bearer ${apiKey}`,
+        extraHeaders: { 'x-runway-version': '2024-11-06' },
+      },
+    }, config);
+  },
 };
 
 export default plugin;

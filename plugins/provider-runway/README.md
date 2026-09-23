@@ -60,6 +60,6 @@ Poll `GET /v1/tasks/{id}` using the returned task `id`; `DELETE` on the same pat
 
 A successful acceptance is billable even if generation later fails. Polling and cancellation do not repeat the generation charge. No automatic submission retries occur after an uncertain send.
 
-The endpoint must enforce authenticated buyer ownership using `x-antseed-buyer-peer-id` supplied by the relay and return downloadable result URLs that do not require exposing seller credentials. No authenticated Files API download proxy is included.
+The AntSeed seller node records which buyer created each task and rejects status and cancel requests from any other buyer with 404 before they reach the endpoint. The endpoint may add its own checks using `x-antseed-buyer-peer-id`, and must return downloadable result URLs that do not expose seller credentials. No authenticated Files API download proxy is included.
 
 For persistence limits, failure recovery, and compatibility, see [native video integration](../../docs/protocol/spec/10-native-video.md).

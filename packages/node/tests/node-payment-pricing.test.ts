@@ -6,6 +6,10 @@ import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-code
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
+import { ResourceOwnershipStore } from '../src/resources/resource-ownership-store.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
@@ -102,6 +106,7 @@ it('meters native video acceptance once, preserves buyer ownership, and serves f
   const handler = makeSellerRequestHandler({
     providers: [provider], sellerPaymentManager: makeSpmMock({ recordSpend, hasSession: () => paid }),
     channelsClient: {} as any, sessionTracker: null, announcer: null, emit: () => false,
+    resourceOwnershipStore: new ResourceOwnershipStore(join(mkdtempSync(join(tmpdir(), 'antseed-resources-')), 'resources.db')),
   });
   const frames: Uint8Array[] = [];
   const payment = { sendNeedAuth, sendPaymentRequired: vi.fn() } as any;
@@ -121,8 +126,111 @@ it('meters native video acceptance once, preserves buyer ownership, and serves f
   expect(payment.sendPaymentRequired).not.toHaveBeenCalled();
   const other = handler.handleConnection(makeConn(frames), 'c'.repeat(40), payment);
   await other.mux.handleFrame({ type: MessageType.HttpRequest, messageId: 10, payload: encodeHttpRequest(request('GET', '/v1/tasks/task')) });
-  expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(403);
+  expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(404);
   expect(owners.get('task')).toBe(buyer);
+  expect(provider.handleRequest).toHaveBeenCalledTimes(4);
+});
+
+describe('native video job ownership and idempotency', () => {
+  const buyer = 'b'.repeat(40);
+  const other = 'c'.repeat(40);
+  const pricing = { version: 1 as const, components: [{ unit: 'video_seconds' as const, priceUsd: 0.1 }] };
+
+  function setup(dbPath = join(mkdtempSync(join(tmpdir(), 'antseed-resources-')), 'resources.db'), taskIds = ['task-1', 'task-2']) {
+    const provider = makeProvider(0, 0, {
+      name: 'runway', services: ['gen4.5'], serviceApiProtocols: { 'gen4.5': ['runway-video'] },
+      serviceUnitBillingModels: { 'gen4.5': { 'runway-video': pricing } },
+    });
+    const creates: string[] = [];
+    provider.handleRequest = vi.fn(async request => {
+      const id = request.method === 'POST' ? taskIds[creates.push(request.requestId) - 1]! : request.path.split('/').at(-1)!;
+      return { requestId: request.requestId, statusCode: request.method === 'DELETE' ? 204 : 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ id, status: 'PENDING' })) };
+    });
+    const recordSpend = vi.fn();
+    const store = new ResourceOwnershipStore(dbPath);
+    const handler = makeSellerRequestHandler({
+      providers: [provider], sellerPaymentManager: makeSpmMock({ recordSpend }),
+      channelsClient: {} as any, sessionTracker: null, announcer: null, emit: () => false,
+      resourceOwnershipStore: store,
+    });
+    const frames: Uint8Array[] = [];
+    const payment = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any;
+    const connections = new Map<string, ReturnType<SellerRequestHandler['handleConnection']>>();
+    let messageId = 0;
+    const send = async (peer: string, method: string, path: string, body: object = {}, headers: Record<string, string> = {}) => {
+      const connection = connections.get(peer) ?? handler.handleConnection(makeConn(frames), peer, payment);
+      connections.set(peer, connection);
+      messageId += 1;
+      const request: SerializedHttpRequest = { requestId: `r-${messageId}`, method, path, headers: { 'content-type': 'application/json', 'x-antseed-service': 'gen4.5', ...headers }, body: Buffer.from(JSON.stringify(body)) };
+      await connection.mux.handleFrame({ type: MessageType.HttpRequest, messageId, payload: encodeHttpRequest(request) });
+      return decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload);
+    };
+    const create = (peer: string, headers: Record<string, string> = {}, body: object = { model: 'gen4.5', duration: 8 }) => send(peer, 'POST', '/v1/text_to_video', body, headers);
+    return { provider, recordSpend, store, send, create, payment, dbPath };
+  }
+
+  it('rejects polls and cancels from buyers that did not create the job, without calling upstream', async () => {
+    const { provider, send, create, store } = setup();
+    expect((await create(buyer)).statusCode).toBe(200);
+    for (const method of ['GET', 'DELETE']) {
+      const denied = await send(other, method, '/v1/tasks/task-1');
+      expect(denied.statusCode).toBe(404);
+      expect(JSON.parse(new TextDecoder().decode(denied.body)).error.code).toBe('resource_not_found');
+    }
+    expect((await send(other, 'GET', '/v1/tasks/unknown')).statusCode).toBe(404);
+    expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+    expect((await send(buyer, 'GET', '/v1/tasks/task-1')).statusCode).toBe(200);
+    expect((await send(buyer, 'DELETE', '/v1/tasks/task-1')).statusCode).toBe(204);
+    store.close();
+  });
+
+  it('keeps ownership across a seller restart', async () => {
+    const first = setup();
+    await first.create(buyer);
+    first.store.close();
+    const restarted = setup(first.dbPath);
+    expect((await restarted.send(buyer, 'GET', '/v1/tasks/task-1')).statusCode).toBe(200);
+    expect((await restarted.send(other, 'GET', '/v1/tasks/task-1')).statusCode).toBe(404);
+    restarted.store.close();
+  });
+
+  it('replays an accepted create for the same idempotency key without a second upstream job or charge', async () => {
+    const { provider, recordSpend, create, payment, store } = setup();
+    const key = { 'x-antseed-idempotency-key': 'retry-key-1' };
+    const original = await create(buyer, key);
+    const replay = await create(buyer, key);
+    expect(JSON.parse(new TextDecoder().decode(replay.body)).id).toBe('task-1');
+    expect(replay.headers['x-antseed-idempotent-replay']).toBe('true');
+    expect(original.headers['x-antseed-idempotent-replay']).toBeUndefined();
+    expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+    expect(recordSpend).toHaveBeenCalledTimes(1);
+    expect(payment.sendNeedAuth).toHaveBeenCalledTimes(1);
+    const otherBuyer = await create(other, key);
+    expect(JSON.parse(new TextDecoder().decode(otherBuyer.body)).id).toBe('task-2');
+    store.close();
+  });
+
+  it('rejects idempotency key reuse with a different request', async () => {
+    const { provider, create, store } = setup();
+    const key = { 'x-antseed-idempotency-key': 'retry-key-2' };
+    await create(buyer, key);
+    const reused = await create(buyer, key, { model: 'gen4.5', duration: 10 });
+    expect(reused.statusCode).toBe(422);
+    expect((await create(buyer, { 'x-antseed-idempotency-key': 'bad key!' })).statusCode).toBe(400);
+    expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+    store.close();
+  });
+
+  it('refuses video when ownership storage is unavailable', async () => {
+    const provider = makeProvider(0, 0, { name: 'runway', services: ['gen4.5'], serviceApiProtocols: { 'gen4.5': ['runway-video'] }, serviceUnitBillingModels: { 'gen4.5': { 'runway-video': pricing } } });
+    provider.handleRequest = vi.fn(provider.handleRequest);
+    const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: makeSpmMock(), channelsClient: {} as any, sessionTracker: null, announcer: null, emit: () => false });
+    const frames: Uint8Array[] = [];
+    const { mux } = handler.handleConnection(makeConn(frames), buyer, { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any);
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'r', method: 'GET', path: '/v1/tasks/task', headers: { 'x-antseed-service': 'gen4.5' }, body: new Uint8Array() }) });
+    expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(503);
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+  });
 });
 
 function makeAttestHarness() {

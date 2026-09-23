@@ -2,21 +2,26 @@ import type { Provider, SerializedHttpRequest, SerializedHttpResponse } from '@a
 import { validateUnitBillingModelV1 } from '@antseed/node';
 import { nativeVideoRoute, requestService, type NativeVideoProtocol } from '@antseed/api-adapter';
 import { BaseProvider } from './base-provider.js';
+import type { RelayConfig } from './http-relay.js';
 import { parseCsv, parseServiceUnitBillingModelsJson, parseServiceCapabilitiesJson } from './config-utils.js';
 
-export function createNativeVideoProvider(name: 'runway' | 'veo', config: Record<string, string>): Provider {
-  const prefix = name === 'runway' ? 'RUNWAY' : 'GEMINI';
-  const baseUrl = config[`${prefix}_BASE_URL`]?.trim();
-  const apiKey = config[`${prefix}_API_KEY`]?.trim();
-  if (!baseUrl) throw new Error(`${prefix}_BASE_URL must point to a seller-operated API`);
+export interface NativeVideoProviderOptions {
+  name: string;
+  protocol: NativeVideoProtocol;
+  relay: Pick<RelayConfig, 'baseUrl' | 'authHeaderName' | 'authHeaderValue' | 'extraHeaders'>;
+}
+
+export function createNativeVideoProvider(options: NativeVideoProviderOptions, config: Record<string, string>): Provider {
+  const { name, protocol } = options;
+  const baseUrl = options.relay.baseUrl.trim();
+  if (!baseUrl) throw new Error('Base URL must point to a seller-operated API');
   const url = new URL(baseUrl);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid seller API base URL');
-  if (!apiKey) throw new Error(`${prefix}_API_KEY is required`);
+  if (!options.relay.authHeaderName.trim() || !options.relay.authHeaderValue.trim()) throw new Error('Seller API authentication is required');
   const aliases = JSON.parse(config['ANTSEED_SERVICE_ALIAS_MAP_JSON'] ?? '{}') as Record<string, string>;
   if (Object.entries(aliases).some(([service, upstream]) => service !== upstream)) throw new Error('Native video services must use upstream model names; aliases are not supported');
   const services = parseCsv(config['ANTSEED_ALLOWED_SERVICES']);
   if (!services.length) throw new Error('ANTSEED_ALLOWED_SERVICES is required');
-  const protocol: NativeVideoProtocol = name === 'runway' ? 'runway-video' : 'veo-video';
   const serviceUnitBillingModels = parseServiceUnitBillingModelsJson(config['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON']);
   for (const service of services) {
     const pricing = serviceUnitBillingModels?.[service]?.[protocol];
@@ -33,9 +38,7 @@ export function createNativeVideoProvider(name: 'runway' | 'veo', config: Record
     serviceUnitBillingModels,
     serviceApiProtocols: Object.fromEntries(services.map(service => [service, [protocol]])),
     serviceCapabilities: Object.fromEntries(services.map(service => [service, { ...capabilities?.[service], outputs: ['video'] }])),
-    relay: { baseUrl, authHeaderName: name === 'runway' ? 'authorization' : 'x-goog-api-key',
-      authHeaderValue: name === 'runway' ? `Bearer ${apiKey}` : apiKey,
-      extraHeaders: name === 'runway' ? { 'x-runway-version': '2024-11-06' } : undefined,
+    relay: { ...options.relay, baseUrl,
       maxConcurrency, allowedServices: [], preserveRequestBody: true, retryOn5xx: 0, redirect: 'error',
     },
   });

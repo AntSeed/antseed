@@ -27,7 +27,9 @@ import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
-import { nativeVideoRoute, requestService } from '@antseed/api-adapter';
+import { nativeVideoAcceptance, nativeVideoRoute, requestService, type NativeVideoRoute } from '@antseed/api-adapter';
+import { createHash } from 'node:crypto';
+import type { ResourceOwnershipStore } from './resources/resource-ownership-store.js';
 import { videoBillingUsage, type BillingRequestFacts } from '@antseed/buyer-core';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
@@ -44,6 +46,20 @@ function isZeroTokenPricing(pricing: ProviderTokenPricing): boolean {
     && (pricing.cachedInputUsdPerMillion == null || pricing.cachedInputUsdPerMillion === 0);
 }
 
+export const IDEMPOTENCY_KEY_HEADER = 'x-antseed-idempotency-key';
+export const IDEMPOTENT_REPLAY_HEADER = 'x-antseed-idempotent-replay';
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function headerValue(headers: Record<string, string>, name: string): string | undefined {
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
+  return entry?.[1]?.trim();
+}
+
+/** Veo operation names may be polled with or without their `models/<model>/` prefix. */
+function videoResourceKey(protocol: NativeVideoRoute['protocol'], resourceId: string): string {
+  return protocol === 'veo-video' ? resourceId.replace(/^models\/[^/]+\//, '') : resourceId;
+}
+
 export interface SellerRequestHandlerDeps {
   identity: Identity;
   providers: Provider[];
@@ -55,6 +71,8 @@ export interface SellerRequestHandlerDeps {
   announcer: PeerAnnouncer | null;
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
+  /** Persistent buyer ownership and idempotency records for stateful video jobs. Video follow-ups fail closed without it. */
+  resourceOwnershipStore?: ResourceOwnershipStore | null;
   emit: (event: string, ...args: unknown[]) => boolean;
 }
 
@@ -83,6 +101,8 @@ export class SellerRequestHandler {
   private readonly _deps: SellerRequestHandlerDeps;
   private readonly _providerLoadCounts = new Map<string, number>();
   private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
+  private readonly _pendingIdempotencyKeys = new Set<string>();
+  private readonly _unpersistedResourceOwners = new Map<string, string>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: SellerRequestHandlerDeps) {
@@ -248,6 +268,77 @@ export class SellerRequestHandler {
         mux.sendProxyResponse({ requestId: request.requestId, statusCode: 503, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify({ error: { code: "billing_configuration_error", message: "Video service requires explicit unit pricing" } })) });
         return;
       }
+      let videoIdempotency: { key: string; requestHash: string; pendingKey: string } | null = null;
+      if (videoRoute) {
+        const store = this._deps.resourceOwnershipStore;
+        if (!store) {
+          this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
+          return;
+        }
+        if (videoRoute.action !== 'create') {
+          let owner: string | null;
+          try {
+            const resourceKey = videoResourceKey(videoRoute.protocol, videoRoute.resourceId!);
+            owner = store.getOwner(videoRoute.protocol, resourceKey)
+              ?? this._unpersistedResourceOwners.get(`${videoRoute.protocol}\n${resourceKey}`)
+              ?? null;
+          } catch (err) {
+            debugWarn(`[SellerHandler] Video ownership lookup failed: ${err instanceof Error ? err.message : err}`);
+            this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
+            return;
+          }
+          if (owner?.toLowerCase() !== buyerPeerId.toLowerCase()) {
+            debugWarn(`[SellerHandler] Rejecting ${videoRoute.action} for video job not owned by ${buyerPeerId.slice(0, 12)}...`);
+            this._sendJsonError(mux, request.requestId, 404, 'resource_not_found', 'Video job not found');
+            return;
+          }
+        } else {
+          const key = headerValue(request.headers, IDEMPOTENCY_KEY_HEADER);
+          if (key !== undefined) {
+            if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
+              this._sendJsonError(mux, request.requestId, 400, 'invalid_idempotency_key', `${IDEMPOTENCY_KEY_HEADER} must be 1-128 characters of [A-Za-z0-9._:-]`);
+              return;
+            }
+            const requestHash = createHash('sha256')
+              .update(`${request.method}\n${request.path.split('?')[0]}\n${requestService(request) ?? ''}\n`)
+              .update(request.body)
+              .digest('hex');
+            let stored: ReturnType<ResourceOwnershipStore['getIdempotentCreate']>;
+            try {
+              stored = store.getIdempotentCreate(buyerPeerId, videoRoute.protocol, key);
+            } catch (err) {
+              debugWarn(`[SellerHandler] Idempotency lookup failed: ${err instanceof Error ? err.message : err}`);
+              this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot check the idempotency key');
+              return;
+            }
+            if (stored) {
+              if (stored.requestHash !== requestHash) {
+                this._sendJsonError(mux, request.requestId, 422, 'idempotency_key_reused', 'Idempotency key was already used for a different video request');
+                return;
+              }
+              debugLog(`[SellerHandler] Replaying accepted video create for ${buyerPeerId.slice(0, 12)}... (no new charge)`);
+              mux.sendProxyResponse({
+                requestId: request.requestId,
+                statusCode: stored.response.statusCode,
+                headers: { ...stored.response.headers, [IDEMPOTENT_REPLAY_HEADER]: 'true' },
+                body: stored.response.body,
+              });
+              return;
+            }
+            const pendingKey = `${buyerPeerId.toLowerCase()}\n${videoRoute.protocol}\n${key}`;
+            if (this._pendingIdempotencyKeys.has(pendingKey)) {
+              this._sendJsonError(mux, request.requestId, 409, 'idempotency_in_progress', 'A video request with this idempotency key is still in progress; retry shortly', { 'retry-after': '2' });
+              return;
+            }
+            this._pendingIdempotencyKeys.add(pendingKey);
+            videoIdempotency = { key, requestHash, pendingKey };
+          }
+        }
+      }
+      const releaseIdempotency = (): void => {
+        if (videoIdempotency) this._pendingIdempotencyKeys.delete(videoIdempotency.pendingKey);
+      };
+      try {
       const isFreeService = (videoRoute !== null && videoRoute.action !== 'create') || isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
@@ -551,6 +642,9 @@ export class SellerRequestHandler {
             responseUsage = parseResponseUsage(response.body);
           }
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
+          if (videoRoute?.action === 'create') {
+            this._recordVideoAcceptance(videoRoute, response, buyerPeerId, provider.name, request, videoIdempotency);
+          }
           if (!streamedResponseStarted) {
             mux.sendProxyResponse(response);
           } else if (heldDoneChunkData !== null) {
@@ -694,9 +788,62 @@ export class SellerRequestHandler {
         this.adjustProviderLoad(provider.name, -1);
         if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
+      } finally {
+        releaseIdempotency();
+      }
     });
 
     return { mux };
+  }
+
+  private _recordVideoAcceptance(
+    route: NativeVideoRoute,
+    response: SerializedHttpResponse,
+    buyerPeerId: string,
+    providerName: string,
+    request: SerializedHttpRequest,
+    idempotency: { key: string; requestHash: string } | null,
+  ): void {
+    const resourceId = nativeVideoAcceptance(route.protocol, response);
+    const store = this._deps.resourceOwnershipStore;
+    if (!resourceId || !store) return;
+    const resourceKey = videoResourceKey(route.protocol, resourceId);
+    try {
+      store.recordAcceptedCreate(
+        {
+          protocol: route.protocol,
+          resourceId: resourceKey,
+          buyerPeerId: buyerPeerId.toLowerCase(),
+          provider: providerName,
+          service: requestService(request) ?? 'unknown',
+        },
+        idempotency
+          ? { key: idempotency.key, requestHash: idempotency.requestHash, response: { statusCode: response.statusCode, headers: response.headers, body: response.body ?? new Uint8Array(0) } }
+          : undefined,
+      );
+    } catch (err) {
+      debugWarn(`[SellerHandler] Failed to record video job ownership for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      if (this._unpersistedResourceOwners.size < 10_000) {
+        this._unpersistedResourceOwners.set(`${route.protocol}\n${resourceKey}`, buyerPeerId.toLowerCase());
+      }
+      response.headers['x-antseed-ownership-persistence'] = 'failed';
+    }
+  }
+
+  private _sendJsonError(
+    mux: ProxyMux,
+    requestId: string,
+    statusCode: number,
+    code: string,
+    message: string,
+    extraHeaders: Record<string, string> = {},
+  ): void {
+    mux.sendProxyResponse({
+      requestId,
+      statusCode,
+      headers: { 'content-type': 'application/json', ...extraHeaders },
+      body: new TextEncoder().encode(JSON.stringify({ error: { code, message } })),
+    });
   }
 
   // -- Local /v1/models handler --

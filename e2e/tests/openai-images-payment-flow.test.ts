@@ -410,7 +410,6 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     it(`relays seller-operated ${name} jobs with acceptance billing and free follow-ups`, async () => {
       await setupRpc();
       const protocol = name === 'runway' ? 'runway-video' : 'veo-video';
-      const prefix = name === 'runway' ? 'RUNWAY' : 'GEMINI';
       const owners = new Map<string, string>();
       let submissions = 0;
       let lastSubmission: unknown;
@@ -439,21 +438,23 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
         const uri = `http://127.0.0.1:${address.port}/result`;
         const body = name === 'runway'
           ? { id: 'job', ...(request.method === 'POST' ? {} : { status: 'SUCCEEDED', output: [uri] }) }
-          : { name: 'models/video-model/operations/job', ...(request.method === 'POST' ? {} : { done: true, response: { generatedVideos: [{ video: { uri } }] } }) };
+          : { name: 'models/video-model/operations/job', ...(request.method === 'POST' ? {} : { done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri } }] } } }) };
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify(body));
       });
       await new Promise<void>(resolve => sellerApi.listen(0, '127.0.0.1', resolve));
       try {
         const address = sellerApi.address() as { port: number };
-        const provider = createNativeVideoProvider(name, {
-          [`${prefix}_BASE_URL`]: `http://127.0.0.1:${address.port}`, [`${prefix}_API_KEY`]: 'endpoint-secret',
+        const provider = createNativeVideoProvider({
+          name, protocol,
+          relay: { baseUrl: `http://127.0.0.1:${address.port}`, authHeaderName: name === 'runway' ? 'authorization' : 'x-goog-api-key', authHeaderValue: name === 'runway' ? 'Bearer endpoint-secret' : 'endpoint-secret' },
+        }, {
           ANTSEED_ALLOWED_SERVICES: 'video-model',
           ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({ 'video-model': { [protocol]: { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.01 }] } } }),
         });
         const { port, discoveredSeller } = await setupProxyNetwork(provider);
         const body = name === 'runway' ? { model: 'video-model', service: 'extension', promptText: '猫', duration: 8, custom: { enabled: true } }
-          : { model: 'extension-model', service: 'extension-service', instances: [{ prompt: '猫' }], parameters: { durationSeconds: 8, sampleCount: 1 }, custom: [1, null] };
+          : { model: 'extension-model', service: 'extension-service', instances: [{ prompt: '猫' }], parameters: { durationSeconds: '8', numberOfVideos: 1 }, custom: [1, null] };
         const path = name === 'runway' ? '/v1/text_to_video' : '/v1beta/models/video-model:predictLongRunning';
         const rawBody = ` \n${JSON.stringify(body, null, 2)}\n`;
         const created = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: rawBody });
@@ -468,7 +469,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
           const status = await fetch(`http://127.0.0.1:${port}${statusPath}`);
           expect(status.status).toBe(200);
           const result = await status.json() as any;
-          const uri = name === 'runway' ? result.output[0] : result.response.generatedVideos[0].video.uri;
+          const uri = name === 'runway' ? result.output[0] : result.response.generateVideoResponse.generatedSamples[0].video.uri;
           expect(await (await fetch(uri)).text()).toBe('mock-video');
         }
         expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(80_000n);

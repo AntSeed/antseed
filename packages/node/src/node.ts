@@ -17,6 +17,7 @@ import type {
 } from "./types/http.js";
 import type { ConnectionConfig } from "./types/connection.js";
 import { MeteringStorage } from "./metering/storage.js";
+import { ResourceOwnershipStore } from "./resources/resource-ownership-store.js";
 import { ReceiptGenerator } from "./metering/receipt-generator.js";
 import {
   SellerSessionTracker,
@@ -354,6 +355,7 @@ export class AntseedNode extends EventEmitter {
   private _keepalives = new Map<PeerId, KeepaliveManager>();
   private _nat: NatTraversal | null = null;
   private _metering: MeteringStorage | null = null;
+  private _resourceOwnership: ResourceOwnershipStore | null = null;
   private _receiptGenerator: ReceiptGenerator | null = null;
   private _balanceManager: BalanceManager | null = null;
   private _depositsClient: DepositsClient | null = null;
@@ -681,6 +683,15 @@ export class AntseedNode extends EventEmitter {
         // ignore close errors
       }
       this._metering = null;
+    }
+
+    if (this._resourceOwnership) {
+      try {
+        this._resourceOwnership.close();
+      } catch {
+        // ignore close errors
+      }
+      this._resourceOwnership = null;
     }
 
     if (this._verificationStorage) {
@@ -1546,6 +1557,11 @@ export class AntseedNode extends EventEmitter {
     } catch (err) {
       debugWarn(`[Node] Metering storage unavailable: ${err instanceof Error ? err.message : err}`);
     }
+    try {
+      this._resourceOwnership = new ResourceOwnershipStore(join(dataDir, "resources.db"));
+    } catch (err) {
+      debugWarn(`[Node] Resource ownership storage unavailable; video services will be refused: ${err instanceof Error ? err.message : err}`);
+    }
 
     if (this._metering) {
       this._receiptGenerator = new ReceiptGenerator({
@@ -1690,6 +1706,7 @@ export class AntseedNode extends EventEmitter {
       channelsClient: this._channelsClient,
       announcer: this._announcer,
       maxUploadBodyBytes: this._config.maxUploadBodyBytes,
+      resourceOwnershipStore: this._resourceOwnership,
       ...(this._config.payments?.reserveEstimateOverdraftUsdc != null
         ? { reserveEstimateOverdraftUsdc: BigInt(this._config.payments.reserveEstimateOverdraftUsdc) }
         : {}),

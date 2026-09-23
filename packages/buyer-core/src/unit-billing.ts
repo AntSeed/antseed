@@ -88,7 +88,9 @@ export function extractUnitResponseUsage(
 ): { usage: UnitBillingUsage; tokenUsage: TokenUsage } {
   if (requestFacts?.video) {
     const video = requestFacts.video;
-    const accepted = video.action === 'create' && nativeVideoAcceptance(video.protocol, response) !== null;
+    const accepted = video.action === 'create'
+      && !isIdempotentReplay(response)
+      && nativeVideoAcceptance(video.protocol, response) !== null;
     return { usage: accepted ? factsToUnitUsage(requestFacts) : { units: {} }, tokenUsage: ZERO_TOKEN_USAGE };
   }
   const parsed = parseJsonObject(response.body);
@@ -107,6 +109,11 @@ export function extractUnitResponseUsage(
     },
     tokenUsage: responseFacts.tokenUsage,
   };
+}
+
+/** A seller replay of an already-accepted create; the original acceptance was the only charge. */
+function isIdempotentReplay(response: SerializedHttpResponse): boolean {
+  return Object.entries(response.headers).some(([key, value]) => key.toLowerCase() === 'x-antseed-idempotent-replay' && value === 'true');
 }
 
 export function computeFinalUnitBilling(

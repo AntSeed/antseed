@@ -77,17 +77,34 @@ export function nativeVideoFacts(request: SerializedHttpRequest): NativeVideoFac
   if (!body) throw new Error('Video submission requires a JSON object');
   const parameters = body.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters)
     ? body.parameters as Record<string, unknown> : {};
-  const count = route.protocol === 'veo-video' ? parameters.sampleCount ?? 1 : 1;
-  const duration = route.protocol === 'veo-video' ? parameters.durationSeconds : body.duration;
-  if (!Number.isSafeInteger(count) || Number(count) <= 0) throw new Error('Video sample count must be a positive integer');
-  if (duration !== undefined && (!Number.isSafeInteger(duration) || Number(duration) <= 0)) {
-    throw new Error('Video duration must be a positive integer');
-  }
-  if (duration !== undefined && !Number.isSafeInteger(Number(duration) * Number(count))) throw new Error('Video quantity exceeds the safe integer limit');
+  const count = route.protocol === 'veo-video' ? veoVideoCount(parameters) : 1;
+  const rawDuration = route.protocol === 'veo-video' ? parameters.durationSeconds : body.duration;
+  const duration = route.protocol === 'runway-video' && rawDuration === 'auto' ? undefined : positiveInteger(rawDuration);
+  if (!Number.isSafeInteger(count) || count <= 0) throw new Error('Video sample count must be a positive integer');
+  if (duration === null) throw new Error('Video duration must be a positive integer');
+  if (duration !== undefined && !Number.isSafeInteger(duration * count)) throw new Error('Video quantity exceeds the safe integer limit');
   const resolution = route.protocol === 'veo-video' ? parameters.resolution : body.resolution;
   return {
-    protocol: route.protocol, action: route.action, count: Number(count),
-    ...(duration === undefined ? {} : { duration: Number(duration) }),
+    protocol: route.protocol, action: route.action, count,
+    ...(duration === undefined ? {} : { duration }),
     ...(typeof resolution === 'string' ? { resolution } : {}),
   };
+}
+
+/** Positive integer from a number or decimal string; undefined when absent, null when invalid. */
+function positiveInteger(value: unknown): number | undefined | null {
+  if (value === undefined) return undefined;
+  const parsed = typeof value === 'string' && /^[0-9]+$/.test(value.trim()) ? Number(value.trim()) : value;
+  return typeof parsed === 'number' && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/** Gemini API uses `numberOfVideos`; Vertex AI uses `sampleCount`. Both must agree when present. */
+function veoVideoCount(parameters: Record<string, unknown>): number {
+  const numberOfVideos = positiveInteger(parameters.numberOfVideos);
+  const sampleCount = positiveInteger(parameters.sampleCount);
+  if (numberOfVideos === null || sampleCount === null) return Number.NaN;
+  if (numberOfVideos !== undefined && sampleCount !== undefined && numberOfVideos !== sampleCount) {
+    throw new Error('Veo numberOfVideos and sampleCount disagree');
+  }
+  return numberOfVideos ?? sampleCount ?? 1;
 }
