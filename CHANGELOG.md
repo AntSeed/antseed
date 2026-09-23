@@ -73,6 +73,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Linux desktop: use space-free installation, executable, and icon names; install the Chromium sandbox helper with root-owned setuid permissions; and fix Debian package removal and upgrades, including recovery from the broken 0.2.44 maintainer script, without changing macOS or Windows upgrade identities.
+
 - Payments: reconnect to retained channels without adding the seller's minimum budget to buyer-signed spend. Sellers safely acknowledge replayed authorizations and restore request access while preserving earned payments and zero-spend closure without buyer withdrawal or ghost penalties.
 
 - ANTS dashboard: remove obsolete split/merge/max-lock forms, bulk-selection state, unused confirmation summaries, and expanded-row styles. Keep single-position Move, Extend, and Withdraw, wallet safeguards, and backend/CLI capabilities unchanged.
