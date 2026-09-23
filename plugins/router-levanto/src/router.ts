@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AntseedRouterPlugin, PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
 import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
 import localPlugin from '@antseed/router-local';
-import { LEVANTO_ROUTING_CONTRACT, LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './contract.js';
+import { LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './validation.js';
 import { CacheObservations } from './cache-observations.js';
 
 type CachedRoute = { text: string; fingerprint: string; routes: RouteRecommendation[] };
@@ -54,7 +54,7 @@ export class LevantoRoutingAdapter {
       if (!peer.metadata?.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) return [];
       try {
         const offer = resolveServiceBillingOffer(peer.metadata.offerings, 'levanto', 'levanto-route');
-        return offer.contract === LEVANTO_ROUTING_CONTRACT && parseMicroUsdc(offer.priceMicroUsdc) <= parseMicroUsdc(this.maxFeeMicroUsdc)
+        return offer.serviceApiProtocol === 'levanto-routing' && parseMicroUsdc(offer.priceMicroUsdc) <= parseMicroUsdc(this.maxFeeMicroUsdc)
           ? [{ peer, offer }] : [];
       } catch { return []; }
     });
@@ -67,7 +67,7 @@ export class LevantoRoutingAdapter {
       expectedCachedTokens: this.observations.estimates(context.conversationKey, context.candidates, promptTokens),
       constraints: { allowedPeerIds: [...new Set(context.candidates.map(candidate => candidate.peerId))] },
     };
-    validateRoutingRequest(LEVANTO_ROUTING_CONTRACT, payload);
+    validateRoutingRequest(payload);
     let recommendations: RouteRecommendation[] | undefined;
     const response = await context.sendRequest(selected.peer, {
       requestId: randomUUID(), method: 'POST', path: LEVANTO_ROUTING_PATH,
@@ -79,7 +79,7 @@ export class LevantoRoutingAdapter {
       signal: context.signal, unitBilling: selected.offer, maxFeeMicroUsdc: this.maxFeeMicroUsdc,
       acceptResponse: response => {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(response.body));
-        const ranked = validateRoutingResponse(LEVANTO_ROUTING_CONTRACT, parsed, payload);
+        const ranked = validateRoutingResponse(parsed, payload);
         const routes = ranked.filter(entry => context.candidates.some(candidate => candidate.peerId === entry.peer && candidate.serviceId === entry.model))
           .map(entry => ({ serviceId: entry.model, peerId: entry.peer }));
         if (!routes.length) return false;

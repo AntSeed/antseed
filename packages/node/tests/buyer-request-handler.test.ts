@@ -8,14 +8,13 @@ import type {
   SerializedHttpResponseChunk,
 } from '../src/types/http.js';
 import type { PeerInfo } from '../src/types/peer.js';
-import { SERVICE_CONTRACT_HEADER } from '@antseed/protocol/service-billing';
 
 describe('explicit completed-request buyer requests', () => {
-  const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+  const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
   const peer = { peerId: 'a'.repeat(40) } as PeerInfo;
   const request = {
     requestId: 'fixed', method: 'POST', path: '/_antseed/route',
-    headers: { 'x-antseed-provider': offer.provider, [SERVICE_CONTRACT_HEADER]: offer.contract },
+    headers: { 'x-antseed-provider': offer.provider },
     body: new TextEncoder().encode(JSON.stringify({ service: offer.service, v: 1, cqt: 5, inputMessage: 'Help', promptTokens: 1, expectedCachedTokens: [], constraints: {} })),
   };
   const validResponse = { v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: 'b'.repeat(40), estimate: { costUsd: 0.01, inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 }, price: { inUsdPerM: 1, outUsdPerM: 2, cachedInUsdPerM: 0 } }] };
@@ -47,22 +46,21 @@ describe('explicit completed-request buyer requests', () => {
     await harness.handler.sendRequest(peer, { ...request, headers: { 'content-type': 'application/json' } }, undefined, { unitBilling: offer, acceptResponse: harness.acceptResponse });
     expect(harness.mux.sendProxyRequest.mock.calls[0]![0].headers).toMatchObject({
       'x-antseed-provider': offer.provider,
-      [SERVICE_CONTRACT_HEADER]: offer.contract,
     });
     expect(harness.mux.sendProxyRequest.mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
+    expect(harness.mux.sendProxyRequest.mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-service-contract');
   });
   it('rejects conflicting agreement headers before execution', async () => {
     const harness = setup();
-    await expect(harness.handler.sendRequest(peer, { ...request, headers: { 'X-Antseed-Service-Contract': 'wrong-contract' } }, undefined, { unitBilling: offer, acceptResponse: harness.acceptResponse })).rejects.toThrow('agreed offer');
+    await expect(harness.handler.sendRequest(peer, { ...request, headers: { 'X-Antseed-Provider': 'wrong-provider' } }, undefined, { unitBilling: offer, acceptResponse: harness.acceptResponse })).rejects.toThrow('agreed offer');
     expect(harness.mux.sendProxyRequest).not.toHaveBeenCalled();
   });
   it('executes a non-Levanto contract through the same request and payment path', async () => {
     const state = setup([{ statusCode: 200, body: { summary: 'Done' } }]);
-    const summaryOffer = { provider: 'summarizer', service: 'summary', contract: 'summary-v1', priceMicroUsdc: '1000' };
+    const summaryOffer = { provider: 'summarizer', service: 'summary', serviceApiProtocol: 'typesafe-systemone' as const, priceMicroUsdc: '1000' };
     const response = await state.handler.sendRequest(peer, {
       ...request, path: '/summary',
-      headers: { 'content-type': 'application/json', 'x-antseed-provider': summaryOffer.provider,
-        [SERVICE_CONTRACT_HEADER]: summaryOffer.contract },
+      headers: { 'content-type': 'application/json', 'x-antseed-provider': summaryOffer.provider },
       body: new TextEncoder().encode(JSON.stringify({ service: 'summary', text: 'Hello' })),
     }, undefined, {
       unitBilling: summaryOffer,

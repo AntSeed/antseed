@@ -115,7 +115,7 @@ describe('ModelHealthChecker', () => {
     const onRequest = vi.fn(async request => jsonResponse(request.requestId, 200));
     const provider = makeProvider({
       services: ['levanto-route', 'model-a'], onRequest,
-      serviceExecution: { 'levanto-route': { kind: 'routing', contract: 'levanto-routing-v1', path: '/_antseed/levanto-route', acceptResponse: () => true } },
+      serviceApiProtocols: { 'levanto-route': ['levanto-routing'] },
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }] });
     await checker.runSweep();

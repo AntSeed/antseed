@@ -6,7 +6,7 @@ import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-code
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
-import { COMPLETED_REQUESTS_CAPABILITY, SERVICE_CONTRACT_HEADER } from '@antseed/protocol/service-billing';
+import { COMPLETED_REQUESTS_CAPABILITY } from '@antseed/protocol/service-billing';
 
 const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
@@ -17,7 +17,6 @@ describe('completed-request seller payments', () => {
   function setup(overrides: Record<string, unknown> = {}, capable = true) {
     let spend = 0n;
     const provider = makeProvider(10, 10, { name: 'levanto', services: ['levanto-route', 'image'] });
-    provider.serviceExecution = { 'levanto-route': { kind: 'routing', contract: 'levanto-routing-v1', path: '/_antseed/levanto-route', acceptResponse: (_request, response) => response.statusCode === 200 } };
     provider.serviceApiProtocols = { 'levanto-route': ['levanto-routing'] };
     provider.serviceUnitBillingModels = { 'levanto-route': { 'levanto-routing': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } } };
     provider.pricing = { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, services: { 'levanto-route': { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } } };
@@ -34,10 +33,10 @@ describe('completed-request seller payments', () => {
     const send = async (requestId = 'fixed', patch: Partial<SerializedHttpRequest> = {}) => {
       await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({
         requestId, method: 'POST', path: '/_antseed/levanto-route',
-        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto', [SERVICE_CONTRACT_HEADER]: 'levanto-routing-v1' },
+        headers: { 'content-type': 'application/json', 'x-antseed-provider': 'levanto' },
         body: new TextEncoder().encode(JSON.stringify(body)), ...patch,
       }) });
-      return decodeHttpResponse(decodeFrame(frames.at(-1)!).message!.payload);
+      return frames.map(frame => decodeHttpResponse(decodeFrame(frame).message!.payload)).reverse().find(response => response.requestId === requestId)!;
     };
     return { provider, spm, paymentMux, send };
   }
@@ -52,8 +51,6 @@ describe('completed-request seller payments', () => {
     const harness = setup();
     harness.provider.serviceApiProtocols!['levanto-route'] = ['typesafe-systemone'];
     harness.provider.serviceUnitBillingModels!['levanto-route'] = { 'typesafe-systemone': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } };
-    harness.provider.serviceExecution!['levanto-route']!.path = '/v1/systemone';
-    harness.provider.serviceExecution!['levanto-route']!.kind = 'custom';
     expect((await harness.send('typesafe', { path: '/v1/systemone' })).statusCode).toBe(200);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
     expect(vi.mocked(harness.provider.handleRequest).mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
@@ -75,19 +72,46 @@ describe('completed-request seller payments', () => {
     expect(harness.paymentMux.sendPaymentRequired).toHaveBeenCalledWith(expect.objectContaining({ minBudgetPerRequest: '1000' }));
     hasSession = true;
     expect((await harness.send()).statusCode).toBe(200);
-    expect((await harness.send()).statusCode).toBe(400);
     expect(harness.provider.handleRequest).toHaveBeenCalledOnce();
   });
-  it('never executes beyond the confirmed reserve, including concurrent calls', async () => {
+  it('rejects the next request after the confirmed reserve is spent', async () => {
     const harness = setup({ getReserveMax: () => 1000n });
-    await Promise.all([harness.send('first'), harness.send('second')]);
+    expect((await harness.send('first')).statusCode).toBe(200);
+    expect((await harness.send('second')).statusCode).toBe(402);
     expect(harness.provider.handleRequest).toHaveBeenCalledOnce();
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
   });
-  it('does not charge responses rejected by the provider validator', async () => {
+  it('leaves API payload validation to the provider and buyer', async () => {
     const harness = setup();
-    harness.provider.serviceExecution!['levanto-route']!.acceptResponse = () => false;
-    expect((await harness.send()).statusCode).toBe(500);
+    vi.mocked(harness.provider.handleRequest).mockImplementation(async request => ({ requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode('{}') }));
+    expect((await harness.send('opaque', { body: new TextEncoder().encode(JSON.stringify({ service: 'levanto-route', v: 2 })) })).statusCode).toBe(200);
+    expect(harness.provider.handleRequest).toHaveBeenCalledOnce();
+    expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
+  });
+  it('uses ordinary concurrent dispatch for paid routing requests', async () => {
+    const harness = setup();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(harness.provider.handleRequest).mockImplementation(async request => {
+      await gate;
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(result)) };
+    });
+    const first = harness.send('active');
+    const second = harness.send('concurrent');
+    try {
+      await vi.waitFor(() => expect(harness.provider.handleRequest).toHaveBeenCalledTimes(2));
+    } finally {
+      release();
+      await Promise.all([first, second]);
+    }
+    expect((await first).statusCode).toBe(200);
+    expect((await second).statusCode).toBe(200);
+    expect(harness.spm.recordSpend).toHaveBeenCalledTimes(2);
+  });
+  it('does not charge requests rejected by the provider', async () => {
+    const harness = setup();
+    vi.mocked(harness.provider.handleRequest).mockImplementation(async request => ({ requestId: request.requestId, statusCode: 400, headers: {}, body: new TextEncoder().encode('{}') }));
+    expect((await harness.send()).statusCode).toBe(400);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 0n);
     expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '0', billingUsage: { version: 2, units: { completed_requests: '0' } } }));
   });
@@ -96,9 +120,9 @@ describe('completed-request seller payments', () => {
     const response = await harness.send('models', { method: 'GET', path: '/v1/models', headers: {}, body: new Uint8Array() });
     expect(JSON.parse(new TextDecoder().decode(response.body)).data.map((model: { id: string }) => model.id)).toEqual(['image']);
   });
-  it('preserves concurrent inference for buyers that never opt into fixed fees', async () => {
-    const harness = setup({}, false);
-    expect((await harness.send('legacy-route-attempt')).statusCode).toBe(400);
+  it.each([false, true])('preserves concurrent inference after routing opt-in %s', async capable => {
+    const harness = setup({}, capable);
+    expect((await harness.send('route-attempt')).statusCode).toBe(capable ? 200 : 400);
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const handleRequestStream = vi.fn(async (request: SerializedHttpRequest) => {
@@ -172,6 +196,7 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
 }
 
 function makeSpmMock(overrides: Record<string, unknown> = {}): any {
+  let inFlight = 0;
   return {
     hasSession: () => true,
     getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
@@ -187,9 +212,9 @@ function makeSpmMock(overrides: Record<string, unknown> = {}): any {
     waitForPendingAuths: async () => {},
     awaitAcceptedAtLeast: async () => false,
     settleSession: vi.fn(async () => {}),
-    beginBillableRequest: vi.fn(),
-    endBillableRequest: vi.fn(),
-    hasInFlightRequests: () => false,
+    beginBillableRequest: vi.fn(() => { inFlight += 1; }),
+    endBillableRequest: vi.fn(() => { inFlight -= 1; }),
+    hasInFlightRequests: () => inFlight > 0,
     hasClosingChannel: () => false,
     ...overrides,
   };

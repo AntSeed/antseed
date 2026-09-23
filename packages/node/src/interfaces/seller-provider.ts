@@ -3,13 +3,6 @@ import type { ServiceApiProtocol } from '../types/service-api.js';
 import type { ServiceUnitBillingModels } from '../types/billing.js';
 import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
 
-export interface ServiceExecution {
-  kind: 'routing' | 'custom';
-  contract: string;
-  path: string;
-  acceptResponse(request: SerializedHttpRequest, response: SerializedHttpResponse): boolean;
-}
-
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
@@ -30,7 +23,6 @@ export interface ProviderPricing {
  * You just handle the HTTP request → response conversion.
  */
 export interface Provider {
-  serviceExecution?: Record<string, ServiceExecution>;
   /** Unique name for this provider (e.g., 'anthropic', 'openai', 'my-local-llm') */
   name: string;
 

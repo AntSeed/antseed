@@ -171,7 +171,7 @@ export class BuyerPaymentManager {
     if (this._requestBillingEntries.has(requestId)) throw new Error('Request ID already used');
     this._unitBillingPeers.add(peerId);
     this.trackRequestBilling(requestId, {
-      context: { sellerPeerId: peerId, provider: offer.provider, service: offer.service, unitLimits: { completed_requests: 1 } },
+      context: { sellerPeerId: peerId, provider: offer.provider, service: offer.service, serviceApiProtocol: offer.serviceApiProtocol, unitLimits: { completed_requests: 1 } },
       requestFacts: {}, unitModel: completedRequestBillingModel(offer.priceMicroUsdc),
       tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
     });
@@ -425,6 +425,7 @@ export class BuyerPaymentManager {
 
   /** Clean up all in-memory state for a seller when the session ends. */
   cleanupSession(sellerPeerId: string): void {
+    this._unitBillingPeers.delete(sellerPeerId);
     this._cumulativeAmount.delete(sellerPeerId);
     this._metadata.delete(sellerPeerId);
     this._verifiedCost.delete(sellerPeerId);

@@ -134,7 +134,7 @@ describe('BuyerPaymentManager', () => {
 
   // ── authorizeSpending ──────────────────────────────────────────
   describe('completed-request responses', () => {
-    const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+    const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
     const peer = 'a'.repeat(40);
     async function open() {
       const channelId = await manager.authorizeSpending(peer, mux, 1000n, TEST_PRICING);

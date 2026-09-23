@@ -1,5 +1,5 @@
 import type { PeerAnnouncer } from './discovery/announcer.js';
-import { completedRequestOffer } from './billing/service.js';
+import { completedRequestOffer, isLegacyInferenceService } from './billing/service.js';
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -36,7 +36,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
-import { COMPLETED_REQUESTS_CAPABILITY, SERVICE_CONTRACT_HEADER, parseMicroUsdc } from '@antseed/protocol/service-billing';
+import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc } from '@antseed/protocol/service-billing';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -86,10 +86,6 @@ export class SellerRequestHandler {
   private readonly _providerLoadCounts = new Map<string, number>();
   private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly _requestQueues = new Map<string, Promise<void>>();
-  private readonly _requestQueueSizes = new Map<string, number>();
-  private readonly _unitBillingBuyers = new Set<string>();
-  private readonly _unitBillingExecuted = new Map<string, number>();
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
@@ -129,7 +125,7 @@ export class SellerRequestHandler {
       maxUploadBodyBytes: this._deps.maxUploadBodyBytes,
     });
 
-    const handleRequest = async (request: SerializedHttpRequest): Promise<void> => {
+    mux.onProxyRequest(async (request: SerializedHttpRequest): Promise<void> => {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
       // Handle /v1/models locally — free metadata endpoint, no payment required.
@@ -237,20 +233,12 @@ export class SellerRequestHandler {
       }
 
       const service = this._extractRequestedService(request)!;
-      const execution = provider.serviceExecution?.[service];
       const unitBilling = completedRequestOffer(provider, service);
-      const unitBillingKey = `${buyerPeerId}:${request.requestId}`;
       try {
-        if (execution && (request.method !== 'POST' || request.path !== execution.path)) throw new Error('Request does not match service endpoint');
         if (unitBilling) {
           if (!conn.hasRemoteCapability(COMPLETED_REQUESTS_CAPABILITY) || request.method !== 'POST'
-            || this._extractRequestedProvider(request) !== provider.name.toLowerCase()
-            || request.path !== execution!.path
-            || request.headers[SERVICE_CONTRACT_HEADER] !== unitBilling.contract) throw new Error('Completed-request capability and matching contract required');
-          if (this._unitBillingExecuted.has(unitBillingKey)) throw new Error('Completed-request request ID already executed');
+            || this._extractRequestedProvider(request) !== provider.name.toLowerCase()) throw new Error('Completed-request capability and matching provider required');
           if (parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
-        } else if (request.headers[SERVICE_CONTRACT_HEADER] !== undefined) {
-          throw new Error('Service does not support completed-request billing');
         }
       } catch (error) {
         mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' },
@@ -341,17 +329,7 @@ export class SellerRequestHandler {
             return;
           }
           let accepted = spm.getAcceptedCumulative(session.sessionId);
-          const spent = spm.getCumulativeSpend(session.sessionId);
-          // Serving headroom only includes funds locked on-chain. Pending
-          // top-ups are not counted until topUp() succeeds, otherwise a large
-          // request could push spend above the current reserve before the extra
-          // funds are actually locked.
-          const reserveMax = spm.getEffectiveReserveMax(session.sessionId);
-          const isBlocked = spm.isChannelBlocked(session.sessionId);
-          // If spend has caught up and there is no headroom left in the reserve,
-          // stop serving before accepting any additional request cost.
-          const isAtExactSpendLimit = spent > 0n && spent === accepted && reserveMax > 0n && accepted >= reserveMax;
-
+          let spent = spm.getCumulativeSpend(session.sessionId);
           if (spent > 0n && spent > accepted) {
             // Race cover: the buyer's SpendingAuth for the *previous* response's
             // NeedAuth may still be on the wire when this request arrives. The
@@ -364,10 +342,14 @@ export class SellerRequestHandler {
             // completed) it hides the round-trip latency from the buyer.
             const caughtUp = await spm.awaitAcceptedAtLeast(session.sessionId, spent, DEFAULT_CATCH_UP_WAIT_MS);
             accepted = spm.getAcceptedCumulative(session.sessionId);
+            spent = spm.getCumulativeSpend(session.sessionId);
             if (caughtUp && spent <= accepted) {
               debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
             }
           }
+          const reserveMax = spm.getEffectiveReserveMax(session.sessionId);
+          const isBlocked = spm.isChannelBlocked(session.sessionId);
+          const isAtExactSpendLimit = spent > 0n && spent === accepted && reserveMax > 0n && accepted >= reserveMax;
           let requestCostEstimate: ReturnType<SellerRequestHandler['_estimateRequestCostUsdc']> = null;
           try {
             requestCostEstimate = requestBilling
@@ -489,15 +471,6 @@ export class SellerRequestHandler {
         ...request,
         headers: { ...request.headers },
       };
-      if (unitBilling) {
-        for (const [key, timestamp] of this._unitBillingExecuted) {
-          if (Date.now() - timestamp > 24 * 60 * 60_000) this._unitBillingExecuted.delete(key);
-        }
-        if (this._unitBillingExecuted.size >= 10_000) {
-          mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Completed-request request limit reached') });
-          return;
-        }
-      }
 
       // Track active seller session at request start
       this._deps.sessionTracker?.getOrCreateSession(buyerPeerId, provider.name);
@@ -535,11 +508,10 @@ export class SellerRequestHandler {
         return;
       }
       if (isBillable) spm!.beginBillableRequest(buyerPeerId);
-      if (unitBilling) this._unitBillingExecuted.set(unitBillingKey, Date.now());
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
-          const response = await this._executeRequest(provider, request, execution ? undefined : {
+          const response = await this._executeRequest(provider, request, unitBilling ? undefined : {
             onResponseStart: (streamResponseStart) => {
               streamedResponseStarted = true;
               responseStartedAt = Date.now();
@@ -558,11 +530,7 @@ export class SellerRequestHandler {
               mux.sendProxyChunk(chunk);
             },
           });
-          let accepted: boolean | undefined;
-          if (execution && response.statusCode >= 200 && response.statusCode < 300) {
-            accepted = execution.acceptResponse(structuredClone(request), structuredClone(response)) === true;
-            if (!accepted) throw new Error('Service response was not accepted');
-          }
+          const accepted = response.statusCode >= 200 && response.statusCode < 300;
           statusCode = response.statusCode;
           responseBody = response.body ?? new Uint8Array(0);
           responseForAuth = response;
@@ -725,38 +693,6 @@ export class SellerRequestHandler {
         this.adjustProviderLoad(provider.name, -1);
         if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
-    };
-    mux.onProxyRequest(async request => {
-      if (!this._deps.providers.some(provider => provider.services.some(service => completedRequestOffer(provider, service)))) return handleRequest(request);
-      const requestProvider = this.matchProvider(request);
-      const requestService = this._extractRequestedService(request);
-      const requestOffer = requestProvider && requestService ? completedRequestOffer(requestProvider, requestService) : undefined;
-      if (conn.hasRemoteCapability(COMPLETED_REQUESTS_CAPABILITY)
-        && requestOffer && this._extractRequestedProvider(request) === requestProvider!.name.toLowerCase()
-          && request.method === 'POST' && request.path === requestProvider!.serviceExecution?.[requestService!]!.path
-          && request.headers[SERVICE_CONTRACT_HEADER] === requestOffer.contract) {
-        this._unitBillingBuyers.add(buyerPeerId);
-      }
-      const count = this._requestQueueSizes.get(buyerPeerId) ?? 0;
-      if (this._unitBillingBuyers.has(buyerPeerId) && count >= 32) {
-        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 429, headers: {}, body: new TextEncoder().encode('Payment request queue full') });
-        return;
-      }
-      this._requestQueueSizes.set(buyerPeerId, count + 1);
-      const previous = this._requestQueues.get(buyerPeerId) ?? Promise.resolve();
-      const next = this._unitBillingBuyers.has(buyerPeerId) ? previous.catch(() => undefined).then(() => handleRequest(request)) : handleRequest(request);
-      const pending = Promise.allSettled([previous, next]).then(() => undefined);
-      this._requestQueues.set(buyerPeerId, pending);
-      try { await next; } finally {
-        const remaining = (this._requestQueueSizes.get(buyerPeerId) ?? 1) - 1;
-        if (remaining === 0) this._requestQueueSizes.delete(buyerPeerId);
-        else this._requestQueueSizes.set(buyerPeerId, remaining);
-        if (this._requestQueues.get(buyerPeerId) === pending) {
-          void pending.then(() => {
-            if (this._requestQueues.get(buyerPeerId) === pending) this._requestQueues.delete(buyerPeerId);
-          });
-        }
-      }
     });
 
     return { mux };
@@ -765,7 +701,7 @@ export class SellerRequestHandler {
   // -- Local /v1/models handler --
 
   private _handleModelsRequest(request: SerializedHttpRequest): SerializedHttpResponse {
-    const allServices = this._deps.providers.flatMap(provider => provider.services.filter(service => !provider.serviceExecution?.[service]));
+    const allServices = this._deps.providers.flatMap(provider => provider.services.filter(service => isLegacyInferenceService(provider, service)));
     const now = Math.floor(Date.now() / 1000);
 
     // GET /v1/models/:id — single model lookup

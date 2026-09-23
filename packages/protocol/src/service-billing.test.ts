@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { serviceBillingOffering, parseMicroUsdc, resolveServiceBillingOffer } from './service-billing.js';
 
-const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
 
 describe('completed-request signed offerings', () => {
   it.each(['0', '1', '1000', '40000'])('round-trips %s micro-USDC through float32', priceMicroUsdc => {

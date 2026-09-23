@@ -4,7 +4,7 @@ import { LevantoRoutingAdapter, routerPlugin, levantoRoutingMetadata } from './r
 
 const sellerId = 'a'.repeat(40);
 const inferenceId = 'b'.repeat(40);
-const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
 const peer = { peerId: sellerId, metadata: { peerId: sellerId, capabilities: [COMPLETED_REQUESTS_CAPABILITY], offerings: [serviceBillingOffering(offer)] } } as PeerInfo;
 const recommendation: RouteRecommendation = { serviceId: 'model-a', peerId: inferenceId };
 const result = {
@@ -54,6 +54,17 @@ describe('Levanto buyer adapter', () => {
     expect(await state.adapter.selectRoute(request('Help', 'model-a'), [peer], state.context)).toBeNull();
     await expect(state.adapter.selectRoute(request(''), [peer], state.context)).rejects.toThrow('user text');
     expect(state.sendRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed successful responses before accepting recommendations', async () => {
+    const state = setup();
+    state.sendRequest.mockImplementation(async (_peer, serviceRequest, options) => {
+      const response = { requestId: serviceRequest.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode('{}') };
+      options.acceptResponse!(response);
+      return response;
+    });
+    await expect(state.adapter.selectRoute(request(), [peer], state.context)).rejects.toThrow('Invalid Levanto routing response');
+    expect(state.accepted).not.toHaveBeenCalled();
   });
 
   it('reuses unchanged text, reroutes changed text, and does not cache unidentified conversations', async () => {

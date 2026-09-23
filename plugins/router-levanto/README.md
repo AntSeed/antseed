@@ -26,7 +26,7 @@ antseed buyer start --router levanto-router
 
 Replace the example peer ID with the selected routing-service peer's actual ID.
 The buyer never substitutes another routing-service peer because it is cheaper.
-The selected peer must advertise a compatible `levanto-routing-v1` completed-request
+The selected peer must advertise a compatible `levanto-routing` completed-request
 offer. `ANTSEED_MAX_ROUTING_FEE_MICRO_USDC` is a required buyer limit, not a price.
 
 This is a limitation of the current Levanto payment adapter, not a requirement
@@ -211,9 +211,11 @@ added.
 
 ## External service compatibility
 
-Routing and billing are separate. The seller's `serviceExecution` descriptor
-defines the routing endpoint and response validator; `serviceUnitBillingModels`
-separately selects how to charge. `levanto-routing` identifies the API format,
+Routing and billing are separate. The Levanto buyer plugin defines its routing
+endpoint and validates its payloads; the shared API adapter only identifies the
+protocol. Providers validate their own API requests and responses, while
+`serviceUnitBillingModels` selects how to charge. No `serviceExecution`
+configuration is required. `levanto-routing` identifies the API format,
 not its billing unit. The current Levanto integration supports
 `completed_requests`: an accepted routing response counts as one unit, whether it
 contains one or five recommendations. A price of zero makes that service free.
@@ -222,22 +224,26 @@ real backend token measurements; predicted inference tokens are not such usage.
 
 The SDK uses the same unit-cost evaluator and cumulative payment channel as image
 billing, but a different measurement adapter. Images measure `output_images`;
-routing measures accepted `completed_requests`. The SDK supplies provider and
-service-contract headers; no unit-price header is sent. The buyer keeps the
+routing measures accepted `completed_requests`. The SDK supplies the existing
+provider header; no unit-price or service-contract header is sent. The buyer keeps the
 selected advertised price and maximum locally. A seller price change after
 discovery can therefore cause a payment disagreement after execution, but cannot
 automatically increase the buyer's authorization. See
 `docs/protocol/unit-billing-services.md` for provider configuration.
 
-`levanto-routing-v1` is this integration's versioned request/response schema name,
-not a blockchain contract or a pricing mode. Upgraded buyers and sellers opt into
+The generic seller handler counts successful provider responses without checking
+Levanto's payload schema. If a provider returns HTTP success with an invalid
+payload, the buyer rejects it and will not authorize the seller's charge.
+
+The endpoint and `v: 1` request/response bodies identify the routing format;
+there is no separate execution-contract setting. Upgraded buyers and sellers opt into
 completed-request billing. Existing token/image buyers keep their current formats
 and cannot accidentally buy routing as inference.
 
-The external seller must implement the advertised Levanto routing contract and
+The external seller must implement the advertised Levanto routing API and
 accept `POST /_antseed/levanto-route` with `service: "levanto-route"`, `v`, numeric `cqt`,
 `inputMessage`, `promptTokens`, `expectedCachedTokens`, and `constraints`.
-The seller must configure its advertised service's endpoint to match this path;
+The seller's handler must accept this API path;
 the buyer does not retry the former remote `/_antseed/route` path.
 Success responses contain `v: 1`, a nonempty `router` identifier and `ranked`
 entries with `model`, `peer`, `estimate`, and `price`. Day-pass renewal responses

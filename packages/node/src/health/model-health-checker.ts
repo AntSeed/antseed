@@ -169,7 +169,6 @@ export class ModelHealthChecker {
       }
 
       for (const service of services) {
-        if (provider.serviceExecution?.[service]) continue;
         if (this._stopped) return;
         await this._probeService(target, service);
       }

@@ -6,7 +6,7 @@ import type { Provider } from '../src/interfaces/seller-provider.js';
 import { completedRequestOffer, inferenceServiceFields, legacyUnitBillingModels } from '../src/billing/service.js';
 
 describe('unit billing through normal SDK requests', () => {
-  const offer = { provider: 'summarizer', service: 'summary', contract: 'summary-v1', priceMicroUsdc: '1000' };
+  const offer = { provider: 'summarizer', service: 'summary', serviceApiProtocol: 'typesafe-systemone' as const, priceMicroUsdc: '1000' };
   function setup() {
     const peer = { peerId: 'a'.repeat(40), metadata: { peerId: 'a'.repeat(40), capabilities: [COMPLETED_REQUESTS_CAPABILITY], offerings: [serviceBillingOffering(offer)] } } as PeerInfo;
     const verifyMetadataSignature = vi.fn(async () => true);
@@ -49,7 +49,6 @@ describe('independent service execution and pricing', () => {
     return {
       name: 'mixed', services: ['route', 'image'], maxConcurrency: 4,
       pricing: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } },
-      serviceExecution: { route: { kind: 'routing', contract: 'route-v1', path: '/route', acceptResponse: () => true } },
       serviceApiProtocols: { route: ['levanto-routing'], image: ['openai-images'] },
       serviceUnitBillingModels: {
         route: { 'levanto-routing': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } },
@@ -64,7 +63,7 @@ describe('independent service execution and pricing', () => {
   it('keeps completed requests out of legacy image metadata', () => {
     const candidate = provider();
     register(candidate);
-    expect(completedRequestOffer(candidate, 'route')).toEqual({ provider: 'mixed', service: 'route', contract: 'route-v1', priceMicroUsdc: '1000' });
+    expect(completedRequestOffer(candidate, 'route')).toEqual({ provider: 'mixed', service: 'route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' });
     expect(legacyUnitBillingModels(candidate)).toEqual({ image: candidate.serviceUnitBillingModels!.image });
     expect(inferenceServiceFields(candidate, candidate.serviceApiProtocols!)).toEqual({ image: ['openai-images'] });
   });
@@ -73,15 +72,13 @@ describe('independent service execution and pricing', () => {
     delete candidate.serviceUnitBillingModels!.route;
     expect(() => register(candidate)).not.toThrow();
     expect(completedRequestOffer(candidate, 'route')).toBeUndefined();
-    expect(candidate.serviceExecution!.route!.kind).toBe('routing');
+    expect(inferenceServiceFields(candidate, candidate.serviceApiProtocols!)).toEqual({ image: ['openai-images'] });
   });
   it('allows the same completed-request price on a TypeSafe API', () => {
     const candidate = provider();
     const model = candidate.serviceUnitBillingModels!.route!['levanto-routing']!;
     candidate.serviceApiProtocols!.route = ['typesafe-systemone'];
     candidate.serviceUnitBillingModels!.route = { 'typesafe-systemone': model };
-    candidate.serviceExecution!.route!.kind = 'custom';
-    candidate.serviceExecution!.route!.path = '/v1/systemone';
     expect(() => register(candidate)).not.toThrow();
     expect(completedRequestOffer(candidate, 'route')?.priceMicroUsdc).toBe('1000');
   });
@@ -94,10 +91,7 @@ describe('independent service execution and pricing', () => {
     unadvertised.serviceApiProtocols!.route = [];
     expect(() => register(unadvertised)).toThrow('advertised API protocol');
   });
-  it('requires an execution contract and rejects unmeasured token surcharges', () => {
-    const missing = provider();
-    delete missing.serviceExecution;
-    expect(() => register(missing)).toThrow('execution contract');
+  it('rejects unmeasured token surcharges', () => {
     const surcharge = provider();
     surcharge.pricing.defaults.inputUsdPerMillion = 1;
     expect(() => register(surcharge)).toThrow('unmeasured token charges');
@@ -108,7 +102,7 @@ describe('independent service execution and pricing', () => {
     expect(() => register(free)).not.toThrow();
     const invalid = provider();
     invalid.serviceUnitBillingModels!.image = { 'openai-images': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } };
-    expect(() => register(invalid)).toThrow('execution contract');
-    expect(() => legacyUnitBillingModels(invalid)).toThrow('legacy inference metadata');
+    expect(() => register(invalid)).not.toThrow();
+    expect(legacyUnitBillingModels(invalid)).toEqual({});
   });
 });

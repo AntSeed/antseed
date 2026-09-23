@@ -50,7 +50,7 @@ try {
     providers: [{ provider: 'openai', services: ['image'], defaultPricing: pricing, maxConcurrency: 5, currentLoad: 0,
       serviceApiProtocols: { image: ['openai-images'] }, serviceUnitBillingModels: { image: { 'openai-images': imageModel } } }],
     capabilities: [COMPLETED_REQUESTS_CAPABILITY],
-    offerings: [serviceBillingOffering({ provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' })],
+    offerings: [serviceBillingOffering({ provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing', priceMicroUsdc: '1000' })],
   };
   metadata.signature = Buffer.from(signData(wallet, encodeMetadataForSigning(metadata))).toString('hex');
   const decoded = codec.decodeMetadata(encodeMetadata(metadata));

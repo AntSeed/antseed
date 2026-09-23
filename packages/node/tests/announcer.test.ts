@@ -137,7 +137,7 @@ describe('PeerAnnouncer capabilities', () => {
 
 describe('PeerAnnouncer metadata versions', () => {
   it('signs completed-request offerings in legacy v12 alongside unchanged image billing v1', async () => {
-    const offer = { provider: 'levanto', service: 'levanto-route', contract: 'levanto-routing-v1', priceMicroUsdc: '1000' };
+    const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
     const announcer = new PeerAnnouncer({
       ...makeBaseConfig(), capabilities: [COMPLETED_REQUESTS_CAPABILITY], offerings: [serviceBillingOffering(offer)],
       providers: [{ provider: 'images', services: ['image'], maxConcurrency: 5,

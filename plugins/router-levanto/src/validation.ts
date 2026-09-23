@@ -1,4 +1,3 @@
-export const LEVANTO_ROUTING_CONTRACT = 'levanto-routing-v1';
 export const LEVANTO_ROUTING_PATH = '/_antseed/levanto-route';
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -13,8 +12,7 @@ function peerId(value: unknown): boolean {
   return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 }
 
-export function validateRoutingRequest(contract: string, input: unknown): asserts input is Record<string, unknown> {
-  if (contract !== LEVANTO_ROUTING_CONTRACT) throw new Error('Unsupported routing contract');
+export function validateRoutingRequest(input: unknown): asserts input is Record<string, unknown> {
   if (!object(input) || input.v !== 1 || ![1, 3, 5, 7, 9].includes(input.cqt as number)
     || typeof input.inputMessage !== 'string' || !input.inputMessage.trim()
     || !Number.isSafeInteger(input.promptTokens) || (input.promptTokens as number) < 0
@@ -35,8 +33,8 @@ export function validateRoutingRequest(contract: string, input: unknown): assert
   }
 }
 
-export function validateRoutingResponse(contract: string, input: unknown, request: unknown): Array<{ model: string; peer: string }> {
-  validateRoutingRequest(contract, request);
+export function validateRoutingResponse(input: unknown, request: unknown): Array<{ model: string; peer: string }> {
+  validateRoutingRequest(request);
   if (!object(input) || input.v !== 1 || input.error !== undefined || input.renewalDue !== undefined
     || typeof input.router !== 'string' || !input.router || !Array.isArray(input.ranked) || !input.ranked.length || input.ranked.length > 512) {
     throw new Error('Invalid Levanto routing response; per-response backend required');

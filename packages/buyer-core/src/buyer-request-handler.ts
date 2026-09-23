@@ -11,7 +11,7 @@ import type { BuyerPeerView } from './interfaces.js';
 import type { BuyerConnection } from './interfaces.js';
 import type { ProxyMux } from './proxy-mux.js';
 import { PaymentMux } from './payment-mux.js';
-import { SERVICE_CONTRACT_HEADER, parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { ConnectionState } from '@antseed/protocol/connection-state';
 import type { BuyerPaymentNegotiator, SelectedBillingRoute } from './buyer-payment-negotiator.js';
 import { debugLog, debugWarn } from './debug.js';
@@ -116,16 +116,13 @@ export class BuyerRequestHandler {
     const verificationMux = this._deps.getVerificationMux(peer.peerId, conn);
     const negotiator = options?.controlPlane ? null : this._deps.negotiator;
     const unitBilling = options?.unitBilling;
-    if (!unitBilling && Object.keys(req.headers).some(header => header.toLowerCase() === SERVICE_CONTRACT_HEADER)) {
-      throw new Error('Completed-request headers require an explicit completed-request request');
-    }
     if (unitBilling) {
       if (callbacks || options?.controlPlane || externalAuthPresent(req)) throw new Error('Completed-request requests require ordinary non-streaming SDK payments');
       if (!options?.acceptResponse) throw new Error('Completed-request requests require response acceptance');
       const unitBillingBody = JSON.parse(new TextDecoder().decode(req.body)) as Record<string, unknown> | null;
       if (!unitBillingBody || req.method !== 'POST'
         || unitBillingBody.service !== unitBilling.service) throw new Error('Completed-request request does not match agreed service');
-      const agreementHeaders = { 'x-antseed-provider': unitBilling.provider, [SERVICE_CONTRACT_HEADER]: unitBilling.contract };
+      const agreementHeaders = { 'x-antseed-provider': unitBilling.provider };
       for (const [header, value] of Object.entries(req.headers)) {
         const expected = agreementHeaders[header.toLowerCase() as keyof typeof agreementHeaders];
         if (expected !== undefined && value !== expected) throw new Error('Completed-request request does not match agreed offer');

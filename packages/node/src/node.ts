@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { COMPLETED_REQUESTS_CAPABILITY, serviceBillingOffering, parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
-import { completedRequestOffer, inferenceServiceFields, legacyUnitBillingModels } from './billing/service.js';
+import { completedRequestOffer, inferenceServiceFields, isLegacyInferenceService, legacyUnitBillingModels } from './billing/service.js';
 import { validateUnitBillingModel } from '@antseed/protocol/billing';
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -427,12 +427,6 @@ export class AntseedNode extends EventEmitter {
   }
 
   registerProvider(provider: Provider): void {
-    for (const [service, execution] of Object.entries(provider.serviceExecution ?? {})) {
-      if (!provider.services.includes(service) || !['routing', 'custom'].includes(execution.kind)
-        || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(execution.contract)
-        || typeof execution.acceptResponse !== 'function') throw new Error('Invalid service execution contract');
-      if (!execution.path.startsWith('/') || execution.path.startsWith('//') || /[?#\s]/.test(execution.path)) throw new Error('Invalid service endpoint');
-    }
     for (const [service, protocols] of Object.entries(provider.serviceUnitBillingModels ?? {})) {
       for (const [protocol, model] of Object.entries(protocols)) {
         if (!model || model.version !== 2) continue;
@@ -1427,7 +1421,7 @@ export class AntseedNode extends EventEmitter {
         || !await this._peerLookup.verifyMetadataSignature(metadata)
         || !metadata.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) throw new Error('Verified completed-request metadata required');
       const offer = resolveServiceBillingOffer(metadata.offerings, agreed.provider, agreed.service);
-      if (offer.contract !== agreed.contract || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Completed-request offer changed');
+      if (offer.serviceApiProtocol !== agreed.serviceApiProtocol || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Completed-request offer changed');
       if (maximum === undefined || parseMicroUsdc(offer.priceMicroUsdc) > parseMicroUsdc(maximum)) throw new Error('Unit price exceeds buyer limit');
       if (!acceptResponse) throw new Error('Completed-request requests require response acceptance');
       return this._buyerHandler.sendRequest(snapshot, request, undefined, { ...options, unitBilling: offer, acceptResponse });
@@ -1676,16 +1670,16 @@ export class AntseedNode extends EventEmitter {
         identity,
         dht: this._dht,
         get offerings() { return getServiceBillingOfferings(); },
-        providers: this._providers.filter(provider => !provider.serviceExecution || provider.services.some(service => !provider.serviceExecution?.[service])).map((p) => ({
+        providers: this._providers.filter(provider => provider.services.length === 0 || provider.services.some(service => isLegacyInferenceService(provider, service))).map((p) => ({
           provider: p.name,
-          get services() { return p.serviceExecution ? p.services.filter(service => !p.serviceExecution?.[service]) : p.services; },
+          get services() { return p.services.filter(service => isLegacyInferenceService(p, service)); },
           ...(p.serviceCategories ? { serviceCategories: inferenceServiceFields(p, p.serviceCategories) } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: inferenceServiceFields(p, p.serviceApiProtocols) } : {}),
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: legacyUnitBillingModels(p) } : {}),
           ...(p.serviceCapabilities ? { serviceCapabilities: inferenceServiceFields(p, p.serviceCapabilities) } : {}),
           maxConcurrency: p.maxConcurrency,
           isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false
-            && (!p.serviceExecution || p.services.some(service => !p.serviceExecution?.[service])),
+            && (p.services.length === 0 || p.services.some(service => isLegacyInferenceService(p, service))),
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
