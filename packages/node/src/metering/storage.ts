@@ -9,12 +9,19 @@ import type {
 import { runMigrations } from '../storage/migrate.js';
 import { meteringMigrations } from '../storage/migrations/metering/index.js';
 
+export interface FreeTierConsumption {
+  allowed: boolean;
+  remaining: number;
+  retryAfterMs: number;
+}
+
 /**
  * SQLite storage for metering data.
  * All data is stored locally on the user's machine.
  */
 export class MeteringStorage {
   private readonly db: Database.Database;
+  private lastFreeTierPruneAt: number | null = null;
 
   /**
    * Open or create the SQLite database at the given path.
@@ -311,6 +318,56 @@ export class MeteringStorage {
     };
   }
 
+  /** Atomically consume one seller free-tier request in a sliding window. */
+  consumeFreeTierRequest(input: {
+    buyerAddress: string;
+    service: string;
+    maxRequests: number;
+    windowMs: number;
+    nowMs?: number;
+  }): FreeTierConsumption {
+    const nowMs = input.nowMs ?? Date.now();
+    const windowStart = nowMs - input.windowMs;
+    const buyerAddress = input.buyerAddress.toLowerCase();
+    const pruneIntervalMs = Math.min(input.windowMs, 60 * 60_000);
+    if (
+      this.lastFreeTierPruneAt === null
+      || nowMs < this.lastFreeTierPruneAt
+      || nowMs - this.lastFreeTierPruneAt >= pruneIntervalMs
+    ) {
+      this.db.prepare('DELETE FROM free_tier_usage WHERE timestamp < ?').run(windowStart);
+      this.lastFreeTierPruneAt = nowMs;
+    }
+    const consume = this.db.transaction((): FreeTierConsumption => {
+      const row = this.db.prepare(`
+        SELECT COUNT(*) AS request_count, MIN(timestamp) AS oldest_timestamp
+        FROM free_tier_usage
+        WHERE buyer_address = ? AND timestamp >= ?
+      `).get(buyerAddress, windowStart) as {
+        request_count: number;
+        oldest_timestamp: number | null;
+      };
+
+      if (row.request_count >= input.maxRequests) {
+        const retryAfterMs = row.oldest_timestamp === null
+          ? input.windowMs
+          : Math.max(1, row.oldest_timestamp + input.windowMs - nowMs);
+        return { allowed: false, remaining: 0, retryAfterMs };
+      }
+
+      this.db.prepare(`
+        INSERT INTO free_tier_usage (buyer_address, service, timestamp)
+        VALUES (?, ?, ?)
+      `).run(buyerAddress, input.service, nowMs);
+      return {
+        allowed: true,
+        remaining: input.maxRequests - row.request_count - 1,
+        retryAfterMs: 0,
+      };
+    });
+    return consume();
+  }
+
   /** Get aggregated metering stats for a specific seller peer. */
   getEventStatsByPeer(sellerPeerId: string): {
     totalRequests: number;
@@ -363,6 +420,7 @@ export class MeteringStorage {
     receiptsDeleted: number;
     verificationsDeleted: number;
     sessionsDeleted: number;
+    freeTierUsageDeleted: number;
   } {
     const deleteEvents = this.db.prepare(
       'DELETE FROM metering_events WHERE timestamp < ?'
@@ -376,17 +434,22 @@ export class MeteringStorage {
     const deleteSessions = this.db.prepare(
       'DELETE FROM sessions WHERE started_at < ?'
     );
+    const deleteFreeTierUsage = this.db.prepare(
+      'DELETE FROM free_tier_usage WHERE timestamp < ?'
+    );
 
     const eventsResult = deleteEvents.run(timestampMs);
     const receiptsResult = deleteReceipts.run(timestampMs);
     const verificationsResult = deleteVerifications.run(timestampMs);
     const sessionsResult = deleteSessions.run(timestampMs);
+    const freeTierUsageResult = deleteFreeTierUsage.run(timestampMs);
 
     return {
       eventsDeleted: eventsResult.changes,
       receiptsDeleted: receiptsResult.changes,
       verificationsDeleted: verificationsResult.changes,
       sessionsDeleted: sessionsResult.changes,
+      freeTierUsageDeleted: freeTierUsageResult.changes,
     };
   }
 

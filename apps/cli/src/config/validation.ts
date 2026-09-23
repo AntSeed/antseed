@@ -416,6 +416,19 @@ export function validateConfig(config: AntseedConfig): string[] {
     }
   }
 
+  if (config.seller.freeTier !== undefined) {
+    const freeTier = config.seller.freeTier;
+    if (!Number.isSafeInteger(freeTier.maxRequestsPerAddress) || freeTier.maxRequestsPerAddress < 1) {
+      errors.push('seller.freeTier.maxRequestsPerAddress must be a positive safe integer');
+    }
+    if (
+      freeTier.windowMs !== undefined &&
+      (!Number.isSafeInteger(freeTier.windowMs) || freeTier.windowMs < 1_000)
+    ) {
+      errors.push('seller.freeTier.windowMs must be a safe integer >= 1000');
+    }
+  }
+
   validateVerifications('seller.verifications', config.seller.verifications, errors);
 
   if (config.relayer !== undefined) {

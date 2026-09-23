@@ -14,6 +14,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Sellers: add an optional persistent free tier for fully zero-priced services with `seller.freeTier.maxRequestsPerAddress` and a configurable sliding `windowMs`. Limits apply across all free services per authenticated buyer address, survive reconnects and restarts, return HTTP 429 with retry timing when exhausted, and leave paid traffic unchanged.
+
 - ANTS dashboard: transactions signed by an EIP-7702 smart account (for example a MetaMask smart account, which routes calls through its delegation framework) are now accepted when the same account sent them and the reviewed contract emitted an event; previously the job was reported as failed although the transaction succeeded.
 - ANTS dashboard: buyer usage rewards for the earliest recognized epoch were missed when Antscan's participant window was too short; the window now spans from the earliest claimable epoch to the current one.
 - ANTS dashboard: the Rewards page shows the connected wallet's own buyer rewards when that wallet is a buyer account, and the local identity's buyer account only when the wallet is its authorized operator (or no wallet is connected).

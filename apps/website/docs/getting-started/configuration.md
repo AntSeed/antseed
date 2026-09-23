@@ -147,7 +147,7 @@ Prefer `--data-dir` in service/systemd scripts. `ANTSEED_DATA_DIR` is equivalent
 | Section | Description |
 |---|---|
 | `identity` | Display name |
-| `seller` | Per-provider service offerings (plugin, pricing, capabilities, unit billing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
+| `seller` | Per-provider service offerings (plugin, pricing, capabilities, unit billing, categories, upstream model mapping), free-tier limits, reserve floor, max concurrent buyers, agent directory |
 | `buyer` | Max pricing thresholds, proxy port, DHT peer refresh interval |
 | `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
@@ -161,6 +161,10 @@ Everything a seller announces lives under `seller.providers[name]`. The key unde
   "seller": {
     "reserveFloor": 10,
     "maxConcurrentBuyers": 50,
+    "freeTier": {
+      "maxRequestsPerAddress": 100,
+      "windowMs": 86400000
+    },
     "providers": {
       "together": {
         "plugin": "openai",
@@ -293,6 +297,34 @@ antseed config seller set providers.together.services.deepseek-v3.1.pricing.inpu
 antseed config seller set providers.together.services.deepseek-v3.1.categories '["chat","math","coding","fast"]'
 antseed config seller set providers.together.services.deepseek-v3.1.capabilities '{"contextWindow":128000,"inputs":["text"],"toolUse":true}'
 ```
+
+## Free-Tier Limits
+
+A service is free only when its token prices and any unit-billing components are all zero. By default, free services remain unlimited for backward compatibility. Sellers can apply one persistent request allowance across all fully zero-priced services for each authenticated buyer address:
+
+```json
+{
+  "seller": {
+    "freeTier": {
+      "maxRequestsPerAddress": 100,
+      "windowMs": 86400000
+    }
+  }
+}
+```
+
+This example allows each buyer address 100 free requests in a sliding 24-hour window. The counter is seller-wide, so switching between free models or reconnecting does not reset it. Usage is stored in the seller's `metering.db` and survives restarts. Once exhausted, the seller returns HTTP `429` with `code: "free_tier_exhausted"` and a `Retry-After` header; paid services are unaffected.
+
+The limit is per buyer identity address, not per IP address. A user can create another identity, so this controls repeated use by one address rather than providing Sybil resistance. Use nonzero service pricing when stronger economic gating is required.
+
+Configure it from the CLI or edit `config.json` directly:
+
+```bash
+antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.windowMs 86400000
+```
+
+Omit `windowMs` to use the 24-hour default. Remove `seller.freeTier` to restore unlimited zero-priced service access.
 
 ## Model Health Checks
 

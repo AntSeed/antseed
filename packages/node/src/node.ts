@@ -85,6 +85,8 @@ import {
   FreeUsageClient,
   BuyerFreeUsageManager,
   SellerFreeUsageManager,
+  SellerFreeTierLimiter,
+  type SellerFreeTierConfig,
   StakingClient,
   ChannelStore,
   CHANNEL_KIND,
@@ -267,6 +269,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Optional per-address request limit for zero-priced seller services. */
+  freeTier?: SellerFreeTierConfig;
   /** Seller-side deposit-sweep relayer settings (opt-out, ON by default). */
   relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
@@ -1679,6 +1683,19 @@ export class AntseedNode extends EventEmitter {
       );
     }
 
+    const sellerFreeTierLimiter = this._config.freeTier
+      ? new SellerFreeTierLimiter(this._config.freeTier, this._metering)
+      : null;
+    if (sellerFreeTierLimiter) {
+      debugLog(
+        `[Node] Seller free tier enabled: ${sellerFreeTierLimiter.maxRequestsPerAddress} request(s) ` +
+        `per buyer address every ${sellerFreeTierLimiter.windowMs}ms`,
+      );
+      if (!this._metering) {
+        debugWarn('[Node] Seller free-tier limits are using in-memory accounting because metering storage is unavailable; counters reset on restart.');
+      }
+    }
+
     // Create seller request handler
     this._sellerHandler = new SellerRequestHandler({
       identity,
@@ -1686,6 +1703,7 @@ export class AntseedNode extends EventEmitter {
       provers: this._provers,
       sellerPaymentManager: this._sellerPaymentManager,
       sellerFreeUsageManager: this._sellerFreeUsageManager,
+      sellerFreeTierLimiter,
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,

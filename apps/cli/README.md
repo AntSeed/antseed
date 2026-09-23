@@ -133,6 +133,15 @@ antseed config seller add-service openai gpt-image-1 \
 
 `--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.
 
+Services whose token and unit prices are all zero are unlimited unless the seller configures a persistent per-address free tier:
+
+```bash
+antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.windowMs 86400000
+```
+
+This allows each authenticated buyer address 100 requests across all fully zero-priced services in a sliding 24-hour window. Reconnects and seller restarts do not reset the counter. Exhausted buyers receive HTTP 429 with `free_tier_exhausted`; paid services are unaffected. The limit is per buyer identity, not per IP, so creating another identity can bypass it.
+
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
@@ -181,6 +190,10 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
   "seller": {
     "publicAddress": "peer.example.com:6882",
     "maxUploadBodyBytes": 134217728,
+    "freeTier": {
+      "maxRequestsPerAddress": 100,
+      "windowMs": 86400000
+    },
     "providers": {
       "anthropic": {
         "plugin": "anthropic",
@@ -267,6 +280,10 @@ antseed config seller set publicAddress "peer.example.com:6882"
 
 # Raise the seller per-request upload cap (bytes) for large Codex-style payloads
 antseed config seller set maxUploadBodyBytes 134217728
+
+# Cap zero-priced services per authenticated buyer address
+antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.windowMs 86400000
 
 # Buyer max pricing, DHT peer refresh cadence, and metadata fetch timeout
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
