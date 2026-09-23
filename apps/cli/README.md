@@ -133,6 +133,16 @@ antseed config seller add-service openai gpt-image-1 \
 
 `--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.
 
+Services whose token and unit prices are all zero are unlimited unless the seller configures a persistent free tier, keyed by buyer address, remote IP, or both:
+
+```bash
+antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.maxRequestsPerIp 300
+antseed config seller set freeTier.windowMs 86400000
+```
+
+This allows each authenticated buyer address 100 requests, and each remote IP 300 requests, across all fully zero-priced services in a sliding 24-hour window. A request is served only while every configured limit still has headroom. Reconnects and seller restarts do not reset the counters. Exhausted buyers receive HTTP 429 with `free_tier_exhausted` and a `limitedBy` field (`address` or `ip`); paid services are unaffected. The address limit alone can be bypassed by creating another identity; the IP limit (IPv6 grouped by /64) closes that gap at the cost of sharing the allowance between users behind one NAT, so set it higher than the per-address limit.
+
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
@@ -181,6 +191,11 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
   "seller": {
     "publicAddress": "peer.example.com:6882",
     "maxUploadBodyBytes": 134217728,
+    "freeTier": {
+      "maxRequestsPerAddress": 100,
+      "maxRequestsPerIp": 300,
+      "windowMs": 86400000
+    },
     "providers": {
       "anthropic": {
         "plugin": "anthropic",
@@ -267,6 +282,11 @@ antseed config seller set publicAddress "peer.example.com:6882"
 
 # Raise the seller per-request upload cap (bytes) for large Codex-style payloads
 antseed config seller set maxUploadBodyBytes 134217728
+
+# Cap zero-priced services per authenticated buyer address and per remote IP
+antseed config seller set freeTier.maxRequestsPerAddress 100
+antseed config seller set freeTier.maxRequestsPerIp 300
+antseed config seller set freeTier.windowMs 86400000
 
 # Buyer max pricing, DHT peer refresh cadence, and metadata fetch timeout
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
