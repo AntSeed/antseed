@@ -17,7 +17,7 @@ import {
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
 import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
-import { COMPLETED_REQUESTS_CAPABILITY, serviceBillingOffering, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { COMPLETED_REQUESTS_CAPABILITY, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { decodeMetadata, encodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { verifySignature, hexToBytes } from '../src/p2p/identity.js';
 
@@ -136,25 +136,31 @@ describe('PeerAnnouncer capabilities', () => {
 });
 
 describe('PeerAnnouncer metadata versions', () => {
-  it('signs completed-request offerings in legacy v12 alongside unchanged image billing v1', async () => {
+  it('signs native completed-request and image models together in metadata v12', async () => {
     const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
     const announcer = new PeerAnnouncer({
-      ...makeBaseConfig(), capabilities: [COMPLETED_REQUESTS_CAPABILITY], offerings: [serviceBillingOffering(offer)],
+      ...makeBaseConfig(), capabilities: [COMPLETED_REQUESTS_CAPABILITY],
       providers: [{ provider: 'images', services: ['image'], maxConcurrency: 5,
         serviceApiProtocols: { image: ['openai-images'] },
         serviceUnitBillingModels: { image: { 'openai-images': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] } } },
+      }, { provider: offer.provider, services: [offer.service], maxConcurrency: 5,
+        pricing: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } },
+        serviceApiProtocols: { [offer.service]: [offer.serviceApiProtocol] },
+        serviceUnitBillingModels: { [offer.service]: { [offer.serviceApiProtocol]: { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(offer.priceMicroUsdc) / 1_000_000 }] } } },
       }],
     });
     await announcer.announce();
     const metadata = announcer.getLatestMetadata()!;
     const decoded = decodeMetadata(encodeMetadata(metadata));
     expect(decoded.version).toBe(12);
+    expect(decoded.offerings).toBeUndefined();
     expect(decoded.capabilities).toContain(COMPLETED_REQUESTS_CAPABILITY);
     expect(decoded.providers[0]?.services).toEqual(['image']);
     expect(decoded.providers[0]?.serviceUnitBillingModels?.image?.['openai-images']?.version).toBe(1);
-    expect(resolveServiceBillingOffer(decoded.offerings, offer.provider, offer.service)).toEqual(offer);
+    expect(resolveServiceBillingOffer(decoded.providers, offer.provider, offer.service)).toEqual(offer);
     expect(await verifySignature(decoded.peerId, hexToBytes(decoded.signature), encodeMetadataForSigning(decoded))).toBe(true);
-    decoded.offerings![0]!.pricing.pricePerUnit = 1;
+    const model = decoded.providers.find(provider => provider.provider === offer.provider)!.serviceUnitBillingModels![offer.service]![offer.serviceApiProtocol]!;
+    model.components[0]!.priceUsd = 0.001001;
     expect(await verifySignature(decoded.peerId, hexToBytes(decoded.signature), encodeMetadataForSigning(decoded))).toBe(false);
   });
   it('announces current-version metadata carrying configured billing models', async () => {

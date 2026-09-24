@@ -139,6 +139,9 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2
     devDependencies:
+      '@antseed/router-local':
+        specifier: workspace:*
+        version: link:../../plugins/router-local
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.33
@@ -887,10 +890,6 @@ importers:
         version: 2.1.9(@types/node@22.7.5)(lightningcss@1.27.0)(sass@1.97.3)(terser@5.46.0)
 
   plugins/router-levanto:
-    dependencies:
-      '@antseed/router-local':
-        specifier: workspace:*
-        version: link:../router-local
     devDependencies:
       '@antseed/node':
         specifier: workspace:*
@@ -904,6 +903,9 @@ importers:
 
   plugins/router-local:
     dependencies:
+      '@antseed/router-levanto':
+        specifier: workspace:*
+        version: link:../router-levanto
       '@antseed/router-core':
         specifier: workspace:*
         version: link:../../packages/router-core

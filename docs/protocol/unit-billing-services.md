@@ -23,8 +23,8 @@ serviceApiProtocols: { 'levanto-route': ['levanto-routing'] },
 serviceUnitBillingModels: {
   'levanto-route': {
     'levanto-routing': {
-      version: 2,
-      components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }],
+      version: 1,
+      components: [{ unit: 'completed_requests', priceUsd: 0.001 }],
     },
   },
 },
@@ -38,7 +38,7 @@ adapter only identifies the protocol. Providers are responsible for validating
 their own API requests and returning non-success responses for rejected work;
 the generic seller handler does not inspect Levanto's payload schema.
 
-`1000` micro-USDC is 0.001 USDC; `'0'` makes the service free. The current Levanto
+`priceUsd: 0.001` costs 1000 micro-USDC; `priceUsd: 0` makes the service free. The current Levanto
 buyer supports completed-request pricing, not token-priced routing. Nonzero token
 surcharges are rejected because the completed-request adapter does not measure
 backend tokens. Supporting token-priced routing requires actual usage reporting.
@@ -55,8 +55,8 @@ backend tokens. Supporting token-priced routing requires actual usage reporting.
    once. It does not prepay the routing charge.
 4. The seller measures successful provider responses; the buyer additionally
    validates and accepts delivery. The shared calculator computes the charge;
-   version-2 usage reports contain
-   `{version: 2, units: {completed_requests: '1'}}` (or `'0'`).
+   existing version-1 usage reports contain
+   `{version: 1, units: {completed_requests: '1'}}` (or `'0'`).
 5. The existing payment manager signs, persists and settles cumulative
    SpendingAuth. Failed, cancelled and rejected responses receive no buyer
    authorization; duplicate response/NeedAuth processing cannot charge twice.
@@ -85,22 +85,31 @@ Existing image-v1 metadata, prices, rounding and `output_images` reports are
 unchanged. Token billing is unchanged. New completed-request purchases require
 upgraded peers advertising `payments.completed-requests.v1`.
 
-Discovery keeps signed metadata v12. Offers use
-`unit-billing.v2:<provider>:<api-protocol>` with the existing per-request pricing
-field; float32 prices must round-trip to the exact micro-USDC amount. Routing and
-new billing modes stay out of legacy inference listings. Old buyers can still
-buy existing token/image services from an upgraded mixed seller. Routing health
-probes are skipped based on API format, not pricing.
+Discovery keeps signed metadata v12. Both image and completed-request prices use
+`providers[].serviceUnitBillingModels`: the existing version-1 component layout
+with `priceUsd`. `output_images` keeps unit ID 0; `completed_requests` adds ID 1.
+There is no special `offerings` entry or new metadata layout. Completed-request
+prices must round to the same micro-USDC amount before and after the existing
+float32 metadata encoding; prices that lose that precision are rejected.
+
+Old buyers can still buy from upgraded sellers advertising only existing image
+and token services. An old decoder rejects the **entire announcement** containing
+the unknown `completed_requests` unit, not just that service. Keeping metadata at
+v12 does not make the new unit readable by old buyers. Initially, run completed-request
+services on separate peers. Mixed sellers require upgraded buyers for all their
+services. Routing and completed-request services stay out of ordinary inference
+listings. Routing health probes are skipped based on API format, not pricing.
 
 The unreleased generic execution API and contract-based offering names are not
 preserved. Buyers and sellers using those branch-only formats must upgrade.
 
 ## Verification
 
-After building, run `node scripts/check-unit-billing-compatibility.mjs`. It loads
-frozen pre-change code from `172e4fc986484c9c1adbbfccd076427850dd57c7` and checks
-metadata signatures and legacy image billing: two $0.04 images still cost 80000
-micro-USDC with a v1 usage report. Tests additionally cover schema validation,
-price limits, acceptance, ordinary concurrency and mixed-service operation.
+After building, run `pnpm --filter @antseed/protocol --filter @antseed/node run test`.
+The regular suites cover metadata encoding and signatures, image billing,
+completed-request schema validation, price limits, response acceptance,
+concurrency and mixed-service operation. They use the current source tree and
+do not fetch or execute historical buyer code; compatibility against an old buyer
+implementation is not tested automatically.
 Live settlement and Levanto's private backend still need an authenticated smoke
 test. See the router README for selection, fallback and conversation accounting.

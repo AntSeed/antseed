@@ -151,6 +151,53 @@ describe('BuyerPaymentManager', () => {
       await manager.authorizeUnitResponse(peer, 'fixed', mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
     });
+    it('expires finished entries without discarding pending or accepted unpaid requests', async () => {
+      await open();
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        for (const requestId of ['pending', 'accepted', 'rejected', 'authorized']) {
+          manager.trackUnitRequest(peer, requestId, offer);
+        }
+        manager.observeUnitResponse(peer, 'accepted', true);
+        manager.observeUnitResponse(peer, 'rejected', false);
+        manager.observeUnitResponse(peer, 'authorized', true);
+        await manager.authorizeUnitResponse(peer, 'authorized', mux);
+        manager.trackUnitRequest(peer, 'free', { ...offer, priceMicroUsdc: '0' });
+        manager.observeUnitResponse(peer, 'free', true);
+        manager.trackRequestBilling('image', {
+          context: { sellerPeerId: peer, provider: 'images', service: 'image' }, requestFacts: {},
+          unitModel: { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] },
+        });
+        clock.mockReturnValue(now + 5 * 60_000 + 1);
+        for (const requestId of ['rejected', 'authorized', 'free', 'image']) {
+          expect(manager.getRequestBilling(requestId)).toBeUndefined();
+        }
+        for (const requestId of ['pending', 'accepted']) {
+          expect(manager.getRequestBilling(requestId)).toBeDefined();
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    });
+    it('trims only discardable entries and rejects overflow without losing unpaid requests', () => {
+      manager.trackUnitRequest(peer, 'accepted', offer);
+      manager.observeUnitResponse(peer, 'accepted', true);
+      manager.trackUnitRequest(peer, 'rejected', offer);
+      manager.observeUnitResponse(peer, 'rejected', false);
+      for (let index = 0; index < 510; index += 1) {
+        manager.trackUnitRequest(peer, `pending-${index}`, offer);
+      }
+      manager.trackUnitRequest(peer, 'last', offer);
+      expect(manager.getRequestBilling('rejected')).toBeUndefined();
+      expect(manager.getRequestBilling('accepted')).toBeDefined();
+      expect(manager.getRequestBilling('pending-0')).toBeDefined();
+      expect(manager.getRequestBilling('last')).toBeDefined();
+      expect(() => manager.trackUnitRequest(peer, 'overflow', offer)).toThrow('Too many unresolved');
+      expect(manager.getRequestBilling('overflow')).toBeUndefined();
+      expect(manager.getRequestBilling('accepted')).toBeDefined();
+      expect(manager.getRequestBilling('pending-0')).toBeDefined();
+    });
     it('enforces the local fee budget and prevents token-path double charging', async () => {
       await open();
       expect(() => manager.trackUnitRequest(peer, 'expensive', { ...offer, priceMicroUsdc: '100001' })).toThrow('budget');
@@ -174,7 +221,7 @@ describe('BuyerPaymentManager', () => {
       manager.observeUnitResponse(peer, 'fixed', true);
       await Promise.all([
         manager.authorizeUnitResponse(peer, 'fixed', mux),
-        manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '9999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux),
+        manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 1, units: { completed_requests: '1' } }, requiredCumulativeAmount: '9999999', currentAcceptedCumulative: '0', deposit: '10000000' }, mux),
       ]);
       expect(mux.sentSpendingAuths).toHaveLength(2);
       for (const auth of mux.sentSpendingAuths as Array<{ cumulativeAmount: string; metadata: string }>) {
@@ -200,7 +247,7 @@ describe('BuyerPaymentManager', () => {
     it('handles NeedAuth before response without signing until delivery', async () => {
       const channelId = await open();
       manager.trackUnitRequest(peer, 'fixed', offer);
-      await manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+      await manager.handleNeedAuth(peer, { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 1, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
       manager.observeUnitResponse(peer, 'fixed', true);
       await manager.authorizeUnitResponse(peer, 'fixed', mux);
@@ -210,7 +257,7 @@ describe('BuyerPaymentManager', () => {
       const channelId = await open();
       manager.trackUnitRequest(peer, 'fixed', offer);
       manager.observeUnitResponse(peer, 'fixed', true);
-      const payload = { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 2 as const, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' };
+      const payload = { channelId, requestId: 'fixed', lastRequestCost: '1000', billingUsage: { version: 1 as const, units: { completed_requests: '1' } }, requiredCumulativeAmount: '1000', currentAcceptedCumulative: '0', deposit: '10000000' };
       for (const patch of [{ lastRequestCost: '1001' }, { requestId: 'unknown' }, { channelId: 'wrong' }, { inputTokens: '1' }, { billingUsage: undefined }, { billingUsage: { version: 1 as const, units: { output_images: '1' } } }]) {
         await manager.handleNeedAuth(peer, { ...payload, ...patch }, mux);
       }
@@ -221,7 +268,7 @@ describe('BuyerPaymentManager', () => {
       const channelId = await open();
       manager.trackUnitRequest(peer, 'price-change', offer);
       manager.observeUnitResponse(peer, 'price-change', true);
-      await manager.handleNeedAuth(peer, { channelId, requestId: 'price-change', lastRequestCost: '2000', billingUsage: { version: 2, units: { completed_requests: '1' } }, requiredCumulativeAmount: '2000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
+      await manager.handleNeedAuth(peer, { channelId, requestId: 'price-change', lastRequestCost: '2000', billingUsage: { version: 1, units: { completed_requests: '1' } }, requiredCumulativeAmount: '2000', currentAcceptedCumulative: '0', deposit: '10000000' }, mux);
       expect(mux.sentSpendingAuths).toHaveLength(0);
       await manager.authorizeUnitResponse(peer, 'price-change', mux);
       expect(mux.sentSpendingAuths).toHaveLength(1);

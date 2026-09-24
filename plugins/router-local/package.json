@@ -20,6 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@antseed/router-levanto": "workspace:*",
     "@antseed/router-core": "workspace:*"
   },
   "peerDependencies": {

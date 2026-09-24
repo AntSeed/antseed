@@ -1,4 +1,5 @@
-import type { AntseedRouterPlugin } from '@antseed/node';
+import type { AntseedRouterPlugin, RoutingUsageObservation } from '@antseed/node';
+import { LevantoRoutingAdapter, levantoRoutingMetadata } from '@antseed/router-levanto';
 import { WELL_KNOWN_TOOL_HINTS, formatToolHints } from '@antseed/router-core';
 import { LocalRouter, type BuyerMaxPricingConfig } from './router.js';
 
@@ -139,12 +140,19 @@ const plugin: AntseedRouterPlugin = {
     if (maxPeerStalenessMs !== undefined && Number.isNaN(maxPeerStalenessMs)) {
       throw new Error('ANTSEED_MAX_PEER_STALENESS_MS must be a valid number');
     }
-    return new LocalRouter({
+    const adapter = new LevantoRoutingAdapter();
+    return Object.assign(new LocalRouter({
       minReputation,
       maxPricing,
       maxFailures,
       failureCooldownMs,
       maxPeerStalenessMs,
+    }), {
+      autoRouteServiceId: 'levanto-auto',
+      routingMetadata: structuredClone(levantoRoutingMetadata),
+      recordUsage: (observation: RoutingUsageObservation) => adapter.observations.record(observation),
+      resetRouting: () => adapter.reset(),
+      selectRoute: adapter.selectRoute.bind(adapter),
     });
   },
 };

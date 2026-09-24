@@ -37,9 +37,9 @@ import {
   computeCostUsdc,
   type ServicePricing,
 } from './pricing.js';
-import type { UnitBillingContext, UnitBillingModel, UnitBillingUsage } from '@antseed/protocol/billing';
+import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
-import { completedRequestBillingModel, evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { completedRequestBillingModel, evaluateUnitBilling, isCompletedRequestBillingModel, isFreeUnitBillingModel, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { completedRequestUsage } from './unit-billing.js';
 import { buyerFault, faultCodeOf } from './errors.js';
 import { parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
@@ -62,7 +62,7 @@ function countOutputImages(usage: UnitBillingUsage | undefined): bigint {
 }
 
 function validateUnitNormalizedCost(
-  model: UnitBillingModel,
+  model: UnitBillingModelV1,
   context: UnitBillingContext,
   usage: UnitBillingUsage,
 ): bigint {
@@ -102,7 +102,7 @@ export interface PerRequestAuthResult {
 export interface BuyerRequestBillingEntry {
   context: UnitBillingContext;
   requestFacts: ImageRequestFacts;
-  unitModel?: UnitBillingModel;
+  unitModel?: UnitBillingModelV1;
   tokenPricing?: ServicePricing;
   observedUnitUsage?: UnitBillingUsage;
   accepted?: boolean;
@@ -112,6 +112,13 @@ export interface BuyerRequestBillingEntry {
 
 interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
   createdAtMs: number;
+}
+
+function canDiscardRequestBilling(entry: BuyerRequestBillingEntry): boolean {
+  return !isCompletedRequestBillingModel(entry.unitModel)
+    || entry.accepted === false
+    || Boolean(entry.authorization)
+    || (entry.accepted === true && entry.unitModel !== undefined && isFreeUnitBillingModel(entry.unitModel));
 }
 
 interface PendingReserveAuthorization {
@@ -180,7 +187,7 @@ export class BuyerPaymentManager {
 
   bindUnitRequestChannel(peerId: string, requestId: string): void {
     const entry = this._requestBillingEntries.get(requestId);
-    if (!entry || entry.context.sellerPeerId !== peerId || entry.unitModel?.version !== 2) throw new Error('Unknown unit-billed request');
+    if (!entry || entry.context.sellerPeerId !== peerId || !isCompletedRequestBillingModel(entry.unitModel)) throw new Error('Unknown unit-billed request');
     const session = this.getActiveSession(peerId);
     if (!session || !this._confirmedPeers.has(peerId)) return;
     if (entry.channelId && entry.channelId !== session.sessionId) throw new Error('Unit request channel changed before delivery');
@@ -189,7 +196,7 @@ export class BuyerPaymentManager {
 
   observeUnitResponse(peerId: string, requestId: string, accepted: boolean): void {
     const entry = this._requestBillingEntries.get(requestId);
-    if (!entry || entry.context.sellerPeerId !== peerId || entry.unitModel?.version !== 2) throw new Error('Unknown unit-billed request');
+    if (!entry || entry.context.sellerPeerId !== peerId || !isCompletedRequestBillingModel(entry.unitModel)) throw new Error('Unknown unit-billed request');
     if (entry.accepted !== undefined) return;
     entry.accepted = accepted;
     this.recordObservedUnitUsage(requestId, completedRequestUsage(accepted));
@@ -803,7 +810,7 @@ export class BuyerPaymentManager {
 
   private _cleanupRequestBillingCache(now = Date.now()): void {
     for (const [requestId, entry] of this._requestBillingEntries) {
-      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS && (entry.unitModel?.version !== 2 || entry.accepted === false || entry.authorization || (entry.accepted === true && entry.unitModel.components[0]?.priceMicroUsdc === '0'))) {
+      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS && canDiscardRequestBilling(entry)) {
         this.clearRequestBilling(requestId);
       }
     }
@@ -811,7 +818,7 @@ export class BuyerPaymentManager {
 
   private _trimRequestBillingCache(): void {
     while (this._requestBillingEntries.size > MAX_REQUEST_BILLING_ENTRIES) {
-      const oldest = [...this._requestBillingEntries].find(([, entry]) => entry.unitModel?.version !== 2 || entry.accepted === false || entry.authorization || (entry.accepted === true && entry.unitModel.components[0]?.priceMicroUsdc === '0'))?.[0];
+      const oldest = [...this._requestBillingEntries].find(([, entry]) => canDiscardRequestBilling(entry))?.[0];
       if (oldest === undefined) throw new Error('Too many unresolved unit-billed requests');
       this.clearRequestBilling(oldest);
     }
@@ -1272,7 +1279,7 @@ export class BuyerPaymentManager {
       : undefined;
 
     const unitBillingModel = requestBilling?.unitModel;
-    const completedRequest = unitBillingModel?.version === 2;
+    const completedRequest = isCompletedRequestBillingModel(unitBillingModel);
     if (completedRequest && requestBilling) {
       if (requestBilling.context.sellerPeerId !== sellerPeerId || requestBilling.accepted !== true
         || requestBilling.channelId !== session.sessionId || !this._confirmedPeers.has(sellerPeerId)) throw new Error('Unit billing requires validated response authorization on its original channel');
@@ -1509,7 +1516,7 @@ export class BuyerPaymentManager {
     }
 
     const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
-    if (requestBilling?.unitModel?.version === 2) {
+    if (requestBilling?.unitModel && isCompletedRequestBillingModel(requestBilling.unitModel)) {
       if (requestBilling.context.sellerPeerId !== sellerPeerId || payload.channelId !== session.sessionId
         || payload.lastRequestCost === undefined || !/^(0|[1-9]\d*)$/.test(payload.lastRequestCost)
         || !payload.billingUsage || [payload.inputTokens, payload.outputTokens, payload.cachedInputTokens, payload.freshInputTokens].some(value => value !== undefined && value !== '0')) return;
@@ -1527,7 +1534,7 @@ export class BuyerPaymentManager {
       } catch (error) { debugWarn('Unit billing authorization rejected: ' + String(error)); }
       return;
     }
-    if (payload.billingUsage?.version === 2) return;
+    if (payload.billingUsage?.units?.completed_requests !== undefined) return;
     if (this._unitBillingPeers.has(sellerPeerId) && !this._requestService.get(payload.requestId)) return;
     const buyerService = requestBilling?.context.service
       ?? this._requestService.get(payload.requestId);

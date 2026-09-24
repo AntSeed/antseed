@@ -1105,9 +1105,7 @@ export class BuyerProxy {
   }
 
   private _defaultSelection(): RoutingSelection {
-    return this._node.router?.selectRoute
-      ? { kind: 'router', ...(this._node.router.defaultRoutingService ? { service: structuredClone(this._node.router.defaultRoutingService) } : {}) }
-      : { kind: 'model', model: null }
+    return { kind: 'model', model: null }
   }
 
   private _validateRoutingSelection(value: unknown): asserts value is RoutingSelection {
@@ -1115,7 +1113,7 @@ export class BuyerProxy {
     if (value.kind === 'model' && value.model !== null && !isValidRoutedModelTarget(value.model)) throw new Error('Invalid model selection')
     if (value.kind === 'router') {
       const router = this._node.router
-      if (!router?.selectRoute) throw new Error('Load a model-selection router before selecting router mode')
+      if (!router?.selectRoute) throw new Error('The loaded router does not support routing-service selection')
       const metadata = router.routingMetadata
       if (metadata) validateRoutingServiceMetadata(metadata)
       resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, value.preferences ?? {})
@@ -2438,7 +2436,7 @@ export class BuyerProxy {
       res.once('finish', releaseConversationRouting)
       res.once('close', releaseConversationRouting)
       try {
-        if (!selectedRouter?.selectRoute) throw new Error('Load a model-selection router before selecting router mode')
+        if (!selectedRouter?.selectRoute) throw new Error('The loaded router does not support routing-service selection')
         if (conversationIdentity?.isUserThread && trackedConversationKey
           && (storedConversation || !isTitleGenerationRequest(conversationBody))) {
           const tracked = this._conversations.touch({

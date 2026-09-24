@@ -1,8 +1,9 @@
 # Levanto buyer router
 
-`@antseed/router-levanto` is a buyer-only plugin. It asks a selected AntSeed
+`@antseed/router-levanto` is the buyer-only Levanto adapter used by the existing
+`local` router. It asks a selected AntSeed
 routing-service peer for ranked recommendations, then uses normal AntSeed
-inference execution. The registry alias is `levanto-router`.
+inference execution. Buyers select a routing service, not a different router plugin.
 
 The remote recommendation endpoint is `POST /_antseed/levanto-route`. This is
 separate from the generic local `/_antseed/route` control API, which changes the
@@ -15,29 +16,35 @@ is not part of the buyer interface. Generic completed-request transport remains 
 
 ## Select the router
 
-Install the matching SDK/CLI and this plugin. Once published:
+Install the matching SDK/CLI and local router, which includes this adapter.
+Once published:
 
 ```bash
-antseed plugin add @antseed/router-levanto
+antseed plugin add @antseed/router-local
 antseed config buyer set selection '{"kind":"router","service":{"peerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"levanto","serviceId":"levanto-route"},"preferences":{"cqt":"5"}}'
-export ANTSEED_MAX_ROUTING_FEE_MICRO_USDC=1000
-antseed buyer start --router levanto-router
+antseed buyer start
 ```
 
 Replace the example peer ID with the selected routing-service peer's actual ID.
 The buyer never substitutes another routing-service peer because it is cheaper.
 The selected peer must advertise a compatible `levanto-routing` completed-request
-offer. `ANTSEED_MAX_ROUTING_FEE_MICRO_USDC` is a required buyer limit, not a price.
+offer. Routing purchases use the selected service's advertised price, with no
+separate routing-fee setting. Each purchase is bounded to that price snapshot;
+there is no user-configured routing-price ceiling across future purchases.
+Starting the local router does not enable routing-service mode:
+without an explicit selection it stays in model mode.
 
 This is a limitation of the current Levanto payment adapter, not a requirement
 of the generic router interface. Routing selects an inference destination;
 billing determines how a remote service is paid. The adapter currently does not
 support selecting token-based or other billing modes for the recommendation.
 
-`LEVANTO_SELLER_PEER_ID` can provide the default routing-service target when
-`buyer.selection.service` is not set. Otherwise select the target through
-configuration or the local route endpoint; there is no cheapest-peer default.
-The remaining plugin settings are the existing local-router policy settings.
+Select the exact peer, provider and service through `buyer.selection` or the local
+route endpoint; there is no separate seller-peer setting or cheapest-peer default.
+The advertised `levanto-routing` protocol identifies compatible services, rather
+than a hardcoded provider name. The remaining plugin settings are the existing
+local-router policy settings. Routing services stay out of the inference-model
+catalog; this change does not add a desktop picker.
 
 In router mode, messages-style requests using `model: "antseed"` or
 `model: "levanto-auto"` use the selected router, ignoring an old fixed-model
@@ -226,7 +233,7 @@ The SDK uses the same unit-cost evaluator and cumulative payment channel as imag
 billing, but a different measurement adapter. Images measure `output_images`;
 routing measures accepted `completed_requests`. The SDK supplies the existing
 provider header; no unit-price or service-contract header is sent. The buyer keeps the
-selected advertised price and maximum locally. A seller price change after
+selected advertised price locally and uses it as the purchase maximum. A seller price change after
 discovery can therefore cause a payment disagreement after execution, but cannot
 automatically increase the buyer's authorization. See
 `docs/protocol/unit-billing-services.md` for provider configuration.
@@ -236,9 +243,15 @@ Levanto's payload schema. If a provider returns HTTP success with an invalid
 payload, the buyer rejects it and will not authorize the seller's charge.
 
 The endpoint and `v: 1` request/response bodies identify the routing format;
-there is no separate execution-contract setting. Upgraded buyers and sellers opt into
-completed-request billing. Existing token/image buyers keep their current formats
-and cannot accidentally buy routing as inference.
+there is no separate execution-contract setting. Completed-request pricing uses
+the existing version-1 component shape, for example
+`{ unit: 'completed_requests', priceUsd: 0.001 }`, directly in
+`providers[].serviceUnitBillingModels`. Signed metadata stays at v12; no special
+`offerings` entry is needed. Existing image/token-only announcements remain readable
+by old buyers, but an old buyer rejects the whole announcement if it includes the
+new unit. Run routing services on separate peers initially; mixed sellers require
+upgraded buyers for all their services. Buyers and sellers must both upgrade to use
+completed-request billing.
 
 The external seller must implement the advertised Levanto routing API and
 accept `POST /_antseed/levanto-route` with `service: "levanto-route"`, `v`, numeric `cqt`,

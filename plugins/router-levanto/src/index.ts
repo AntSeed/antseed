@@ -1,1 +1,1 @@
-export { routerPlugin as default, routerPlugin, LevantoRoutingAdapter } from './router.js';
+export { LevantoRoutingAdapter, levantoRoutingMetadata } from './router.js';

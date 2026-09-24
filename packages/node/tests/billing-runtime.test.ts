@@ -57,14 +57,14 @@ describe("unit billing runtime", () => {
     const result = computeFinalUnitBilling(completedRequestBillingModel('1000'), requestContext, routeResponse, undefined, true);
     expect(result.costUsdc).toBe(1000n);
     expect(result.usage).toEqual({ units: { completed_requests: 1 } });
-    expect(result.billingUsage).toEqual({ version: 2, units: { completed_requests: '1' } });
+    expect(result.billingUsage).toEqual({ version: 1, units: { completed_requests: '1' } });
     expect(result.tokenUsage).toEqual({ inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 });
   });
   it('requires explicit acceptance and does not bill failures or rejected responses', () => {
     const model = completedRequestBillingModel('1000');
     expect(() => computeFinalUnitBilling(model, requestContext, routeResponse)).toThrow('acceptance');
     expect(computeFinalUnitBilling(model, requestContext, routeResponse, undefined, false).costUsdc).toBe(0n);
-    expect(computeFinalUnitBilling(model, requestContext, { ...routeResponse, statusCode: 500 }).billingUsage).toEqual({ version: 2, units: { completed_requests: '0' } });
+    expect(computeFinalUnitBilling(model, requestContext, { ...routeResponse, statusCode: 500 }).billingUsage).toEqual({ version: 1, units: { completed_requests: '0' } });
     expect(computeFinalUnitBilling(completedRequestBillingModel('0'), requestContext, routeResponse, undefined, true).costUsdc).toBe(0n);
   });
   it("rejects positive billingUsage cost when buyer recomputation is zero", () => {

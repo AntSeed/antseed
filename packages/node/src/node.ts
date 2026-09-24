@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
-import { COMPLETED_REQUESTS_CAPABILITY, serviceBillingOffering, parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
-import { completedRequestOffer, inferenceServiceFields, isLegacyInferenceService, legacyUnitBillingModels } from './billing/service.js';
-import { validateUnitBillingModel } from '@antseed/protocol/billing';
+import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { completedRequestOffer } from './billing/service.js';
+import { isCompletedRequestBillingModel, validateUnitBillingModelV1 } from '@antseed/protocol/billing';
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IDENTITY_HISTORY_TTL_MS, IdentityHistoryCollector } from './reputation/identity-history.js';
@@ -429,12 +429,11 @@ export class AntseedNode extends EventEmitter {
   registerProvider(provider: Provider): void {
     for (const [service, protocols] of Object.entries(provider.serviceUnitBillingModels ?? {})) {
       for (const [protocol, model] of Object.entries(protocols)) {
-        if (!model || model.version !== 2) continue;
-        const errors = validateUnitBillingModel(model);
+        if (!model || !isCompletedRequestBillingModel(model)) continue;
+        const errors = validateUnitBillingModelV1(model);
         if (errors.length) throw new Error(errors.join('; '));
         if (!provider.services.includes(service) || !provider.serviceApiProtocols?.[service]?.some(advertised => advertised === protocol)) throw new Error('Completed requests require an advertised API protocol');
-        const offer = completedRequestOffer(provider, service)!;
-        serviceBillingOffering(offer);
+        completedRequestOffer(provider, service);
         const pricing = provider.pricing.services?.[service] ?? provider.pricing.defaults;
         if (pricing.inputUsdPerMillion !== 0 || pricing.outputUsdPerMillion !== 0 || (pricing.cachedInputUsdPerMillion ?? 0) !== 0) {
           throw new Error('Completed-request pricing cannot include unmeasured token charges');
@@ -1420,7 +1419,7 @@ export class AntseedNode extends EventEmitter {
       if (!metadata || metadata.peerId !== snapshot.peerId || !this._peerLookup
         || !await this._peerLookup.verifyMetadataSignature(metadata)
         || !metadata.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) throw new Error('Verified completed-request metadata required');
-      const offer = resolveServiceBillingOffer(metadata.offerings, agreed.provider, agreed.service);
+      const offer = resolveServiceBillingOffer(metadata.providers, agreed.provider, agreed.service);
       if (offer.serviceApiProtocol !== agreed.serviceApiProtocol || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Completed-request offer changed');
       if (maximum === undefined || parseMicroUsdc(offer.priceMicroUsdc) > parseMicroUsdc(maximum)) throw new Error('Unit price exceeds buyer limit');
       if (!acceptResponse) throw new Error('Completed-request requests require response acceptance');
@@ -1660,32 +1659,24 @@ export class AntseedNode extends EventEmitter {
         ...(this._connectionManager.supportsWebRtc ? [CONNECTION_CAPABILITY_WEBRTC_V1] : []),
         ...(this._config.capabilities ?? []),
       ];
-      const getServiceBillingOfferings = () => this._advertisingPausedReason !== null ? [] : this._providers
-        .filter(provider => provider.healthCheckAvailable !== false)
-        .flatMap(provider => provider.services.flatMap(service => {
-          const offer = completedRequestOffer(provider, service);
-          return offer ? [serviceBillingOffering(offer)] : [];
-        }));
       const announcerConfig: AnnouncerConfig = {
         identity,
         dht: this._dht,
-        get offerings() { return getServiceBillingOfferings(); },
-        providers: this._providers.filter(provider => provider.services.length === 0 || provider.services.some(service => isLegacyInferenceService(provider, service))).map((p) => ({
+        providers: this._providers.map((p) => ({
           provider: p.name,
-          get services() { return p.services.filter(service => isLegacyInferenceService(p, service)); },
-          ...(p.serviceCategories ? { serviceCategories: inferenceServiceFields(p, p.serviceCategories) } : {}),
-          ...(p.serviceApiProtocols ? { serviceApiProtocols: inferenceServiceFields(p, p.serviceApiProtocols) } : {}),
-          ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: legacyUnitBillingModels(p) } : {}),
-          ...(p.serviceCapabilities ? { serviceCapabilities: inferenceServiceFields(p, p.serviceCapabilities) } : {}),
+          get services() { return p.services; },
+          ...(p.serviceCategories ? { serviceCategories: p.serviceCategories } : {}),
+          ...(p.serviceApiProtocols ? { serviceApiProtocols: p.serviceApiProtocols } : {}),
+          ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: p.serviceUnitBillingModels } : {}),
+          ...(p.serviceCapabilities ? { serviceCapabilities: p.serviceCapabilities } : {}),
           maxConcurrency: p.maxConcurrency,
-          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false
-            && (p.services.length === 0 || p.services.some(service => isLegacyInferenceService(p, service))),
+          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false,
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
               outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
             },
-            ...(p.pricing.services ? { services: inferenceServiceFields(p, p.pricing.services) } : {}),
+            ...(p.pricing.services ? { services: p.pricing.services } : {}),
           },
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),

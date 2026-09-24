@@ -15,9 +15,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@antseed/router-local": "workspace:*"
-  },
   "peerDependencies": { "@antseed/node": ">=0.1.0" },
   "devDependencies": {
     "@antseed/node": "workspace:*",

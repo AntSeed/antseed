@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test, { type TestContext } from 'node:test'
+import localPlugin from '@antseed/router-local'
 import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  COMPLETED_REQUESTS_CAPABILITY,
   adaptPeerFaultErrorResponse,
   buyerFault,
   computeTrustScore,
@@ -53,6 +55,82 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
   }
 }
 
+test('the local router switches between a model and Levanto without replacing the plugin', async () => {
+  const inferencePeer = makeRankedRoutingFixture().peers[0]!
+  const routingPeer = makePeer('d', ['levanto'])
+  routingPeer.metadata = {
+    peerId: routingPeer.peerId, version: 12, timestamp: Date.now(), signature: '', region: 'test',
+    capabilities: [COMPLETED_REQUESTS_CAPABILITY],
+    providers: [{ provider: 'levanto', services: ['levanto-route'], maxConcurrency: 1, currentLoad: 0,
+      defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      serviceApiProtocols: { 'levanto-route': ['levanto-routing'] },
+      serviceUnitBillingModels: { 'levanto-route': { 'levanto-routing': {
+        version: 1, components: [{ unit: 'completed_requests', priceUsd: 0.001 }],
+      } } },
+    }],
+  } as NonNullable<PeerInfo['metadata']>
+  const router = await localPlugin.createRouter({})
+  const peers = [inferencePeer, routingPeer]
+  const proxy = makeBuyerProxyWithPeers(peers, peers, router)
+  ;(proxy as any)._mergeStateFile = async () => {}
+  const initial = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+  assert.deepEqual(JSON.parse(initial.body).selection, { kind: 'model', model: null })
+  const requests: SerializedHttpRequest[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest, options: Parameters<RouteSelectionContext['sendRequest']>[2]) => {
+    requests.push(request)
+    if (request.path === '/_antseed/levanto-route') {
+      assert.equal(peer.peerId, routingPeer.peerId)
+      assert.equal(options.maxFeeMicroUsdc, '1000')
+      assert.equal(options.unitBilling?.service, 'levanto-route')
+      const payload = JSON.parse(Buffer.from(request.body).toString())
+      assert.equal(payload.cqt, 9)
+      assert.equal(payload.service, 'levanto-route')
+      const response = { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from(JSON.stringify({
+        v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: inferencePeer.peerId,
+          estimate: { costUsd: 0.1, inputTokens: 4, cachedInputTokens: 0, outputTokens: 10 },
+          price: { inUsdPerM: 1, outUsdPerM: 2, cachedInUsdPerM: 0 },
+        }],
+      })) }
+      assert.equal(options.acceptResponse?.(response), true)
+      return response
+    }
+    assert.equal(peer.peerId, inferencePeer.peerId)
+    assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'model-a')
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"choices":[]}') }
+  }
+  const setModel = () => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'model-a' } }))
+  const infer = (model = 'antseed') => invokeProxy(proxy, makeProxyRequest({ body: { model, messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal((await setModel()).statusCode, 200)
+  assert.equal((await infer()).statusCode, 200)
+  assert.equal(requests.length, 1)
+  const selection = chatRouterSelection('d', '9')
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection } }))).statusCode, 200)
+  const routed = await infer()
+  assert.equal(routed.statusCode, 200, routed.body)
+  assert.deepEqual(requests.map(request => request.path), ['/v1/chat/completions', '/_antseed/levanto-route', '/v1/chat/completions'])
+  assert.notEqual(requests[1]!.requestId, requests[2]!.requestId)
+  assert.equal((await infer('model-a')).statusCode, 200)
+  assert.equal((await infer(`${inferencePeer.peerId}@model-a`)).statusCode, 200)
+  assert.equal((await setModel()).statusCode, 200)
+  assert.equal((await infer()).statusCode, 200)
+  assert.equal(requests.filter(request => request.path === '/_antseed/levanto-route').length, 1)
+  assert.equal((proxy as any)._node.router, router)
+})
+
+test('local routing stays in model mode by default and rejects routing without eligible inference destinations', async () => {
+  const router = await localPlugin.createRouter({})
+  const proxy = makeBuyerProxyWithPeers([], [], router)
+  ;(proxy as any)._mergeStateFile = async () => {}
+  ;(proxy as any)._node.sendRequest = () => { throw new Error('No purchase should be dispatched') }
+  const initial = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+  assert.deepEqual(JSON.parse(initial.body).selection, { kind: 'model', model: null })
+  const selected = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: chatRouterSelection('d', '5') } }))
+  assert.equal(selected.statusCode, 200)
+  const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(response.statusCode, 502)
+  assert.match(response.body, /No eligible inference candidates/)
+})
+
 test('selected router hands auto requests to normal inference and bypasses concrete models and pins', async () => {
   const peer = makePeer('a', ['openai'])
   peer.reputationScore = 90
@@ -69,6 +147,7 @@ test('selected router hands auto requests to normal inference and bypasses concr
     },
   }
   const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  ;(proxy as any)._setRoutingSelection({ kind: 'router' })
   const dispatched: SerializedHttpRequest[] = []
   ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: SerializedHttpRequest) => {
     dispatched.push(request)
@@ -90,6 +169,7 @@ test('selected router failure never silently uses an inference seller', async ()
     async selectRoute() { throw new Error('Routing service unavailable') },
   }
   const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  ;(proxy as any)._setRoutingSelection({ kind: 'router' })
   ;(proxy as any)._node.sendRequest = () => { throw new Error('inference must not execute') }
   const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'levanto-auto', messages: [{ role: 'user', content: 'Hello' }] } }))
   assert.equal(response.statusCode, 502)
@@ -119,6 +199,7 @@ function makeRankedRoutingFixture(statuses: number[] = [503, 200], recommendatio
     },
   }
   const proxy = makeBuyerProxyWithPeers(peers, peers, router)
+  ;(proxy as any)._setRoutingSelection({ kind: 'router' })
   ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
     const statusCode = statuses[calls.requests.length] ?? 200
     calls.requests.push({ peer, request })

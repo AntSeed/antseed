@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { COMPLETED_REQUESTS_CAPABILITY, serviceBillingOffering, type PeerInfo, type RouteRecommendation, type RouteSelectionContext, type SerializedHttpRequest } from '@antseed/node';
-import { LevantoRoutingAdapter, routerPlugin, levantoRoutingMetadata } from './router.js';
+import { COMPLETED_REQUESTS_CAPABILITY, type PeerInfo, type RouteRecommendation, type RouteSelectionContext, type SerializedHttpRequest } from '@antseed/node';
+import { LevantoRoutingAdapter } from './router.js';
 
 const sellerId = 'a'.repeat(40);
 const inferenceId = 'b'.repeat(40);
 const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
-const peer = { peerId: sellerId, metadata: { peerId: sellerId, capabilities: [COMPLETED_REQUESTS_CAPABILITY], offerings: [serviceBillingOffering(offer)] } } as PeerInfo;
+function providers(priceMicroUsdc = offer.priceMicroUsdc): NonNullable<PeerInfo['metadata']>['providers'] {
+  return [{ provider: offer.provider, services: [offer.service], defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }, maxConcurrency: 1, currentLoad: 0,
+    serviceApiProtocols: { [offer.service]: [offer.serviceApiProtocol] },
+    serviceUnitBillingModels: { [offer.service]: { [offer.serviceApiProtocol]: { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(priceMicroUsdc) / 1_000_000 }] } } },
+  }];
+}
+const peer = { peerId: sellerId, metadata: { version: 12, peerId: sellerId, capabilities: [COMPLETED_REQUESTS_CAPABILITY], providers: providers() } } as PeerInfo;
 const recommendation: RouteRecommendation = { serviceId: 'model-a', peerId: inferenceId };
 const result = {
   v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: inferenceId,
@@ -31,7 +37,7 @@ function setup() {
     candidates: [{ ...recommendation, peerId: inferenceId, provider: 'openai', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }],
     acceptRecommendations: accepted, sendRequest,
   };
-  return { adapter: new LevantoRoutingAdapter('1000'), context, accepted, sendRequest };
+  return { adapter: new LevantoRoutingAdapter(), context, accepted, sendRequest };
 }
 
 describe('Levanto buyer adapter', () => {
@@ -88,23 +94,43 @@ describe('Levanto buyer adapter', () => {
     expect(state.sendRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('requires an opted-in seller within the buyer fee cap', async () => {
+  it('requires an opted-in seller and respects cancellation', async () => {
     const state = setup();
-    await expect(new LevantoRoutingAdapter('999').selectRoute(request(), [peer], state.context)).rejects.toThrow('fee limit');
     await expect(state.adapter.selectRoute(request(), [{ ...peer, metadata: undefined }], state.context)).rejects.toThrow('compatible');
     state.context.signal = AbortSignal.abort();
     await expect(state.adapter.selectRoute(request(), [peer], state.context)).rejects.toThrow();
     expect(state.sendRequest).not.toHaveBeenCalled();
   });
 
-  it('loads the buyer role without seller URL or API key', async () => {
-    const router = await routerPlugin.createRouter({ ANTSEED_MAX_ROUTING_FEE_MICRO_USDC: '1000' });
-    expect(router.autoRouteServiceId).toBe('levanto-auto');
-    expect(router.selectRoute).toBeTypeOf('function');
-    expect(router.selectPeer).toBeTypeOf('function');
-    expect(router.routingMetadata).toEqual(levantoRoutingMetadata);
-    expect(router.recordUsage).toBeTypeOf('function');
-    expect(routerPlugin.configSchema?.some(field => field.key === 'LEVANTO_BASE_URL' || field.key === 'LEVANTO_API_KEY')).toBe(false);
+  it('uses the selected advertised price without a separate fee setting', async () => {
+    const state = setup();
+    expect(await state.adapter.selectRoute(request('Hello', 'model-a'), [peer], state.context)).toBeNull();
+    expect(state.sendRequest).not.toHaveBeenCalled();
+    for (const price of ['0', '2500']) {
+      state.adapter.reset();
+      const pricedPeer = { ...peer, metadata: { ...peer.metadata!, providers: providers(price) } };
+      await state.adapter.selectRoute(request(), [pricedPeer], state.context);
+      const options = state.sendRequest.mock.calls.at(-1)![2];
+      expect(options.unitBilling?.priceMicroUsdc).toBe(price);
+      expect(options.maxFeeMicroUsdc).toBe(price);
+    }
+  });
+
+  it('resolves the exact provider and service using the advertised protocol', async () => {
+    const state = setup();
+    const provider = { ...providers()[0]!, provider: 'custom-provider', services: ['custom-route'],
+      serviceApiProtocols: { 'custom-route': ['levanto-routing' as const] },
+      serviceUnitBillingModels: { 'custom-route': providers()[0]!.serviceUnitBillingModels!['levanto-route']! },
+    };
+    const customPeer = { ...peer, metadata: { ...peer.metadata!, providers: [provider] } };
+    state.context.routingService = { peerId: sellerId, provider: provider.provider, serviceId: 'custom-route' };
+    await state.adapter.selectRoute(request(), [customPeer], state.context);
+    expect(state.sendRequest.mock.calls[0]![2].unitBilling).toMatchObject({ provider: provider.provider, service: 'custom-route' });
+    expect(JSON.parse(new TextDecoder().decode(state.sendRequest.mock.calls[0]![1].body)).service).toBe('custom-route');
+    state.adapter.reset();
+    state.context.routingService.serviceId = 'missing-route';
+    await expect(state.adapter.selectRoute(request(), [customPeer], state.context)).rejects.toThrow('compatible');
+    expect(state.sendRequest).toHaveBeenCalledTimes(1);
   });
 
   it('uses live enum preferences and invalidates an unchanged-turn decision', async () => {
@@ -129,7 +155,7 @@ describe('Levanto buyer adapter', () => {
 
   it('does not replace the selected routing peer with a cheaper peer', async () => {
     const state = setup();
-    const cheaper = { ...peer, peerId: 'c'.repeat(40), metadata: { ...peer.metadata!, offerings: [serviceBillingOffering({ ...offer, priceMicroUsdc: '0' })] } } as PeerInfo;
+    const cheaper = { ...peer, peerId: 'c'.repeat(40), metadata: { ...peer.metadata!, providers: providers('0') } } as PeerInfo;
     await state.adapter.selectRoute(request(), [cheaper, peer], state.context);
     expect(state.sendRequest.mock.calls[0]![0].peerId).toBe(sellerId);
     state.adapter.reset();

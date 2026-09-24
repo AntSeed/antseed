@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { AntseedRouterPlugin, PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
-import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
-import localPlugin from '@antseed/router-local';
+import type { PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
+import { COMPLETED_REQUESTS_CAPABILITY, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
 import { LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './validation.js';
 import { CacheObservations } from './cache-observations.js';
 
@@ -22,11 +21,6 @@ export class LevantoRoutingAdapter {
     this.conversations.clear();
   }
 
-  constructor(private readonly maxFeeMicroUsdc: string, private readonly sellerPeerId?: string) {
-    parseMicroUsdc(maxFeeMicroUsdc);
-    if (sellerPeerId && !/^[0-9a-f]{40}$/.test(sellerPeerId)) throw new Error('Invalid LEVANTO_SELLER_PEER_ID');
-  }
-
   async selectRoute(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null> {
     const body = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
     if (body.model !== 'levanto-auto' && body.model !== 'antseed') return null;
@@ -34,9 +28,8 @@ export class LevantoRoutingAdapter {
     const generation = this.generation;
     const preferences = resolveRoutingPreferences(levantoRoutingMetadata.preferencesSchema, context.preferences ?? {});
     if (context.preferencesSchemaHash !== undefined && context.preferencesSchemaHash !== levantoRoutingMetadata.preferencesSchemaHash) throw new Error('Routing preferences schema changed');
-    const target = context.routingService ?? (this.sellerPeerId ? { peerId: this.sellerPeerId, provider: 'levanto', serviceId: 'levanto-route' } : undefined);
+    const target = context.routingService;
     if (!target) throw new Error('Select a Levanto routing-service peer');
-    if (target.provider !== 'levanto' || target.serviceId !== 'levanto-route') throw new Error('Unsupported Levanto routing service');
     const fingerprint = canonicalRoutingJson({ target, preferences, schema: levantoRoutingMetadata.preferencesSchemaHash });
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const latestUser = [...messages].reverse().find(message => message && message.role === 'user');
@@ -53,13 +46,13 @@ export class LevantoRoutingAdapter {
       if (peer.peerId !== target.peerId) return [];
       if (!peer.metadata?.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) return [];
       try {
-        const offer = resolveServiceBillingOffer(peer.metadata.offerings, 'levanto', 'levanto-route');
-        return offer.serviceApiProtocol === 'levanto-routing' && parseMicroUsdc(offer.priceMicroUsdc) <= parseMicroUsdc(this.maxFeeMicroUsdc)
+        const offer = resolveServiceBillingOffer(peer.metadata.providers, target.provider, target.serviceId);
+        return offer.serviceApiProtocol === 'levanto-routing'
           ? [{ peer, offer }] : [];
       } catch { return []; }
     });
     const selected = candidates[0];
-    if (!selected) throw new Error('No compatible Levanto completed-request service within the fee limit');
+    if (!selected) throw new Error('No compatible Levanto completed-request service');
     const inputMessage = text.length > 8192 ? text.slice(0, 4096) + text.slice(-4096) : text;
     const promptTokens = Math.ceil(text.length / 4);
     const payload = {
@@ -76,7 +69,7 @@ export class LevantoRoutingAdapter {
       },
       body: new TextEncoder().encode(JSON.stringify({ ...payload, service: selected.offer.service })),
     }, {
-      signal: context.signal, unitBilling: selected.offer, maxFeeMicroUsdc: this.maxFeeMicroUsdc,
+      signal: context.signal, unitBilling: selected.offer, maxFeeMicroUsdc: selected.offer.priceMicroUsdc,
       acceptResponse: response => {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(response.body));
         const ranked = validateRoutingResponse(parsed, payload);
@@ -97,26 +90,3 @@ export class LevantoRoutingAdapter {
     return recommendations;
   }
 }
-
-export const routerPlugin: AntseedRouterPlugin = {
-  name: 'levanto-router', displayName: 'Levanto Router', version: '0.1.0', type: 'router',
-  description: 'Buy Levanto recommendations and execute them using normal AntSeed inference',
-  configSchema: [
-    ...(localPlugin.configSchema ?? []),
-    { key: 'ANTSEED_MAX_ROUTING_FEE_MICRO_USDC', label: 'Maximum routing fee (micro-USDC)', type: 'string', required: true },
-    { key: 'LEVANTO_SELLER_PEER_ID', label: 'Levanto seller peer ID', type: 'string' },
-  ],
-  async createRouter(config) {
-    const maxFee = config.ANTSEED_MAX_ROUTING_FEE_MICRO_USDC;
-    if (maxFee === undefined) throw new Error('ANTSEED_MAX_ROUTING_FEE_MICRO_USDC is required');
-    const adapter = new LevantoRoutingAdapter(maxFee, config.LEVANTO_SELLER_PEER_ID);
-    const router = await localPlugin.createRouter(config);
-    router.autoRouteServiceId = 'levanto-auto';
-    router.routingMetadata = structuredClone(levantoRoutingMetadata);
-    if (config.LEVANTO_SELLER_PEER_ID) router.defaultRoutingService = { peerId: config.LEVANTO_SELLER_PEER_ID, provider: 'levanto', serviceId: 'levanto-route' };
-    router.recordUsage = observation => adapter.observations.record(observation);
-    router.resetRouting = () => adapter.reset();
-    router.selectRoute = adapter.selectRoute.bind(adapter);
-    return router;
-  },
-};

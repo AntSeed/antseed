@@ -2,7 +2,7 @@ import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js"
 import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
-import { validateUnitBillingModelV1 } from "../billing/unit.js";
+import { isCompletedRequestBillingModel, validateUnitBillingModelV1 } from "../billing/unit.js";
 
 // Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
 // snapshot bounded while allowing large aggregator catalogs.
@@ -544,10 +544,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
-          } else if (protocol !== "openai-images") {
+          } else if (!isCompletedRequestBillingModel(model) && protocol !== "openai-images") {
             errors.push({
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
-              message: "Service unit billing models currently support openai-images only",
+              message: "Image billing models support openai-images only",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({
@@ -561,6 +561,17 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message,
             });
+          }
+          if (modelErrors.length > 0) continue;
+          if (isCompletedRequestBillingModel(model)) {
+            if (!serviceProtocols?.includes(protocol as typeof serviceProtocols[number])) {
+              errors.push({ field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`, message: "Completed requests require an advertised API protocol" });
+            }
+            const pricing = p.servicePricing?.[serviceName] ?? p.defaultPricing;
+            if (pricing.inputUsdPerMillion !== 0 || pricing.outputUsdPerMillion !== 0 || (pricing.cachedInputUsdPerMillion ?? 0) !== 0) {
+              errors.push({ field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`, message: "Completed-request pricing cannot include unmeasured token charges" });
+            }
+            continue;
           }
           if (model.components.length > MAX_BILLING_COMPONENTS_PER_MODEL) {
             errors.push({

@@ -54,12 +54,6 @@ export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
 
 export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   {
-    name: 'levanto-router',
-    type: 'router',
-    description: 'Levanto paid model recommendations with existing inference execution',
-    package: '@antseed/router-levanto',
-  },
-  {
     name: 'local',
     type: 'router',
     description: 'Local router for Claude Code, Codex',

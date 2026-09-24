@@ -2,11 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { TRUSTED_PLUGINS, TRUSTED_PROVIDER_PLUGINS, TRUSTED_ROUTER_PLUGINS, TRUSTED_VERIFIER_PLUGINS, resolvePluginPackage } from './registry.js'
 
-test('levanto is a buyer-only router package', () => {
-  assert.equal(resolvePluginPackage('levanto-router'), '@antseed/router-levanto')
+test('local is the selectable router; Levanto is an adapter, not a separate mode', () => {
+  assert.equal(resolvePluginPackage('local'), '@antseed/router-local')
   assert.ok(!TRUSTED_PROVIDER_PLUGINS.some((plugin) => plugin.name === 'levanto'))
-  assert.ok(TRUSTED_ROUTER_PLUGINS.some((plugin) => plugin.name === 'levanto-router'))
-  assert.ok(!TRUSTED_ROUTER_PLUGINS.some((plugin) => plugin.name === 'levanto'))
+  assert.deepEqual(TRUSTED_ROUTER_PLUGINS.map(plugin => plugin.name), ['local'])
 })
 
 test('trusted plugin registry keeps typed lists and verifier invariants', () => {

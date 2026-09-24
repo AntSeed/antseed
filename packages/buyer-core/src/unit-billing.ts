@@ -13,12 +13,13 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/pro
 import type {
   UnitBillingContext,
   UnitBillingMatchKeyV1,
-  UnitBillingModel,
+  UnitBillingModelV1,
   UnitBillingUsage,
-  UnitBillingUsageReport,
+  UnitBillingUsageReportV1,
 } from '@antseed/protocol/billing';
 import {
   evaluateUnitBilling,
+  isCompletedRequestBillingModel,
   unitUsageToBillingReport,
 } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
@@ -40,7 +41,7 @@ export interface FinalUnitBillingResult {
   usage: UnitBillingUsage;
   tokenUsage: TokenUsage;
   costUsdc: bigint;
-  billingUsage: UnitBillingUsageReport;
+  billingUsage: UnitBillingUsageReportV1;
 }
 
 export interface MeasurementAdapter {
@@ -70,10 +71,10 @@ export function captureUnitBillingContext(args: {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  unitModel?: UnitBillingModel;
+  unitModel?: UnitBillingModelV1;
   request: SerializedHttpRequest;
 }): CapturedUnitBillingContext {
-  if (args.unitModel?.version === 2) {
+  if (isCompletedRequestBillingModel(args.unitModel)) {
     return {
       context: { sellerPeerId: args.sellerPeerId, provider: args.provider, service: args.service,
         serviceApiProtocol: args.serviceApiProtocol, unitLimits: { completed_requests: 1 } },
@@ -127,13 +128,13 @@ export function extractUnitResponseUsage(
 }
 
 export function computeFinalUnitBilling(
-  model: UnitBillingModel,
+  model: UnitBillingModelV1,
   context: UnitBillingContext,
   response: SerializedHttpResponse,
   requestFacts?: ImageRequestFacts,
   accepted?: boolean,
 ): FinalUnitBillingResult {
-  const adapter = model.version === 2 ? completedRequestMeasurementAdapter : imageMeasurementAdapter;
+  const adapter = isCompletedRequestBillingModel(model) ? completedRequestMeasurementAdapter : imageMeasurementAdapter;
   const responseUsage = adapter.measure(response, requestFacts, accepted);
   const costUsdc = evaluateUnitBilling(model, context, responseUsage.usage);
   return {

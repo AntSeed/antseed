@@ -18,7 +18,7 @@ describe('completed-request seller payments', () => {
     let spend = 0n;
     const provider = makeProvider(10, 10, { name: 'levanto', services: ['levanto-route', 'image'] });
     provider.serviceApiProtocols = { 'levanto-route': ['levanto-routing'] };
-    provider.serviceUnitBillingModels = { 'levanto-route': { 'levanto-routing': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } } };
+    provider.serviceUnitBillingModels = { 'levanto-route': { 'levanto-routing': { version: 1, components: [{ unit: 'completed_requests', priceUsd: 0.001 }] } } };
     provider.pricing = { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, services: { 'levanto-route': { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } } };
     provider.handleRequest = vi.fn(async request => ({ requestId: request.requestId, statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(result)) }));
     provider.handleRequestStream = vi.fn();
@@ -44,17 +44,17 @@ describe('completed-request seller payments', () => {
     const harness = setup();
     expect((await harness.send()).statusCode).toBe(200);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
-    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '1000', inputTokens: '0', outputTokens: '0', billingUsage: { version: 2, units: { completed_requests: '1' } } }));
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '1000', inputTokens: '0', outputTokens: '0', billingUsage: { version: 1, units: { completed_requests: '1' } } }));
     expect(harness.provider.handleRequestStream).not.toHaveBeenCalled();
   });
   it('uses completed-request measurement for a TypeSafe service without a price header', async () => {
     const harness = setup();
     harness.provider.serviceApiProtocols!['levanto-route'] = ['typesafe-systemone'];
-    harness.provider.serviceUnitBillingModels!['levanto-route'] = { 'typesafe-systemone': { version: 2, components: [{ unit: 'completed_requests', priceMicroUsdc: '1000' }] } };
+    harness.provider.serviceUnitBillingModels!['levanto-route'] = { 'typesafe-systemone': { version: 1, components: [{ unit: 'completed_requests', priceUsd: 0.001 }] } };
     expect((await harness.send('typesafe', { path: '/v1/systemone' })).statusCode).toBe(200);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
     expect(vi.mocked(harness.provider.handleRequest).mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
-    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ billingUsage: { version: 2, units: { completed_requests: '1' } } }));
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ billingUsage: { version: 1, units: { completed_requests: '1' } } }));
   });
   it('rejects legacy buyers and mismatched offers before execution', async () => {
     const legacy = setup({}, false);
@@ -113,7 +113,7 @@ describe('completed-request seller payments', () => {
     vi.mocked(harness.provider.handleRequest).mockImplementation(async request => ({ requestId: request.requestId, statusCode: 400, headers: {}, body: new TextEncoder().encode('{}') }));
     expect((await harness.send()).statusCode).toBe(400);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 0n);
-    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '0', billingUsage: { version: 2, units: { completed_requests: '0' } } }));
+    expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '0', billingUsage: { version: 1, units: { completed_requests: '0' } } }));
   });
   it('keeps ordinary services discoverable to legacy model-list clients', async () => {
     const harness = setup({}, false);

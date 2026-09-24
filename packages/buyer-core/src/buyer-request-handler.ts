@@ -20,7 +20,7 @@ import type { ResponseAuthSink } from './interfaces.js';
 import type { ResponseAuthSampler } from './interfaces.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import { verifyResponseAuth } from './response-auth.js';
-import { isFreeUnitBillingModel } from '@antseed/protocol/billing';
+import { isCompletedRequestBillingModel, isFreeUnitBillingModel } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   detectRequestServiceApiProtocol,
@@ -153,6 +153,9 @@ export class BuyerRequestHandler {
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
+    if (!unitBilling && isCompletedRequestBillingModel(billingRoute?.unitModel)) {
+      throw new Error('Completed-request purchases require an explicit offer and response acceptance');
+    }
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
     const isFreeService = unitBilling ? parseMicroUsdc(unitBilling.priceMicroUsdc) === 0n : requestedService
@@ -437,15 +440,15 @@ export class BuyerRequestHandler {
       }
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') {
-        return adaptPeerResponse(await finishUnitBilling(result.response));
+        return adaptPeerResponse(result.response);
       }
       startTime = Date.now();
-      const retriedResponse = await executeUnitBillingSafe();
-      if (!isFreeService && !unitBilling) {
+      const retriedResponse = await executeRequest();
+      if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return adaptPeerResponse(await finishUnitBilling(retriedResponse));
+      return adaptPeerResponse(retriedResponse);
     }
 
     if (negotiator && !isFreeService && !unitBilling) {
