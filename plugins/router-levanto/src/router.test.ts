@@ -107,7 +107,7 @@ describe('Levanto buyer adapter', () => {
     expect(await state.adapter.selectRoute(request('Hello', 'model-a'), [peer], state.context)).toBeNull();
     expect(state.sendRequest).not.toHaveBeenCalled();
     for (const price of ['0', '2500']) {
-      state.adapter.reset();
+      state.adapter.resetRouting();
       const pricedPeer = { ...peer, metadata: { ...peer.metadata!, providers: providers(price) } };
       await state.adapter.selectRoute(request(), [pricedPeer], state.context);
       const options = state.sendRequest.mock.calls.at(-1)![2];
@@ -127,7 +127,7 @@ describe('Levanto buyer adapter', () => {
     await state.adapter.selectRoute(request(), [customPeer], state.context);
     expect(state.sendRequest.mock.calls[0]![2].unitBilling).toMatchObject({ provider: provider.provider, service: 'custom-route' });
     expect(JSON.parse(new TextDecoder().decode(state.sendRequest.mock.calls[0]![1].body)).service).toBe('custom-route');
-    state.adapter.reset();
+    state.adapter.resetRouting();
     state.context.routingService.serviceId = 'missing-route';
     await expect(state.adapter.selectRoute(request(), [customPeer], state.context)).rejects.toThrow('compatible');
     expect(state.sendRequest).toHaveBeenCalledTimes(1);
@@ -158,7 +158,7 @@ describe('Levanto buyer adapter', () => {
     const cheaper = { ...peer, peerId: 'c'.repeat(40), metadata: { ...peer.metadata!, providers: providers('0') } } as PeerInfo;
     await state.adapter.selectRoute(request(), [cheaper, peer], state.context);
     expect(state.sendRequest.mock.calls[0]![0].peerId).toBe(sellerId);
-    state.adapter.reset();
+    state.adapter.resetRouting();
     await expect(state.adapter.selectRoute(request(), [cheaper], state.context)).rejects.toThrow('compatible');
     state.context.routingService = undefined;
     await expect(state.adapter.selectRoute(request(), [peer], state.context)).rejects.toThrow('Select a Levanto');

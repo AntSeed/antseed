@@ -472,7 +472,6 @@ function mergeBuyerConfig(
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
-    ...(value['selection'] !== undefined ? { selection: value['selection'] as AntseedConfig['buyer']['selection'] } : {}),
     routingPreferences: mergeBuyerRoutingPreferences(
       defaultRoutingPreferences,
       value['routingPreferences'],

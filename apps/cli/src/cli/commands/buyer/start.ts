@@ -464,7 +464,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         routingPreferences: effectiveBuyerConfig.routingPreferences,
-        selection: effectiveBuyerConfig.selection,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })

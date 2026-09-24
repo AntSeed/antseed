@@ -39,6 +39,13 @@ export type RoutingUsageObservation = {
   cachedInputTokens: number;
 };
 
+export interface ModelRouterAdapter {
+  routingMetadata: RoutingServiceMetadataV1;
+  selectRoute(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null>;
+  recordUsage?(observation: RoutingUsageObservation): void;
+  resetRouting?(): void;
+}
+
 /**
  * Interface that buyer nodes implement for peer selection.
  *
@@ -50,6 +57,7 @@ export type RoutingUsageObservation = {
  * the cheapest peer with reputation above a minimum threshold.
  */
 export interface Router {
+  getModelRouterAdapter?(target: RoutingServiceTarget, peers: PeerInfo[]): ModelRouterAdapter;
   routingMetadata?: RoutingServiceMetadataV1;
   defaultRoutingService?: RoutingServiceTarget;
   recordUsage?(observation: RoutingUsageObservation): void;

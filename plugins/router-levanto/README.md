@@ -21,11 +21,11 @@ Once published:
 
 ```bash
 antseed plugin add @antseed/router-local
-antseed config buyer set selection '{"kind":"router","service":{"peerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"levanto","serviceId":"levanto-route"},"preferences":{"cqt":"5"}}'
 antseed buyer start
 ```
 
-Replace the example peer ID with the selected routing-service peer's actual ID.
+Once the buyer is running, select the service through the local route endpoint
+shown below. Replace its example peer ID with the routing-service peer's actual ID.
 The buyer never substitutes another routing-service peer because it is cheaper.
 The selected peer must advertise a compatible `levanto-routing` completed-request
 offer. Routing purchases use the selected service's advertised price, with no
@@ -39,8 +39,8 @@ of the generic router interface. Routing selects an inference destination;
 billing determines how a remote service is paid. The adapter currently does not
 support selecting token-based or other billing modes for the recommendation.
 
-Select the exact peer, provider and service through `buyer.selection` or the local
-route endpoint; there is no separate seller-peer setting or cheapest-peer default.
+Select the exact peer, provider and service through the local route endpoint;
+there is no separate seller-peer setting or cheapest-peer default.
 The advertised `levanto-routing` protocol identifies compatible services, rather
 than a hardcoded provider name. The remaining plugin settings are the existing
 local-router policy settings. Routing services stay out of the inference-model
@@ -63,9 +63,10 @@ is not supported by this adapter. Failures do not silently switch routers.
 
 ## Live selection and generic preferences
 
-`buyer.selection` stores either a model or a routing-service target and its
-preferences. Config changes are watched while the buyer runs. The local control
-API also supports changes without restarting:
+The SDK type is `RoutingSelection`: it represents either a direct model
+choice or delegating that choice to a model-routing service. Selection is set
+through the local control API and saved in `buyer.state.json`, not startup
+configuration. The API supports changes without restarting:
 
 ```http
 POST /_antseed/route
@@ -84,15 +85,30 @@ Content-Type: application/json
 }
 ```
 
-`GET /_antseed/route` returns the current selection. The existing `{ "model":
-"your-model" }` update remains supported and selects model mode. Selections are
-saved in `buyer.state.json`. Updating selection cancels in-flight router-directed
-requests and invalidates cached decisions. Explicit state selections survive
-restart; a changed config selection is applied by the running config watcher.
+`GET /_antseed/route` returns `{ "ok": true, "selection": ... }`. To select a
+model, POST `{ "selection": { "kind": "model", "model": "your-model" } }`;
+use `model: null` inside that selection to clear the default.
+Selections are saved under `selection` in `buyer.state.json`. On upgrade, a valid
+legacy `defaultRoutedModel` is converted and persisted once if `selection` is
+missing. An existing `selection` always wins, including an explicitly cleared
+default. The legacy key can remain in the file but is ignored after conversion.
+The old top-level `model` API field is no longer supported.
+Desktop/VPR and other model-only control clients need a follow-up update; this
+change intentionally does not preserve their old selection API.
+Selection changes apply to subsequent requests. In-flight requests retain their
+original selection and are not cancelled by model or chat selection changes.
+Client-disconnect cancellation remains in place. Explicit state selections
+survive restart. Without saved selection, the buyer starts in model mode with no
+default model. Existing price/trust policy configuration and hot reload are unchanged.
 
-`GET /_antseed/router/metadata` exposes the loaded plugin's generic schema,
-schema hash, selection and effective preferences for a future UI. No new desktop
-controls are included. For Levanto, the schema is:
+Conversation spend includes recommendation and inference costs and their reported
+input, cached-input, and output tokens. Recommendation purchases do not add an
+extra conversation request count. A recommendation reporting zero tokens adds
+no tokens; token usage is not suppressed just because it came from a router.
+
+Preference schemas are defined directly in each installed model-router adapter
+through `ModelRouterAdapter.routingMetadata`; no HTTP metadata endpoint or new
+desktop controls are included. For Levanto, the schema is:
 
 ```json
 {
@@ -112,7 +128,7 @@ controls are included. For Levanto, the schema is:
 The shared enum validation/hash machinery follows the former routing PRs 3/5:
 router-defined flat string choices, optional defaults/descriptions/required fields,
 unknown-value rejection, and a 16 KiB schema/value bound. It is not a global CQT
-enum. `Router.routingMetadata` supplies the installed plugin's descriptor;
+enum. `ModelRouterAdapter.routingMetadata` supplies the selected adapter's descriptor;
 `RouteSelectionContext` carries current effective preferences, its schema hash,
 and the selected service. Levanto converts the string choice to its numeric
 backend `cqt`. `LEVANTO_CQT` is replaced by these live preferences.
@@ -121,6 +137,45 @@ This descriptor comes from the installed plugin, not unsigned seller HTTP data.
 This change does not reintroduce metadata v13 or claim remote schema negotiation.
 The Levanto wire request retains its existing fields; no new backend schema is
 required for enum preferences or exact-candidate filtering.
+
+## Registering another routing adapter
+
+The local router uses `ModelRouterRegistry` from `@antseed/router-core` to
+resolve the exact selected peer/provider/service's advertised API protocol.
+Levanto is registered by default under `levanto-routing`; its provider name is
+not used to choose the adapter. Unknown protocols and ambiguous advertisements
+fail instead of falling back to Levanto.
+
+An adapter implements `ModelRouterAdapter` from `@antseed/node`: `routingMetadata`
+and `selectRoute(request, peers, context)`, with optional `recordUsage` and
+`resetRouting` hooks. The method returns generic `RouteRecommendation[]` values.
+Its request construction, response validation and any billing mode selection
+stay inside the adapter, while candidate eligibility and inference execution
+remain shared.
+
+Code integrating an additional adapter can pass it to the local router factory:
+
+```ts
+import { createLocalRouter } from '@antseed/router-local';
+
+const router = createLocalRouter(config, {
+  'another-routing-protocol': anotherAdapter,
+});
+```
+
+Here `anotherAdapter` is an instance implementing `ModelRouterAdapter`. The protocol
+must also be supported by discovery metadata; registering an adapter does not
+extend metadata's wire format. This is explicit code registration, not automatic
+discovery or installation of arbitrary npm plugins. For built-in integrations,
+add a default registration alongside Levanto in the local router factory.
+
+The buyer validates live selections and resolves preferences using the selected
+adapter's schema, and resolves it again from current peers before execution.
+Selections loaded before discovery are structurally checked immediately; their
+adapter/schema is checked before any routing purchase. In model mode the local
+router has no selected routing schema. Inference usage observations are shared
+with registered adapters so their independent cache estimates can stay warm;
+selection changes reset each adapter's decision cache.
 
 ## Per-conversation router settings
 
@@ -170,9 +225,8 @@ inference requests remain overrides; automatic affinity does not override the
 chat router. Buyer-wide inference-peer pins do not replace an explicit chat router.
 
 Child/subagent requests inherit their parent chat's selection while maintaining
-separate cache observations. Changing a chat override cancels that chat's ongoing
-router-directed requests, including its children, but not other chats. Changing
-the buyer-wide selection does not cancel requests using explicit chat overrides.
+separate cache observations. Changing a chat override or the buyer-wide selection
+does not cancel ongoing requests; subsequent requests use the updated selection.
 No additional desktop controls are included.
 
 ## Recommendation filtering

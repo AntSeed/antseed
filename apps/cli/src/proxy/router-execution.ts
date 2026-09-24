@@ -4,8 +4,14 @@ import { findMissingRequiredParameters, getExplicitProviderOverride, resolvePeer
 import { overrideRoutedModelInBody } from './request-utils.js'
 import { resolveRoutingPreferences, validateRoutingServiceMetadata, type RoutingSelection } from '@antseed/node'
 
+/**
+ * Recommendation step before inference: build allowed destinations, ask the selected
+ * adapter, and resolve its recommendations back to those destinations. The caller
+ * then sends the actual inference request; this module does not generate the answer.
+ */
 type ExecutionCandidate = RouteCandidate & { peer: PeerInfo; effectiveReputationScore: number | null }
 
+/** Build the text-model destinations this buyer can use, ordered by its existing routing policy. */
 export function eligibleRouterCandidates(
   request: SerializedHttpRequest,
   peers: PeerInfo[],
@@ -17,6 +23,7 @@ export function eligibleRouterCandidates(
   const explicitProvider = getExplicitProviderOverride(request)
   const candidates: ExecutionCandidate[] = []
   for (const offer of buildNetworkServiceOffers(peers)) {
+    // Keep only available, priced text services compatible with the request and required parameters.
     const peer = peers.find(candidate => candidate.peerId === offer.peerId)
     if (!peer || offer.type !== 'text' || (explicitProvider && offer.provider !== explicitProvider)) continue
     if (peer.maxConcurrency !== undefined && peer.currentLoad !== undefined && peer.currentLoad >= peer.maxConcurrency) continue
@@ -25,6 +32,7 @@ export function eligibleRouterCandidates(
     if (!plan?.serviceId || (requiredParameters.length && plan.selection?.requiresTransform)) continue
     if (findMissingRequiredParameters(peer, offer.provider, plan.serviceId, requiredParameters).length) continue
     const rewritten = overrideRoutedModelInBody(request.body, request.headers, plan.serviceId)
+    // Check peer policy against the model/provider we would actually send, not the automatic alias.
     const policyRequest = { ...request, body: rewritten.body, headers: { ...rewritten.headers, 'x-antseed-provider': offer.provider } }
     if (!allowsPeer(policyRequest, peer)) continue
     const candidate = {
@@ -39,10 +47,16 @@ export function eligibleRouterCandidates(
     || first.peerId.localeCompare(second.peerId))
 }
 
+/** Return the first eligible destination from a recommendation list, or null if none match. */
 export function resolveRouterRecommendation(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate | null {
   return resolveRouterRecommendations(routes, candidates)[0] ?? null
 }
 
+/**
+ * Match recommendations to the buyer's allowed destinations, preserving recommendation order.
+ * An exact peer stays exact; a model-only recommendation expands in candidate order.
+ * Invalid entries and duplicate peer/provider/service destinations are discarded.
+ */
 export function resolveRouterRecommendations(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate[] {
   if (!Array.isArray(routes) || routes.length === 0 || routes.length > 512) return []
   const resolved: ExecutionCandidate[] = []
@@ -61,6 +75,7 @@ export function resolveRouterRecommendations(routes: readonly RouteRecommendatio
   return resolved
 }
 
+/** Rewrite the requested model and pin its inference peer/provider, without sending the request. */
 export function requestForRouterCandidate(request: SerializedHttpRequest, candidate: ExecutionCandidate): SerializedHttpRequest {
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, candidate.serviceId)
   if (!rewritten.overridden) throw new Error('Could not apply router recommendation')
@@ -70,6 +85,11 @@ export function requestForRouterCandidate(request: SerializedHttpRequest, candid
   }
 }
 
+/**
+ * Ask the selected model-router adapter for recommendations and validate the result.
+ * Return a request prepared for the first destination plus the ranked fallback list;
+ * BuyerProxy performs inference dispatch and retry handling afterward.
+ */
 export async function executeRouterSelection(args: {
   node: Pick<AntseedNode, 'sendRequest'>;
   router: Router;
@@ -82,26 +102,33 @@ export async function executeRouterSelection(args: {
   onRoutingRequest?: (requestId: string) => void;
 }): Promise<{ request: SerializedHttpRequest; candidates: ExecutionCandidate[] }> {
   const { node, router, request, peers, candidates, conversationKey, signal } = args
-  if (!router.selectRoute) throw new Error('Selected router does not support model selection')
-  const metadata = router.routingMetadata
+  // Resolve the adapter for the selected service, or use a router that implements selectRoute directly.
+  const routingService = args.selection?.service ?? router.defaultRoutingService
+  if (router.getModelRouterAdapter && !routingService) throw new Error('Select an exact routing-service target')
+  const adapter = router.getModelRouterAdapter ? router.getModelRouterAdapter(routingService!, peers) : router
+  if (!adapter.selectRoute) throw new Error('Selected router does not support model selection')
+  // Validate this adapter's preference schema and apply its defaults before calling it.
+  const metadata = adapter.routingMetadata
   if (metadata) validateRoutingServiceMetadata(metadata)
   const preferences = resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, args.selection?.preferences ?? {})
-  const routingService = args.selection?.service ?? router.defaultRoutingService
   signal.throwIfAborted()
   let acceptedKeys: string | null = null
   const candidateKeys = (resolved: readonly ExecutionCandidate[]) => JSON.stringify(resolved.map(candidate => [candidate.peerId, candidate.provider, candidate.serviceId]))
   let onAbort: () => void = () => {}
+  // Stop waiting on cancellation even if the adapter does not observe the supplied signal.
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = () => reject(signal.reason ?? new Error('Routing aborted'))
     signal.addEventListener('abort', onAbort, { once: true })
   })
   try {
-    const routes = await Promise.race([aborted, router.selectRoute(structuredClone(request), structuredClone(peers), {
+    // Give the adapter request/peer copies so its rewrites do not mutate the buyer's originals.
+    const routes = await Promise.race([aborted, adapter.selectRoute(structuredClone(request), structuredClone(peers), {
       signal, conversationKey,
       preferences, preferencesSchemaHash: metadata?.preferencesSchemaHash,
       routingService: routingService ? structuredClone(routingService) : undefined,
       candidates: candidates.map(({ peer: _peer, effectiveReputationScore: _score, ...candidate }) => ({ ...candidate })),
       acceptRecommendations: recommendations => {
+        // Remember the accepted destinations and order so the adapter cannot return a different list later.
         if (signal.aborted) return false
         const resolved = resolveRouterRecommendations(recommendations, candidates)
         if (!resolved.length) return false
@@ -111,6 +138,7 @@ export async function executeRouterSelection(args: {
         return true
       },
       sendRequest: (peer, serviceRequest, options) => {
+        // Recommendation requests use the selected service peer and a separate ID from inference.
         if (routingService && peer.peerId !== routingService.peerId) throw new Error('Routing request must use the selected routing-service peer')
         const snapshot = structuredClone(serviceRequest)
         if (typeof snapshot.requestId !== 'string' || !snapshot.requestId || snapshot.requestId === request.requestId) {
@@ -121,6 +149,7 @@ export async function executeRouterSelection(args: {
       },
     })])
     signal.throwIfAborted()
+    // Check the returned recommendations even if the adapter never called acceptRecommendations.
     const resolved = routes ? resolveRouterRecommendations(routes, candidates) : []
     if (!resolved.length || (acceptedKeys !== null && acceptedKeys !== candidateKeys(resolved))) {
       throw new Error('Selected router returned no eligible recommendation')
@@ -130,6 +159,7 @@ export async function executeRouterSelection(args: {
       candidates: resolved,
     }
   } finally {
+    // Do not leave a listener attached after this recommendation attempt has finished.
     signal.removeEventListener('abort', onAbort)
   }
 }

@@ -2,6 +2,7 @@ import { assertRoutingPreferences, type RoutingPreferences } from '@antseed/prot
 
 export type RoutingServiceTarget = { peerId: string; provider: string; serviceId: string };
 
+/** Choose an explicit model or a service that recommends models, independently of billing. */
 export type RoutingSelection =
   | { kind: 'model'; model: string | null }
   | { kind: 'router'; service?: RoutingServiceTarget; preferences?: RoutingPreferences };

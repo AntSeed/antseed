@@ -33,7 +33,7 @@ export {
 // Re-exported so CLI callers can format/parse gas balances without depending
 // on ethers directly.
 export { formatEther, parseEther } from 'ethers';
-export type { Router, RouteRecommendation, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
+export type { Router, ModelRouterAdapter, RouteRecommendation, RouteCandidate, RouteSelectionContext } from './interfaces/buyer-router.js';
 export type { RoutingUsageObservation } from './interfaces/buyer-router.js';
 export * from './routing/selection.js';
 export { assertRoutingPreferences, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingPreferenceSchema, validateRoutingServiceMetadata, type RoutingPreferences, type RoutingPreferenceSchema, type RoutingServiceMetadataV1 } from '@antseed/protocol';

@@ -1,6 +1,6 @@
-import type { AntseedRouterPlugin, RoutingUsageObservation } from '@antseed/node';
-import { LevantoRoutingAdapter, levantoRoutingMetadata } from '@antseed/router-levanto';
-import { WELL_KNOWN_TOOL_HINTS, formatToolHints } from '@antseed/router-core';
+import type { AntseedRouterPlugin, ModelRouterAdapter } from '@antseed/node';
+import { LevantoRoutingAdapter } from '@antseed/router-levanto';
+import { ModelRouterRegistry, WELL_KNOWN_TOOL_HINTS, formatToolHints } from '@antseed/router-core';
 import { LocalRouter, type BuyerMaxPricingConfig } from './router.js';
 
 function isNonNegativeFinite(value: unknown): value is number {
@@ -122,40 +122,43 @@ const plugin: AntseedRouterPlugin = {
     { key: 'ANTSEED_FAILURE_COOLDOWN_MS', label: 'Failure Cooldown (ms)', type: 'number', required: false, default: 30000, description: 'Cooldown after repeated failures (ms)' },
     { key: 'ANTSEED_MAX_PEER_STALENESS_MS', label: 'Max Peer Staleness (ms)', type: 'number', required: false, default: 300000, description: 'Peer staleness horizon (ms)' },
   ],
-  createRouter(config: Record<string, string>) {
-    const minReputation = config['ANTSEED_MIN_REPUTATION'] ? parseInt(config['ANTSEED_MIN_REPUTATION'], 10) : undefined;
-    if (minReputation !== undefined && Number.isNaN(minReputation)) {
-      throw new Error('ANTSEED_MIN_REPUTATION must be a valid number');
-    }
-    const maxPricing = parseMaxPricingJson(config['ANTSEED_MAX_PRICING_JSON']);
-    const maxFailures = config['ANTSEED_MAX_FAILURES'] ? parseInt(config['ANTSEED_MAX_FAILURES'], 10) : undefined;
-    if (maxFailures !== undefined && Number.isNaN(maxFailures)) {
-      throw new Error('ANTSEED_MAX_FAILURES must be a valid number');
-    }
-    const failureCooldownMs = config['ANTSEED_FAILURE_COOLDOWN_MS'] ? parseInt(config['ANTSEED_FAILURE_COOLDOWN_MS'], 10) : undefined;
-    if (failureCooldownMs !== undefined && Number.isNaN(failureCooldownMs)) {
-      throw new Error('ANTSEED_FAILURE_COOLDOWN_MS must be a valid number');
-    }
-    const maxPeerStalenessMs = config['ANTSEED_MAX_PEER_STALENESS_MS'] ? parseInt(config['ANTSEED_MAX_PEER_STALENESS_MS'], 10) : undefined;
-    if (maxPeerStalenessMs !== undefined && Number.isNaN(maxPeerStalenessMs)) {
-      throw new Error('ANTSEED_MAX_PEER_STALENESS_MS must be a valid number');
-    }
-    const adapter = new LevantoRoutingAdapter();
-    return Object.assign(new LocalRouter({
-      minReputation,
-      maxPricing,
-      maxFailures,
-      failureCooldownMs,
-      maxPeerStalenessMs,
-    }), {
-      autoRouteServiceId: 'levanto-auto',
-      routingMetadata: structuredClone(levantoRoutingMetadata),
-      recordUsage: (observation: RoutingUsageObservation) => adapter.observations.record(observation),
-      resetRouting: () => adapter.reset(),
-      selectRoute: adapter.selectRoute.bind(adapter),
-    });
-  },
+  createRouter: createLocalRouter,
 };
+
+export function createLocalRouter(config: Record<string, string>, adapters: Record<string, ModelRouterAdapter> = {}) {
+  const minReputation = config['ANTSEED_MIN_REPUTATION'] ? parseInt(config['ANTSEED_MIN_REPUTATION'], 10) : undefined;
+  if (minReputation !== undefined && Number.isNaN(minReputation)) {
+    throw new Error('ANTSEED_MIN_REPUTATION must be a valid number');
+  }
+  const maxPricing = parseMaxPricingJson(config['ANTSEED_MAX_PRICING_JSON']);
+  const maxFailures = config['ANTSEED_MAX_FAILURES'] ? parseInt(config['ANTSEED_MAX_FAILURES'], 10) : undefined;
+  if (maxFailures !== undefined && Number.isNaN(maxFailures)) {
+    throw new Error('ANTSEED_MAX_FAILURES must be a valid number');
+  }
+  const failureCooldownMs = config['ANTSEED_FAILURE_COOLDOWN_MS'] ? parseInt(config['ANTSEED_FAILURE_COOLDOWN_MS'], 10) : undefined;
+  if (failureCooldownMs !== undefined && Number.isNaN(failureCooldownMs)) {
+    throw new Error('ANTSEED_FAILURE_COOLDOWN_MS must be a valid number');
+  }
+  const maxPeerStalenessMs = config['ANTSEED_MAX_PEER_STALENESS_MS'] ? parseInt(config['ANTSEED_MAX_PEER_STALENESS_MS'], 10) : undefined;
+  if (maxPeerStalenessMs !== undefined && Number.isNaN(maxPeerStalenessMs)) {
+    throw new Error('ANTSEED_MAX_PEER_STALENESS_MS must be a valid number');
+  }
+  const registry = new ModelRouterRegistry();
+  registry.register('levanto-routing', new LevantoRoutingAdapter());
+  for (const [protocol, adapter] of Object.entries(adapters)) registry.register(protocol, adapter);
+  return Object.assign(new LocalRouter({
+    minReputation,
+    maxPricing,
+    maxFailures,
+    failureCooldownMs,
+    maxPeerStalenessMs,
+  }), {
+    autoRouteServiceId: 'levanto-auto',
+    getModelRouterAdapter: registry.resolve.bind(registry),
+    recordUsage: registry.recordUsage.bind(registry),
+    resetRouting: registry.resetRouting.bind(registry),
+  });
+}
 
 export default plugin;
 

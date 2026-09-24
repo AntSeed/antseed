@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
+import type { PeerInfo, RouteRecommendation, RouteSelectionContext, ModelRouterAdapter, RoutingUsageObservation, SerializedHttpRequest } from '@antseed/node';
 import { COMPLETED_REQUESTS_CAPABILITY, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
 import { LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './validation.js';
 import { CacheObservations } from './cache-observations.js';
@@ -11,14 +11,19 @@ export const levantoRoutingMetadata = createRoutingServiceMetadata({
   properties: { cqt: { type: 'string', enum: ['1', '3', '5', '7', '9'], default: '5', description: 'Cost/quality preference' } },
 });
 
-export class LevantoRoutingAdapter {
+export class LevantoRoutingAdapter implements ModelRouterAdapter {
+  readonly routingMetadata = structuredClone(levantoRoutingMetadata);
   private readonly conversations = new Map<string, CachedRoute>();
   readonly observations = new CacheObservations();
   private generation = 0;
 
-  reset(): void {
+  resetRouting(): void {
     this.generation++;
     this.conversations.clear();
+  }
+
+  recordUsage(observation: RoutingUsageObservation): void {
+    this.observations.record(observation);
   }
 
   async selectRoute(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null> {

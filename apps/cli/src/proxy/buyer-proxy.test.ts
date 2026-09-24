@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test, { type TestContext } from 'node:test'
-import localPlugin from '@antseed/router-local'
+import localPlugin, { createLocalRouter } from '@antseed/router-local'
 import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
@@ -18,6 +18,7 @@ import {
   createRoutingServiceMetadata,
   type ModelRoutingPreferences,
   type Router,
+  type ModelRouterAdapter,
   type RouteSelectionContext,
   type RouteRecommendation,
   type SerializedHttpRequest,
@@ -98,7 +99,7 @@ test('the local router switches between a model and Levanto without replacing th
     assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'model-a')
     return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"choices":[]}') }
   }
-  const setModel = () => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'model-a' } }))
+  const setModel = () => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: 'model-a' } } }))
   const infer = (model = 'antseed') => invokeProxy(proxy, makeProxyRequest({ body: { model, messages: [{ role: 'user', content: 'Hello' }] } }))
   assert.equal((await setModel()).statusCode, 200)
   assert.equal((await infer()).statusCode, 200)
@@ -117,7 +118,7 @@ test('the local router switches between a model and Levanto without replacing th
   assert.equal((proxy as any)._node.router, router)
 })
 
-test('local routing stays in model mode by default and rejects routing without eligible inference destinations', async () => {
+test('local routing stays in model mode by default and rejects unadvertised routing targets', async () => {
   const router = await localPlugin.createRouter({})
   const proxy = makeBuyerProxyWithPeers([], [], router)
   ;(proxy as any)._mergeStateFile = async () => {}
@@ -125,10 +126,83 @@ test('local routing stays in model mode by default and rejects routing without e
   const initial = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
   assert.deepEqual(JSON.parse(initial.body).selection, { kind: 'model', model: null })
   const selected = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: chatRouterSelection('d', '5') } }))
-  assert.equal(selected.statusCode, 200)
+  assert.equal(selected.statusCode, 400)
+  assert.match(selected.body, /not advertised/)
+})
+
+test('registered routing protocols select their own adapter and preference schema through the local router', async (testContext) => {
+  const inferencePeer = makeRankedRoutingFixture().peers[0]!
+  const routingPeer = makePeer('d', ['alternative'])
+  routingPeer.metadata = { peerId: routingPeer.peerId, version: 12, region: 'test', timestamp: Date.now(), signature: '',
+    providers: [{ provider: 'alternative', services: ['route'], maxConcurrency: 1, currentLoad: 0,
+    defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+    serviceApiProtocols: { route: ['openai-responses'] },
+  }, { provider: 'levanto', services: ['levanto-route'], maxConcurrency: 1, currentLoad: 0,
+    defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+    serviceApiProtocols: { 'levanto-route': ['levanto-routing'] } }] }
+  const contexts: RouteSelectionContext[] = []
+  let resets = 0
+  const adapter: ModelRouterAdapter = {
+    routingMetadata: createRoutingServiceMetadata({ type: 'object', additionalProperties: false,
+      properties: { policy: { type: 'string', enum: ['cost', 'quality'], default: 'cost' } } }),
+    async selectRoute(_request, _peers, context) {
+      contexts.push(context)
+      const routes = [{ serviceId: 'model-a', peerId: inferencePeer.peerId }]
+      assert.equal(context.acceptRecommendations(routes), true)
+      return routes
+    },
+    resetRouting() { resets++ },
+  }
+  const router = createLocalRouter({}, { 'openai-responses': adapter })
+  const peers = [inferencePeer, routingPeer]
+  const proxy = makeBuyerProxyWithPeers(peers, peers, router)
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-adapter-selection-'))
+  const store = new ConversationStore(directory)
+  testContext.after(async () => { await store.flush(); await rm(directory, { recursive: true, force: true }) })
+  ;(proxy as any)._conversations = store
+  ;(proxy as any)._mergeStateFile = async () => {}
+  let inferenceCalls = 0
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    inferenceCalls++
+    assert.equal(peer.peerId, inferencePeer.peerId)
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"choices":[]}') }
+  }
+  const target = { peerId: routingPeer.peerId, provider: 'alternative', serviceId: 'route' }
+  const select = (preferences: Record<string, string>) => invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route',
+    body: { selection: { kind: 'router', service: target, preferences } } }))
+  assert.equal((await select({ cqt: '5' })).statusCode, 400)
+  assert.equal((await select({ policy: 'quality' })).statusCode, 200)
   const response = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
-  assert.equal(response.statusCode, 502)
-  assert.match(response.body, /No eligible inference candidates/)
+  assert.equal(response.statusCode, 200, response.body)
+  assert.equal(contexts.length, 1)
+  assert.equal(inferenceCalls, 1)
+  assert.deepEqual(contexts[0]!.preferences, { policy: 'quality' })
+  assert.equal(contexts[0]!.preferencesSchemaHash, adapter.routingMetadata.preferencesSchemaHash)
+  assert.deepEqual(contexts[0]!.routingService, target)
+  assert.equal((await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: chatRouterSelection('d', '9') } }))).statusCode, 200)
+  store.touch({ tool: 'vpr', sessionKey: 'adapter-chat' })
+  const selectChat = (preferences: Record<string, string>) => invokeProxy(proxy, makeProxyRequest({
+    path: '/_antseed/conversations/update', body: { id: 'vpr:adapter-chat', routingSelection: { kind: 'router', service: target, preferences } },
+  }))
+  assert.equal((await selectChat({ cqt: '5' })).statusCode, 400)
+  assert.equal((await selectChat({ policy: 'cost' })).statusCode, 200)
+  const chatResponse = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': 'adapter-chat' },
+    body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] },
+  }))
+  assert.equal(chatResponse.statusCode, 200, chatResponse.body)
+  assert.deepEqual(contexts[1]!.preferences, { policy: 'cost' })
+  assert.deepEqual(contexts[1]!.routingService, target)
+  assert.equal((await select({})).statusCode, 200)
+  const defaultResponse = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(defaultResponse.statusCode, 200, defaultResponse.body)
+  assert.deepEqual(contexts[2]!.preferences, { policy: 'cost' })
+  assert.equal(resets, 0)
+  routingPeer.metadata!.providers[0]!.serviceApiProtocols!.route = ['openai-chat-completions']
+  const unsupported = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
+  assert.equal(unsupported.statusCode, 502)
+  assert.match(unsupported.body, /No registered adapter/)
+  assert.equal(contexts.length, 3)
+  assert.equal(inferenceCalls, 3)
 })
 
 test('selected router hands auto requests to normal inference and bypasses concrete models and pins', async () => {
@@ -321,7 +395,7 @@ test('persisted chat overrides route after reload and fail closed when the plugi
   await (proxy as any)._conversations.flush()
 })
 
-test('chat changes cancel only that chat and children; buyer default changes leave overridden chats running', { timeout: 5_000 }, async (context) => {
+test('chat and buyer selection changes leave in-flight requests using their original selection', { timeout: 5_000 }, async (context) => {
   const { proxy, peers, router, update, request } = await makeConversationRoutingFixture(context)
   await update('chat-a', chatRouterSelection('d', '9'))
   await update('chat-b', chatRouterSelection('e', '1'))
@@ -341,16 +415,15 @@ test('chat changes cancel only that chat and children; buyer default changes lea
   const inherited = request('chat-c')
   await ready
   assert.equal((await update('chat-a', chatRouterSelection('d', '7'))).statusCode, 200)
-  assert.equal((await first).statusCode, 502)
-  assert.equal(waiting.get('vpr:child-a')!.signal.aborted, true)
+  assert.equal(waiting.get('vpr:child-a')!.signal.aborted, false)
   assert.equal(waiting.get('vpr:chat-b')!.signal.aborted, false)
   assert.equal(waiting.get('vpr:chat-c')!.signal.aborted, false)
   ;(proxy as any)._setRoutingSelection(chatRouterSelection('f', '3'))
-  assert.equal((await inherited).statusCode, 502)
-  assert.equal(waiting.get('vpr:chat-b')!.signal.aborted, false)
-  waiting.get('vpr:chat-b')!.finish()
-  assert.equal((await second).statusCode, 200)
-  assert.equal((proxy as any)._activeConversationRouting.size, 0)
+  for (const pending of waiting.values()) {
+    assert.equal(pending.signal.aborted, false)
+    pending.finish()
+  }
+  for (const response of await Promise.all([first, second, inherited])) assert.equal(response.statusCode, 200)
 })
 
 test('router selection carries live enum preferences, ignores stale defaults and preserves model mode', async () => {
@@ -365,13 +438,10 @@ test('router selection carries live enum preferences, ignores stale defaults and
     return select(request, peers, context)
   }
   ;(proxy as any)._mergeStateFile = async () => {}
-  ;(proxy as any)._defaultRoutedModel = 'stale-model'
+  ;(proxy as any)._setRoutingSelection({ kind: 'model', model: 'stale-model' })
   const service = { peerId: 'd'.repeat(40), provider: 'levanto', serviceId: 'levanto-route' }
   const selected = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'router', service, preferences: { cqt: '9' } } } }))
   assert.equal(selected.statusCode, 200, selected.body)
-  const metadata = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/router/metadata' }))
-  assert.deepEqual(JSON.parse(metadata.body).preferences, { cqt: '9' })
-  assert.deepEqual(JSON.parse(metadata.body).metadata, router.routingMetadata)
   const first = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
   assert.equal(first.statusCode, 200, first.body)
   assert.deepEqual(captured[0], { preferences: { cqt: '9' }, target: service, schema: router.routingMetadata.preferencesSchemaHash })
@@ -407,7 +477,7 @@ test('switching a routed conversation back to model mode overrides old automatic
   const headers = { 'x-vpr-session-id': session }
   const body = { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] }
   assert.equal((await invokeProxy(proxy, makeProxyRequest({ headers, body }))).statusCode, 200)
-  await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'model-b' } }))
+  await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: 'model-b' } } }))
   assert.equal((await invokeProxy(proxy, makeProxyRequest({ headers, body }))).statusCode, 200)
   assert.equal(JSON.parse(Buffer.from(calls.requests.at(-1)!.request.body).toString()).model, 'model-b')
   assert.equal(calls.routing, 1)
@@ -437,21 +507,106 @@ test('explicit router target and preferences survive the local state-file round 
   assert.deepEqual(JSON.parse(restored.body).selection, selection)
 })
 
-test('legacy state preserves a configured model when absent and clears it when explicitly null', async (context) => {
+test('buyer starts without a default model and restores or clears its saved selection', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-legacy-route-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
-  const proxy = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any,
-    selection: { kind: 'model', model: 'configured-model' } })
+  const proxy = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any })
   const stateFile = join(directory, 'buyer.state.json')
+  assert.deepEqual((proxy as any)._routingSelection, { kind: 'model', model: null })
+  await writeFile(stateFile, JSON.stringify({ selection: { kind: 'model', model: 'saved-model' } }))
+  await (proxy as any)._reloadSessionOverrides()
+  assert.deepEqual((proxy as any)._routingSelection, { kind: 'model', model: 'saved-model' })
   await writeFile(stateFile, '{}')
   await (proxy as any)._reloadSessionOverrides()
-  assert.deepEqual((proxy as any)._selection, { kind: 'model', model: 'configured-model' })
-  await writeFile(stateFile, JSON.stringify({ defaultRoutedModel: null }))
+  assert.deepEqual((proxy as any)._routingSelection, { kind: 'model', model: 'saved-model' })
+  await writeFile(stateFile, JSON.stringify({ selection: { kind: 'model', model: null } }))
   await (proxy as any)._reloadSessionOverrides()
-  assert.deepEqual((proxy as any)._selection, { kind: 'model', model: null })
+  assert.deepEqual((proxy as any)._routingSelection, { kind: 'model', model: null })
 })
 
-test('live config reload applies generic router preferences without changing local eligibility policy', async (context) => {
+test('legacy saved models migrate once while preserving unrelated buyer state', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-route-migration-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const stateFile = join(directory, 'buyer.state.json')
+  const pinnedPeerId = 'a'.repeat(40)
+  for (const legacyModel of ['model-a', `  ${pinnedPeerId}@model-a  `, null, '']) {
+    const proxy = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any })
+    const peers = [{ peerId: pinnedPeerId }]
+    await writeFile(stateFile, JSON.stringify({ defaultRoutedModel: legacyModel, pinnedPeerId, peers }))
+    let writes = 0
+    const merge = (proxy as any)._mergeStateFile.bind(proxy)
+    ;(proxy as any)._mergeStateFile = async (patch: Record<string, unknown>) => { writes++; await merge(patch) }
+
+    await (proxy as any)._reloadSessionOverrides()
+
+    const selection = { kind: 'model', model: typeof legacyModel === 'string' ? legacyModel.trim() || null : null }
+    const response = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+    assert.deepEqual(JSON.parse(response.body).selection, selection)
+    const saved = JSON.parse(await readFile(stateFile, 'utf8'))
+    assert.deepEqual(saved.selection, selection)
+    assert.equal(saved.pinnedPeerId, pinnedPeerId)
+    assert.deepEqual(saved.peers, peers)
+    assert.equal(writes, 1)
+
+    await (proxy as any)._reloadSessionOverrides()
+    assert.equal(writes, 1)
+    const restarted = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any })
+    await (restarted as any)._reloadSessionOverrides()
+    assert.deepEqual((restarted as any)._routingSelection, selection)
+  }
+})
+
+test('saved selections including router mode and cleared defaults take precedence over legacy models', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-route-precedence-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const stateFile = join(directory, 'buyer.state.json')
+  const { proxy } = makeRankedRoutingFixture([200])
+  ;(proxy as any)._stateFile = stateFile
+  let writes = 0
+  ;(proxy as any)._mergeStateFile = async () => { writes++ }
+  for (const selection of [{ kind: 'model', model: 'new-model' }, { kind: 'model', model: null }, { kind: 'router' }]) {
+    await writeFile(stateFile, JSON.stringify({ selection, defaultRoutedModel: 'old-model' }))
+    await (proxy as any)._reloadSessionOverrides()
+    assert.deepEqual((proxy as any)._routingSelection, selection)
+  }
+  assert.equal(writes, 0)
+})
+
+test('invalid legacy models are not migrated or allowed to replace the active selection', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-invalid-legacy-route-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const proxy = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any })
+  const stateFile = join(directory, 'buyer.state.json')
+  const selection = { kind: 'model', model: 'active-model' }
+  await writeFile(stateFile, JSON.stringify({ selection }))
+  await (proxy as any)._reloadSessionOverrides()
+  for (const defaultRoutedModel of [42, {}, [], 'not-a-peer@model-a']) {
+    await writeFile(stateFile, JSON.stringify({ defaultRoutedModel }))
+    await (proxy as any)._reloadSessionOverrides()
+    assert.deepEqual((proxy as any)._routingSelection, selection)
+    assert.equal('selection' in JSON.parse(await readFile(stateFile, 'utf8')), false)
+  }
+})
+
+test('invalid saved selections cannot replace the active selection', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-invalid-route-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const proxy = new BuyerProxy({ port: 0, dataDir: directory, node: { router: null } as any })
+  const stateFile = join(directory, 'buyer.state.json')
+  const selection = { kind: 'model', model: 'saved-model' }
+  await writeFile(stateFile, JSON.stringify({ selection }))
+  await (proxy as any)._reloadSessionOverrides()
+
+  for (const invalid of [null, 'model-a', [], { kind: 'model' }, { kind: 'model', model: 42 },
+    { kind: 'model', model: 'not-a-peer@model-a' }, { kind: 'router' }]) {
+    await writeFile(stateFile, JSON.stringify({ selection: invalid }))
+    await (proxy as any)._reloadSessionOverrides()
+    const response = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+    assert.deepEqual(JSON.parse(response.body).selection, selection)
+  }
+})
+
+test('config reload updates eligibility policy without replacing the active model-router selection', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-router-config-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const { proxy } = makeRankedRoutingFixture([200])
@@ -460,14 +615,16 @@ test('live config reload applies generic router preferences without changing loc
     properties: { cqt: { type: 'string', enum: ['1', '5', '9'], default: '5' } } })
   const path = join(directory, 'config.json')
   ;(proxy as any)._configPath = path
-  ;(proxy as any)._mergeStateFile = async () => {}
+  ;(proxy as any)._mergeStateFile = async () => { assert.fail('Config reload must not persist selection') }
   const service = { peerId: 'c'.repeat(40), provider: 'levanto', serviceId: 'levanto-route' }
-  for (const cqt of ['1', '9']) {
-    const selection = { kind: 'router', service, preferences: { cqt } }
-    await writeFile(path, JSON.stringify({ buyer: { selection, routingPreferences: priceAndTrustPreferences } }))
+  const activeSelection = { kind: 'router', service, preferences: { cqt: '5' } }
+  ;(proxy as any)._setRoutingSelection(activeSelection)
+  for (const maxInputUsdPerMillion of [15, 25]) {
+    const routingPreferences = { ...priceAndTrustPreferences, maxInputUsdPerMillion }
+    await writeFile(path, JSON.stringify({ buyer: { routingPreferences } }))
     await (proxy as any)._reloadRoutingPreferences()
-    assert.deepEqual((proxy as any)._selection, selection)
-    assert.deepEqual((proxy as any)._routingPreferences, priceAndTrustPreferences)
+    assert.deepEqual((proxy as any)._routingSelection, activeSelection)
+    assert.deepEqual((proxy as any)._routingPreferences, routingPreferences)
   }
 })
 
@@ -501,7 +658,38 @@ test('routing observations use successful native usage and isolate child session
   assert.equal(observation.serviceId, 'model-a')
 })
 
-test('changing routing selection aborts an in-flight decision and does not dispatch inference', async () => {
+test('changing model selection affects the next request without cancelling the current decision', async () => {
+  const { proxy, calls, peers } = makeRankedRoutingFixture([200, 200])
+  const router = (proxy as any)._node.router as Router
+  let started!: () => void
+  const ready = new Promise<void>(resolve => { started = resolve })
+  let receivedSignal: AbortSignal | undefined
+  let finish!: () => void
+  router.selectRoute = async (_request, _peers, context) => {
+    receivedSignal = context.signal
+    started()
+    return new Promise(resolve => { finish = () => {
+      const routes = [{ serviceId: 'model-a', peerId: peers[0]!.peerId }]
+      assert.equal(context.acceptRecommendations(routes), true)
+      resolve(routes)
+    } })
+  }
+  ;(proxy as any)._mergeStateFile = async () => {}
+  const pending = invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
+  await ready
+  const change = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: 'model-b' } } }))
+  assert.equal(change.statusCode, 200)
+  assert.equal(receivedSignal!.aborted, false)
+  finish()
+  const response = await pending
+  assert.equal(response.statusCode, 200)
+  assert.equal(JSON.parse(Buffer.from(calls.requests[0]!.request.body).toString()).model, 'model-a')
+  const next = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Next' }] } }))
+  assert.equal(next.statusCode, 200)
+  assert.equal(JSON.parse(Buffer.from(calls.requests[1]!.request.body).toString()).model, 'model-b')
+})
+
+test('client disconnect still cancels a pending model-routing decision', { timeout: 5_000 }, async () => {
   const { proxy, calls } = makeRankedRoutingFixture([200])
   const router = (proxy as any)._node.router as Router
   let started!: () => void
@@ -512,13 +700,18 @@ test('changing routing selection aborts an in-flight decision and does not dispa
     started()
     return new Promise(() => {})
   }
-  ;(proxy as any)._mergeStateFile = async () => {}
-  const pending = invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [{ role: 'user', content: 'Hello' }] } }))
+  const response = makeProxyResponse()
+  let disconnect!: () => void
+  response.once = (...args: unknown[]) => {
+    if (args[0] === 'close') disconnect = args[1] as () => void
+    return response
+  }
+  const pending = (proxy as any)._handleRequest(makeProxyRequest({ body: {
+    model: 'antseed', messages: [{ role: 'user', content: 'Hello' }],
+  } }), response)
   await ready
-  const change = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'model-b' } }))
-  assert.equal(change.statusCode, 200)
-  const response = await pending
-  assert.equal(response.statusCode, 502)
+  disconnect()
+  await pending
   assert.equal(receivedSignal!.aborted, true)
   assert.equal(calls.requests.length, 0)
 })
@@ -707,9 +900,9 @@ function makeRoutingSpendFixture(options: { late?: boolean; rejected?: boolean; 
   const node = (fixture.proxy as any)._node
   const selectRoute = node.router.selectRoute.bind(node.router)
   const sendRequest = node.sendRequest
-  const spend = (requestId: string, amountUsdc: string, inputTokens: string) => {
+  const spend = (requestId: string, amountUsdc: string, inputTokens: string, cachedInputTokens = '0') => {
     ;(fixture.proxy as any)._attributeSpend({ sellerPeerId: fixture.peers[0]!.peerId, requestId, amountUsdc,
-      inputTokens, cachedInputTokens: '0', outputTokens: inputTokens, outputImages: '0' })
+      inputTokens, cachedInputTokens, outputTokens: inputTokens, outputImages: '0' })
   }
   const pendingFees: string[] = []
   const snapshots: Array<{ spentUsdc: string; requestCount: number }> = []
@@ -721,7 +914,7 @@ function makeRoutingSpendFixture(options: { late?: boolean; rejected?: boolean; 
   node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
     if (request.path === '/_antseed/route') {
       pendingFees.push(request.requestId)
-      if (!options.late && !options.rejected) spend(request.requestId, '1000', '9')
+      if (!options.late && !options.rejected) spend(request.requestId, '1000', '9', '3')
       const tracked = (fixture.proxy as any)._requestConversations.get(request.requestId)
       if (tracked) {
         const conversation = (fixture.proxy as any)._conversations.get(tracked.convId)
@@ -736,7 +929,7 @@ function makeRoutingSpendFixture(options: { late?: boolean; rejected?: boolean; 
   return { ...fixture, pendingFees, snapshots, spend }
 }
 
-test('routing fees are attributed before inference without inflating turns or inference tokens', async () => {
+test('routing fees and reported tokens are attributed without counting an extra turn', async () => {
   const { proxy, snapshots } = makeRoutingSpendFixture()
   const session = randomUUID()
   const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
@@ -746,8 +939,9 @@ test('routing fees are attributed before inference without inflating turns or in
   const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
   assert.equal(conversation.spentUsdc, '21000')
   assert.equal(conversation.requestCount, 1)
-  assert.equal(conversation.inputTokens, '4')
-  assert.equal(conversation.outputTokens, '4')
+  assert.equal(conversation.inputTokens, '13')
+  assert.equal(conversation.cachedInputTokens, '3')
+  assert.equal(conversation.outputTokens, '13')
 })
 
 test('late routing authorization is still attributed after inference finishes', async () => {
@@ -760,6 +954,9 @@ test('late routing authorization is still attributed after inference finishes', 
   const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
   assert.equal(conversation.spentUsdc, '21000')
   assert.equal(conversation.requestCount, 1)
+  assert.equal(conversation.inputTokens, '4')
+  assert.equal(conversation.cachedInputTokens, '0')
+  assert.equal(conversation.outputTokens, '4')
 })
 
 test('routing spend stays on the conversation when all inference destinations fail', async () => {
@@ -771,7 +968,7 @@ test('routing spend stays on the conversation when all inference destinations fa
   const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
   assert.equal(conversation.spentUsdc, '1000')
   assert.equal(conversation.requestCount, 0)
-  assert.equal(conversation.inputTokens, '0')
+  assert.equal(conversation.inputTokens, '9')
 })
 
 test('rejected routing responses do not invent a conversation charge', async () => {
@@ -808,6 +1005,34 @@ test('subagent routing fees roll up to the parent conversation', async () => {
   assert.equal(conversations.length, 1)
   assert.equal(conversations[0].spentUsdc, '21000')
   assert.equal(conversations[0].requestCount, 1)
+})
+
+test('ordinary requests keep attributing spend after the conversation already exists', async () => {
+  const { proxy, calls } = makeRoutingSpendFixture()
+  ;(proxy as any)._setRoutingSelection({ kind: 'model', model: null })
+  const session = randomUUID()
+  for (const message of ['Hello', 'Follow up']) {
+    const response = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-vpr-session-id': session },
+      body: { model: 'model-a', messages: [{ role: 'user', content: message }] } }))
+    assert.equal(response.statusCode, 200, response.body)
+  }
+  const conversation = (proxy as any)._conversations.get(`vpr:${session}`)
+  assert.equal(calls.routing, 0)
+  assert.equal(conversation.spentUsdc, '40000')
+  assert.equal(conversation.requestCount, 2)
+  assert.equal(conversation.inputTokens, '8')
+})
+
+test('model and model-routing requests use the same duplicate tracking guard', () => {
+  const proxy = makeBuyerProxyWithPeers([]) as any
+  for (const purpose of [undefined, 'routing']) {
+    const requestId = randomUUID()
+    proxy._trackRequestConversation(requestId, 'first-chat', undefined, purpose)
+    const original = proxy._requestConversations.get(requestId)
+    assert.throws(() => proxy._trackRequestConversation(requestId, 'other-chat', undefined, purpose), /Request ID already tracked/)
+    assert.equal(proxy._requestConversations.get(requestId), original)
+    assert.equal(original.convId, 'first-chat')
+  }
 })
 
 test('reused routing IDs cannot move a late payment into another conversation', async () => {
@@ -1078,9 +1303,7 @@ test('BuyerProxy starts incremental discovery on startup', async (t) => {
   await proxy.stop()
 
   assert.equal(sweepCalls, 1)
-  assert.equal((proxy as any)._routingSelectionController.signal.aborted, true)
   await proxy.start()
-  assert.equal((proxy as any)._routingSelectionController.signal.aborted, false)
   await proxy.stop()
   assert.equal(sweepCalls, 2)
 })
@@ -1813,7 +2036,7 @@ test('antseed alias with a model-only default route uses automatic peer selectio
     openai: { services: { 'openai-gpt-56-sol': ['openai-chat-completions'] } },
   }
   const proxy = makeBuyerProxyWithPeers([lower, higher], [lower, higher], permissiveRouter())
-  ;(proxy as any)._defaultRoutedModel = 'gpt-5.6-sol'
+  ;(proxy as any)._setRoutingSelection({ kind: 'model', model: 'gpt-5.6-sol' })
   let selectedPeerId = ''
   let selectedBody: Record<string, unknown> | null = null
   ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
@@ -3781,7 +4004,7 @@ test('overrideRoutedModelInBody no-ops on a matching model, a missing model, or 
   assert.equal(overrideRoutedModelInBody(nonJson, { 'content-type': 'text/plain' }, route).overridden, false)
 })
 
-test('route control endpoint sets, persists, and returns the default routed model', async (t) => {
+test('route control endpoint requires, persists, and returns a single selection', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-route-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const proxy = new BuyerProxy({
@@ -3790,28 +4013,34 @@ test('route control endpoint sets, persists, and returns the default routed mode
     node: { router: null } as any,
   })
 
-  const set = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: `${validPeerId}@gpt-4o` } }))
+  for (const body of [{}, { model: 'gpt-4o' }, { selection: null }]) {
+    const rejected = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body }))
+    assert.equal(rejected.statusCode, 400)
+  }
+
+  const set = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: `${validPeerId}@gpt-4o` } } }))
   assert.equal(set.statusCode, 200)
-  assert.deepEqual(JSON.parse(set.body), { ok: true, model: `${validPeerId}@gpt-4o`, selection: { kind: 'model', model: `${validPeerId}@gpt-4o` } })
+  assert.deepEqual(JSON.parse(set.body), { ok: true, selection: { kind: 'model', model: `${validPeerId}@gpt-4o` } })
 
   const get = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
-  assert.deepEqual(JSON.parse(get.body), { ok: true, model: `${validPeerId}@gpt-4o`, selection: { kind: 'model', model: `${validPeerId}@gpt-4o` } })
+  assert.deepEqual(JSON.parse(get.body), { ok: true, selection: { kind: 'model', model: `${validPeerId}@gpt-4o` } })
 
   const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
-  assert.equal(persisted['defaultRoutedModel'], `${validPeerId}@gpt-4o`)
+  assert.deepEqual(persisted['selection'], { kind: 'model', model: `${validPeerId}@gpt-4o` })
+  assert.equal('defaultRoutedModel' in persisted, false)
 
-  const automatic = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'gpt-4o' } }))
+  const automatic = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: 'gpt-4o' } } }))
   assert.equal(automatic.statusCode, 200)
-  assert.deepEqual(JSON.parse(automatic.body), { ok: true, model: 'gpt-4o', selection: { kind: 'model', model: 'gpt-4o' } })
+  assert.deepEqual(JSON.parse(automatic.body), { ok: true, selection: { kind: 'model', model: 'gpt-4o' } })
 
   const automaticPersisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
-  assert.equal(automaticPersisted['defaultRoutedModel'], 'gpt-4o')
+  assert.deepEqual(automaticPersisted['selection'], { kind: 'model', model: 'gpt-4o' })
 
-  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'not-a-peer@gpt-4o' } }))
+  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: 'not-a-peer@gpt-4o' } } }))
   assert.equal(invalid.statusCode, 400)
 
-  const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: '' } }))
-  assert.deepEqual(JSON.parse(cleared.body), { ok: true, model: null, selection: { kind: 'model', model: null } })
+  const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { selection: { kind: 'model', model: null } } }))
+  assert.deepEqual(JSON.parse(cleared.body), { ok: true, selection: { kind: 'model', model: null } })
 })
 
 test('buyer-usage endpoint reports lastActivityAt, null until a request is dispatched', async () => {
@@ -3883,7 +4112,7 @@ test('per-chat pin overrides the default routed model for the antseed alias', as
   try {
     const defaultRoute = `${'aa'.repeat(20)}@default-model`
     const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
-    ;(proxy as any)._defaultRoutedModel = defaultRoute
+    ;(proxy as any)._setRoutingSelection({ kind: 'model', model: defaultRoute })
     const store = (proxy as any)._conversations
     store.touch({ tool: 'codex-exec', sessionKey: 'sess-1' })
     store.setPinnedModel('codex-exec:sess-1', pinnedRoute, 'user')
@@ -4093,7 +4322,7 @@ test('conversation control endpoints list, rename, pin, reject bad pins, delete'
 test('subagent requests roll up into the parent conversation', async () => {
   const { proxy, dir } = await makeConversationProxy()
   try {
-    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    ;(proxy as any)._setRoutingSelection({ kind: 'model', model: `${'aa'.repeat(20)}@default-model` })
     const store = (proxy as any)._conversations
 
     await invokeProxy(proxy, makeProxyRequest({
@@ -4113,7 +4342,7 @@ test('subagent requests roll up into the parent conversation', async () => {
 test('title request racing ahead of the first turn does not name the chat', async () => {
   const { proxy, dir } = await makeConversationProxy()
   try {
-    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    ;(proxy as any)._setRoutingSelection({ kind: 'model', model: `${'aa'.repeat(20)}@default-model` })
     const store = (proxy as any)._conversations
 
     // OpenCode's ensureTitle request lands first, on the same session.
