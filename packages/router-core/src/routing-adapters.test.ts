@@ -13,7 +13,7 @@ const peer = {
 function adapter(): ModelRouterAdapter {
   return {
     routingMetadata: createRoutingServiceMetadata({ type: 'object', additionalProperties: false, properties: {} }),
-    selectRoute: vi.fn(async () => []), recordUsage: vi.fn(), resetRouting: vi.fn(),
+    selectRoute: vi.fn(async () => []), recordUsage: vi.fn(),
   }
 }
 
@@ -55,7 +55,7 @@ describe('ModelRouterRegistry', () => {
     expect(() => registry.register('openai-responses', invalid)).toThrow()
   })
 
-  it('shares isolated inference observations and resets each adapter cache', () => {
+  it('shares isolated inference observations with each adapter', () => {
     const registry = new ModelRouterRegistry()
     const first = adapter()
     const second = adapter()
@@ -69,8 +69,5 @@ describe('ModelRouterRegistry', () => {
     registry.recordUsage(observation)
     expect(second.recordUsage).toHaveBeenCalledWith(observation)
     expect(observation.inputTokens).toBe(100)
-    registry.resetRouting()
-    expect(first.resetRouting).toHaveBeenCalledTimes(1)
-    expect(second.resetRouting).toHaveBeenCalledTimes(1)
   })
 })

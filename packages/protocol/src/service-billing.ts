@@ -3,7 +3,6 @@ import { isKnownServiceApiProtocol, type ServiceApiProtocol } from './service-ap
 import { isCompletedRequestBillingModel, usdToMicroUsdc, validateUnitBillingModelV1, type ServiceUnitBillingModelsV1 } from './billing.js';
 export { parseMicroUsdc } from './billing.js';
 
-export const COMPLETED_REQUESTS_CAPABILITY = 'payments.completed-requests.v1';
 export interface ServiceBillingOffer {
   provider: string;
   service: string;

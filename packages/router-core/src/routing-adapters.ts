@@ -24,8 +24,4 @@ export class ModelRouterRegistry {
   recordUsage(observation: RoutingUsageObservation): void {
     for (const adapter of this.adapters.values()) adapter.recordUsage?.(structuredClone(observation))
   }
-
-  resetRouting(): void {
-    for (const adapter of this.adapters.values()) adapter.resetRouting?.()
-  }
 }

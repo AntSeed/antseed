@@ -17,7 +17,7 @@ import {
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
 import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
-import { COMPLETED_REQUESTS_CAPABILITY, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { decodeMetadata, encodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { verifySignature, hexToBytes } from '../src/p2p/identity.js';
 
@@ -139,7 +139,7 @@ describe('PeerAnnouncer metadata versions', () => {
   it('signs native completed-request and image models together in metadata v12', async () => {
     const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
     const announcer = new PeerAnnouncer({
-      ...makeBaseConfig(), capabilities: [COMPLETED_REQUESTS_CAPABILITY],
+      ...makeBaseConfig(),
       providers: [{ provider: 'images', services: ['image'], maxConcurrency: 5,
         serviceApiProtocols: { image: ['openai-images'] },
         serviceUnitBillingModels: { image: { 'openai-images': { version: 1, components: [{ unit: 'output_images', priceUsd: 0.04 }] } } },
@@ -154,7 +154,12 @@ describe('PeerAnnouncer metadata versions', () => {
     const decoded = decodeMetadata(encodeMetadata(metadata));
     expect(decoded.version).toBe(12);
     expect(decoded.offerings).toBeUndefined();
-    expect(decoded.capabilities).toContain(COMPLETED_REQUESTS_CAPABILITY);
+    expect(decoded.capabilities).toEqual([
+      CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+      CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+      CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+      CONNECTION_CAPABILITY_TCP_ENC_V1,
+    ].sort());
     expect(decoded.providers[0]?.services).toEqual(['image']);
     expect(decoded.providers[0]?.serviceUnitBillingModels?.image?.['openai-images']?.version).toBe(1);
     expect(resolveServiceBillingOffer(decoded.providers, offer.provider, offer.service)).toEqual(offer);

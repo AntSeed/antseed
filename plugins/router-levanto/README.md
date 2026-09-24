@@ -147,18 +147,18 @@ not used to choose the adapter. Unknown protocols and ambiguous advertisements
 fail instead of falling back to Levanto.
 
 An adapter implements `ModelRouterAdapter` from `@antseed/node`: `routingMetadata`
-and `selectRoute(request, peers, context)`, with optional `recordUsage` and
-`resetRouting` hooks. The method returns generic `RouteRecommendation[]` values.
+and `selectRoute(request, peers, context)`, with an optional `recordUsage` hook.
+The method returns generic `RouteRecommendation[]` values.
 Its request construction, response validation and any billing mode selection
 stay inside the adapter, while candidate eligibility and inference execution
 remain shared.
 
-Code integrating an additional adapter can pass it to the local router factory:
+Code integrating an additional adapter can pass it to the local plugin's `createRouter` method:
 
 ```ts
-import { createLocalRouter } from '@antseed/router-local';
+import localPlugin from '@antseed/router-local';
 
-const router = createLocalRouter(config, {
+const router = localPlugin.createRouter(config, {
   'another-routing-protocol': anotherAdapter,
 });
 ```

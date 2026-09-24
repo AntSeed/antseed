@@ -50,7 +50,7 @@ backend tokens. Supporting token-priced routing requires actual usage reporting.
 2. The buyer sends the normal request with `unitBilling: offer` and a synchronous
    `acceptResponse` callback. Only literal `true` accepts delivery. The SDK adds the
    existing provider header; no unit-price or service-contract header is sent.
-3. The seller checks capability and confirmed reserve, then executes. Initial
+3. The seller checks the request method, provider, and confirmed reserve, then executes. Initial
    pre-execution 402 negotiation uses the existing channel handshake and retries
    once. It does not prepay the routing charge.
 4. The seller measures successful provider responses; the buyer additionally
@@ -83,7 +83,10 @@ remains separate and uses request correlation and the durable channel store.
 
 Existing image-v1 metadata, prices, rounding and `output_images` reports are
 unchanged. Token billing is unchanged. New completed-request purchases require
-upgraded peers advertising `payments.completed-requests.v1`.
+upgraded buyers and sellers. The signed `completed_requests` billing model
+identifies the offer; there is no separate advertisement or connection capability
+flag for this billing mode. Sellers do not reject incompatible buyers through an
+upfront capability check, so incompatibility may instead fail later during payment.
 
 Discovery keeps signed metadata v12. Both image and completed-request prices use
 `providers[].serviceUnitBillingModels`: the existing version-1 component layout

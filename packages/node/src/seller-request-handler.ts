@@ -36,7 +36,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
-import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc } from '@antseed/protocol/service-billing';
+import { parseMicroUsdc } from '@antseed/protocol/service-billing';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -236,8 +236,8 @@ export class SellerRequestHandler {
       const unitBilling = completedRequestOffer(provider, service);
       try {
         if (unitBilling) {
-          if (!conn.hasRemoteCapability(COMPLETED_REQUESTS_CAPABILITY) || request.method !== 'POST'
-            || this._extractRequestedProvider(request) !== provider.name.toLowerCase()) throw new Error('Completed-request capability and matching provider required');
+          if (request.method !== 'POST'
+            || this._extractRequestedProvider(request) !== provider.name.toLowerCase()) throw new Error('Completed-request POST and matching provider required');
           if (parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
         }
       } catch (error) {

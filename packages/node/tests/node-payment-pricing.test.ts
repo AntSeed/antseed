@@ -6,7 +6,6 @@ import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-code
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
-import { COMPLETED_REQUESTS_CAPABILITY } from '@antseed/protocol/service-billing';
 
 const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
@@ -14,7 +13,7 @@ const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
 describe('completed-request seller payments', () => {
   const body = { service: 'levanto-route', v: 1, cqt: 5, inputMessage: 'Help with code', promptTokens: 3, expectedCachedTokens: [], constraints: {} };
   const result = { v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: 'a'.repeat(40), estimate: { costUsd: 0.01, inputTokens: 3, cachedInputTokens: 0, outputTokens: 30 }, price: { inUsdPerM: 1, outUsdPerM: 3, cachedInUsdPerM: 0 } }] };
-  function setup(overrides: Record<string, unknown> = {}, capable = true) {
+  function setup(overrides: Record<string, unknown> = {}) {
     let spend = 0n;
     const provider = makeProvider(10, 10, { name: 'levanto', services: ['levanto-route', 'image'] });
     provider.serviceApiProtocols = { 'levanto-route': ['levanto-routing'] };
@@ -29,7 +28,7 @@ describe('completed-request seller payments', () => {
     const frames: Uint8Array[] = [];
     const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() };
     const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: spm, sessionTracker: null, channelsClient: {} as any, announcer: null, emit: () => false });
-    const { mux } = handler.handleConnection({ ...makeConn(frames), hasRemoteCapability: (capability: string) => capable && capability === COMPLETED_REQUESTS_CAPABILITY }, 'b'.repeat(40), paymentMux as any);
+    const { mux } = handler.handleConnection(makeConn(frames), 'b'.repeat(40), paymentMux as any);
     const send = async (requestId = 'fixed', patch: Partial<SerializedHttpRequest> = {}) => {
       await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({
         requestId, method: 'POST', path: '/_antseed/levanto-route',
@@ -40,7 +39,7 @@ describe('completed-request seller payments', () => {
     };
     return { provider, spm, paymentMux, send };
   }
-  it('charges exactly the fee with zero tokens, without invoking streaming', async () => {
+  it('charges exactly the fee without a capability flag, with zero tokens and no streaming', async () => {
     const harness = setup();
     expect((await harness.send()).statusCode).toBe(200);
     expect(harness.spm.recordSpend).toHaveBeenCalledWith('session-1', 1000n);
@@ -56,12 +55,10 @@ describe('completed-request seller payments', () => {
     expect(vi.mocked(harness.provider.handleRequest).mock.calls[0]![0].headers).not.toHaveProperty('x-antseed-unit-price');
     expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ billingUsage: { version: 1, units: { completed_requests: '1' } } }));
   });
-  it('rejects legacy buyers and mismatched offers before execution', async () => {
-    const legacy = setup({}, false);
-    expect((await legacy.send()).statusCode).toBe(400);
-    expect(legacy.provider.handleRequest).not.toHaveBeenCalled();
+  it('rejects mismatched providers and non-POST requests before execution', async () => {
     const harness = setup();
     expect((await harness.send('wrong', { headers: {} })).statusCode).toBe(400);
+    expect((await harness.send('wrong-method', { method: 'GET' })).statusCode).toBe(400);
     expect(harness.provider.handleRequest).not.toHaveBeenCalled();
   });
   it('negotiates once before execution and allows retrying that request ID', async () => {
@@ -116,13 +113,13 @@ describe('completed-request seller payments', () => {
     expect(harness.paymentMux.sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: '0', billingUsage: { version: 1, units: { completed_requests: '0' } } }));
   });
   it('keeps ordinary services discoverable to legacy model-list clients', async () => {
-    const harness = setup({}, false);
+    const harness = setup();
     const response = await harness.send('models', { method: 'GET', path: '/v1/models', headers: {}, body: new Uint8Array() });
     expect(JSON.parse(new TextDecoder().decode(response.body)).data.map((model: { id: string }) => model.id)).toEqual(['image']);
   });
-  it.each([false, true])('preserves concurrent inference after routing opt-in %s', async capable => {
-    const harness = setup({}, capable);
-    expect((await harness.send('route-attempt')).statusCode).toBe(capable ? 200 : 400);
+  it('preserves concurrent inference after a completed-request purchase', async () => {
+    const harness = setup();
+    expect((await harness.send('route-attempt')).statusCode).toBe(200);
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const handleRequestStream = vi.fn(async (request: SerializedHttpRequest) => {
@@ -141,7 +138,7 @@ describe('completed-request seller payments', () => {
     }
   });
   it('keeps legacy image charges and v1 reports unchanged on a mixed seller', async () => {
-    const harness = setup({}, false);
+    const harness = setup();
     harness.provider.pricing = { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } };
     harness.provider.serviceApiProtocols = { ...harness.provider.serviceApiProtocols, image: ['openai-images'] };
     harness.provider.serviceUnitBillingModels = { ...harness.provider.serviceUnitBillingModels, image: { 'openai-images': {

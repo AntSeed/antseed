@@ -43,7 +43,6 @@ export interface ModelRouterAdapter {
   routingMetadata: RoutingServiceMetadataV1;
   selectRoute(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null>;
   recordUsage?(observation: RoutingUsageObservation): void;
-  resetRouting?(): void;
 }
 
 /**
@@ -61,7 +60,6 @@ export interface Router {
   routingMetadata?: RoutingServiceMetadataV1;
   defaultRoutingService?: RoutingServiceTarget;
   recordUsage?(observation: RoutingUsageObservation): void;
-  resetRouting?(): void;
   autoRouteServiceId?: string;
   selectRoute?(request: SerializedHttpRequest, peers: PeerInfo[], context: RouteSelectionContext): Promise<RouteRecommendation[] | null>;
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null;

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { COMPLETED_REQUESTS_CAPABILITY, parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { completedRequestOffer } from './billing/service.js';
 import { isCompletedRequestBillingModel, validateUnitBillingModelV1 } from '@antseed/protocol/billing';
 import { homedir } from "node:os";
@@ -1417,8 +1417,7 @@ export class AntseedNode extends EventEmitter {
       const request = structuredClone(req);
       const metadata = snapshot.metadata;
       if (!metadata || metadata.peerId !== snapshot.peerId || !this._peerLookup
-        || !await this._peerLookup.verifyMetadataSignature(metadata)
-        || !metadata.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) throw new Error('Verified completed-request metadata required');
+        || !await this._peerLookup.verifyMetadataSignature(metadata)) throw new Error('Verified completed-request metadata required');
       const offer = resolveServiceBillingOffer(metadata.providers, agreed.provider, agreed.service);
       if (offer.serviceApiProtocol !== agreed.serviceApiProtocol || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Completed-request offer changed');
       if (maximum === undefined || parseMicroUsdc(offer.priceMicroUsdc) > parseMicroUsdc(maximum)) throw new Error('Unit price exceeds buyer limit');
@@ -1655,7 +1654,6 @@ export class AntseedNode extends EventEmitter {
     // Set up announcer for providers
     if (this._providers.length > 0) {
       const extraCapabilities = [
-        ...(this._providers.some(provider => provider.services.some(service => completedRequestOffer(provider, service))) ? [COMPLETED_REQUESTS_CAPABILITY] : []),
         ...(this._connectionManager.supportsWebRtc ? [CONNECTION_CAPABILITY_WEBRTC_V1] : []),
         ...(this._config.capabilities ?? []),
       ];

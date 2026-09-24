@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { COMPLETED_REQUESTS_CAPABILITY } from '@antseed/protocol/service-billing';
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import net, { type Socket } from "node:net";
@@ -129,7 +128,6 @@ const INITIAL_LINE_TIMEOUT_MS = 10_000;
 const MAX_INITIAL_LINE_BYTES = 8 * 1024;
 const TCP_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
 const LOCAL_CONNECTION_CAPABILITIES = [
-  COMPLETED_REQUESTS_CAPABILITY,
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_SIGNED_SDP_V1,

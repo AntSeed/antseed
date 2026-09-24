@@ -88,11 +88,11 @@ test('buyer handoff preserves inference payload and sets the resolved seller/pro
   assert.equal(result.request.headers['x-antseed-pin-peer'], peer.peerId)
   assert.equal(result.request.headers['x-antseed-provider'], 'openai')
   assert.deepEqual(JSON.parse(Buffer.from(result.request.body).toString()), { model: 'model-a', messages: [{ role: 'user', content: 'Hello' }], stream: true })
-  assert.equal(result.candidates.length, 1)
+  assert.deepEqual(result.recommendations, [{ serviceId: 'model-a', candidates: candidates() }])
   assert.equal(JSON.parse(Buffer.from(request.body).toString()).model, 'levanto-auto')
 })
 
-test('ranked recommendations expand model-only entries in policy order and deduplicate exact destinations', () => {
+test('ranked recommendations retain model-only choices and deduplicate their allowed sellers in policy order', () => {
   const first = candidates()[0]!
   const second = { ...first, peerId: 'b'.repeat(40) as PeerInfo['peerId'] }
   const third = { ...first, serviceId: 'model-b' }
@@ -103,8 +103,23 @@ test('ranked recommendations expand model-only entries in policy order and dedup
     { serviceId: 'model-a' },
     { serviceId: 'model-a', peerId: second.peerId },
   ], available)
-  assert.deepEqual(resolved, [second, third, first])
-  assert.deepEqual(resolveRouterRecommendations([{ serviceId: 'model-a', peerId: second.peerId }], available), [second])
+  assert.deepEqual(resolved, [
+    { serviceId: 'model-a', peerId: second.peerId, candidate: second },
+    { serviceId: 'model-b', candidates: [third] },
+    { serviceId: 'model-a', candidates: [first] },
+  ])
+  assert.deepEqual(resolveRouterRecommendations([{ serviceId: 'model-a', peerId: second.peerId }], available), [
+    { serviceId: 'model-a', peerId: second.peerId, candidate: second },
+  ])
+})
+
+test('an exact peer retains its provider choices without becoming a model-only recommendation', () => {
+  const first = candidates()[0]!
+  const second = { ...first, provider: 'other-provider' }
+  assert.deepEqual(resolveRouterRecommendations([{ serviceId: first.serviceId, peerId: first.peerId }], [first, second]), [
+    { serviceId: first.serviceId, peerId: first.peerId, candidate: first },
+    { serviceId: second.serviceId, peerId: second.peerId, candidate: second },
+  ])
 })
 
 test('a plugin cannot change fallback destinations after response acceptance', async () => {

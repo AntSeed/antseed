@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { COMPLETED_REQUESTS_CAPABILITY, type PeerInfo, type RouteRecommendation, type RouteSelectionContext, type SerializedHttpRequest } from '@antseed/node';
+import type { PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
 import { LevantoRoutingAdapter } from './router.js';
 
 const sellerId = 'a'.repeat(40);
@@ -11,7 +11,7 @@ function providers(priceMicroUsdc = offer.priceMicroUsdc): NonNullable<PeerInfo[
     serviceUnitBillingModels: { [offer.service]: { [offer.serviceApiProtocol]: { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(priceMicroUsdc) / 1_000_000 }] } } },
   }];
 }
-const peer = { peerId: sellerId, metadata: { version: 12, peerId: sellerId, capabilities: [COMPLETED_REQUESTS_CAPABILITY], providers: providers() } } as PeerInfo;
+const peer = { peerId: sellerId, metadata: { version: 12, peerId: sellerId, providers: providers() } } as PeerInfo;
 const recommendation: RouteRecommendation = { serviceId: 'model-a', peerId: inferenceId };
 const result = {
   v: 1, router: 'levanto', ranked: [{ model: 'model-a', peer: inferenceId,
@@ -94,7 +94,7 @@ describe('Levanto buyer adapter', () => {
     expect(state.sendRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('requires an opted-in seller and respects cancellation', async () => {
+  it('requires an advertised billing offer and respects cancellation', async () => {
     const state = setup();
     await expect(state.adapter.selectRoute(request(), [{ ...peer, metadata: undefined }], state.context)).rejects.toThrow('compatible');
     state.context.signal = AbortSignal.abort();
@@ -107,10 +107,10 @@ describe('Levanto buyer adapter', () => {
     expect(await state.adapter.selectRoute(request('Hello', 'model-a'), [peer], state.context)).toBeNull();
     expect(state.sendRequest).not.toHaveBeenCalled();
     for (const price of ['0', '2500']) {
-      state.adapter.resetRouting();
+      const pricedState = setup();
       const pricedPeer = { ...peer, metadata: { ...peer.metadata!, providers: providers(price) } };
-      await state.adapter.selectRoute(request(), [pricedPeer], state.context);
-      const options = state.sendRequest.mock.calls.at(-1)![2];
+      await pricedState.adapter.selectRoute(request(), [pricedPeer], pricedState.context);
+      const options = pricedState.sendRequest.mock.calls.at(-1)![2];
       expect(options.unitBilling?.priceMicroUsdc).toBe(price);
       expect(options.maxFeeMicroUsdc).toBe(price);
     }
@@ -127,7 +127,6 @@ describe('Levanto buyer adapter', () => {
     await state.adapter.selectRoute(request(), [customPeer], state.context);
     expect(state.sendRequest.mock.calls[0]![2].unitBilling).toMatchObject({ provider: provider.provider, service: 'custom-route' });
     expect(JSON.parse(new TextDecoder().decode(state.sendRequest.mock.calls[0]![1].body)).service).toBe('custom-route');
-    state.adapter.resetRouting();
     state.context.routingService.serviceId = 'missing-route';
     await expect(state.adapter.selectRoute(request(), [customPeer], state.context)).rejects.toThrow('compatible');
     expect(state.sendRequest).toHaveBeenCalledTimes(1);
@@ -158,8 +157,7 @@ describe('Levanto buyer adapter', () => {
     const cheaper = { ...peer, peerId: 'c'.repeat(40), metadata: { ...peer.metadata!, providers: providers('0') } } as PeerInfo;
     await state.adapter.selectRoute(request(), [cheaper, peer], state.context);
     expect(state.sendRequest.mock.calls[0]![0].peerId).toBe(sellerId);
-    state.adapter.resetRouting();
-    await expect(state.adapter.selectRoute(request(), [cheaper], state.context)).rejects.toThrow('compatible');
+    await expect(state.adapter.selectRoute(request('Next turn'), [cheaper], state.context)).rejects.toThrow('compatible');
     state.context.routingService = undefined;
     await expect(state.adapter.selectRoute(request(), [peer], state.context)).rejects.toThrow('Select a Levanto');
   });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PeerInfo, RouteRecommendation, RouteSelectionContext, ModelRouterAdapter, RoutingUsageObservation, SerializedHttpRequest } from '@antseed/node';
-import { COMPLETED_REQUESTS_CAPABILITY, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
+import { resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
 import { LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './validation.js';
 import { CacheObservations } from './cache-observations.js';
 
@@ -15,12 +15,6 @@ export class LevantoRoutingAdapter implements ModelRouterAdapter {
   readonly routingMetadata = structuredClone(levantoRoutingMetadata);
   private readonly conversations = new Map<string, CachedRoute>();
   readonly observations = new CacheObservations();
-  private generation = 0;
-
-  resetRouting(): void {
-    this.generation++;
-    this.conversations.clear();
-  }
 
   recordUsage(observation: RoutingUsageObservation): void {
     this.observations.record(observation);
@@ -30,7 +24,6 @@ export class LevantoRoutingAdapter implements ModelRouterAdapter {
     const body = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
     if (body.model !== 'levanto-auto' && body.model !== 'antseed') return null;
     context.signal.throwIfAborted();
-    const generation = this.generation;
     const preferences = resolveRoutingPreferences(levantoRoutingMetadata.preferencesSchema, context.preferences ?? {});
     if (context.preferencesSchemaHash !== undefined && context.preferencesSchemaHash !== levantoRoutingMetadata.preferencesSchemaHash) throw new Error('Routing preferences schema changed');
     const target = context.routingService;
@@ -49,7 +42,7 @@ export class LevantoRoutingAdapter implements ModelRouterAdapter {
 
     const candidates = peers.flatMap(peer => {
       if (peer.peerId !== target.peerId) return [];
-      if (!peer.metadata?.capabilities?.includes(COMPLETED_REQUESTS_CAPABILITY)) return [];
+      if (!peer.metadata) return [];
       try {
         const offer = resolveServiceBillingOffer(peer.metadata.providers, target.provider, target.serviceId);
         return offer.serviceApiProtocol === 'levanto-routing'
@@ -88,7 +81,7 @@ export class LevantoRoutingAdapter implements ModelRouterAdapter {
     });
     context.signal.throwIfAborted();
     if (response.statusCode < 200 || response.statusCode >= 300 || !recommendations) throw new Error(`Levanto routing failed (${response.statusCode})`);
-    if (context.conversationKey && generation === this.generation) {
+    if (context.conversationKey) {
       this.conversations.set(context.conversationKey, { text, fingerprint, routes: structuredClone(recommendations) });
       if (this.conversations.size > 500) this.conversations.delete(this.conversations.keys().next().value!);
     }

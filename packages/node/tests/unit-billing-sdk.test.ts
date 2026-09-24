@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AntseedNode } from '../src/node.js';
-import { COMPLETED_REQUESTS_CAPABILITY } from '@antseed/protocol/service-billing';
 import type { PeerInfo } from '../src/types/peer.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
 import { completedRequestOffer, isLegacyInferenceService } from '../src/billing/service.js';
@@ -8,7 +7,7 @@ import { completedRequestOffer, isLegacyInferenceService } from '../src/billing/
 describe('unit billing through normal SDK requests', () => {
   const offer = { provider: 'summarizer', service: 'summary', serviceApiProtocol: 'typesafe-systemone' as const, priceMicroUsdc: '1000' };
   function setup() {
-    const peer = { peerId: 'a'.repeat(40), metadata: { version: 12, peerId: 'a'.repeat(40), capabilities: [COMPLETED_REQUESTS_CAPABILITY], providers: [{
+    const peer = { peerId: 'a'.repeat(40), metadata: { version: 12, peerId: 'a'.repeat(40), providers: [{
       provider: offer.provider, services: [offer.service], defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }, maxConcurrency: 1, currentLoad: 0,
       serviceApiProtocols: { [offer.service]: [offer.serviceApiProtocol] },
       serviceUnitBillingModels: { [offer.service]: { [offer.serviceApiProtocol]: { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(offer.priceMicroUsdc) / 1_000_000 }] } } },
@@ -21,7 +20,7 @@ describe('unit billing through normal SDK requests', () => {
     }, { unitBilling: offer, maxFeeMicroUsdc, acceptResponse: () => true });
     return { peer, send, verifyMetadataSignature, sendRequest };
   }
-  it('verifies the native signed billing model and forwards its exact price', async () => {
+  it('verifies the signed billing model and forwards its exact price without a capability flag', async () => {
     const harness = setup();
     await harness.send();
     expect(harness.verifyMetadataSignature).toHaveBeenCalledWith(harness.peer.metadata);
@@ -29,7 +28,7 @@ describe('unit billing through normal SDK requests', () => {
       path: '/summary', method: 'POST',
     }), undefined, expect.objectContaining({ unitBilling: offer }));
   });
-  it('rejects missing capability, invalid signature, identity mismatch, and excessive fee before dispatch', async () => {
+  it('rejects invalid signature, identity mismatch, and excessive fee before dispatch', async () => {
     const expensive = setup();
     await expect(expensive.send('999')).rejects.toThrow('buyer limit');
     expect(expensive.sendRequest).not.toHaveBeenCalled();
@@ -37,14 +36,20 @@ describe('unit billing through normal SDK requests', () => {
     unsigned.verifyMetadataSignature.mockResolvedValue(false);
     await expect(unsigned.send()).rejects.toThrow('Verified');
     expect(unsigned.sendRequest).not.toHaveBeenCalled();
-    const legacy = setup();
-    legacy.peer.metadata!.capabilities = [];
-    await expect(legacy.send()).rejects.toThrow('Verified');
-    expect(legacy.sendRequest).not.toHaveBeenCalled();
     const mismatched = setup();
     mismatched.peer.metadata!.peerId = 'b'.repeat(40);
     await expect(mismatched.send()).rejects.toThrow('Verified');
     expect(mismatched.sendRequest).not.toHaveBeenCalled();
+  });
+  it('still rejects missing or changed advertised prices before dispatch', async () => {
+    const missing = setup();
+    missing.peer.metadata!.providers[0]!.serviceUnitBillingModels = {};
+    await expect(missing.send()).rejects.toThrow('Missing completed-request billing model');
+    expect(missing.sendRequest).not.toHaveBeenCalled();
+    const changed = setup();
+    changed.peer.metadata!.providers[0]!.serviceUnitBillingModels![offer.service]![offer.serviceApiProtocol]!.components[0]!.priceUsd = 0.002;
+    await expect(changed.send()).rejects.toThrow('offer changed');
+    expect(changed.sendRequest).not.toHaveBeenCalled();
   });
 });
 

@@ -9,7 +9,15 @@ import { resolveRoutingPreferences, validateRoutingServiceMetadata, type Routing
  * adapter, and resolve its recommendations back to those destinations. The caller
  * then sends the actual inference request; this module does not generate the answer.
  */
-type ExecutionCandidate = RouteCandidate & { peer: PeerInfo; effectiveReputationScore: number | null }
+export type ExecutionCandidate = RouteCandidate & { peer: PeerInfo; effectiveReputationScore: number | null }
+
+export type ResolvedRouterRecommendation =
+  | { serviceId: string; peerId: string; candidate: ExecutionCandidate }
+  | { serviceId: string; peerId?: undefined; candidates: ExecutionCandidate[] }
+
+function recommendationCandidates(routes: readonly ResolvedRouterRecommendation[]): ExecutionCandidate[] {
+  return routes.flatMap(route => route.peerId === undefined ? route.candidates : [route.candidate])
+}
 
 /** Build the text-model destinations this buyer can use, ordered by its existing routing policy. */
 export function eligibleRouterCandidates(
@@ -49,28 +57,31 @@ export function eligibleRouterCandidates(
 
 /** Return the first eligible destination from a recommendation list, or null if none match. */
 export function resolveRouterRecommendation(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate | null {
-  return resolveRouterRecommendations(routes, candidates)[0] ?? null
+  return recommendationCandidates(resolveRouterRecommendations(routes, candidates))[0] ?? null
 }
 
 /**
  * Match recommendations to the buyer's allowed destinations, preserving recommendation order.
- * An exact peer stays exact; a model-only recommendation expands in candidate order.
+ * Keep model-only choices distinct from exact peers, with their allowed sellers in policy order.
  * Invalid entries and duplicate peer/provider/service destinations are discarded.
  */
-export function resolveRouterRecommendations(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ExecutionCandidate[] {
+export function resolveRouterRecommendations(routes: readonly RouteRecommendation[], candidates: readonly ExecutionCandidate[]): ResolvedRouterRecommendation[] {
   if (!Array.isArray(routes) || routes.length === 0 || routes.length > 512) return []
-  const resolved: ExecutionCandidate[] = []
+  const resolved: ResolvedRouterRecommendation[] = []
   const seen = new Set<string>()
   for (const route of routes) {
     if (!route || typeof route.serviceId !== 'string' || !route.serviceId || route.inference !== undefined
       || (route.peerId !== undefined && (typeof route.peerId !== 'string' || !/^[0-9a-f]{40}$/.test(route.peerId)))) continue
+    const modelCandidates: ExecutionCandidate[] = []
     for (const candidate of candidates) {
       if (candidate.serviceId !== route.serviceId || (route.peerId !== undefined && candidate.peerId !== route.peerId)) continue
       const key = JSON.stringify([candidate.peerId, candidate.provider, candidate.serviceId])
       if (seen.has(key)) continue
       seen.add(key)
-      resolved.push(candidate)
+      if (route.peerId === undefined) modelCandidates.push(candidate)
+      else resolved.push({ serviceId: route.serviceId, peerId: route.peerId, candidate })
     }
+    if (modelCandidates.length) resolved.push({ serviceId: route.serviceId, candidates: modelCandidates })
   }
   return resolved
 }
@@ -87,7 +98,7 @@ export function requestForRouterCandidate(request: SerializedHttpRequest, candid
 
 /**
  * Ask the selected model-router adapter for recommendations and validate the result.
- * Return a request prepared for the first destination plus the ranked fallback list;
+ * Return a request prepared for the first destination plus the model/peer recommendations;
  * BuyerProxy performs inference dispatch and retry handling afterward.
  */
 export async function executeRouterSelection(args: {
@@ -100,7 +111,7 @@ export async function executeRouterSelection(args: {
   selection?: Extract<RoutingSelection, { kind: 'router' }>;
   signal: AbortSignal;
   onRoutingRequest?: (requestId: string) => void;
-}): Promise<{ request: SerializedHttpRequest; candidates: ExecutionCandidate[] }> {
+}): Promise<{ request: SerializedHttpRequest; recommendations: ResolvedRouterRecommendation[] }> {
   const { node, router, request, peers, candidates, conversationKey, signal } = args
   // Resolve the adapter for the selected service, or use a router that implements selectRoute directly.
   const routingService = args.selection?.service ?? router.defaultRoutingService
@@ -113,7 +124,7 @@ export async function executeRouterSelection(args: {
   const preferences = resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, args.selection?.preferences ?? {})
   signal.throwIfAborted()
   let acceptedKeys: string | null = null
-  const candidateKeys = (resolved: readonly ExecutionCandidate[]) => JSON.stringify(resolved.map(candidate => [candidate.peerId, candidate.provider, candidate.serviceId]))
+  const candidateKeys = (resolved: readonly ResolvedRouterRecommendation[]) => JSON.stringify(recommendationCandidates(resolved).map(candidate => [candidate.peerId, candidate.provider, candidate.serviceId]))
   let onAbort: () => void = () => {}
   // Stop waiting on cancellation even if the adapter does not observe the supplied signal.
   const aborted = new Promise<never>((_resolve, reject) => {
@@ -155,8 +166,8 @@ export async function executeRouterSelection(args: {
       throw new Error('Selected router returned no eligible recommendation')
     }
     return {
-      request: requestForRouterCandidate(request, resolved[0]!),
-      candidates: resolved,
+      request: requestForRouterCandidate(request, recommendationCandidates(resolved)[0]!),
+      recommendations: resolved,
     }
   } finally {
     // Do not leave a listener attached after this recommendation attempt has finished.
