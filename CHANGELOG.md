@@ -16,6 +16,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Website: added lANTS Market to the ecosystem page — a community-built board and USDC market for lANTS staking positions on Antseed, with a card and onchain preview. No other copy or layout changes.
 - Sellers: add an optional persistent free tier for fully zero-priced services with `seller.freeTier.maxRequestsPerAddress`, `seller.freeTier.maxRequestsPerIp` (IPv6 grouped by /64), and a configurable sliding `windowMs`. Limits apply across all free services, are enforced together when both are set, survive reconnects and restarts, return HTTP 429 with retry timing and the binding limit (`limitedBy`) when exhausted, and leave paid traffic unchanged.
 
 - ANTS dashboard: transactions signed by an EIP-7702 smart account (for example a MetaMask smart account, which routes calls through its delegation framework) are now accepted when the same account sent them and the reviewed contract emitted an event; previously the job was reported as failed although the transaction succeeded.
