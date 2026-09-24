@@ -5,6 +5,8 @@ import {AllVersionsLink} from '../lib/AllVersionsLink';
 import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {useNetworkStats} from '../lib/useNetworkStats';
 import {Button, ArrowRight} from './ui';
+import Link from '@docusaurus/Link';
+import {CommandChip} from './CommandChip';
 import {HeroDemo, DEMO_BEATS, DEMO_TOTAL_FRAMES} from './HeroDemo';
 
 /**
@@ -431,6 +433,162 @@ export function DownloadCta({
       </Button>
       {versionsLink && <AllVersionsLink />}
       {caption && <span className={styles.ctaCaption}>{caption}</span>}
+    </div>
+  );
+}
+
+/* Hero use switch — three ways in. The desktop app is the default; the CLI
+   and agent paths reuse the commands documented in
+   docs/guides/using-the-api.md and skills/join-buyer/SKILL.md. */
+type HeroUse = 'app' | 'cli' | 'agent';
+
+const HERO_USES: {id: HeroUse; label: string}[] = [
+  {id: 'app', label: 'Download the app'},
+  {id: 'cli', label: 'Use it from the CLI'},
+  {id: 'agent', label: 'Use it from an agent'},
+];
+
+type HeroTermToken = {text: string; cls?: 'tGreen' | 'tOrange' | 'tYellow' | 'tPurple' | 'tBlue' | 'tWhite' | 'tComment'};
+type HeroTermLine = {kind: 'comment' | 'cmd' | 'out'; tokens: HeroTermToken[]};
+
+const cm = (text: string): HeroTermLine => ({kind: 'comment', tokens: [{text, cls: 'tComment'}]});
+const out = (text: string): HeroTermLine => ({kind: 'out', tokens: [{text, cls: 'tComment'}]});
+const cmd = (...tokens: HeroTermToken[]): HeroTermLine => ({kind: 'cmd', tokens});
+const sp = {text: ' '};
+
+/* Same palette as the TerminalCard in the localhost section: purple binary,
+   blue subcommand / URL, yellow flag, orange package / model, green string. */
+const HERO_CLI_LINES: HeroTermLine[] = [
+  cm('# Install the CLI'),
+  cmd({text: 'npm', cls: 'tPurple'}, sp, {text: 'install', cls: 'tBlue'}, sp, {text: '-g', cls: 'tYellow'}, sp, {text: '@antseed/cli', cls: 'tOrange'}),
+  cm('# Start the buyer: your API endpoint, on this machine'),
+  cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer start', cls: 'tBlue'}),
+  out('Proxy listening on http://localhost:8377'),
+  cm('# Call it like any OpenAI-compatible API'),
+  cmd(
+    {text: 'curl', cls: 'tPurple'}, sp, {text: 'localhost:8377/v1/chat/completions', cls: 'tBlue'}, {text: ' \\\n    '},
+    {text: '-H', cls: 'tYellow'}, sp, {text: "'content-type: application/json'", cls: 'tGreen'}, {text: ' \\\n    '},
+    {text: '-d', cls: 'tYellow'}, {text: " '{"}, {text: '"model"', cls: 'tBlue'}, {text: ': '}, {text: '"deepseek-v4-flash"', cls: 'tOrange'},
+    {text: ', '}, {text: '"messages"', cls: 'tBlue'}, {text: ': [{'}, {text: '"role"', cls: 'tBlue'}, {text: ': '}, {text: '"user"', cls: 'tGreen'},
+    {text: ', '}, {text: '"content"', cls: 'tBlue'}, {text: ': '}, {text: '"Hello"', cls: 'tGreen'}, {text: "}]}'"},
+  ),
+  cm('# Fund it when you want paid models (free ones need nothing)'),
+  cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer deposit', cls: 'tBlue'}),
+];
+
+const JOIN_BUYER_SKILL_URL = 'https://github.com/AntSeed/antseed/tree/main/skills/join-buyer';
+const JOIN_BUYER_INSTALL = 'gh skill install AntSeed/antseed join-buyer';
+
+function useCopy(text: string) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      /* clipboard unavailable — text stays selectable */
+    }
+  };
+  return {copied, copy};
+}
+
+function CopyButton({text, label = 'Copy'}: {text: string; label?: string}) {
+  const {copied, copy} = useCopy(text);
+  return (
+    <button type="button" className={styles.useCopyBtn} onClick={copy} aria-live="polite">
+      {copied ? 'Copied' : label}
+    </button>
+  );
+}
+
+/** Static mini terminal for the hero: the CLI steps, copy-able as one script. */
+function HeroTerminal({lines}: {lines: HeroTermLine[]}) {
+  const script = lines
+    .filter((l) => l.kind === 'cmd')
+    .map((l) => l.tokens.map((t) => t.text).join(''))
+    .join('\n');
+  return (
+    <div className={`${styles.terminal} ${styles.heroTerminal}`}>
+      <div className={styles.terminalBar}>
+        <span className={styles.tDots}>
+          <i style={{background: '#EF4444'}} />
+          <i style={{background: '#F59E0B'}} />
+          <i style={{background: '#676663'}} />
+        </span>
+        <span className={styles.terminalStatus}>Use it from the CLI</span>
+        <CopyButton text={script} label="Copy commands" />
+      </div>
+      <pre className={styles.heroTerminalBody}>
+        {lines.map((l, i) => (
+          <span key={i}>
+            {l.kind === 'cmd' && <span className={styles.tGreen}>$ </span>}
+            {l.tokens.map((t, j) => (
+              <span key={j} className={t.cls ? styles[t.cls] : undefined}>{t.text}</span>
+            ))}
+            {'\n'}
+          </span>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function readUseParam(): HeroUse | null {
+  if (typeof window === 'undefined') return null;
+  const v = new URLSearchParams(window.location.search).get('use');
+  return v === 'cli' || v === 'agent' || v === 'app' ? v : null;
+}
+
+export function HeroUseCta() {
+  const [use, setUse] = useState<HeroUse>('app');
+  // ?use=cli / ?use=agent preselects a path (docs and social links). Read after
+  // mount so server and client render the same default.
+  useEffect(() => {
+    const fromUrl = readUseParam();
+    if (fromUrl) setUse(fromUrl);
+  }, []);
+  return (
+    <div className={styles.ctaBlock}>
+      <div className={styles.useSwitch} role="tablist" aria-label="How do you want to use Antseed?">
+        {HERO_USES.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            role="tab"
+            aria-selected={use === u.id}
+            className={`${styles.useSwitchBtn} ${use === u.id ? styles.useSwitchBtnActive : ''}`}
+            onClick={() => setUse(u.id)}>
+            {u.label}
+          </button>
+        ))}
+      </div>
+      {use === 'app' && <DownloadCta />}
+      {use === 'cli' && (
+        <div className={`${styles.ctaBlock} ${styles.usePanel}`}>
+          <HeroTerminal lines={HERO_CLI_LINES} />
+          <span className={styles.useNote}>
+            No account. Mac, Windows, Linux, or a headless server.{' '}
+            <Link to="/docs/guides/using-the-api" className={styles.useLink}>Full API guide →</Link>
+          </span>
+        </div>
+      )}
+      {use === 'agent' && (
+        <div className={`${styles.ctaBlock} ${styles.usePanel}`}>
+          <div className={styles.useRow}>
+            <CommandChip command={JOIN_BUYER_INSTALL} />
+            <Button href={JOIN_BUYER_SKILL_URL} variant="ghost" arrow>View the skill</Button>
+          </div>
+          <span className={styles.useNote}>
+            Installs the join-buyer skill into your agent with the GitHub CLI. The agent then
+            installs, starts, funds and wires itself to localhost:8377.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

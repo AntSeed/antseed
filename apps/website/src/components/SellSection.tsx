@@ -15,6 +15,7 @@ export function SellSection() {
   const stats = useNetworkStats();
   return (
     <section className={styles.sellSection}>
+      <img className={styles.sellAnt} src="/img/home/ant-v-dots.png" alt="" aria-hidden="true" />
       <div className={styles.sectionInner}>
         <div className={styles.sellCardWrap}>
         <img className={styles.sellAntMobile} src="/img/home/ant-v-dots.png" alt="" aria-hidden="true" />

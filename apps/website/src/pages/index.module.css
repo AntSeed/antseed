@@ -161,6 +161,11 @@
     align-items: flex-start;
   }
 
+  .heroSplit .useRow {
+    justify-content: flex-start;
+  }
+
+
   .heroSplit .statsRow {
     grid-area: stats;
     align-self: start;
@@ -228,6 +233,11 @@
    scale the type down on narrow screens instead of wrapping. Sized so
    the longest phrase (~24em) clears the 16px hero padding at 375px. */
 @media (max-width: 640px) {
+  .useSwitchBtn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
   .heroSub {
     font-size: clamp(11px, 3.7vw, 18px);
   }
@@ -255,6 +265,107 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+
+/* hero use switch: app / CLI / agent */
+.useSwitch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 8px;
+  border: 1px solid var(--as-line);
+  border-radius: 999px;
+  background: var(--as-soil-2);
+}
+
+.useSwitchBtn {
+  border: none;
+  background: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: var(--as-font-ui);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--as-text-2);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.useSwitchBtn:hover {
+  color: var(--as-heading);
+}
+
+.useSwitchBtnActive,
+.useSwitchBtnActive:hover {
+  background: var(--as-ink);
+  color: #FFFFFF;
+}
+
+.usePanel {
+  width: 100%;
+  max-width: 600px;
+}
+
+.heroTerminal {
+  width: 100%;
+  text-align: left;
+  padding-bottom: 8px;
+}
+
+.heroTerminalBody {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: #FFFFFF;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.useCopyBtn {
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #FFFFFF;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: var(--as-font-ui);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.useCopyBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.useRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.useLink {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.useNote {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--as-text-3);
 }
 
 .ctaCaption {
@@ -1271,6 +1382,7 @@
   background: var(--as-void);
   padding: 80px 16px;
   overflow: hidden;
+  scroll-margin-top: var(--ifm-navbar-height);
 }
 
 .darkSection::before {
@@ -1523,7 +1635,7 @@
   position: relative;
   overflow: hidden;
   padding: 96px 16px;
-  background: var(--as-soil-0);
+  background: var(--as-soil-1);
 }
 
 .stepsSection .sectionInner {
@@ -1641,8 +1753,27 @@
    ============================================================ */
 .sellSection {
   position: relative;
-  padding: 40px 16px 96px;
+  padding: 96px 16px;
   overflow: hidden;
+}
+
+/* desktop: the ant-dots backdrop runs behind the glass card, as it does on
+   the live homepage where the steps section's ant spills into this one */
+.sellAnt {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 20px;
+  width: 700px;
+  height: 784px;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sellSection .sectionInner {
+  position: relative;
+  z-index: 1;
 }
 
 .sellCardWrap {
@@ -2133,6 +2264,10 @@
 
   .darkSection {
     padding: 64px 16px;
+  }
+
+  .sellAnt {
+    display: none;
   }
 
   .sellAntMobile {

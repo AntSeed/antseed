@@ -16,7 +16,7 @@ import {PrivacyPanel} from '../components/PrivacyPanel';
 import {WhoItsFor} from '../components/WhoItsFor';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
 import {HeroDemo} from '../components/HeroDemo';
-import {HeroDotCanvas, DownloadCta, HeroStatsRow, StackedHero} from '../components/HomeHero';
+import {HeroDotCanvas, DownloadCta, HeroStatsRow, HeroUseCta, StackedHero} from '../components/HomeHero';
 import {LogoMarquee} from '../components/LogoMarquee';
 import {OwnedByNoOne} from '../components/NetworkPanel';
 import {SellSection} from '../components/SellSection';
@@ -51,7 +51,7 @@ function Hero() {
           <p className={styles.heroSubStatic}>
             Save on every AI model. No usage limits, no middleman, always anonymous.
           </p>
-          <DownloadCta versionsLink={false} />
+          <HeroUseCta />
         </div>
         <div className={`${styles.demoFrame} ${styles.demoFrameSplit}`} ref={demoRef}>
           <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} compact />
@@ -101,44 +101,44 @@ function PrivateByDesign() {
    POINT YOUR TOOLS AT LOCALHOST — dark terminal section
    ============================================================ */
 const HOME_POINTS = [
-  {icon: 'pt-tools', text: 'Keep your tools. Swap the providers underneath.'},
+  {icon: 'pt-tools', text: 'OpenAI and Anthropic compatible. Your SDKs and tools just work.'},
   {icon: 'pt-shield', text: 'Fallback the moment a provider is slow, expensive, or down.'},
   {icon: 'pt-route', text: 'Route by price, speed, reputation, or privacy.'},
   {icon: 'pt-wallet', text: 'Pay per request, straight to the provider. No subscription.'},
 ];
 
+/* Install → run → call. Commands mirror docs/guides/using-the-api.md
+   (Quick Start) so the site never drifts from the documented path. */
 const HOME_TERMINAL_BLOCKS: TBlock[] = [
   {
-    comment: '# Route Claude Code through Antseed',
+    comment: '# 1. Install the CLI',
+    tokens: [
+      {text: '$ ', cls: 'tGreen'},
+      {text: 'npm', cls: 'tPurple'},
+      {text: ' '},
+      {text: 'install', cls: 'tBlue'},
+      {text: ' '},
+      {text: '-g', cls: 'tYellow'},
+      {text: ' '},
+      {text: '@antseed/cli', cls: 'tOrange'},
+    ],
+  },
+  {
+    comment: '# 2. Start the buyer: your API endpoint, on your machine',
     tokens: [
       {text: '$ ', cls: 'tGreen'},
       {text: 'antseed', cls: 'tPurple'},
       {text: ' '},
-      {text: 'claude', cls: 'tBlue'},
+      {text: 'buyer start', cls: 'tBlue'},
+      {text: '\n'},
+      {text: 'Proxy listening on http://localhost:8377', cls: 'tComment'},
     ],
   },
   {
-    comment: '# Codex pinned to the best provider',
-    tokens: [
-      {text: '$ ', cls: 'tGreen'},
-      {text: 'antseed', cls: 'tPurple'},
-      {text: ' '},
-      {text: 'codex', cls: 'tBlue'},
-      {text: ' '},
-      {text: '--model', cls: 'tYellow'},
-      {text: ' '},
-      {text: 'deepseek-v3', cls: 'tOrange'},
-    ],
-  },
-  {
-    comment: '# Or call any compatible client',
+    comment: '# 3. Call it like any OpenAI-compatible API',
     tokens: [
       {text: '$ ', cls: 'tGreen'},
       {text: 'curl', cls: 'tPurple'},
-      {text: ' '},
-      {text: '-X', cls: 'tYellow'},
-      {text: ' '},
-      {text: 'POST', cls: 'tBlue'},
       {text: ' '},
       {text: 'http://localhost:8377/v1/chat/completions', cls: 'tBlue'},
       {text: ' \\\n  '},
@@ -150,17 +150,17 @@ const HOME_TERMINAL_BLOCKS: TBlock[] = [
       {text: " '{"},
       {text: '"model"', cls: 'tBlue'},
       {text: ': '},
-      {text: '"deepseek-v3"', cls: 'tOrange'},
+      {text: '"deepseek-v4-flash"', cls: 'tOrange'},
       {text: ',\n    '},
       {text: '"messages"', cls: 'tBlue'},
       {text: ': [{'},
       {text: '"role"', cls: 'tBlue'},
       {text: ': '},
       {text: '"user"', cls: 'tGreen'},
-      {text: ','},
+      {text: ', '},
       {text: '"content"', cls: 'tBlue'},
       {text: ': '},
-      {text: '"hi"', cls: 'tGreen'},
+      {text: '"Hello"', cls: 'tGreen'},
       {text: "}]}'"},
     ],
   },
@@ -308,20 +308,22 @@ export default function Home(): JSX.Element {
       <WhoItsFor />
       <OwnedByNoOne />
       <LocalhostSection
-        title={<>Point your tools<br />at localhost.</>}
+        id="cli"
+        title={<>An AI API,<br />running on localhost.</>}
         lead={
           <>
-            Antseed exposes OpenAI and Anthropic compatible APIs at{' '}
-            <code className={styles.inlineCode}>localhost:8377</code>, then routes each request
-            across the open provider market by price, latency, reputation, capability, or privacy.
-            The router runs on your computer, not on a hosted service, so your requests never pass
-            through anyone else&apos;s servers.
+            Install the CLI and start the buyer, and you get OpenAI and Anthropic compatible
+            endpoints at <code className={styles.inlineCode}>localhost:8377</code>. Use them
+            exactly like a hosted API: same request shapes, same SDKs, same tools. Behind the
+            endpoint, each request is routed across the open market by price, latency,
+            reputation, capability, or privacy. The router runs on your computer, not on a hosted
+            service, so your requests never pass through anyone else&apos;s servers.
           </>
         }
         points={HOME_POINTS}
         blocks={HOME_TERMINAL_BLOCKS}
-        ctaLabel="Explore integrations"
-        ctaTo="/integrations"
+        ctaLabel="Read the API guide"
+        ctaTo="/docs/guides/using-the-api"
       />
       <div className={styles.stepsSellWrap}>
         <SellSection />

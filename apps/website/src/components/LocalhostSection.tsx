@@ -194,6 +194,7 @@ function FlowChips() {
 }
 
 export function LocalhostSection({
+  id,
   title,
   lead,
   points,
@@ -201,6 +202,8 @@ export function LocalhostSection({
   ctaLabel,
   ctaTo,
 }: {
+  /** Anchor id so in-page links (hero "use it from the CLI") can jump here. */
+  id?: string;
   title: ReactNode;
   lead: ReactNode;
   points: PointItem[];
@@ -209,7 +212,7 @@ export function LocalhostSection({
   ctaTo: string;
 }) {
   return (
-    <section className={styles.darkSection}>
+    <section className={styles.darkSection} id={id}>
       <img className={styles.darkAnt} src="/img/home/antdots-green.png" alt="" aria-hidden="true" />
       <div className={styles.sectionInner}>
         <div className={styles.localhostGrid}>
