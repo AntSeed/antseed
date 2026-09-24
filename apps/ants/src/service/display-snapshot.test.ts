@@ -64,7 +64,7 @@ describe('Antscan display snapshots', () => {
     const { ctx, stack, fetchImpl } = fixture();
     expect((await displayData(ctx, stack)).snapshot).not.toBeNull();
     const afterTransaction = { ...ctx, positionReadBarriers: new Map([[owner, { block: 101, at: Math.floor(Date.now() / 1000) }]]) } as AntsContext;
-    await expect(displayData(afterTransaction, stack)).rejects.toMatchObject({ name: 'IndexerSyncingError' });
+    expect((await displayData(afterTransaction, stack)).source.error).toContain('not caught up');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

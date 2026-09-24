@@ -251,6 +251,8 @@ export interface PoolsView {
   yourNetworkShareBps: number;
   /** Your stake across pools that activates at a later epoch. */
   yourPendingStake: string;
+  /** Antscan has not caught up with your latest transaction; your personal pool figures are omitted until it does. */
+  walletSyncing?: boolean;
   explorer: string | null;
   /** 'indexer' = full pool statistics from the explorer; 'chain' = only the pools this wallet stakes in, read live. */
   source: DataSource;

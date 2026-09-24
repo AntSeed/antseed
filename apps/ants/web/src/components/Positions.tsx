@@ -132,7 +132,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
-      {page.reconciling && !page.error ? <p role="status" className="hint">Updating… Waiting for the latest position data. <button type="button" className="link-button" disabled={page.loading} onClick={page.refresh}>Refresh</button></p> : null}
+      {page.reconciling && !page.error ? <p role="status" className="hint">Updating… Waiting for the latest position data.</p> : null}
       {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
       {data?.historySource === 'chain' ? <div className="status-line status-line--muted">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
       {selectedRows.length > 0 && !unavailable ? (

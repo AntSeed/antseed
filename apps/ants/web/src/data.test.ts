@@ -44,6 +44,8 @@ function render(key = 'rewards', options = {}) {
 }
 
 beforeEach(async () => {
+  vi.stubGlobal('document', { visibilityState: 'hidden', addEventListener: () => {}, removeEventListener: () => {} });
+  vi.stubGlobal('window', globalThis);
   vi.resetModules();
   hooks.value = undefined;
   hooks.refs = [];
@@ -59,7 +61,7 @@ beforeEach(async () => {
   await Promise.resolve();
 });
 
-afterEach(() => { for (const cleanup of cleanups) cleanup(); });
+afterEach(() => { for (const cleanup of cleanups) cleanup(); vi.unstubAllGlobals(); });
 
 describe('partial seller data', () => {
   const options = { isPartial: (value: number) => value < 0, retryOnError: false };
@@ -116,6 +118,26 @@ describe('partial seller data', () => {
     resolveRead(-1);
     await new Promise(resolve => setImmediate(resolve));
     expect(renderPools()).toMatchObject({ data: -1, loading: false, partial: true });
+  });
+
+  it('keeps revalidating a successful read that is still waiting on wallet figures', async () => {
+    const syncingOptions = { isSyncing: (value: number) => value === 7 };
+    const mount = () => {
+      for (const cleanup of cleanups.splice(0)) cleanup();
+      hooks.mounted = false;
+      hooks.refs = [];
+      hooks.effects = [];
+      return render('pools', syncingOptions);
+    };
+    mount();
+    resolveRead(7);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(render('pools', syncingOptions)).toMatchObject({ data: 7, reconciling: true, loading: false });
+    expect(mount()).toMatchObject({ data: 7, reconciling: true });
+    expect(render('pools', syncingOptions)).toMatchObject({ loading: true });
+    resolveRead(8);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(render('pools', syncingOptions)).toMatchObject({ data: 8, reconciling: false });
   });
 
   it('preserves the partial marker on a retained full list across navigation', async () => {
@@ -205,5 +227,54 @@ describe('post-confirmation data refresh', () => {
     data.invalidateAll({ confirmed: true });
     data.invalidateAll({ clear: true });
     expect(render()).toMatchObject({ data: null, loading: true, reconciling: false });
+  });
+});
+
+describe('automatic sync checks', () => {
+  function fakeDocument(visibilityState: DocumentVisibilityState) {
+    const listeners = new Set<() => void>();
+    return {
+      visibilityState,
+      addEventListener: (_event: string, listener: () => void) => { listeners.add(listener); },
+      removeEventListener: (_event: string, listener: () => void) => { listeners.delete(listener); },
+      fire() { for (const listener of [...listeners]) listener(); },
+      listeners,
+    };
+  }
+
+  it('re-reads after the poll interval while visible, once', () => {
+    vi.useFakeTimers();
+    try {
+      const doc = fakeDocument('visible');
+      const reload = vi.fn();
+      data.scheduleSyncCheck(reload, doc as unknown as Document, globalThis as unknown as Window);
+      vi.advanceTimersByTime(data.SYNC_POLL_MS - 1);
+      expect(reload).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      doc.fire();
+      expect(reload).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('waits for a hidden tab to become visible and stops after cleanup', () => {
+    vi.useFakeTimers();
+    try {
+      const doc = fakeDocument('hidden');
+      const reload = vi.fn();
+      const stop = data.scheduleSyncCheck(reload, doc as unknown as Document, globalThis as unknown as Window);
+      vi.advanceTimersByTime(data.SYNC_POLL_MS * 5);
+      expect(reload).not.toHaveBeenCalled();
+      doc.visibilityState = 'visible';
+      doc.fire();
+      expect(reload).toHaveBeenCalledOnce();
+      const again = vi.fn();
+      const stopAgain = data.scheduleSyncCheck(again, doc as unknown as Document, globalThis as unknown as Window);
+      stopAgain();
+      vi.advanceTimersByTime(data.SYNC_POLL_MS);
+      expect(again).not.toHaveBeenCalled();
+      expect(doc.listeners.size).toBe(1);
+      stop();
+      expect(doc.listeners.size).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 });

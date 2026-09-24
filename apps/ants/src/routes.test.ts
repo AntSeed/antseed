@@ -39,6 +39,18 @@ describe('dashboard API', () => {
     expect(service.poolsView).toHaveBeenCalledTimes(2);
   });
 
+  it('serves public pool data while wallet figures sync without caching it', async () => {
+    const app = setup(true);
+    service.poolsView.mockResolvedValueOnce({ source: 'indexer', sourceError: null, walletSyncing: true, pools: [{ agentId: 7 }] })
+      .mockResolvedValue({ source: 'indexer', sourceError: null, walletSyncing: false, pools: [{ agentId: 7 }] });
+    const syncing = await app.inject('/api/pools');
+    expect(syncing.statusCode).toBe(200);
+    expect(syncing.json().data).toMatchObject({ walletSyncing: true, pools: [{ agentId: 7 }] });
+    expect((await app.inject('/api/pools')).json().data.walletSyncing).toBe(false);
+    await app.inject('/api/pools');
+    expect(service.poolsView).toHaveBeenCalledTimes(2);
+  });
+
   it('caches intentional chain-only mode without an explorer error', async () => {
     const app = setup(true);
     service.poolsView.mockResolvedValue({ source: 'chain', sourceError: null, pools: [] });

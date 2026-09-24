@@ -25,7 +25,7 @@ export function RewardsPage() {
     <>
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data && !page.loading ? <ErrorBox title="Rewards could not be refreshed" error={`Shown amounts may be out of date. Retry refreshing before another action. This does not mean a confirmed transaction failed. ${page.error}`} onRetry={page.refresh} /> : null}
-      {updating ? <p role="status" className="hint">Updating… Waiting for the latest reward data. <button className="link-button" type="button" disabled={page.loading} onClick={page.refresh}>Refresh</button></p> : null}
+      {updating ? <p role="status" className="hint">Updating… Waiting for the latest reward data.</p> : null}
       {!data && page.loading ? (
         <>
           <div className="muted small mb">Loading rewards from the blockchain and indexer…</div>

@@ -42,7 +42,7 @@ export interface WithdrawPreview {
   simulationError: string | null;
 }
 
-export type PoolDetail = PoolView & { currentEpoch: number };
+export type PoolDetail = PoolView & { currentEpoch: number; walletSyncing?: boolean };
 
 export class ApiError extends Error {
   readonly status: number;

@@ -21,7 +21,7 @@ export function PositionsPage() {
   const sortedPools = useMemo(() => sortPools(pools.data?.pools ?? []), [pools.data]);
   const data = overview.data;
   const canTransfer = data?.wallet.canTransfer ?? false;
-  const pending = toBigInt(pools.data?.yourPendingStake ?? null) ?? 0n;
+  const pending = pools.reconciling ? 0n : toBigInt(pools.data?.yourPendingStake ?? null) ?? 0n;
 
   return (
     <>
@@ -40,9 +40,9 @@ export function PositionsPage() {
         />
         <StatTile
           label="Your power"
-          value={pools.data ? formatAnts(pools.data.yourTotalPower) : pools.error ? '—' : '…'}
+          value={pools.reconciling && !pools.error ? '…' : pools.data ? formatAnts(pools.data.yourTotalPower) : pools.error ? '—' : '…'}
           loading={pools.loading && !pools.data}
-          sub={pools.reconciling && !pools.error ? <>Updating… <button className="link-button" type="button" disabled={pools.loading} onClick={pools.refresh}>Refresh</button></> : pools.data ? `${formatBps(pools.data.yourNetworkShareBps)} of all pools` : pools.error ? <span className="danger">{pools.error}</span> : 'scanning pools…'}
+          sub={pools.reconciling && !pools.error ? 'Updating…' : pools.data ? `${formatBps(pools.data.yourNetworkShareBps)} of all pools` : pools.error ? <span className="danger">{pools.error}</span> : 'scanning pools…'}
         />
         <StatTile
           label={walletReady ? 'Claimable rewards' : 'Buyer rewards'}
@@ -58,7 +58,7 @@ export function PositionsPage() {
                 </button>
               </span>
             ) : rewards.reconciling ? (
-              <>Updating… <button className="link-button" type="button" disabled={rewards.loading} onClick={rewards.refresh}>Refresh</button></>
+              'Updating…'
             ) : rewards.data ? (
               <a href={href('rewards')}>{walletReady ? 'Stake rewards or claim →' : 'View buyer rewards →'}</a>
             ) : (

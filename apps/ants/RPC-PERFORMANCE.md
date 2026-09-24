@@ -126,8 +126,14 @@ setups retain chain reads. Transaction preparation and authorization remain live
 
 Post-transaction read barriers return HTTP 202 with `state: "syncing"` rather
 than a display error. The dashboard retains the last successful snapshot with an
-"Updating…" label and a manual refresh control; no new polling is introduced.
+"Updating…" label and re-reads every three seconds while the tab is visible,
+until Antscan catches up; no manual refresh is required.
 Positions show an empty-wallet message only after a successful, current read.
+Pool and seller-detail reads are not blocked by a wallet barrier: public
+statistics still load (falling back to chain reads for network totals), while
+the response sets `walletSyncing` and omits the wallet's own pool figures. The
+dashboard labels those figures "Updating…", re-reads them on the same schedule,
+and does not cache the response.
 
 Pool statistics use a separate, wallet-independent GraphQL snapshot of current
 and previous epochs, also cached for 15 seconds. It does not fetch wallet

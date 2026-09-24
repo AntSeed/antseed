@@ -98,6 +98,7 @@ export function StakePage() {
       >
         {pools.error && !pools.data ? <ErrorBox error={pools.error} onRetry={pools.refresh} /> : null}
         {pools.loading ? <p className="hint" role="status">{pools.data ? 'Updating sellers… Showing previously loaded data.' : 'Loading sellers…'}</p> : null}
+        {!pools.loading && pools.reconciling ? <p className="hint" role="status">Updating your stake… Waiting for Antscan to include your latest transaction.</p> : null}
         {!pools.loading && (pools.partial || (pools.error && pools.data)) ? (
           <div className={pools.error ? 'status-line' : 'status-line status-line--muted'} role="status">
             {pools.error ? `Could not update sellers: ${pools.error}. ` : 'Could not load the full seller list. '}
@@ -111,9 +112,9 @@ export function StakePage() {
           </div>
         ) : null}
         {!pools.loading && pools.data?.source === 'chain' && sortedPools.length === 0 ? (
-          <p className="hint">You have no staked pools to show.</p>
+          pools.reconciling ? null : <p className="hint">You have no staked pools to show.</p>
         ) : pools.data || pools.loading ? (
-          <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={openSeller} onStake={openSeller} />
+          <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} walletSyncing={pools.reconciling} onOpen={openSeller} onStake={openSeller} />
         ) : null}
       </Panel>
 

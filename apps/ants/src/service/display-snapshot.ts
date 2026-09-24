@@ -1,7 +1,6 @@
 import type { DisplaySource } from '../api-types.js';
 import type { AntsContext, ResolvedStack } from './context.js';
 import { IndexerError, type IndexedStakingEpoch } from './indexer.js';
-import { IndexerSyncingError } from '../read-state.js';
 
 export interface DisplayPoolEpoch {
   agentId: number;
@@ -145,12 +144,11 @@ export async function displayData(ctx: AntsContext, stack: ResolvedStack): Promi
     const now = Math.floor(Date.now() / 1000);
     if (snapshot.chainId !== ctx.chain.evmChainId) throw new Error('Antscan chain does not match the dashboard');
     const barrier = ctx.positionReadBarriers?.get(ctx.address.toLowerCase());
-    if (barrier && snapshot.indexedBlock < barrier.block) throw new IndexerSyncingError('Antscan has not caught up with your transaction');
+    if (barrier && snapshot.indexedBlock < barrier.block) throw new Error('Antscan has not caught up with your transaction');
     if (now - snapshot.indexedAt > MAX_AGE_SECONDS || snapshot.indexedAt > now + 30) throw new Error('Antscan checkpoint is stale');
     if (snapshot.indexedAt < stack.genesis + stack.currentEpoch * stack.epochDuration) throw new Error('Antscan has not reached the current epoch');
     return { snapshot, source: { source: 'indexer', indexedBlock: snapshot.indexedBlock, indexedAt: snapshot.indexedAt } };
   } catch (error) {
-    if (error instanceof IndexerSyncingError) throw error;
     if (!(error instanceof IndexerError) && !(error instanceof Error)) throw error;
     return { snapshot: null, source: { source: 'chain', error: error.message } };
   }

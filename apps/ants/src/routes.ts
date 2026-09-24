@@ -72,9 +72,9 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get('/api/positions', (_request, reply) => respond(reply, () => cached('positions', () => positions(ctx))));
   app.get('/api/rewards', (_request, reply) => respond(reply, () => cached('rewards', () => rewards(ctx))));
   app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000,
-    value => value.source !== 'chain' || !value.sourceError)));
+    value => !value.walletSyncing && (value.source !== 'chain' || !value.sourceError))));
   app.get<{ Params: { address: string } }>('/api/sellers/:address/models', (request, reply) => respond(reply, () => views.read(`seller-models:${request.params.address.toLowerCase()}`, () => sellerModels(ctx.chain.explorerApiUrl, request.params.address), 60_000)));
-  app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
+  app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => views.read(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)), undefined, value => !value.walletSyncing)));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));
   app.get('/api/network', (_request, reply) => respond(reply, () => networkSnapshot(ctx)));

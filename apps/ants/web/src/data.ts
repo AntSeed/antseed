@@ -16,6 +16,9 @@ interface Entry {
   partial?: boolean;
 }
 
+/** How often a view waiting for Antscan to catch up re-reads while the tab is visible. */
+export const SYNC_POLL_MS = 3_000;
+
 let generation = 0;
 const cache = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
@@ -38,6 +41,23 @@ export function invalidatePrefix(prefix: string): void {
     if (key.startsWith(prefix)) cache.delete(key);
   }
   for (const listener of listeners) listener(false, false);
+}
+
+/** Re-read once after `SYNC_POLL_MS` while the tab is visible, or as soon as a hidden tab becomes visible. */
+export function scheduleSyncCheck(reload: () => void, doc: Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventListener'> = document, timers: Pick<Window, 'setTimeout' | 'clearTimeout'> = window): () => void {
+  let done = false;
+  const check = () => {
+    if (done || doc.visibilityState !== 'visible') return;
+    done = true;
+    reload();
+  };
+  const timer = timers.setTimeout(check, SYNC_POLL_MS);
+  doc.addEventListener('visibilitychange', check);
+  return () => {
+    done = true;
+    timers.clearTimeout(timer);
+    doc.removeEventListener('visibilitychange', check);
+  };
 }
 
 export interface PageData<T> {
@@ -68,6 +88,8 @@ function readCache<T>(key: string | null): State<T> {
 
 interface PageDataOptions<T> {
   isPartial?: (data: T) => boolean;
+  /** The read succeeded but some of it is still waiting for the indexer; keep revalidating and mark it updating. */
+  isSyncing?: (data: T) => boolean;
   retryOnError?: boolean;
 }
 
@@ -105,6 +127,11 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
           if (startedGeneration !== generation) return;
           const partial = optionsRef.current.isPartial?.(data) ?? false;
           const previous = cache.get(k);
+          if (optionsRef.current.isSyncing?.(data)) {
+            const keep = previous && !optionsRef.current.isSyncing(previous.data as T);
+            cache.set(k, { data: keep ? previous.data : data, at: 0, partial: keep ? previous.partial : partial, reconciling: true });
+            return;
+          }
           const retain = partial && previous && !optionsRef.current.isPartial?.(previous.data as T);
           cache.set(k, { data: retain ? previous.data : data, at: retain ? previous.at : Date.now(), partial });
         })
@@ -181,6 +208,12 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
     }, 25_000 * (retryCount.current + 1));
     return () => window.clearTimeout(timer);
   }, [key, state.error, state.loading, load]);
+
+  const waiting = state.key === key && state.reconciling && !state.error;
+  useEffect(() => {
+    if (!waiting || state.loading || key === null) return;
+    return scheduleSyncCheck(() => load(key));
+  }, [key, waiting, state.loading, load]);
 
   const view = state.key === key ? state : readCache<T>(key);
   return { data: view.data, error: view.error, loading: view.loading, reconciling: view.reconciling, partial: view.partial, updatedAt: view.updatedAt, refresh };
