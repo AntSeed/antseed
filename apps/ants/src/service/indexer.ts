@@ -10,6 +10,8 @@ import { fetchDisplaySnapshot, type DisplaySnapshot } from './display-snapshot.j
 import { fetchRewardPositions, type RewardPositions } from './position-feed.js';
 
 const FETCH_TIMEOUT_MS = 8_000;
+const READ_BUDGET_MS = 18_000;
+const RETRY_DELAY_MS = 750;
 const CACHE_TTL_MS = 15_000;
 
 export interface IndexedStakingEpoch {
@@ -253,12 +255,13 @@ const toBuyerEpoch = (row: Record<string, unknown>): IndexedBuyerEpoch => ({
 export class AntscanIndexer implements Indexer {
   readonly baseUrl: string;
   private readonly cache = new Map<string, { at: number; value: Promise<unknown> }>();
+  private readonly pending = new Map<string, Promise<unknown>>();
 
   constructor(baseUrl: string, private readonly fetchImpl: typeof fetch = fetch, private readonly ttlMs = CACHE_TTL_MS) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
-  invalidate(): void { this.cache.clear(); }
+  invalidate(): void { this.cache.clear(); this.pending.clear(); }
 
   displaySnapshot(epoch: number): Promise<DisplaySnapshot> {
     const key = `display:${epoch}`;
@@ -271,22 +274,50 @@ export class AntscanIndexer implements Indexer {
   }
 
   private get<T>(path: string, cache = true): Promise<T> {
+    const running = this.pending.get(path);
+    if (cache && running) return running as Promise<T>;
     const hit = this.cache.get(path);
     if (cache && hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
     const url = `${this.baseUrl}${path}`;
-    const value = (async () => {
-      let response: Response;
-      try {
-        response = await this.fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { accept: 'application/json' } });
-      } catch (error) {
-        throw new IndexerError(`Explorer unreachable: ${(error as Error).message}`, url);
-      }
-      if (!response.ok) throw new IndexerError(`Explorer responded with HTTP ${response.status}`, url, response.status);
-      return await response.json() as T;
-    })();
-    if (cache) this.cache.set(path, { at: Date.now(), value });
-    value.catch(() => { if (this.cache.get(path)?.value === value) this.cache.delete(path); });
+    const value = this.read<T>(url);
+    if (cache) {
+      this.pending.set(path, value);
+      value.then(() => {
+        if (this.pending.get(path) !== value) return;
+        this.pending.delete(path);
+        this.cache.set(path, { at: Date.now(), value });
+      }, () => {
+        if (this.pending.get(path) === value) this.pending.delete(path);
+      });
+    }
     return value;
+  }
+
+  private async read<T>(url: string): Promise<T> {
+    const deadline = Date.now() + READ_BUDGET_MS;
+    for (let attempt = 0; ; attempt++) {
+      let retryAfter: string | null = null;
+      let failure: IndexerError;
+      try {
+        const response = await this.fetchImpl(url, {
+          signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(1, deadline - Date.now()))),
+          headers: { accept: 'application/json' },
+        });
+        if (response.ok) return await response.json() as T;
+        retryAfter = response.headers.get('retry-after');
+        await response.body?.cancel();
+        failure = new IndexerError(`Explorer responded with HTTP ${response.status}`, url, response.status);
+        if (response.status !== 408 && response.status !== 429 && response.status < 500) throw failure;
+      } catch (error) {
+        if (error instanceof IndexerError || error instanceof SyntaxError) throw error;
+        failure = new IndexerError(`Explorer unreachable: ${(error as Error).message}`, url);
+      }
+      const requestedDelay = retryAfter === null ? 0 : /^\d+$/.test(retryAfter)
+        ? Number(retryAfter) * 1_000 : Date.parse(retryAfter) - Date.now();
+      const delay = Math.max(RETRY_DELAY_MS, Number.isFinite(requestedDelay) ? requestedDelay : 0);
+      if (attempt >= 1 || delay + FETCH_TIMEOUT_MS > deadline - Date.now()) throw failure;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
 
   async pools(): Promise<IndexedPools> {

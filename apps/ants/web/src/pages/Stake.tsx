@@ -9,6 +9,7 @@ import { Panel } from '../components/Panel';
 import { PoolDrawer, PoolsTable, sortPools } from '../components/Pools';
 import { StakeForm } from '../components/StakeForm';
 import { usePageData } from '../data';
+import { poolDataOptions } from '../pool-data';
 import { epochStartAt, formatAnts, formatDuration, formatInt, formatUsdcCompact, formatUtc, shortAddress } from '../format';
 import { useNow } from '../hooks';
 
@@ -19,7 +20,7 @@ export function StakePage() {
   const overview = usePageData('overview', api.overview);
   const positions = usePageData(walletReady ? 'positions:current' : null, api.positions);
   const rewards = usePageData('rewards', api.rewards, 5 * 60_000);
-  const pools = usePageData('pools', api.pools, 5 * 60_000);
+  const pools = usePageData('pools', api.pools, 5 * 60_000, poolDataOptions);
   const data = overview.data;
   const buyerOperator = rewards.data?.buyerUsage.operator;
   const wrongBuyerWallet = walletReady && !!buyerOperator && buyerOperator.toLowerCase() !== config.address.toLowerCase()
@@ -96,13 +97,25 @@ export function StakePage() {
         }
       >
         {pools.error && !pools.data ? <ErrorBox error={pools.error} onRetry={pools.refresh} /> : null}
-        {pools.error && pools.data ? <div className="status-line">Refresh failed: {pools.error}</div> : null}
-        {pools.data?.source === 'chain' ? (
-          <div className="status-line">
-            Pool statistics are unavailable{pools.data.sourceError ? ` (${pools.data.sourceError})` : ' (no explorer configured)'}; only pools you stake in are listed, read live from the chain.
+        {pools.loading ? <p className="hint" role="status">{pools.data ? 'Updating sellers… Showing previously loaded data.' : 'Loading sellers…'}</p> : null}
+        {!pools.loading && pools.reconciling ? <p className="hint" role="status">Updating your stake… Waiting for Antscan to include your latest transaction.</p> : null}
+        {!pools.loading && (pools.partial || (pools.error && pools.data)) ? (
+          <div className={pools.error ? 'status-line' : 'status-line status-line--muted'} role="status">
+            {pools.error ? `Could not update sellers: ${pools.error}. ` : 'Could not load the full seller list. '}
+            {pools.error || pools.data?.source === 'indexer' ? 'Showing previously loaded data; statistics may be out of date.' : 'Only pools you stake in are shown, read live from the chain.'}
+            {' '}<Button variant="outline" size="sm" onClick={pools.refresh}>Try again</Button>
           </div>
         ) : null}
-        <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} onOpen={openSeller} onStake={openSeller} />
+        {!pools.loading && pools.data?.source === 'chain' && !pools.partial && !pools.error ? (
+          <div className="status-line status-line--muted">
+            No explorer configured. Only pools you stake in are listed, read live from the chain.
+          </div>
+        ) : null}
+        {!pools.loading && pools.data?.source === 'chain' && sortedPools.length === 0 ? (
+          pools.reconciling ? null : <p className="hint">You have no staked pools to show.</p>
+        ) : pools.data || pools.loading ? (
+          <PoolsTable pools={sortedPools} currentEpoch={pools.data?.currentEpoch ?? 0} loading={pools.loading && !pools.data} walletSyncing={pools.reconciling} onOpen={openSeller} onStake={openSeller} />
+        ) : null}
       </Panel>
 
       {stakeTarget !== undefined && pools.data ? (

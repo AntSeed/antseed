@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { ZeroAddress } from 'ethers';
+import { IndexerSyncingError } from './read-state.js';
 import { networkSnapshot, networkLegacy } from './service/network.js';
 import type { AntsContext } from './service/context.js';
 import { JobRunner, describeError } from './jobs.js';
@@ -44,6 +45,10 @@ async function respond(reply: FastifyReply, read: () => Promise<unknown>): Promi
   try {
     reply.send({ ok: true, data: await read() });
   } catch (error) {
+    if (error instanceof IndexerSyncingError) {
+      reply.status(202).send({ ok: false, state: 'syncing' });
+      return;
+    }
     reply.status(400).send({ ok: false, error: describeError(error) });
   }
 }
@@ -66,9 +71,10 @@ export function registerRoutes(app: FastifyInstance, context: RouteContext): voi
   app.get('/api/overview', (_request, reply) => respond(reply, () => cached('overview', () => overview(ctx))));
   app.get('/api/positions', (_request, reply) => respond(reply, () => cached('positions', () => positions(ctx))));
   app.get('/api/rewards', (_request, reply) => respond(reply, () => cached('rewards', () => rewards(ctx))));
-  app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000)));
+  app.get('/api/pools', (_request, reply) => respond(reply, () => views.read('pools', () => poolsView(ctx), 60_000,
+    value => !value.walletSyncing && (value.source !== 'chain' || !value.sourceError))));
   app.get<{ Params: { address: string } }>('/api/sellers/:address/models', (request, reply) => respond(reply, () => views.read(`seller-models:${request.params.address.toLowerCase()}`, () => sellerModels(ctx.chain.explorerApiUrl, request.params.address), 60_000)));
-  app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => cached(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)))));
+  app.get<{ Params: { agentId: string } }>('/api/pools/:agentId', (request, reply) => respond(reply, () => views.read(`pool:${request.params.agentId}`, () => singlePool(ctx, Number(request.params.agentId)), undefined, value => !value.walletSyncing)));
   app.get<{ Querystring: { epochs?: string } }>('/api/usage', (request, reply) => respond(reply, () => cached(`usage:${request.query.epochs ?? ''}`, () => usage(ctx, { epochs: request.query.epochs ? Number(request.query.epochs) : undefined }))));
   app.get('/api/emissions', (_request, reply) => respond(reply, () => cached('emissions', () => emissions(ctx))));
   app.get('/api/network', (_request, reply) => respond(reply, () => networkSnapshot(ctx)));

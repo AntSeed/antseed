@@ -14,6 +14,8 @@ import type {
   VerificationView,
 } from '../../src/api-types';
 
+import { IndexerSyncingError } from '../../src/read-state';
+
 const TOKEN_KEY = 'ants.dashboard.token';
 
 export interface DashboardConfig {
@@ -40,7 +42,7 @@ export interface WithdrawPreview {
   simulationError: string | null;
 }
 
-export type PoolDetail = PoolView & { currentEpoch: number };
+export type PoolDetail = PoolView & { currentEpoch: number; walletSyncing?: boolean };
 
 export class ApiError extends Error {
   readonly status: number;
@@ -83,7 +85,7 @@ export function onUnauthorized(listener: () => void): () => void {
   };
 }
 
-type Envelope<T> = { ok: true; data: T } | { ok: false; error: string };
+type Envelope<T> = { ok: true; data: T } | { ok: false; state: 'syncing' } | { ok: false; error: string };
 
 export async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const headers: Record<string, string> = { Authorization: `Bearer ${getToken() ?? ''}` };
@@ -111,7 +113,10 @@ export async function request<T>(path: string, init?: { method?: string; body?: 
   if (!envelope || typeof envelope !== 'object') {
     throw new ApiError(`HTTP ${response.status}`, response.status);
   }
-  if (!envelope.ok) throw new ApiError(envelope.error || `HTTP ${response.status}`, response.status);
+  if (!envelope.ok) {
+    if ('state' in envelope && envelope.state === 'syncing') throw new IndexerSyncingError();
+    throw new ApiError(('error' in envelope && envelope.error) || `HTTP ${response.status}`, response.status);
+  }
   return envelope.data;
 }
 

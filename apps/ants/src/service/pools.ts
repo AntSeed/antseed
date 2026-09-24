@@ -12,6 +12,7 @@ import { stakeEligibility } from './stake-eligibility.js';
 import { displayData, type DisplayData } from './display-snapshot.js';
 import { liveWalletPositions } from './indexed-wallet.js';
 import type { LivePositions } from './position-feed.js';
+import { IndexerSyncingError } from '../read-state.js';
 
 const VOLUME_EPOCHS = 9;
 /** Epochs of per-pool history returned by the single-pool endpoint for charts. */
@@ -82,6 +83,8 @@ interface PoolContext {
   explorer: ExplorerSellers;
   /** Your open positions per agent. */
   own: Map<number, OwnPool>;
+  /** Antscan has not caught up with your latest transaction; `own` is empty until it does. */
+  walletSyncing: boolean;
 }
 
 /** Ids, stake counting this epoch, stake still pending activation, and live power of your positions in one pool. */
@@ -99,7 +102,15 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
   const epoch = stack.currentEpoch;
   const display = await displayData(ctx, stack);
   let live: LivePositions | undefined;
-  if (ctx.address !== ZeroAddress && ctx.indexer()) live = await liveWalletPositions(ctx, epoch);
+  let walletSyncing = false;
+  if (ctx.address !== ZeroAddress && ctx.indexer()) {
+    try {
+      live = await liveWalletPositions(ctx, epoch);
+    } catch (error) {
+      if (!(error instanceof IndexerSyncingError)) throw error;
+      walletSyncing = true;
+    }
+  }
   const current = display.snapshot?.epochs.find(row => row.epoch === epoch) ?? (display.source.error ? null : indexed?.currentEpoch === epoch && indexed.network.current?.epoch === epoch && indexed.network.current.complete !== false ? indexed.network.current : null);
   const last = display.snapshot?.epochs.find(row => row.epoch === epoch - 1) ?? (display.source.error ? null : indexed?.currentEpoch === epoch && indexed.network.last?.epoch === epoch - 1 && indexed.network.last.complete !== false ? indexed.network.last : null);
   const epochs = Array.from({ length: VOLUME_EPOCHS }, (_, index) => epoch - index).filter((value) => value >= 0);
@@ -111,7 +122,7 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
     last ? Promise.resolve(BigInt(last.totalWeightedPoolPoints)) : !ctx.indexer()?.displaySnapshot && accounting && epoch > 0 ? safe(() => accounting.totalWeightedPoolPointsByEpoch(epoch - 1), 0n) : Promise.resolve(0n),
     explorerSellers(ctx.chain.explorerApiUrl),
     (async () => {
-      if (ctx.address === ZeroAddress || live) return [];
+      if (ctx.address === ZeroAddress || live || walletSyncing) return [];
       const [open, closed] = await Promise.all([pools.allStakerPositionIds(ctx.address), closedPositionIds(ctx)]);
       return pools.positionsBatch([...new Set([...open, ...closed.ids])]);
     })(),
@@ -122,7 +133,7 @@ async function poolContext(ctx: AntsContext, indexed?: IndexedPools): Promise<Po
     current ? Promise.resolve(BigInt(current.totalActiveStake)) : safe(() => pools.totalActiveStakeAtEpoch(epoch), 0n),
     live ? Promise.resolve(ownPoolsFromLive(live)) : ownPools(ctx, openRows, epoch),
   ]);
-  return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary };
+  return { stack, display, totalActiveStake, epochs, totalPowerWeight, stakerBudget, totalWeightedPoolPoints, lastStakerBudget, lastTotalWeightedPoolPoints, explorer, own: ownSummary, walletSyncing };
 }
 
 function ownPoolsFromLive(live: LivePositions): Map<number, OwnPool> {
@@ -269,6 +280,7 @@ export async function poolsView(ctx: AntsContext): Promise<PoolsView> {
         yourTotalPower: yourTotalPower.toString(),
         yourNetworkShareBps: bps(yourTotalPower, totalPower),
         yourPendingStake: totalPending(context.own).toString(),
+        walletSyncing: context.walletSyncing,
         source: 'indexer',
         sourceError: context.display.source.error ?? null,
         displaySource: context.display.source,
@@ -301,6 +313,7 @@ async function chainOnlyPools(
     yourTotalPower: yourTotalPower.toString(),
     yourNetworkShareBps: bps(yourTotalPower, context.totalPowerWeight),
     yourPendingStake: totalPending(context.own).toString(),
+    walletSyncing: context.walletSyncing,
     source: 'chain',
     sourceError,
     displaySource: context.display.source,
@@ -308,7 +321,7 @@ async function chainOnlyPools(
   });
 }
 
-export async function singlePool(ctx: AntsContext, agentId: number): Promise<PoolView & { currentEpoch: number }> {
+export async function singlePool(ctx: AntsContext, agentId: number): Promise<PoolView & { currentEpoch: number; walletSyncing: boolean }> {
   const context = await poolContext(ctx);
   const indexer = ctx.indexer();
   if (indexer) {
@@ -332,7 +345,7 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
           view.history = poolHistory(detail.epochs, context.stack.currentEpoch, indexedPool && indexed.currentEpoch === context.stack.currentEpoch
             ? { last: indexedPool.lastEmission, current: indexedPool.projectedEmission } : undefined);
         }
-        return toJson({ ...view, currentEpoch: context.stack.currentEpoch });
+        return toJson({ ...view, currentEpoch: context.stack.currentEpoch, walletSyncing: context.walletSyncing });
       }
     } catch (error) {
       if (!(error instanceof IndexerError)) throw error;
@@ -340,7 +353,7 @@ export async function singlePool(ctx: AntsContext, agentId: number): Promise<Poo
   }
   const [view] = await describePools(ctx, [[agentId, null]], context);
   if (view) await enrichYields(ctx, context, [view]);
-  return toJson({ ...view!, currentEpoch: context.stack.currentEpoch });
+  return toJson({ ...view!, currentEpoch: context.stack.currentEpoch, walletSyncing: context.walletSyncing });
 }
 
 /**

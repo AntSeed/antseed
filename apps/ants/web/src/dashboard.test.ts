@@ -16,12 +16,12 @@ import { poolName, poolLabel, PoolsTable, PoolDrawer, sortPoolsByMetric } from '
 import { formatYieldPercent, poolApyRange, poolApyEstimates } from './pool-yield';
 import type { PoolView, PoolsView, RewardsView, SellerView } from '../../src/api-types';
 
-const state = vi.hoisted(() => ({ data: { 'positions:current': { config: { minStakeEpochs: 1, maxStakeEpochs: 104, stakeActivationDelay: 1 } } } as Record<string, unknown>, keys: [] as Array<string | null>, loadingPools: false }));
+const state = vi.hoisted(() => ({ data: { 'positions:current': { config: { minStakeEpochs: 1, maxStakeEpochs: 104, stakeActivationDelay: 1 } } } as Record<string, unknown>, keys: [] as Array<string | null>, loadingPools: false, partialPools: false, reconcilingPools: false, poolsError: null as string | null }));
 vi.mock('@antseed/ui', async original => ({
   ...await original<typeof import('@antseed/ui')>(),
   Modal: ({ children, title, subtitle, isOpen }: { children: ReactNode; title: ReactNode; subtitle?: ReactNode; isOpen: boolean }) => isOpen ? createElement('section', { role: 'dialog' }, createElement('h2', null, title), subtitle, children) : null,
 }));
-vi.mock('./data', () => ({ usePageData: (key: string | null) => { state.keys.push(key); return { data: key ? state.data[key] ?? null : null, error: null, loading: key === 'pools' && state.loadingPools, refresh: () => {} }; } }));
+vi.mock('./data', () => ({ usePageData: (key: string | null) => { state.keys.push(key); return { data: key ? state.data[key] ?? null : null, error: key === 'pools' ? state.poolsError : null, loading: key === 'pools' && state.loadingPools, partial: key === 'pools' && state.partialPools, reconciling: key === 'pools' && state.reconcilingPools, refresh: () => {} }; } }));
 vi.mock('./jobs', () => ({ useJobs: () => ({ running: false, start: () => {}, toasts: [], dismissToast: () => {}, drawerOpen: false, setDrawerOpen: () => {} }) }));
 vi.mock('./wallet', () => ({ BuyerWalletAction: () => createElement('button', null, 'Connect wallet'), WalletControls: () => createElement('button', null, 'Wallet') }));
 
@@ -36,6 +36,65 @@ function render(child: ReturnType<typeof createElement>): string {
 }
 
 describe('staking dashboard displays', () => {
+  it('keeps partial-result warnings hidden during recovery and shows retry only once loading finishes', () => {
+    const previousPools = state.data.pools;
+    state.data.pools = { source: 'chain', sourceError: 'Explorer timeout', pools: [], networkVolumes: [], currentEpoch: 22 };
+    state.partialPools = true;
+    state.loadingPools = true;
+    try {
+      const loading = render(createElement(StakePage));
+      expect(loading).toContain('Updating sellers…');
+      expect(loading).not.toContain('Could not load');
+      expect(loading).not.toContain('Try again');
+      state.loadingPools = false;
+      const exhausted = render(createElement(StakePage));
+      expect(exhausted).toContain('Could not load the full seller list');
+      expect(exhausted).toContain('Only pools you stake in are shown');
+      expect(exhausted).toContain('Try again');
+      expect(exhausted).toContain('You have no staked pools to show');
+      expect(exhausted).not.toContain('No sellers are ready');
+      state.data.pools = { ...state.data.pools as object, source: 'indexer', sourceError: null };
+      const retained = render(createElement(StakePage));
+      expect(retained).toContain('statistics may be out of date');
+      state.partialPools = false;
+      const recovered = render(createElement(StakePage));
+      expect(recovered).not.toContain('Could not load');
+      expect(recovered).not.toContain('Try again');
+    } finally { state.data.pools = previousPools; state.partialPools = false; state.loadingPools = false; }
+  });
+
+  it('does not report no staked pools in chain-only mode while your stake syncs', () => {
+    const previousPools = state.data.pools;
+    state.data.pools = { source: 'chain', sourceError: null, walletSyncing: true, pools: [], networkVolumes: [], currentEpoch: 22 };
+    state.reconcilingPools = true;
+    try {
+      const html = render(createElement(StakePage));
+      expect(html).toContain('Updating your stake…');
+      expect(html).not.toContain('You have no staked pools');
+    } finally { state.data.pools = previousPools; state.reconcilingPools = false; }
+  });
+
+  it('does not suggest retry for intentionally unconfigured explorers', () => {
+    const previousPools = state.data.pools;
+    state.data.pools = { source: 'chain', sourceError: null, pools: [], networkVolumes: [], currentEpoch: 22 };
+    try {
+      const html = render(createElement(StakePage));
+      expect(html).toContain('No explorer configured');
+      expect(html).not.toContain('Try again');
+      expect(html).not.toContain('Could not load');
+    } finally { state.data.pools = previousPools; }
+  });
+
+  it('does not present a failed read as an empty seller network', () => {
+    const previousPools = state.data.pools;
+    state.data.pools = null;
+    state.poolsError = 'RPC unavailable';
+    try {
+      const html = render(createElement(StakePage));
+      expect(html).toContain('RPC unavailable');
+      expect(html).not.toContain('No sellers are ready');
+    } finally { state.data.pools = previousPools; state.poolsError = null; }
+  });
   it('shows protocol addresses without the environment section', () => {
     const previousOverview = state.data.overview;
     const contractAddress = '0x0000000000000000000000000000000000000042';
@@ -56,6 +115,9 @@ describe('staking dashboard displays', () => {
     try {
       const html = render(createElement(StakePage));
       expect(html).toContain('Sellers');
+      expect(html).toContain('Loading sellers…');
+      expect(html).not.toContain('status-line');
+      expect(html).not.toContain('0 sellers');
       expect(html).not.toContain('Loading pool statistics from the explorer');
     } finally { state.data.pools = previousPools; state.loadingPools = false; }
   });
@@ -627,6 +689,28 @@ describe('sidebar shell and pending stake', () => {
     const mixed = render(createElement(PoolsTable, { pools: [sellerPool({ yourStake: '100000000000000000000', yourPendingStake: '5000000000000000000', yourPoolShareBps: 1000 })], currentEpoch: 22, loading: false, onOpen: () => {}, onStake: () => {} }));
     expect(mixed).toContain('+5');
     expect(mixed).not.toContain('of pool');
+  });
+  it('keeps the seller list visible while your stake waits for Antscan', () => {
+    const previousPools = state.data.pools;
+    state.data.pools = { source: 'indexer', sourceError: null, walletSyncing: true, pools: [sellerPool({ yourStake: '100000000000000000000', yourPositionIds: [1] })], networkVolumes: [], currentEpoch: 22 };
+    state.reconcilingPools = true;
+    try {
+      const html = render(createElement(StakePage));
+      expect(html).toContain('Updating your stake…');
+      expect(html).not.toContain('>Refresh<');
+      expect(html).toContain('Vault seller');
+      expect(html).not.toContain('>100<');
+      expect(html).toContain('Updating…');
+      expect(html).not.toContain('my pools');
+      expect(html).not.toContain('No sellers are ready');
+    } finally { state.data.pools = previousPools; state.reconcilingPools = false; }
+  });
+
+  it('hides your seller-sheet figures while they wait for Antscan', () => {
+    const view = { currentEpoch: 22, networkVolumes: [], explorer: null, walletSyncing: true } as unknown as PoolsView;
+    const html = render(createElement(PoolDrawer, { pool: sellerPool({ yourStake: '0', yourPendingStake: '5000000000000000000' }), view, onClose: () => {} }));
+    expect(html).toContain('Waiting for Antscan to include your latest transaction');
+    expect(html).not.toContain('Pending stake starts earning');
   });
   it('lists pending stake in the seller sheet and links to the positions page', () => {
     const view = { currentEpoch: 22, networkVolumes: [], explorer: null } as unknown as PoolsView;

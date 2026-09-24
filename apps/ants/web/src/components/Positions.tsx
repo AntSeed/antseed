@@ -31,6 +31,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
 
   const data = page.data;
+  const unavailable = page.reconciling || !!page.error;
   const allPositions = useMemo(() => data?.positions ?? [], [data]);
   const closedCount = useMemo(() => allPositions.filter((p) => !isOpen(p)).length, [allPositions]);
   const positions = useMemo(() => (showClosed ? allPositions : allPositions.filter(isOpen)), [allPositions, showClosed]);
@@ -56,9 +57,9 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
       key: 'select',
       className: 'col-select',
       label: openPositions.length > 0 ? (
-        <input type="checkbox" aria-label="Select all open positions" checked={selected.size > 0 && selected.size === openPositions.length} onChange={toggleAll} />
+        <input type="checkbox" aria-label="Select all open positions" disabled={unavailable} checked={selected.size > 0 && selected.size === openPositions.length} onChange={toggleAll} />
       ) : '',
-      render: (p) => isOpen(p) ? <input type="checkbox" aria-label={`Select position ${p.id}`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} onClick={stop} /> : null,
+      render: (p) => isOpen(p) ? <input type="checkbox" aria-label={`Select position ${p.id}`} disabled={unavailable} checked={selected.has(p.id)} onChange={() => toggle(p.id)} onClick={stop} /> : null,
     },
     {
       key: 'seller',
@@ -100,7 +101,7 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
       align: 'right',
       className: 'col-actions',
       render: (p) =>
-        isOpen(p) ? (
+        isOpen(p) && !unavailable ? (
           <span className="row-nowrap" onClick={stop}>
             <Menu
               label={`More actions for position ${p.id}`}
@@ -131,9 +132,10 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
     >
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data ? <div className="status-line">Refresh failed: {page.error}</div> : null}
+      {page.reconciling && !page.error ? <p role="status" className="hint">Updating… Waiting for the latest position data.</p> : null}
       {data?.historySource === 'local' ? <p className="hint">Includes closed positions from verified local transactions. Older history may be incomplete without an indexer.</p> : null}
       {data?.historySource === 'chain' ? <div className="status-line status-line--muted">Closed-position history is unavailable. Open positions are shown from the chain; rewards on closed positions may be missing.</div> : null}
-      {selectedRows.length > 0 ? (
+      {selectedRows.length > 0 && !unavailable ? (
         <div className="bulk-bar" role="region" aria-label="Selected positions">
           <span className="bulk-bar-count">{selectedRows.length} selected · {formatAnts(sumAmounts(selectedRows), 4)} ANTS</span>
           <button type="button" className="link-button" onClick={clearSelection}>clear</button>
@@ -145,16 +147,15 @@ export function PositionsCard({ pools, enabled = true }: { pools: PoolView[]; en
           </div>
         </div>
       ) : null}
-      {rowAction && actionRow && data ? <RowActionPanel key={`${rowAction.id}:${rowAction.kind}`} kind={rowAction.kind} position={actionRow} config={data.config} pools={pools} onClose={() => setRowAction(null)} /> : null}
-      {bulkAction && data && selectedRows.length > 0 ? (
+      {rowAction && actionRow && data && !unavailable ? <RowActionPanel key={`${rowAction.id}:${rowAction.kind}`} kind={rowAction.kind} position={actionRow} config={data.config} pools={pools} onClose={() => setRowAction(null)} /> : null}
+      {bulkAction && data && selectedRows.length > 0 && !unavailable ? (
         <BulkActionPanel kind={bulkAction} positions={selectedRows} pools={pools} onClose={() => setBulkAction(null)} onStarted={() => { setBulkAction(null); clearSelection(); }} />
       ) : null}
       <Table
         columns={columns}
         rows={positions}
         rowKey={(p) => p.id}
-        loading={page.loading && !data}
-        empty={enabled ? "No open positions. Stake rewards into a seller to open one." : "Connect a wallet to see your positions."}
+        empty={!enabled ? 'Connect a wallet to see your positions.' : page.error ? 'Positions are currently unavailable.' : !data ? 'Loading positions…' : page.reconciling ? 'Updating positions…' : 'No open positions. Stake rewards into a seller to open one.'}
       />
       {data?.displaySource?.source === 'indexer' ? <p className="hint">Position status from Antscan. Withdrawal amounts and transaction eligibility are checked live before signing.</p> : null}
       {data?.rewardSource?.indexedBlock !== undefined ? <p className="hint">Reward estimates from Antscan at block {data.rewardSource.indexedBlock}.</p> : null}

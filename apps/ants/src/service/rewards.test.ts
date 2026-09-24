@@ -71,6 +71,14 @@ describe('closed-position rewards', () => {
     expect(preview).not.toHaveBeenCalled();
   });
 
+  it('reports syncing instead of replacing previous rewards with unknown amounts after a transaction', async () => {
+    const { ctx, source } = indexedFixture();
+    Object.assign(ctx, { positionReadBarriers: new Map([[address, { block: source.indexedBlock + 1, at: 0 }]]) });
+    await expect(rewards(ctx)).rejects.toMatchObject({ name: 'IndexerSyncingError' });
+    source.indexedBlock++;
+    expect((await rewards(ctx)).staker.total).toBe('99');
+  });
+
   it.each(['claim', 'restake'])('validates indexed candidates live for %s rather than trusting the displayed amount', async action => {
     const { ctx, poolRewards, pools } = indexedFixture();
     const preview = vi.spyOn(poolRewards, 'previewStakerRewards');

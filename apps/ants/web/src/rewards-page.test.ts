@@ -153,17 +153,16 @@ describe('reward row actions and confirmations', () => {
     expect(html).toContain('class="hero-value">1,250<span');
     expect(action('Claim current buyer rewards').disabled).toBe(false);
   });
-  it('animates amount placeholders without an updating bar and keeps action labels unchanged', () => {
-    state.rewardsLoading = true;
+  it.each([true, false])('keeps amounts visible and marks them updating until reconciliation completes (loading: %s)', loading => {
+    state.rewardsLoading = loading;
     state.reconciling = true;
     const html = render();
-    expect(html).not.toContain('Updating');
-    expect(html).not.toContain('reward-refresh-state');
-    expect(html.match(/class="skeleton reward-amount-loading"/g)).toHaveLength(11);
-    expect(html).toContain('role="status" aria-label="Refreshing amount" aria-busy="true"');
-    expect(html).toContain('<span aria-hidden="true">1,250</span>');
-    expect(html).toContain('<span aria-hidden="true">100</span>');
-    expect(html).toContain('<span aria-hidden="true">850</span>');
+    expect(html).toContain('Updating…');
+    expect(html).not.toContain('reward-amount-loading');
+    expect(html).not.toContain('Rewards could not be refreshed');
+    expect(html).toContain('<span class="muted" aria-busy="true">1,250</span>');
+    expect(html).toContain('<span class="muted" aria-busy="true">100</span>');
+    expect(html).toContain('<span class="muted" aria-busy="true">850</span>');
     expect(html).not.toContain('skel-list');
     expect(state.actions.length).toBeGreaterThan(0);
     for (const entry of state.actions) {
@@ -204,7 +203,8 @@ describe('reward row actions and confirmations', () => {
     expect(state.actions.every(entry => entry.disabled)).toBe(true);
     state.rewardsLoading = true;
     const retrying = render();
-    expect(retrying).toContain('skeleton reward-amount-loading');
+    expect(retrying).toContain('Updating…');
+    expect(retrying).not.toContain('skeleton reward-amount-loading');
     expect(retrying).not.toContain('Updating rewards…');
     expect(retrying).not.toContain('Out of date');
     expect(retrying).not.toContain('Rewards could not be refreshed');
