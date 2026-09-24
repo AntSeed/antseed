@@ -803,6 +803,21 @@ test('type filter splits text and image models', () => {
   assert.deepEqual(text.map((model) => model.id), ['qwen3-coder'])
 })
 
+test('decision models are typed from the typesafe-systemone protocol', () => {
+  const decision = makePeer({
+    peerId: '6'.repeat(40),
+    providerServiceApiProtocols: {
+      typesafe: { services: { 'jev-latest': ['typesafe-systemone'] } },
+    },
+  })
+  const models = buildNetworkModels([textSeller, decision], NOW_MS)
+  const jev = models.find((model) => model.id === 'jev-latest')
+  assert.equal(jev?.type, 'decision')
+  assert.deepEqual(jev?.supported_protocols, ['typesafe-systemone'])
+  assert.equal(parseModelTypeFilter('decisions'), 'decision')
+  assert.equal(parseModelTypeFilter('decision'), 'decision')
+})
+
 test('returns an empty list when no peers are discovered', () => {
   assert.deepEqual(buildNetworkModels([], NOW_MS), [])
 })

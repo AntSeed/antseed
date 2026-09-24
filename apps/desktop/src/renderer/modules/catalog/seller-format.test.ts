@@ -40,7 +40,7 @@ test('seller reputation calls out proven wash traders', () => {
     onChainReputationScore: 0,
     trust: {
       score: 0,
-      history: { score: 60, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 },
+      history: { score: 50, channelCount: 100, totalVolumeUsdcMicros: 100_000_000 },
       usage: { score: 38, shareBps: 7_000, epoch: 11 },
       power: { score: 5, shareBps: 20, epoch: 12 },
       identity: null,

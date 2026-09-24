@@ -14,6 +14,7 @@ import {
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
   DEFAULT_GAS_CHECK_INTERVAL_MS,
   DEFAULT_MIN_GAS_BALANCE_WEI,
+  SellerFreeTierLimiter,
   formatEther,
   parseEther,
   type Provider,
@@ -311,11 +312,14 @@ export function buildSellerPluginRuntimeEnv(
   if (Object.keys(serviceUnitBillingModels).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
+  const pluginPackage = resolvePluginPackage(providerCfg.plugin)
+  const envPrefix = pluginPackage === '@antseed/provider-local-llm'
+    ? 'LOCAL_LLM'
+    : pluginPackage === '@antseed/provider-typesafe'
+      ? 'TYPESAFE'
+      : 'OPENAI'
   if (providerCfg.baseUrl) {
-    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
-      ? 'LOCAL_LLM_BASE_URL'
-      : 'OPENAI_BASE_URL'
-    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
+    runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -323,7 +327,7 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.apiKeyEnv) {
     const apiKey = process.env[providerCfg.apiKeyEnv]
     if (apiKey) {
-      runtimeEnv['OPENAI_API_KEY'] = apiKey
+      runtimeEnv[`${envPrefix}_API_KEY`] = apiKey
     }
   }
 
@@ -622,6 +626,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      if (effectiveSellerConfig.freeTier) {
+        console.log(chalk.dim(`  free tier: ${new SellerFreeTierLimiter(effectiveSellerConfig.freeTier).describe()}`))
+      } else {
+        console.log(chalk.dim('  free tier: unlimited for fully zero-priced services'))
+      }
       if (healthCheckEnabled) {
         const intervalMs = healthCheckCfg?.intervalMs ?? DEFAULT_HEALTH_CHECK_INTERVAL_MS
         const failureThreshold = healthCheckCfg?.failureThreshold ?? DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD
@@ -701,6 +710,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ...(dhtPort ? { dhtPort } : {}),
         ...(signalingPort ? { signalingPort } : {}),
         ...(maxUploadBodyBytes !== undefined ? { maxUploadBodyBytes } : {}),
+        ...(effectiveSellerConfig.freeTier ? { freeTier: effectiveSellerConfig.freeTier } : {}),
         payments: {
           enabled: paymentsEnabled,
           paymentMethod: preferredMethod,

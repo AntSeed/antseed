@@ -1,5 +1,6 @@
 import type {
   EmissionsView,
+  NetworkSnapshot,
   JobView,
   OverviewView,
   PoolView,
@@ -8,6 +9,7 @@ import type {
   ProofStatusView,
   RewardsView,
   SellerView,
+  SellerModelsView,
   UsageView,
   VerificationView,
 } from '../../src/api-types';
@@ -16,8 +18,14 @@ const TOKEN_KEY = 'ants.dashboard.token';
 
 export interface DashboardConfig {
   address: string;
+  selectedAddress?: string;
+  walletAddress?: string | null;
+  buyerAddress: string;
+  browserWallet?: boolean;
+  canAuthorize?: boolean;
   chainId: string;
   evmChainId: number;
+  walletRpcUrl?: string;
   readOnly: boolean;
   dataDir: string;
 }
@@ -27,6 +35,9 @@ export interface WithdrawPreview {
   totalSlashed: string;
   totalReturned: string;
   earlyExit: boolean;
+  pendingRewards: string;
+  transfersRestricted: boolean;
+  simulationError: string | null;
 }
 
 export type PoolDetail = PoolView & { currentEpoch: number };
@@ -51,7 +62,8 @@ export function captureToken(): void {
   } catch {
     /* storage unavailable: the app will show the auth gate */
   }
-  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/overview`);
+  const page = new URLSearchParams(window.location.hash.slice(1)).get('page');
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/${page === 'rewards' ? 'rewards' : 'stake'}`);
 }
 
 export function getToken(): string | null {
@@ -73,7 +85,7 @@ export function onUnauthorized(listener: () => void): () => void {
 
 type Envelope<T> = { ok: true; data: T } | { ok: false; error: string };
 
-async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export async function request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const headers: Record<string, string> = { Authorization: `Bearer ${getToken() ?? ''}` };
   let body: string | undefined;
   if (init?.body !== undefined) {
@@ -117,9 +129,25 @@ export const api = {
   positions: () => get<PositionsView>('/api/positions'),
   rewards: () => get<RewardsView>('/api/rewards'),
   pools: () => get<PoolsView>('/api/pools'),
+  sellerModels: async (address: string) => {
+    try {
+      const data = await get<SellerModelsView>(`/api/sellers/${encodeURIComponent(address)}/models`);
+      if (!data || !('period' in data) || !('totals' in data)) {
+        throw new ApiError('The running dashboard server still uses sampled model data. Restart the updated desktop or dashboard process to load last-epoch totals.', 502);
+      }
+      return data;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new ApiError('The running dashboard server does not have the model-data endpoint (HTTP 404). Restart the updated desktop or dashboard process, then reopen staking.', 404);
+      }
+      throw error;
+    }
+  },
   pool: (agentId: number) => get<PoolDetail>(`/api/pools/${agentId}`),
   usage: (epochs: number) => get<UsageView>(`/api/usage?epochs=${epochs}`),
   emissions: () => get<EmissionsView>('/api/emissions'),
+  network: () => get<NetworkSnapshot>('/api/network'),
+  networkLegacy: () => get<EmissionsView['legacy']>('/api/network/legacy'),
   verification: (seller?: string) =>
     get<VerificationView>(`/api/verification${seller ? `?seller=${encodeURIComponent(seller)}` : ''}`),
   proofStatus: (proofId: string) => get<ProofStatusView>(`/api/verification/proofs/${encodeURIComponent(proofId)}`),

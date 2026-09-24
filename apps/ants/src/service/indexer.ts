@@ -6,10 +6,16 @@
  * data; amounts stay as decimal strings.
  */
 
+import { fetchDisplaySnapshot, type DisplaySnapshot } from './display-snapshot.js';
+import { fetchRewardPositions, type RewardPositions } from './position-feed.js';
+
 const FETCH_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 15_000;
 
 export interface IndexedStakingEpoch {
+  snapshotBlock?: number;
+  lastBlockNumber?: number;
+  complete?: boolean;
   epoch: number;
   totalPowerWeight: string;
   totalActiveStake: string;
@@ -22,6 +28,7 @@ export interface IndexedStakingEpoch {
 }
 
 export interface IndexedPool {
+  participationComplete?: boolean;
   agentId: number;
   seller: string | null;
   sellerName: string | null;
@@ -39,8 +46,13 @@ export interface IndexedPool {
   lastUsagePoints: string;
   volumeUsdc: string;
   lastVolumeUsdc: string;
+  volumeAvailable?: boolean;
+  lastVolumeAvailable?: boolean;
   lastEmission: string;
   lastEmissionSettled: boolean;
+  /** Preserve absent/invalid historical inputs instead of treating them as a real zero. */
+  historicalYield?: { power: string; reward: string; settled: boolean } | null;
+  stakers?: number | null;
   lastRewardPer1kPower: string | null;
   projectedEmission: string;
   projectedRewardPer1kPower: string | null;
@@ -65,13 +77,17 @@ export interface IndexedPoolEpoch {
 }
 
 export interface IndexedPoolDetail {
+  activeStake?: string | null;
   pool: (IndexedPool & { firstStakeAt: number | null }) | null;
   epochs: IndexedPoolEpoch[];
-  openPositions: number;
-  stakers: number;
+  openPositions: number | null;
+  stakers: number | null;
+  /** Stake in open positions waiting for their activation epoch; null when the explorer predates the field. */
+  pendingStake: string | null;
 }
 
 export interface IndexedPosition {
+  lastBlockNumber?: number;
   id: number;
   owner: string;
   agentId: number;
@@ -90,6 +106,9 @@ export interface IndexedPosition {
   slashedAmount: string;
   createdAt: number;
   closedAt: number | null;
+  /** Live power this epoch as read by the explorer; null when the explorer could not read it or predates the field. */
+  power?: string | null;
+  nextPower?: string | null;
 }
 
 export interface IndexedSellerEpoch { seller: string; epoch: number; agentId: number | null; volumeUsdc: string; points: string; weightedPoints: string; requests: string; }
@@ -99,6 +118,9 @@ export interface IndexedParticipant { address: string; currentEpoch: number; sel
 export interface IndexedEpochMetric { epoch: number; volumeUsdc: string; requests: string; }
 
 export interface Indexer {
+  rewardPositions?(owner: string, outstanding?: boolean): Promise<RewardPositions>;
+  displaySnapshot?(epoch: number): Promise<DisplaySnapshot>;
+  invalidate?(): void;
   readonly baseUrl: string;
   pools(): Promise<IndexedPools>;
   pool(agentId: number, epochs?: number): Promise<IndexedPoolDetail>;
@@ -111,7 +133,7 @@ export interface Indexer {
 }
 
 export class IndexerError extends Error {
-  constructor(message: string, readonly url: string) {
+  constructor(message: string, readonly url: string, readonly status?: number) {
     super(message);
     this.name = 'IndexerError';
   }
@@ -125,11 +147,18 @@ const str = (value: unknown): string => (value === null || value === undefined ?
 const lower = (value: unknown): string | null => (typeof value === 'string' && value ? value.toLowerCase() : null);
 /** `convert(value)`, or null when the field is absent. */
 const optional = <T>(value: unknown, convert: (value: unknown) => T): T | null => (value === null || value === undefined ? null : convert(value));
+/** A non-negative integer string, or null for anything else (absent field, error marker, older explorer). */
+const decimalOrNull = (value: unknown): string | null => (/^\d+$/.test(String(value ?? '')) ? String(value) : null);
+/** A non-negative safe integer count, or null. */
+const countOrNull = (value: unknown): number | null => (value != null && Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : null);
 const CLOSE_REASONS = ['split', 'merge', 'move', 'withdraw'] as const;
 
 function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoch | null {
   if (!row) return null;
   return {
+    snapshotBlock: row['snapshotBlock'] == null ? undefined : num(row['snapshotBlock']),
+    lastBlockNumber: row['lastBlockNumber'] == null ? undefined : num(row['lastBlockNumber']),
+    complete: ['epoch', 'totalActiveStake', 'totalPowerWeight', 'stakerBudget', 'totalWeightedPoolPoints'].every(key => /^\d+$/.test(String(row[key] ?? ''))),
     epoch: num(row['epoch']),
     totalPowerWeight: str(row['totalPowerWeight']),
     totalActiveStake: str(row['totalActiveStake']),
@@ -144,6 +173,7 @@ function toStakingEpoch(row: Record<string, unknown> | null): IndexedStakingEpoc
 
 function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: number | null } {
   return {
+    participationComplete: ['openPositions', 'totalPositions'].every(key => row[key] != null && Number.isSafeInteger(Number(row[key])) && Number(row[key]) >= 0),
     agentId: num(row['agentId']),
     seller: lower(row['seller']),
     sellerName: typeof row['sellerName'] === 'string' ? row['sellerName'] : null,
@@ -161,8 +191,13 @@ function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: num
     lastUsagePoints: str(row['lastUsagePoints']),
     volumeUsdc: str(row['volumeUsdc']),
     lastVolumeUsdc: str(row['lastVolumeUsdc']),
+    volumeAvailable: row['volumeUsdc'] != null,
+    lastVolumeAvailable: row['lastVolumeUsdc'] != null,
     lastEmission: str(row['lastEmission']),
     lastEmissionSettled: row['lastEmissionSettled'] === true,
+    historicalYield: /^\d+$/.test(String(row['lastWeight'] ?? '')) && /^\d+$/.test(String(row['lastEmission'] ?? '')) && typeof row['lastEmissionSettled'] === 'boolean'
+      ? { power: String(row['lastWeight']), reward: String(row['lastEmission']), settled: row['lastEmissionSettled'] } : null,
+    stakers: countOrNull(row['stakers']),
     lastRewardPer1kPower: optional(row['lastRewardPer1kPower'], str),
     projectedEmission: str(row['projectedEmission']),
     projectedRewardPer1kPower: optional(row['projectedRewardPer1kPower'], str),
@@ -173,6 +208,7 @@ function toPool(row: Record<string, unknown>): IndexedPool & { firstStakeAt: num
 function toPosition(row: Record<string, unknown>): IndexedPosition {
   const closedBy = CLOSE_REASONS.find((reason) => reason === row['closedBy']) ?? null;
   return {
+    lastBlockNumber: row['lastBlockNumber'] == null ? undefined : num(row['lastBlockNumber']),
     id: num(row['id']),
     owner: lower(row['owner']) ?? '',
     agentId: num(row['agentId']),
@@ -191,6 +227,8 @@ function toPosition(row: Record<string, unknown>): IndexedPosition {
     slashedAmount: str(row['slashedAmount']),
     createdAt: num(row['createdAt']),
     closedAt: optional(row['closedAt'], num),
+    power: decimalOrNull(row['power']),
+    nextPower: decimalOrNull(row['nextPower']),
   };
 }
 
@@ -220,9 +258,21 @@ export class AntscanIndexer implements Indexer {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
-  private get<T>(path: string): Promise<T> {
+  invalidate(): void { this.cache.clear(); }
+
+  displaySnapshot(epoch: number): Promise<DisplaySnapshot> {
+    const key = `display:${epoch}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<DisplaySnapshot>;
+    const value = fetchDisplaySnapshot(this.baseUrl, this.fetchImpl, epoch);
+    this.cache.set(key, { at: Date.now(), value });
+    value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    return value;
+  }
+
+  private get<T>(path: string, cache = true): Promise<T> {
     const hit = this.cache.get(path);
-    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
+    if (cache && hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<T>;
     const url = `${this.baseUrl}${path}`;
     const value = (async () => {
       let response: Response;
@@ -231,10 +281,10 @@ export class AntscanIndexer implements Indexer {
       } catch (error) {
         throw new IndexerError(`Explorer unreachable: ${(error as Error).message}`, url);
       }
-      if (!response.ok) throw new IndexerError(`Explorer responded with HTTP ${response.status}`, url);
+      if (!response.ok) throw new IndexerError(`Explorer responded with HTTP ${response.status}`, url, response.status);
       return await response.json() as T;
     })();
-    this.cache.set(path, { at: Date.now(), value });
+    if (cache) this.cache.set(path, { at: Date.now(), value });
     value.catch(() => { if (this.cache.get(path)?.value === value) this.cache.delete(path); });
     return value;
   }
@@ -249,21 +299,40 @@ export class AntscanIndexer implements Indexer {
   }
 
   async pool(agentId: number, epochs = 8): Promise<IndexedPoolDetail> {
-    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
+    const raw = await this.get<{ pool: Record<string, unknown> | null; epochs: Record<string, unknown>[]; openPositions: unknown; stakers: unknown; pendingStake?: unknown; activeStake?: unknown }>(`/api/staking/pools/${agentId}?epochs=${epochs}`);
     return {
       pool: raw.pool ? toPool(raw.pool) : null,
-      epochs: (raw.epochs ?? []).map((row) => ({
+      epochs: (raw.epochs ?? []).filter(row => row['volumeUsdc'] != null).map((row) => ({
         epoch: num(row['epoch']), weight: str(row['weight']), activeStake: str(row['activeStake']), usagePoints: str(row['usagePoints']), weightedUsagePoints: str(row['weightedUsagePoints']),
         volumeUsdc: str(row['volumeUsdc']), requests: str(row['requests']), settledEmission: str(row['settledEmission']), settled: row['settled'] === true,
       })),
-      openPositions: num(raw.openPositions),
-      stakers: num(raw.stakers),
+      openPositions: countOrNull(raw.openPositions),
+      stakers: countOrNull(raw.stakers),
+      pendingStake: decimalOrNull(raw.pendingStake),
+      activeStake: decimalOrNull(raw.activeStake),
     };
   }
 
   async positions(owner: string, includeClosed = true): Promise<IndexedPosition[]> {
     const raw = await this.get<{ positions: Record<string, unknown>[] }>(`/api/staking/positions?owner=${owner.toLowerCase()}${includeClosed ? '&includeClosed=1' : ''}`);
     return (raw.positions ?? []).map(toPosition);
+  }
+
+  rewardPositions(owner: string, outstanding = false): Promise<RewardPositions> {
+    const key = `rewards:${owner.toLowerCase()}:${outstanding}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < this.ttlMs) return hit.value as Promise<RewardPositions>;
+    const value = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        try { return await fetchRewardPositions(owner, outstanding, path => this.get(path, false)); }
+        catch (error) {
+          if (!(error instanceof IndexerError && error.status === 409 && attempt === 0)) throw error;
+        }
+      }
+    })();
+    this.cache.set(key, { at: Date.now(), value });
+    value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    return value;
   }
 
   async stakingEpochs(limit = 8): Promise<IndexedStakingEpoch[]> {

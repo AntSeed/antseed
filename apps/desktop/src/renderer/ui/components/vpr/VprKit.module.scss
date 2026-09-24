@@ -1,7 +1,5 @@
 /* Shared brand-guideline primitives for the AI VPN screens. */
 
-@use './chip';
-
 /* ---------- Back title ---------- */
 
 /* ---------- Pinned page chrome (VprPage) ---------- */
@@ -33,19 +31,6 @@
   gap: 8px;
 }
 
-/* Credits pill inside the pinned header — same look as the shell's floating
-   pill (VprShell hides that one on views that render this). */
-.headerCredits {
-  @include chip.chip-text;
-  flex: 0 0 auto;
-  max-width: 180px;
-}
-
-.headerCredits:hover,
-.headerCredits:focus-visible {
-  @include chip.chip-hover;
-}
-
 .pageBody {
   flex: 1 1 auto;
   min-height: 0;
@@ -55,6 +40,7 @@
 }
 
 .backTitle {
+  min-width: 0;
   align-self: flex-start;
   min-height: 24px;
   display: inline-flex;

@@ -1663,6 +1663,12 @@ function applyClaudeDesktopConfigPatch(patch: ClaudeDesktopConfigPatchDef): void
   // Model discovery comes from the gateway's /v1/models — a pinned list here
   // would shadow it.
   delete profile['inferenceModels'];
+  // Claude's published model catalog (fetched from downloads.claude.ai on 3p
+  // boots) relabels picker entries by id, so "Antseed Auto" behind
+  // claude-fable-5 would show as "Fable 5" and every curated slot as the
+  // Claude model whose id it borrows. The gateway's display names are the
+  // real labels; keep the catalog off so they win.
+  profile['modelCatalogEnabled'] = false;
   writeJsonFile(paths.profile, profile);
 
   const meta = readConfigPatchFile(paths.meta);
