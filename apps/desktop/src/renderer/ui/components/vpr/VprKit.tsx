@@ -28,7 +28,7 @@ export function VprBackTitle({ title, onBack, fallback = 'home' }: {
   return (
     <button type="button" className={styles.backTitle} onClick={onBack ?? historyBack} title="Back">
       <HugeiconsIcon icon={ArrowLeft01Icon} size={16} strokeWidth={2} />
-      <span>{title}</span>
+      <span title={title}>{title}</span>
     </button>
   );
 }
