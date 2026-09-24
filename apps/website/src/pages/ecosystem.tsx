@@ -171,12 +171,12 @@ function ProductPreview({project}: {project: EcosystemProject}) {
   if (project.theme === 'market') {
     return (
       <div className={`${styles.preview} ${styles.previewStats}`}>
-        <div className={styles.previewTop}><span>lANTS Market</span><i>Overview</i></div>
+        <div className={styles.previewTop}><span>lANTS Market</span><i>Base</i></div>
         <div className={styles.statsGrid}>
-          <div><small>Positions</small><strong>71</strong></div>
-          <div><small>Open</small><strong>58</strong></div>
-          <div><small>Locked</small><strong>156.79k</strong></div>
-          <div><small>Pools</small><strong>35</strong></div>
+          <div><small>Settles in</small><strong>USDC</strong></div>
+          <div><small>Market fee</small><strong>1%</strong></div>
+          <div><small>Custody</small><strong>None</strong></div>
+          <div><small>License</small><strong>MIT</strong></div>
         </div>
         <div className={styles.chartBars}><span /><span /><span /><span /><span /></div>
       </div>
