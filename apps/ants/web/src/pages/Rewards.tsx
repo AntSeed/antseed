@@ -11,6 +11,7 @@ import { Field, Select } from '../components/Field';
 import { LockSlider } from '../components/LockSlider';
 import { poolName } from '../components/Pools';
 import { usePageData } from '../data';
+import { poolDataOptions } from '../pool-data';
 import { formatAnts, isZero, sumBig, toBigInt } from '../format';
 
 const RewardRefreshContext = createContext({ updating: false, stale: false });
@@ -18,12 +19,13 @@ const RewardRefreshContext = createContext({ updating: false, stale: false });
 export function RewardsPage() {
   const page = usePageData('rewards', api.rewards, 5 * 60_000);
   const data = page.data;
-  const updating = !!data && page.loading && page.reconciling;
+  const updating = page.reconciling && (!page.error || page.loading);
   const stale = !!data && (page.reconciling || !!page.error);
   return (
     <>
       {page.error && !data ? <ErrorBox error={page.error} onRetry={page.refresh} /> : null}
       {page.error && data && !page.loading ? <ErrorBox title="Rewards could not be refreshed" error={`Shown amounts may be out of date. Retry refreshing before another action. This does not mean a confirmed transaction failed. ${page.error}`} onRetry={page.refresh} /> : null}
+      {updating ? <p role="status" className="hint">Updating… Waiting for the latest reward data. <button className="link-button" type="button" disabled={page.loading} onClick={page.refresh}>Refresh</button></p> : null}
       {!data && page.loading ? (
         <>
           <div className="muted small mb">Loading rewards from the blockchain and indexer…</div>
@@ -40,16 +42,14 @@ export function RewardsPage() {
 
 function RewardRefreshStatus() {
   const { updating, stale } = useContext(RewardRefreshContext);
-  if (!stale || updating) return null;
-  return <span className="reward-refresh-state">Out of date</span>;
+  if (!stale) return null;
+  return <span className="reward-refresh-state">{updating ? 'Updating…' : 'Out of date'}</span>;
 }
 
 function RewardAmount({ children }: { children: ReactNode }) {
   const { updating } = useContext(RewardRefreshContext);
   if (!updating) return <>{children}</>;
-  return <span className="skeleton reward-amount-loading" role="status" aria-label="Refreshing amount" aria-busy="true">
-    <span aria-hidden="true">{children}</span>
-  </span>;
+  return <span className="muted" aria-busy="true">{children}</span>;
 }
 
 function BuyerRewardsCard({ data }: { data: RewardsView }) {
@@ -259,7 +259,7 @@ function RestakeDestinations({ data, pools }: { data: RewardsView; pools: PoolVi
 function RestakeButton({ kind, data, maxEpochs }: { kind: 'staker' | 'seller' | 'buyer'; data: RewardsView; maxEpochs: number | null }) {
   const { stale } = useContext(RewardRefreshContext);
   const { epochs, slider, positions } = useLock(maxEpochs);
-  const pools = usePageData('pools', api.pools, 5 * 60_000);
+  const pools = usePageData('pools', api.pools, 5 * 60_000, poolDataOptions);
   const [stakeAgent, setStakeAgent] = useState(() => (data.sellerUsage.agentId ? String(data.sellerUsage.agentId) : ''));
   const poolList: PoolView[] = pools.data?.pools ?? [];
   useEffect(() => {

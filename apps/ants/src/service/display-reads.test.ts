@@ -142,7 +142,8 @@ describe('indexed display / live financial read boundary', () => {
   it('waits for Antscan after a confirmed transaction without querying fallback records', async () => {
     const { ctx, pools } = positionFeeds();
     Object.assign(ctx, { positionReadBarriers: new Map([[owner, { block: 101, at: Math.floor(Date.now() / 1000) }]]) });
-    await expect(positions(ctx)).rejects.toThrow('caught up');
+    await expect(positions(ctx)).rejects.toMatchObject({ name: 'IndexerSyncingError' });
+    await expect(poolsView(ctx)).rejects.toMatchObject({ name: 'IndexerSyncingError' });
     expect(pools.allStakerPositionIds).not.toHaveBeenCalled();
     expect(pools.positionStatusesBatch).not.toHaveBeenCalled();
   });

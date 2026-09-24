@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { describeError } from './format';
+import { IndexerSyncingError } from '../../src/read-state';
 
 /**
  * Per-key in-memory cache with request de-duplication. Pages fetch lazily
@@ -11,6 +12,8 @@ import { describeError } from './format';
 interface Entry {
   data: unknown;
   at: number;
+  reconciling?: boolean;
+  partial?: boolean;
 }
 
 let generation = 0;
@@ -23,7 +26,10 @@ export function invalidateAll({ clear = false, confirmed = false }: { clear?: bo
   generation++;
   inflight.clear();
   if (clear) cache.clear();
-  else for (const entry of cache.values()) entry.at = 0;
+  else for (const entry of cache.values()) {
+    entry.at = 0;
+    entry.reconciling ||= confirmed;
+  }
   for (const listener of listeners) listener(clear, confirmed);
 }
 
@@ -39,6 +45,7 @@ export interface PageData<T> {
   error: string | null;
   loading: boolean;
   reconciling: boolean;
+  partial: boolean;
   updatedAt: number | null;
   refresh: () => void;
 }
@@ -49,19 +56,27 @@ interface State<T> {
   error: string | null;
   loading: boolean;
   reconciling: boolean;
+  partial: boolean;
   updatedAt: number | null;
 }
 
 function readCache<T>(key: string | null): State<T> {
   const hit = key !== null ? cache.get(key) : undefined;
-  if (hit) return { key, data: hit.data as T, error: null, loading: false, reconciling: false, updatedAt: hit.at };
-  return { key, data: null, error: null, loading: key !== null, reconciling: false, updatedAt: null };
+  if (hit) return { key, data: hit.data as T, error: null, loading: false, reconciling: hit.reconciling ?? false, partial: hit.partial ?? false, updatedAt: hit.at };
+  return { key, data: null, error: null, loading: key !== null, reconciling: false, partial: false, updatedAt: null };
 }
 
-export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, staleMs = 60_000): PageData<T> {
+interface PageDataOptions<T> {
+  isPartial?: (data: T) => boolean;
+  retryOnError?: boolean;
+}
+
+export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, staleMs = 60_000, options: PageDataOptions<T> = {}): PageData<T> {
   const [state, setState] = useState<State<T>>(() => readCache<T>(key));
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const keyRef = useRef(key);
   keyRef.current = key;
   const mountedRef = useRef(true);
@@ -76,7 +91,10 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
 
   const load = useCallback((k: string, confirmed = false) => {
     const startedGeneration = generation;
-    setState((prev) => (prev.key === k ? { ...prev, loading: true, error: null, reconciling: confirmed || prev.reconciling } : { ...readCache<T>(k), loading: true, reconciling: confirmed }));
+    setState((prev) => {
+      const current = prev.key === k ? prev : readCache<T>(k);
+      return { ...current, loading: true, error: null, reconciling: confirmed || current.reconciling };
+    });
     let promise = inflight.get(k) as Promise<T> | undefined;
     if (!promise) {
       const started = fetcherRef.current();
@@ -84,7 +102,11 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
       inflight.set(k, started);
       started
         .then((data) => {
-          if (startedGeneration === generation) cache.set(k, { data, at: Date.now() });
+          if (startedGeneration !== generation) return;
+          const partial = optionsRef.current.isPartial?.(data) ?? false;
+          const previous = cache.get(k);
+          const retain = partial && previous && !optionsRef.current.isPartial?.(previous.data as T);
+          cache.set(k, { data: retain ? previous.data : data, at: retain ? previous.at : Date.now(), partial });
         })
         .catch(() => undefined)
         .finally(() => {
@@ -92,13 +114,22 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
         });
     }
     promise.then(
-      (data) => {
+      () => {
         if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
-        setState({ key: k, data, error: null, loading: false, reconciling: false, updatedAt: Date.now() });
+        setState(readCache<T>(k));
       },
       (error: unknown) => {
         if (!mountedRef.current || keyRef.current !== k || startedGeneration !== generation) return;
-        setState((prev) => ({ ...(prev.key === k ? prev : readCache<T>(k)), key: k, loading: false, error: describeError(error) }));
+        const syncing = error instanceof IndexerSyncingError;
+        const hit = cache.get(k);
+        if (syncing && hit) {
+          hit.at = 0;
+          hit.reconciling = true;
+        }
+        setState((prev) => {
+          const current = prev.key === k ? prev : readCache<T>(k);
+          return { ...current, key: k, loading: false, reconciling: syncing || current.reconciling, error: syncing ? null : describeError(error) };
+        });
       },
     );
   }, []);
@@ -111,7 +142,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
     const hit = cache.get(key);
     if (hit) {
       setState(readCache<T>(key));
-      if (Date.now() - hit.at < staleMs) return;
+      if (!hit.partial && Date.now() - hit.at < staleMs) return;
     }
     load(key);
   }, [key, load, staleMs]);
@@ -143,7 +174,7 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
       if (!state.loading) retryCount.current = 0;
       return;
     }
-    if (key === null || retryCount.current >= 2 || !/rate limit|network error|HTTP 5\d\d|timeout/i.test(state.error)) return;
+    if (optionsRef.current.retryOnError === false || key === null || retryCount.current >= 2 || !/rate limit|network error|HTTP 5\d\d|timeout/i.test(state.error)) return;
     const timer = window.setTimeout(() => {
       retryCount.current += 1;
       load(key);
@@ -152,5 +183,5 @@ export function usePageData<T>(key: string | null, fetcher: () => Promise<T>, st
   }, [key, state.error, state.loading, load]);
 
   const view = state.key === key ? state : readCache<T>(key);
-  return { data: view.data, error: view.error, loading: view.loading, reconciling: view.reconciling, updatedAt: view.updatedAt, refresh };
+  return { data: view.data, error: view.error, loading: view.loading, reconciling: view.reconciling, partial: view.partial, updatedAt: view.updatedAt, refresh };
 }

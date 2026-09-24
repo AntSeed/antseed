@@ -130,6 +130,33 @@ describe('positions table', () => {
     const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
     expect(html).toContain('Antscan positions are unavailable');
     expect(html).not.toContain('fallback position reads');
+    expect(html).not.toContain('No open positions');
+    expect(html).toContain('Positions are currently unavailable.');
+  });
+
+  it.each([true, false])('shows loading rather than an empty wallet before the first snapshot (syncing: %s)', reconciling => {
+    mocks.page.mockReturnValue({ data: null, loading: !reconciling, reconciling, error: null, refresh: vi.fn() });
+    const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
+    expect(html).toContain('Loading positions…');
+    expect(html).not.toContain('No open positions');
+  });
+
+  it('keeps cached position rows visible while syncing without exposing stale actions', () => {
+    mocks.page.mockReturnValue({ data: { positions: [position()] }, loading: false, reconciling: true, error: null, refresh: vi.fn() });
+    const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
+    expect(html).toContain('Updating…');
+    expect(html).toContain('#29');
+    expect(html).toContain('125');
+    expect(html).not.toContain('No open positions');
+    expect(html).not.toContain('More actions for position');
+    expect(html).toContain('aria-label="Select position 29" disabled=""');
+  });
+
+  it.each([true, false])('shows an empty wallet only after a current response (syncing: %s)', reconciling => {
+    mocks.page.mockReturnValue({ data: { positions: [] }, loading: false, reconciling, error: null, refresh: vi.fn() });
+    const html = renderToStaticMarkup(createElement(PositionsCard, { pools: [] }));
+    expect(html.includes('No open positions')).toBe(!reconciling);
+    expect(html.includes('Updating positions…')).toBe(reconciling);
   });
 
   it('shows estimated position APY with help and an unavailable fallback', () => {

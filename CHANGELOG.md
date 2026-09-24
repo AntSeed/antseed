@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop AI VPN: add integrated copy-link buttons beside Claim rewards and Manage staking so the authenticated dashboard can be opened in another browser on the same computer. Keep open and copy actions independent, explain how to reopen expired dashboard sessions, and remove the Network rewards card from Profile while retaining the dedicated Rewards page.
+- ANTS dashboard: keep seller loading states visible through bounded explorer recovery, retain previously loaded sellers while updating, and offer retry only after recovery fails. Distinguish partial own-pool results from a complete seller list and avoid caching temporary fallback results as fresh.
 - Desktop AI VPN: replace Help in the sidebar with a Rewards tab for ANTS claims and staking, using a solid brand ant inside an outlined circle. Add Help under Profile while keeping its credit balance, usage statistics, payment channels, and wallet controls unchanged.
 - Desktop AI VPN: add plain Settings and Help icons beside the credit balance across page headers and remove Prefs from the sidebar. Settings opens the existing Preferences page; the Profile Help shortcut remains available.
 - ANTS Network page: lead with current contract-calculated staker, buyer, and seller reward budgets, separate emission bucket allowances from actual rewards, and explain remainder settlement to the burn destination and Reserve beyond its base allowance. Share a block-pinned, batched network snapshot with Overview; show next-epoch changes separately, identify Anvil and stale/unavailable data, and load historical usage, legacy emissions, and verification details only when expanded. Remove the Editable column.
@@ -78,6 +80,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- ANTS dashboard: treat post-transaction indexer lag as a syncing state rather than a failed refresh. Retain reward and position snapshots with updating labels, preserve reconciliation across navigation, clear old wallet data on account changes, and prevent actions based on stale reward or position data.
 - Desktop: replace the legacy VPR artwork in the chat welcome screen and title bar with a font-independent AI VPN SVG wordmark matching the original lettering, preserving the ant icon and installer/update compatibility.
 
 - Linux desktop: use space-free installation, executable, and icon names; install the Chromium sandbox helper with root-owned setuid permissions; and fix Debian package removal and upgrades, including recovery from the broken 0.2.44 maintainer script, without changing macOS or Windows upgrade identities.

@@ -218,9 +218,9 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
             my pools · {mineCount}
           </button>
         ) : null}
-        <span className="muted small">
+        {!loading ? <span className="muted small">
           {needle || onlyMine ? `${formatInt(filtered.length)} of ` : ''}{formatInt(stakeablePools.length)} {stakeablePools.length === 1 ? 'seller' : 'sellers'}
-        </span>
+        </span> : null}
       </div>
       {stakeablePools.some(pool => pool.displaySource?.error) ? <p className="hint">Some Antscan statistics are unavailable or may lag. Missing historical yield is shown as —; open a provider for details.</p> : null}
       <Table
