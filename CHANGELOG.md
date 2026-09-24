@@ -81,6 +81,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Fixed
 
 - ANTS dashboard: treat post-transaction indexer lag as a syncing state rather than a failed refresh. Retain reward and position snapshots with updating labels, preserve reconciliation across navigation, clear old wallet data on account changes, and prevent actions based on stale reward or position data. Keep the seller list and network statistics available while only your own stake figures wait for the indexer, and refresh waiting views automatically every few seconds until it catches up.
+- Desktop AI VPN: prevent the chat browser-preview button from overlapping Help, Settings, and the credit balance. Keep header controls readable in narrow windows, give message search its own row when needed, and truncate long page titles with the full title available on hover instead of squeezing the balance.
 - Desktop: replace the legacy VPR artwork in the chat welcome screen and title bar with a font-independent AI VPN SVG wordmark matching the original lettering, preserving the ant icon and installer/update compatibility.
 
 - Linux desktop: use space-free installation, executable, and icon names; install the Chromium sandbox helper with root-owned setuid permissions; and fix Debian package removal and upgrades, including recovery from the broken 0.2.44 maintainer script, without changing macOS or Windows upgrade identities.
