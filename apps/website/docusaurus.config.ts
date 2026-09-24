@@ -255,7 +255,6 @@ const config: Config = {
             },
           ],
         },
-        {to: '/integrations', label: 'Integrations', position: 'left'},
         {to: '/providers', label: 'Providers', position: 'left'},
         {
           href: 'https://antseedstats.com/network',

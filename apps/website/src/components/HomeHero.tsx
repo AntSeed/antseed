@@ -579,13 +579,11 @@ export function HeroUseCta() {
       )}
       {use === 'agent' && (
         <div className={`${styles.ctaBlock} ${styles.usePanel}`}>
-          <div className={styles.useRow}>
-            <CommandChip command={JOIN_BUYER_INSTALL} />
-            <Button href={JOIN_BUYER_SKILL_URL} variant="ghost" arrow>View the skill</Button>
-          </div>
+          <CommandChip command={JOIN_BUYER_INSTALL} />
           <span className={styles.useNote}>
             Installs the join-buyer skill into your agent with the GitHub CLI. The agent then
-            installs, starts, funds and wires itself to localhost:8377.
+            installs, starts, funds and wires itself to localhost:8377.{' '}
+            <a href={JOIN_BUYER_SKILL_URL} className={styles.useLink} target="_blank" rel="noopener noreferrer">View the skill →</a>
           </span>
         </div>
       )}

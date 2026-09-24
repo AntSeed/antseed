@@ -161,10 +161,6 @@
     align-items: flex-start;
   }
 
-  .heroSplit .useRow {
-    justify-content: flex-start;
-  }
-
 
   .heroSplit .statsRow {
     grid-area: stats;
@@ -345,14 +341,6 @@
 
 .useCopyBtn:hover {
   background: rgba(255, 255, 255, 0.12);
-}
-
-.useRow {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
 }
 
 .useLink {
