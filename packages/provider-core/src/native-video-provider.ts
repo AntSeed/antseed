@@ -13,7 +13,7 @@ export interface NativeVideoProviderOptions {
 
 export function createNativeVideoProvider(options: NativeVideoProviderOptions, config: Record<string, string>): Provider {
   const { name, protocol } = options;
-  const baseUrl = options.relay.baseUrl.trim();
+  const baseUrl = options.relay.baseUrl?.trim();
   if (!baseUrl) throw new Error('Base URL must point to a seller-operated API');
   const url = new URL(baseUrl);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid seller API base URL');

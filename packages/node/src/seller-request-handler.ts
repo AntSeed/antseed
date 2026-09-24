@@ -26,11 +26,10 @@ import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
-import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
 import { nativeVideoAcceptance, nativeVideoRoute, requestService, type NativeVideoRoute } from '@antseed/api-adapter';
-import { createHash } from 'node:crypto';
 import type { ResourceOwnershipStore } from './resources/resource-ownership-store.js';
-import { videoBillingUsage, type BillingRequestFacts } from '@antseed/buyer-core';
+import { estimateUnitRequestCost, type BillingRequestFacts } from '@antseed/buyer-core';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
@@ -101,8 +100,7 @@ export class SellerRequestHandler {
   private readonly _deps: SellerRequestHandlerDeps;
   private readonly _providerLoadCounts = new Map<string, number>();
   private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
-  private readonly _pendingIdempotencyKeys = new Set<string>();
-  private readonly _unpersistedResourceOwners = new Map<string, string>();
+  private readonly _pendingVideoCreates = new Set<string>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: SellerRequestHandlerDeps) {
@@ -252,92 +250,20 @@ export class SellerRequestHandler {
 
       const requestPricing = this.resolveProviderPricing(provider, request);
       let requestBilling: SellerBillingContext | null;
+      let unitBillingModel: UnitBillingModelV1 | undefined;
       try {
         requestBilling = this._captureSellerBillingContext(provider, request);
-        const pricingModel = requestBilling ? this.resolveProviderUnitBillingModel(provider, requestBilling.context) : undefined;
-        if (requestBilling?.requestFacts.video?.action === 'create' && pricingModel) this._estimateUnitRequestCostUsdc(requestBilling, pricingModel);
+        unitBillingModel = requestBilling ? this.resolveProviderUnitBillingModel(provider, requestBilling.context) : undefined;
+        if (requestBilling?.requestFacts.video?.action === 'create' && unitBillingModel) this._estimateUnitRequestCostUsdc(requestBilling, unitBillingModel);
       } catch (error) {
-        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'invalid_billing_request', message: error instanceof Error ? error.message : String(error) } })) });
+        this._sendJsonError(mux, request.requestId, 400, 'invalid_billing_request', error instanceof Error ? error.message : String(error));
         return;
       }
-      const unitBillingModel = requestBilling
-        ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
-        : undefined;
       const videoRoute = nativeVideoRoute(request);
-      if (videoRoute && !unitBillingModel) {
-        mux.sendProxyResponse({ requestId: request.requestId, statusCode: 503, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify({ error: { code: "billing_configuration_error", message: "Video service requires explicit unit pricing" } })) });
-        return;
-      }
-      let videoIdempotency: { key: string; requestHash: string; pendingKey: string } | null = null;
-      if (videoRoute) {
-        const store = this._deps.resourceOwnershipStore;
-        if (!store) {
-          this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
-          return;
-        }
-        if (videoRoute.action !== 'create') {
-          let owner: string | null;
-          try {
-            const resourceKey = videoResourceKey(videoRoute.protocol, videoRoute.resourceId!);
-            owner = store.getOwner(videoRoute.protocol, resourceKey)
-              ?? this._unpersistedResourceOwners.get(`${videoRoute.protocol}\n${resourceKey}`)
-              ?? null;
-          } catch (err) {
-            debugWarn(`[SellerHandler] Video ownership lookup failed: ${err instanceof Error ? err.message : err}`);
-            this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
-            return;
-          }
-          if (owner?.toLowerCase() !== buyerPeerId.toLowerCase()) {
-            debugWarn(`[SellerHandler] Rejecting ${videoRoute.action} for video job not owned by ${buyerPeerId.slice(0, 12)}...`);
-            this._sendJsonError(mux, request.requestId, 404, 'resource_not_found', 'Video job not found');
-            return;
-          }
-        } else {
-          const key = headerValue(request.headers, IDEMPOTENCY_KEY_HEADER);
-          if (key !== undefined) {
-            if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
-              this._sendJsonError(mux, request.requestId, 400, 'invalid_idempotency_key', `${IDEMPOTENCY_KEY_HEADER} must be 1-128 characters of [A-Za-z0-9._:-]`);
-              return;
-            }
-            const requestHash = createHash('sha256')
-              .update(`${request.method}\n${request.path.split('?')[0]}\n${requestService(request) ?? ''}\n`)
-              .update(request.body)
-              .digest('hex');
-            let stored: ReturnType<ResourceOwnershipStore['getIdempotentCreate']>;
-            try {
-              stored = store.getIdempotentCreate(buyerPeerId, videoRoute.protocol, key);
-            } catch (err) {
-              debugWarn(`[SellerHandler] Idempotency lookup failed: ${err instanceof Error ? err.message : err}`);
-              this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot check the idempotency key');
-              return;
-            }
-            if (stored) {
-              if (stored.requestHash !== requestHash) {
-                this._sendJsonError(mux, request.requestId, 422, 'idempotency_key_reused', 'Idempotency key was already used for a different video request');
-                return;
-              }
-              debugLog(`[SellerHandler] Replaying accepted video create for ${buyerPeerId.slice(0, 12)}... (no new charge)`);
-              mux.sendProxyResponse({
-                requestId: request.requestId,
-                statusCode: stored.response.statusCode,
-                headers: { ...stored.response.headers, [IDEMPOTENT_REPLAY_HEADER]: 'true' },
-                body: stored.response.body,
-              });
-              return;
-            }
-            const pendingKey = `${buyerPeerId.toLowerCase()}\n${videoRoute.protocol}\n${key}`;
-            if (this._pendingIdempotencyKeys.has(pendingKey)) {
-              this._sendJsonError(mux, request.requestId, 409, 'idempotency_in_progress', 'A video request with this idempotency key is still in progress; retry shortly', { 'retry-after': '2' });
-              return;
-            }
-            this._pendingIdempotencyKeys.add(pendingKey);
-            videoIdempotency = { key, requestHash, pendingKey };
-          }
-        }
-      }
-      const releaseIdempotency = (): void => {
-        if (videoIdempotency) this._pendingIdempotencyKeys.delete(videoIdempotency.pendingKey);
-      };
+      const videoIdempotencyKey = videoRoute?.action === 'create' ? headerValue(request.headers, IDEMPOTENCY_KEY_HEADER) : undefined;
+      if (videoRoute && this._handleVideoPrecheck(mux, request, videoRoute, buyerPeerId, unitBillingModel, videoIdempotencyKey)) return;
+      const pendingVideoCreate = videoIdempotencyKey ? `${buyerPeerId.toLowerCase()}\n${videoRoute!.protocol}\n${videoIdempotencyKey}` : null;
+      if (pendingVideoCreate) this._pendingVideoCreates.add(pendingVideoCreate);
       try {
       const isFreeService = (videoRoute !== null && videoRoute.action !== 'create') || isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
@@ -643,7 +569,7 @@ export class SellerRequestHandler {
           }
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (videoRoute?.action === 'create') {
-            this._recordVideoAcceptance(videoRoute, response, buyerPeerId, provider.name, request, videoIdempotency);
+            this._recordVideoAcceptance(videoRoute, response, buyerPeerId, videoIdempotencyKey);
           }
           if (!streamedResponseStarted) {
             mux.sendProxyResponse(response);
@@ -789,44 +715,76 @@ export class SellerRequestHandler {
         if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
       } finally {
-        releaseIdempotency();
+        if (pendingVideoCreate) this._pendingVideoCreates.delete(pendingVideoCreate);
       }
     });
 
     return { mux };
   }
 
+  /** Returns true when it already sent a response. */
+  private _handleVideoPrecheck(
+    mux: ProxyMux,
+    request: SerializedHttpRequest,
+    route: NativeVideoRoute,
+    buyerPeerId: string,
+    unitBillingModel: UnitBillingModelV1 | undefined,
+    idempotencyKey: string | undefined,
+  ): boolean {
+    if (!unitBillingModel) {
+      this._sendJsonError(mux, request.requestId, 503, 'billing_configuration_error', 'Video service requires explicit unit pricing');
+      return true;
+    }
+    const store = this._deps.resourceOwnershipStore;
+    if (!store) {
+      this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
+      return true;
+    }
+    const buyer = buyerPeerId.toLowerCase();
+    try {
+      if (route.action !== 'create') {
+        if (store.getOwner(route.protocol, videoResourceKey(route.protocol, route.resourceId!)) === buyer) return false;
+        this._sendJsonError(mux, request.requestId, 404, 'resource_not_found', 'Video job not found');
+        return true;
+      }
+      if (idempotencyKey === undefined) return false;
+      if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+        this._sendJsonError(mux, request.requestId, 400, 'invalid_idempotency_key', `${IDEMPOTENCY_KEY_HEADER} must be 1-128 characters of [A-Za-z0-9._:-]`);
+        return true;
+      }
+      const replay = store.getReplay(buyer, route.protocol, idempotencyKey);
+      if (!replay) {
+        if (!this._pendingVideoCreates.has(`${buyer}\n${route.protocol}\n${idempotencyKey}`)) return false;
+        this._sendJsonError(mux, request.requestId, 409, 'idempotency_in_progress', 'A video request with this idempotency key is still in progress');
+        return true;
+      }
+      mux.sendProxyResponse({ requestId: request.requestId, ...replay, headers: { ...replay.headers, [IDEMPOTENT_REPLAY_HEADER]: 'true' } });
+      return true;
+    } catch (err) {
+      debugWarn(`[SellerHandler] Video ownership lookup failed: ${err instanceof Error ? err.message : err}`);
+      this._sendJsonError(mux, request.requestId, 503, 'resource_ownership_unavailable', 'Seller cannot verify video job ownership');
+      return true;
+    }
+  }
+
   private _recordVideoAcceptance(
     route: NativeVideoRoute,
     response: SerializedHttpResponse,
     buyerPeerId: string,
-    providerName: string,
-    request: SerializedHttpRequest,
-    idempotency: { key: string; requestHash: string } | null,
+    idempotencyKey: string | undefined,
   ): void {
     const resourceId = nativeVideoAcceptance(route.protocol, response);
-    const store = this._deps.resourceOwnershipStore;
-    if (!resourceId || !store) return;
-    const resourceKey = videoResourceKey(route.protocol, resourceId);
+    if (!resourceId) return;
     try {
-      store.recordAcceptedCreate(
-        {
-          protocol: route.protocol,
-          resourceId: resourceKey,
-          buyerPeerId: buyerPeerId.toLowerCase(),
-          provider: providerName,
-          service: requestService(request) ?? 'unknown',
-        },
-        idempotency
-          ? { key: idempotency.key, requestHash: idempotency.requestHash, response: { statusCode: response.statusCode, headers: response.headers, body: response.body ?? new Uint8Array(0) } }
-          : undefined,
+      this._deps.resourceOwnershipStore?.recordAcceptedCreate(
+        route.protocol,
+        videoResourceKey(route.protocol, resourceId),
+        buyerPeerId.toLowerCase(),
+        idempotencyKey,
+        { statusCode: response.statusCode, headers: response.headers, body: response.body ?? new Uint8Array(0) },
       );
     } catch (err) {
-      debugWarn(`[SellerHandler] Failed to record video job ownership for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-      if (this._unpersistedResourceOwners.size < 10_000) {
-        this._unpersistedResourceOwners.set(`${route.protocol}\n${resourceKey}`, buyerPeerId.toLowerCase());
-      }
-      response.headers['x-antseed-ownership-persistence'] = 'failed';
+      debugWarn(`[SellerHandler] Failed to record video job ownership: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -836,12 +794,11 @@ export class SellerRequestHandler {
     statusCode: number,
     code: string,
     message: string,
-    extraHeaders: Record<string, string> = {},
   ): void {
     mux.sendProxyResponse({
       requestId,
       statusCode,
-      headers: { 'content-type': 'application/json', ...extraHeaders },
+      headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify({ error: { code, message } })),
     });
   }
@@ -1008,13 +965,8 @@ export class SellerRequestHandler {
     requestBilling: SellerBillingContext,
     model: UnitBillingModelV1,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
-    const usage: UnitBillingUsage = {
-      units: {
-        ...requestBilling.requestUsage.units,
-      },
-    };
     return {
-      cost: evaluateUnitBilling(model, requestBilling.context, requestBilling.requestFacts.video ? videoBillingUsage(model, requestBilling.requestFacts.video, usage) : usage),
+      cost: estimateUnitRequestCost(model, requestBilling),
       inputTokens: 0,
       maxOutputTokens: 0,
     };

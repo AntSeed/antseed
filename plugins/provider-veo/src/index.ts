@@ -3,7 +3,7 @@ import { createNativeVideoProvider } from '@antseed/provider-core';
 
 const plugin: AntseedProviderPlugin = {
   name: 'veo', displayName: 'Veo', version: '0.1.0-beta.0', type: 'provider',
-  description: 'Relay native veo requests to a seller-operated API',
+  description: 'Relay native Veo requests to a seller-operated API',
   configSchema: [
     { key: 'GEMINI_BASE_URL', label: 'Seller API URL', type: 'string', required: true },
     { key: 'GEMINI_API_KEY', label: 'Seller API Key', type: 'secret', required: true },
@@ -13,14 +13,15 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Concurrency', type: 'number', default: 10 },
   ],
   createProvider(config) {
-    const baseUrl = config['GEMINI_BASE_URL']?.trim();
-    const apiKey = config['GEMINI_API_KEY']?.trim();
-    if (!baseUrl) throw new Error('GEMINI_BASE_URL must point to a seller-operated API');
-    if (!apiKey) throw new Error('GEMINI_API_KEY is required');
+    const apiKey = config['GEMINI_API_KEY']?.trim() ?? '';
     return createNativeVideoProvider({
       name: 'veo',
       protocol: 'veo-video',
-      relay: { baseUrl, authHeaderName: 'x-goog-api-key', authHeaderValue: apiKey },
+      relay: {
+        baseUrl: config['GEMINI_BASE_URL'] ?? '',
+        authHeaderName: 'x-goog-api-key',
+        authHeaderValue: apiKey,
+      },
     }, config);
   },
 };

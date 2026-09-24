@@ -8,8 +8,8 @@ const config = { RUNWAY_BASE_URL: 'https://seller.example.test', RUNWAY_API_KEY:
 it('registers the runway seller endpoint plugin without job management', async () => {
   expect(plugin.name).toBe('runway');
   expect(plugin.type).toBe('provider');
-  expect(() => plugin.createProvider({})).toThrow('RUNWAY_BASE_URL');
-  expect(() => plugin.createProvider({ ...config, RUNWAY_API_KEY: ' ' })).toThrow('RUNWAY_API_KEY');
+  expect(() => plugin.createProvider({ ...config, RUNWAY_BASE_URL: '' })).toThrow(/seller-operated/);
+  expect(() => plugin.createProvider({ ...config, RUNWAY_API_KEY: ' ' })).toThrow(/authentication/);
   const provider = await plugin.createProvider(config);
   expect(provider.serviceApiProtocols).toEqual({ video: ['runway-video'] });
   expect(provider).not.toHaveProperty('videoAdapter');

@@ -210,14 +210,10 @@ describe('native video job ownership and idempotency', () => {
     store.close();
   });
 
-  it('rejects idempotency key reuse with a different request', async () => {
+  it('rejects invalid idempotency keys before submission', async () => {
     const { provider, create, store } = setup();
-    const key = { 'x-antseed-idempotency-key': 'retry-key-2' };
-    await create(buyer, key);
-    const reused = await create(buyer, key, { model: 'gen4.5', duration: 10 });
-    expect(reused.statusCode).toBe(422);
     expect((await create(buyer, { 'x-antseed-idempotency-key': 'bad key!' })).statusCode).toBe(400);
-    expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+    expect(provider.handleRequest).not.toHaveBeenCalled();
     store.close();
   });
 

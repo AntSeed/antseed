@@ -91,10 +91,9 @@ for (const provider of ['runway', 'veo'] as const) {
         assert.equal(calls.at(-1)?.service, `model-${index}`)
         assert.equal(calls.at(-1)?.provider, provider)
       }
-      const count = calls.length
-      const conflict = await invokeProxy(restarted, makeProxyRequest({ method: 'GET', path: statusPath('a'), body: {}, headers: { 'x-antseed-pin-peer': peers[1]!.peerId } }))
-      assert.equal(conflict.statusCode, 409)
-      assert.equal(calls.length, count)
+      const recorded = await invokeProxy(restarted, makeProxyRequest({ method: 'GET', path: statusPath('a'), body: {}, headers: { 'x-antseed-pin-peer': peers[1]!.peerId } }))
+      assert.equal(recorded.statusCode, 200)
+      assert.equal(calls.at(-1)?.peer, peers[0]!.peerId)
       await (proxy as any)._stateWriteChain
       await (restarted as any)._stateWriteChain
     } finally {
@@ -143,54 +142,21 @@ test('native resource follow-ups fail when the recorded provider loses support i
   }
 })
 
-test('native video recovers a lost acceptance by replaying the idempotency key to the same seller only', async () => {
+test('native video forwards an idempotency key without retrying uncertain creates', async () => {
   const peers = [makePeer('a', ['runway']), makePeer('b', ['runway'])]
   for (const peer of peers) peer.providerServiceApiProtocols = { runway: { services: { model: ['runway-video'] } } }
   const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
-  const sent: Array<{ peer: string, key: string | undefined, requestId: string }> = []
-  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
-    sent.push({ peer: peer.peerId, key: request.headers['x-antseed-idempotency-key'], requestId: request.requestId })
-    if (sent.length === 1) throw new Error('connection lost after submission')
-    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json', 'x-antseed-idempotent-replay': 'true' }, body: Buffer.from('{"id":"recovered-task"}') }
-  }
-  const recovered = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'idempotency-key': 'client-key-1' } }))
-  assert.equal(recovered.statusCode, 200)
-  assert.equal(JSON.parse(recovered.body).id, 'recovered-task')
-  assert.equal(recovered.headers['x-antseed-idempotency-key'], 'client-key-1')
-  assert.equal(sent.length, 2)
-  assert.equal(sent[0]!.peer, sent[1]!.peer)
-  assert.deepEqual(sent.map(entry => entry.key), ['client-key-1', 'client-key-1'])
-  assert.notEqual(sent[0]!.requestId, sent[1]!.requestId)
-  assert.ok((proxy as any)._resourceRoutes.resolve('runway-video', 'recovered-task'))
-
-  sent.length = 0
-  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
-    sent.push({ peer: peer.peerId, key: request.headers['x-antseed-idempotency-key'], requestId: request.requestId })
+  const sent: string[] = []
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: SerializedHttpRequest) => {
+    sent.push(request.headers['x-antseed-idempotency-key']!)
     throw new Error('uncertain connection loss')
   }
-  const failed = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 } }))
+  const failed = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'idempotency-key': 'client-key-1' } }))
   assert.ok(failed.statusCode >= 400)
-  assert.equal(sent.length, 3)
-  assert.equal(new Set(sent.map(entry => entry.peer)).size, 1)
-  assert.equal(new Set(sent.map(entry => entry.key)).size, 1)
-  assert.match(sent[0]!.key!, /^[0-9a-f-]{36}$/)
-  assert.ok(failed.headers['x-antseed-idempotency-key'])
+  assert.deepEqual(sent, ['client-key-1'])
 
   const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'x-antseed-idempotency-key': 'bad key!' } }))
-  assert.equal(invalid.statusCode, 409)
-})
-
-test('native video reports route persistence failures without losing acceptance', async () => {
-  const peers = [makePeer('a', ['runway']), makePeer('b', ['runway'])]
-  for (const peer of peers) peer.providerServiceApiProtocols = { runway: { services: { model: ['runway-video'] } } }
-  const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
-  ;(proxy as any)._persistResourceRoutes = async () => { throw new Error('disk full') }
-  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({ requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"id":"accepted-task"}') })
-  const accepted = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 } }))
-  assert.equal(accepted.statusCode, 200)
-  assert.equal(accepted.headers['x-antseed-route-persistence'], 'failed')
-  assert.ok(accepted.headers['x-antseed-seller-peer'])
-  assert.equal(JSON.parse(accepted.body).id, 'accepted-task')
+  assert.equal(invalid.statusCode, 400)
 })
 
 test('existing required CLI verification rejects a failed pin without payment/inference and auto falls back to a verified seller', async () => {

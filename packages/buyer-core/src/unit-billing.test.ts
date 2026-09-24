@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { captureUnitBillingContext, computeFinalUnitBilling, videoBillingUsage } from './unit-billing.js';
-import { evaluateUnitBilling, validateUnitBillingUsage, type UnitBillingModelV1 } from '@antseed/protocol/billing';
+import { captureUnitBillingContext, computeFinalUnitBilling, estimateUnitRequestCost } from './unit-billing.js';
+import { validateUnitBillingUsage, type UnitBillingModelV1 } from '@antseed/protocol/billing';
 
 const model: UnitBillingModelV1 = { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1 }] };
 const response = (body: object, statusCode = 200) => ({ requestId: 'request', statusCode, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) });
@@ -20,10 +20,10 @@ describe('acceptance-based video metering', () => {
 
   it('rejects missing duration for per-second pricing and unmatched tiers before submission', () => {
     const missing = capture('/v1/text_to_video', { model: 'gen4.5' });
-    expect(() => videoBillingUsage(model, missing.requestFacts.video!, missing.requestUsage)).toThrow(/duration/);
+    expect(() => estimateUnitRequestCost(model, missing)).toThrow(/duration/);
     const captured = capture();
     const tier: UnitBillingModelV1 = { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1, match: { resolution: '1080p' } }] };
-    expect(() => evaluateUnitBilling(tier, captured.context, videoBillingUsage(tier, captured.requestFacts.video!, captured.requestUsage))).toThrow(/No billing component/);
+    expect(() => estimateUnitRequestCost(tier, captured)).toThrow(/No billing component/);
   });
 
   it('allows fixed per-generation prices without duration', () => {

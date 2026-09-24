@@ -8,8 +8,8 @@ const config = { GEMINI_BASE_URL: 'https://seller.example.test', GEMINI_API_KEY:
 it('registers the veo seller endpoint plugin without job management', async () => {
   expect(plugin.name).toBe('veo');
   expect(plugin.type).toBe('provider');
-  expect(() => plugin.createProvider({})).toThrow('GEMINI_BASE_URL');
-  expect(() => plugin.createProvider({ ...config, GEMINI_API_KEY: ' ' })).toThrow('GEMINI_API_KEY');
+  expect(() => plugin.createProvider({})).toThrow(/seller-operated/);
+  expect(() => plugin.createProvider({ ...config, GEMINI_API_KEY: ' ' })).toThrow(/authentication/);
   const provider = await plugin.createProvider(config);
   expect(provider.serviceApiProtocols).toEqual({ video: ['veo-video'] });
   expect(provider).not.toHaveProperty('videoAdapter');

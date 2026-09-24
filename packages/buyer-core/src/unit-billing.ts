@@ -133,6 +133,13 @@ export function computeFinalUnitBilling(
   };
 }
 
+export function estimateUnitRequestCost(model: UnitBillingModelV1, captured: CapturedUnitBillingContext): bigint {
+  const usage = captured.requestFacts.video
+    ? videoBillingUsage(model, captured.requestFacts.video, captured.requestUsage)
+    : captured.requestUsage;
+  return evaluateUnitBilling(model, captured.context, usage);
+}
+
 function factsToUnitUsage(facts: BillingRequestFacts): UnitBillingUsage {
   if (facts.video) {
     return { units: {
@@ -147,7 +154,7 @@ function factsToUnitUsage(facts: BillingRequestFacts): UnitBillingUsage {
   };
 }
 
-export function videoBillingUsage(model: UnitBillingModelV1, facts: NativeVideoFacts, usage: UnitBillingUsage): UnitBillingUsage {
+function videoBillingUsage(model: UnitBillingModelV1, facts: NativeVideoFacts, usage: UnitBillingUsage): UnitBillingUsage {
   const units: UnitBillingUsage['units'] = {};
   if (facts.action !== 'create') return { units };
   for (const component of model.components) {

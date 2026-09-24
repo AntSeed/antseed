@@ -33,12 +33,11 @@ import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '@antseed/protocol/json-codec';
 import type { UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
-import { evaluateUnitBilling } from '@antseed/protocol/billing';
-import { videoBillingUsage } from './unit-billing.js';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   captureUnitBillingContext,
   computeFinalUnitBilling,
+  estimateUnitRequestCost,
   extractUnitResponseUsage,
   type FinalUnitBillingResult,
 } from './unit-billing.js';
@@ -278,8 +277,7 @@ export class BuyerPaymentNegotiator {
         request,
       });
       if (captured.requestFacts.video && route.unitModel) {
-        const usage = videoBillingUsage(route.unitModel, captured.requestFacts.video, captured.requestUsage);
-        const estimatedCost = evaluateUnitBilling(route.unitModel, captured.context, usage);
+        const estimatedCost = estimateUnitRequestCost(route.unitModel, captured);
         if (estimatedCost > this._bpm.maxPerRequestUsdc) throw new Error('Video request exceeds maxPerRequestUsdc');
       }
       this._bpm.trackRequestBilling(request.requestId, {

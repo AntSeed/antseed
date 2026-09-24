@@ -173,8 +173,6 @@ const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const VIDEO_IDEMPOTENCY_KEY_HEADER = 'x-antseed-idempotency-key'
 const VIDEO_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
-const VIDEO_CREATE_MAX_ATTEMPTS = 3
-const VIDEO_CREATE_RETRY_DELAYS_MS = [500, 1_500] as const
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
 
@@ -187,14 +185,6 @@ function rateLimitRetryDelayMs(headers: Record<string, string>, retryIndex: numb
     }
   }
   return MODEL_RATE_LIMIT_RETRY_DELAYS_MS[retryIndex] ?? MODEL_RATE_LIMIT_RETRY_DELAYS_MS.at(-1)!
-}
-
-function isIdempotencyInProgress(response: SerializedHttpResponse): boolean {
-  try {
-    return JSON.parse(Buffer.from(response.body).toString('utf8'))?.error?.code === 'idempotency_in_progress'
-  } catch {
-    return false
-  }
 }
 
 async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
@@ -2289,31 +2279,24 @@ export class BuyerProxy {
       return
     }
 
-    if (nativeVideo) {
-      try {
-        if (nativeVideo.action === 'create') {
-          const suppliedKey = (serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] ?? serializedReq.headers['idempotency-key'])?.trim()
-          if (suppliedKey !== undefined && !VIDEO_IDEMPOTENCY_KEY_PATTERN.test(suppliedKey)) throw new Error('Idempotency key must be 1-128 characters of [A-Za-z0-9._:-]')
-          serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = suppliedKey || randomUUID()
-          const release = this._resourceRoutes.reserve()
-          res.once('finish', release)
-          res.once('close', release)
-        } else {
-          const pin = serializedReq.headers['x-antseed-pin-peer']?.toLowerCase()
-          const route = this._resourceRoutes.resolve(nativeVideo.protocol, nativeVideo.resourceId!, pin)
-          if (!route && (!pin || !serializedReq.headers['x-antseed-service'])) throw new Error('Unknown video resource; supply x-antseed-pin-peer and x-antseed-service to recover its route')
-          if (route) {
-            serializedReq.headers['x-antseed-pin-peer'] = route.sellerPeerId
-            serializedReq.headers['x-antseed-provider'] = route.provider
-            serializedReq.headers['x-antseed-service'] = route.service
-            await this._persistResourceRoutes().catch(error => console.error('[proxy] Route persistence failed:', error))
-          }
-        }
-      } catch (error) {
-        res.writeHead(409, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: { code: 'video_route_error', message: String(error instanceof Error ? error.message : error) } }))
+    if (nativeVideo?.action === 'create') {
+      const suppliedKey = (serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] ?? serializedReq.headers['idempotency-key'])?.trim()
+      if (suppliedKey !== undefined && !VIDEO_IDEMPOTENCY_KEY_PATTERN.test(suppliedKey)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'invalid_idempotency_key', message: 'Idempotency key must be 1-128 characters of [A-Za-z0-9._:-]' } }))
         return
       }
+      serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = suppliedKey || randomUUID()
+    } else if (nativeVideo) {
+      const route = this._resourceRoutes.resolve(nativeVideo.protocol, nativeVideo.resourceId!)
+      if (!route) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'video_route_not_found', message: 'Unknown video job' } }))
+        return
+      }
+      serializedReq.headers['x-antseed-pin-peer'] = route.sellerPeerId
+      serializedReq.headers['x-antseed-provider'] = route.provider
+      serializedReq.headers['x-antseed-service'] = route.service
     }
 
     // Snapshot the session overrides before any await so a concurrent
@@ -2689,10 +2672,6 @@ export class BuyerProxy {
             return
           }
           if (nativeVideo) {
-            if (nativeVideo.action === 'create') {
-              result.responseHeaders['x-antseed-seller-peer'] ??= selected.peer.peerId
-              result.responseHeaders[VIDEO_IDEMPOTENCY_KEY_HEADER] = serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER]!
-            }
             res.writeHead(result.statusCode, result.responseHeaders)
             res.end(result.responseBody)
             return
@@ -2938,36 +2917,6 @@ export class BuyerProxy {
     }
   }
 
-  /**
-   * Video creates are charged on acceptance. If the acceptance response is
-   * lost, replay the same idempotency key to the same seller: the seller
-   * returns the stored acceptance instead of creating and charging a new job.
-   */
-  private async _sendVideoCreateWithRecovery(
-    peer: PeerInfo,
-    request: SerializedHttpRequest,
-    signal: AbortSignal,
-    pinned: boolean,
-  ): Promise<SerializedHttpResponse> {
-    for (let attempt = 1; ; attempt += 1) {
-      const attemptRequest = attempt === 1 ? request : { ...request, requestId: randomUUID() }
-      let response: SerializedHttpResponse
-      try {
-        response = await this._node.sendRequest(peer, attemptRequest, { signal, pinned })
-      } catch (error) {
-        if (signal.aborted || faultAttributionOf(error) === 'buyer' || attempt >= VIDEO_CREATE_MAX_ATTEMPTS) throw error
-        log(`Video submission to ${peer.peerId.slice(0, 12)}... had an uncertain outcome; replaying its idempotency key (attempt ${attempt + 1}/${VIDEO_CREATE_MAX_ATTEMPTS}).`)
-        if (!await waitForRetry(VIDEO_CREATE_RETRY_DELAYS_MS[attempt - 1] ?? VIDEO_CREATE_RETRY_DELAYS_MS.at(-1)!, signal)) throw error
-        continue
-      }
-      if (attempt > 1 && response.statusCode === 409 && attempt < VIDEO_CREATE_MAX_ATTEMPTS && isIdempotencyInProgress(response)) {
-        if (!await waitForRetry(rateLimitRetryDelayMs(response.headers, attempt - 1), signal)) return response
-        continue
-      }
-      return response
-    }
-  }
-
   private async _verifyPeer(
     peer: PeerInfo,
     makeReach: (chosenId: string) => SellerReach,
@@ -3113,7 +3062,7 @@ export class BuyerProxy {
         ...(requestedService ? { 'x-antseed-service': requestedService } : {}),
       },
     }
-    if (selectedRoutePlan.serviceId && !nativeVideoRoute(requestForPeer)) {
+    if (selectedRoutePlan.serviceId) {
       requestForPeer = withRoutedModel(requestForPeer, selectedRoutePlan.serviceId)
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
@@ -3302,13 +3251,10 @@ export class BuyerProxy {
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
-        const videoCreate = nativeVideoRoute(requestForPeer)?.action === 'create'
-        const upstreamResponse = videoCreate
-          ? await this._sendVideoCreateWithRecovery(selectedPeer, requestForPeer, requestSignal, pinned)
-          : await this._node.sendRequest(selectedPeer, requestForPeer, {
-            signal: requestSignal,
-            pinned,
-          })
+        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
+          signal: requestSignal,
+          pinned,
+        })
         if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
@@ -3316,15 +3262,11 @@ export class BuyerProxy {
         const videoRoute = nativeVideoRoute(requestForPeer)
         if (videoRoute) {
           upstreamResponse.headers['x-antseed-seller-peer'] = selectedPeer.peerId
-          const idempotencyKey = requestForPeer.headers[VIDEO_IDEMPOTENCY_KEY_HEADER]
-          if (videoRoute.action === 'create' && idempotencyKey) upstreamResponse.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = idempotencyKey
+          if (videoRoute.action === 'create') upstreamResponse.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = requestForPeer.headers[VIDEO_IDEMPOTENCY_KEY_HEADER]!
           const resourceId = videoRoute.action === 'create' ? nativeVideoAcceptance(videoRoute.protocol, upstreamResponse) : null
           if (resourceId && requestedService) {
             this._resourceRoutes.record({ protocol: videoRoute.protocol, resourceId, sellerPeerId: selectedPeer.peerId.toLowerCase(), provider: selectedRoutePlan.provider, service: requestedService })
-            try { await this._persistResourceRoutes() } catch (error) {
-              upstreamResponse.headers['x-antseed-route-persistence'] = 'failed'
-              console.error('[proxy] Accepted video route was not persisted:', error)
-            }
+            await this._persistResourceRoutes().catch(error => console.error('[proxy] Accepted video route was not persisted:', error))
           }
         }
         let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)

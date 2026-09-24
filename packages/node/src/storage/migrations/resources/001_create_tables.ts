@@ -9,8 +9,6 @@ export const migration: Migration = {
         protocol TEXT NOT NULL,
         resource_id TEXT NOT NULL,
         buyer_peer_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        service TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         PRIMARY KEY (protocol, resource_id)
       );
@@ -19,8 +17,6 @@ export const migration: Migration = {
         buyer_peer_id TEXT NOT NULL,
         protocol TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,
-        request_hash TEXT NOT NULL,
-        resource_id TEXT NOT NULL,
         status_code INTEGER NOT NULL,
         headers_json TEXT NOT NULL,
         body BLOB NOT NULL,

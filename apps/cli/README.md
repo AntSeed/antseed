@@ -578,13 +578,10 @@ settled entries rather than pending checks. Timer-based garbage collection is
 disabled; the entry bound and buyer lifecycle own cleanup instead. There is no
 disk persistence and no per-inference-response proof in this cache.
 
+## Native video services
+
+Use `@antseed/provider-runway` or `@antseed/provider-veo` to sell native video services. Buyers can discover them with `GET /v1/models?type=videos` and send native Runway or Veo requests to the buyer proxy. See [native video integration](../../docs/protocol/spec/10-native-video.md).
+
 ## Links
 
 - Node SDK: `@antseed/node` (`../node`)
-## Native video services
-
-Use `@antseed/provider-runway` or `@antseed/provider-veo` to connect a seller-operated API, with an explicit `baseUrl`, endpoint credentials, advertised models, and unit pricing. Discover offers with `GET /v1/models?type=videos`. Send native Runway or Veo requests to the buyer proxy; successful task/operation responses establish persistent per-job routes for subsequent status requests.
-
-Video charges an accepted generation attempt. Polling/cancellation are free; later failure is subject to the seller's refund policy. Sellers own execution, access control, result URLs, and storage. There is no AntSeed video queue, artifact cache, or managed video CLI.
-
-See [the native video protocol](../../docs/protocol/spec/10-native-video.md), [Runway setup](../../plugins/provider-runway/README.md), and [Veo setup](../../plugins/provider-veo/README.md) for configuration and routing recovery.
