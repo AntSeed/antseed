@@ -82,6 +82,7 @@ import {
   publicModelId,
   type TelemetryEventProperties,
 } from '../telemetry/events.js';
+import { isNativeVideoProtocol } from '@antseed/node';
 import { classifyChatRequestFailure } from '../telemetry/classify.js';
 import {
   generateConversationTitleWithModel,
@@ -280,7 +281,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
       };
     }
-    if (advertisedProtocol === 'runway-video' || advertisedProtocol === 'veo-video') {
+    if (isNativeVideoProtocol(advertisedProtocol)) {
       return { ok: false, error: 'Video services cannot be used for text chat.' };
     }
     if (advertisedProtocol === 'typesafe-systemone') {

@@ -1,48 +1,136 @@
-import type { SerializedHttpRequest, SerializedHttpResponse } from './types.js';
+import type { NativeVideoProtocol, SerializedHttpRequest, SerializedHttpResponse } from './types.js';
 import { extractRequestBodyFields, parseJsonObject } from './utils.js';
 
-export type NativeVideoProtocol = 'runway-video' | 'veo-video';
+export type { NativeVideoProtocol };
 
 export interface NativeVideoRoute {
   protocol: NativeVideoProtocol;
-  provider: 'runway' | 'veo';
   action: 'create' | 'status' | 'cancel';
   resourceId?: string;
   model?: string;
 }
 
-const RESOURCE_SEGMENT = '[A-Za-z0-9_-]+';
-const VEO_OPERATION = new RegExp(`^(?:models/[A-Za-z0-9._-]+/)?operations/${RESOURCE_SEGMENT}$`);
+type JsonObject = Record<string, unknown>;
+
+interface VideoRequestFields {
+  count?: unknown;
+  duration?: unknown;
+  resolution?: unknown;
+}
+
+/**
+ * One entry per native video API. Everything provider-specific lives here:
+ * paths, where the job ID sits in the accepted response, and which request
+ * fields carry the billable quantity. Routing, ownership, idempotency and
+ * billing elsewhere only use these descriptors.
+ */
+interface NativeVideoApi {
+  protocol: NativeVideoProtocol;
+  createPaths: RegExp;
+  /** Status (GET) and cancel (DELETE) paths; the first capture group is the job ID. */
+  jobPaths: { GET?: RegExp; DELETE?: RegExp };
+  jobId: (body: JsonObject) => unknown;
+  jobIdPattern: RegExp;
+  failedStatus?: (body: JsonObject) => unknown;
+  fields: (body: JsonObject) => VideoRequestFields;
+  /** Sentinel duration values meaning "let the model decide". */
+  autoDuration?: unknown[];
+  /** Maps equivalent job IDs to one ownership key. */
+  resourceKey?: (resourceId: string) => string;
+}
+
+const ID = '[A-Za-z0-9_-]+';
+const SIMPLE_ID = /^[A-Za-z0-9_-]{1,256}$/;
+const VEO_OPERATION = new RegExp(`^(?:models/[A-Za-z0-9._-]+/)?operations/${ID}$`);
+const FAILED_STATUSES = ['FAILED', 'CANCELLED', 'CANCELED'];
+
+function object(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
+}
+
+const NATIVE_VIDEO_APIS: NativeVideoApi[] = [
+  {
+    protocol: 'runway-video',
+    createPaths: /^\/v1\/(?:text|image)_to_video$/,
+    jobPaths: { GET: new RegExp(`^/v1/tasks/(${ID})$`), DELETE: new RegExp(`^/v1/tasks/(${ID})$`) },
+    jobId: body => body.id,
+    jobIdPattern: SIMPLE_ID,
+    failedStatus: body => body.status,
+    fields: body => ({ duration: body.duration, resolution: body.resolution }),
+    autoDuration: ['auto'],
+  },
+  {
+    protocol: 'veo-video',
+    createPaths: /^\/v1beta\/models\/([A-Za-z0-9._-]+):predictLongRunning$/,
+    jobPaths: { GET: new RegExp(`^/v1beta/((?:models/[A-Za-z0-9._-]+/)?operations/${ID})$`) },
+    jobId: body => body.name,
+    jobIdPattern: VEO_OPERATION,
+    fields: body => {
+      const parameters = object(body.parameters);
+      return { count: veoVideoCount(parameters), duration: parameters.durationSeconds, resolution: parameters.resolution };
+    },
+    resourceKey: resourceId => resourceId.replace(/^models\/[^/]+\//, ''),
+  },
+  {
+    protocol: 'minimax-video',
+    createPaths: /^\/v2\/video_generation$/,
+    jobPaths: { GET: new RegExp(`^/v2/query/video_generation/(${ID})$`), DELETE: new RegExp(`^/v2/video_generation/(${ID})$`) },
+    jobId: body => body.task_id,
+    jobIdPattern: SIMPLE_ID,
+    fields: body => ({ duration: body.duration, resolution: body.resolution }),
+  },
+  {
+    protocol: 'wan-video',
+    createPaths: /^\/api\/v1\/services\/aigc\/video-generation\/video-synthesis$/,
+    jobPaths: { GET: new RegExp(`^/api/v1/tasks/(${ID})$`) },
+    jobId: body => object(body.output).task_id,
+    jobIdPattern: SIMPLE_ID,
+    failedStatus: body => object(body.output).task_status,
+    fields: body => {
+      const parameters = object(body.parameters);
+      return { duration: parameters.duration, resolution: parameters.resolution ?? parameters.size };
+    },
+  },
+  {
+    protocol: 'seedance-video',
+    createPaths: /^\/api\/v3\/contents\/generations\/tasks$/,
+    jobPaths: { GET: new RegExp(`^/api/v3/contents/generations/tasks/(${ID})$`), DELETE: new RegExp(`^/api/v3/contents/generations/tasks/(${ID})$`) },
+    jobId: body => body.id,
+    jobIdPattern: SIMPLE_ID,
+    // `frames` overrides `duration`, so frame-based requests have no explicit seconds.
+    fields: body => ({ duration: body.frames === undefined ? body.duration : undefined, resolution: body.resolution }),
+    autoDuration: [-1, '-1'],
+  },
+];
+
+function api(protocol: NativeVideoProtocol): NativeVideoApi {
+  return NATIVE_VIDEO_APIS.find(entry => entry.protocol === protocol)!;
+}
 
 export function nativeVideoRoute(request: Pick<SerializedHttpRequest, 'path' | 'method'>): NativeVideoRoute | null {
   const path = request.path.split('?')[0] ?? '';
-  if (request.method === 'POST' && ['/v1/text_to_video', '/v1/image_to_video'].includes(path)) {
-    return { protocol: 'runway-video', provider: 'runway', action: 'create' };
-  }
-  const runway = new RegExp(`^/v1/tasks/(${RESOURCE_SEGMENT})$`).exec(path);
-  if (runway && ['GET', 'DELETE'].includes(request.method)) {
-    return { protocol: 'runway-video', provider: 'runway', action: request.method === 'GET' ? 'status' : 'cancel', resourceId: runway[1]! };
-  }
-  const veo = /^\/v1beta\/models\/([A-Za-z0-9._-]+):predictLongRunning$/.exec(path);
-  if (veo && request.method === 'POST') {
-    return { protocol: 'veo-video', provider: 'veo', action: 'create', model: veo[1]! };
-  }
-  const operation = path.replace(/^\/v1beta\//, '');
-  if (path.startsWith('/v1beta/') && request.method === 'GET' && VEO_OPERATION.test(operation)) {
-    return { protocol: 'veo-video', provider: 'veo', action: 'status', resourceId: operation };
+  for (const entry of NATIVE_VIDEO_APIS) {
+    const create = request.method === 'POST' ? entry.createPaths.exec(path) : null;
+    if (create) return { protocol: entry.protocol, action: 'create', ...(create[1] ? { model: create[1] } : {}) };
+    const job = entry.jobPaths[request.method as 'GET' | 'DELETE']?.exec(path);
+    if (job) return { protocol: entry.protocol, action: request.method === 'GET' ? 'status' : 'cancel', resourceId: job[1]! };
   }
   return null;
 }
 
+/** Job ID from a successful create response, or null when the seller did not accept a job. */
 export function nativeVideoAcceptance(protocol: NativeVideoProtocol, response: SerializedHttpResponse): string | null {
   if (response.statusCode < 200 || response.statusCode >= 300) return null;
   const body = parseJsonObject(response.body);
   if (!body || body.error) return null;
-  if (protocol === 'runway-video' && ['FAILED', 'CANCELLED', 'CANCELED'].includes(String(body.status).toUpperCase())) return null;
-  const resource = protocol === 'runway-video' ? body.id : body.name;
-  if (typeof resource !== 'string') return null;
-  if (protocol === 'runway-video') return /^[A-Za-z0-9_-]{1,256}$/.test(resource) ? resource : null;
-  return resource.length <= 512 && VEO_OPERATION.test(resource) ? resource : null;
+  const entry = api(protocol);
+  if (FAILED_STATUSES.includes(String(entry.failedStatus?.(body) ?? '').toUpperCase())) return null;
+  const resource = entry.jobId(body);
+  return typeof resource === 'string' && resource.length <= 512 && entry.jobIdPattern.test(resource) ? resource : null;
+}
+
+export function nativeVideoResourceKey(protocol: NativeVideoProtocol, resourceId: string): string {
+  return api(protocol).resourceKey?.(resourceId) ?? resourceId;
 }
 
 export function requestService(request: SerializedHttpRequest): string | undefined {
@@ -53,7 +141,7 @@ export function requestService(request: SerializedHttpRequest): string | undefin
     return header?.trim() || undefined;
   }
   const body = extractRequestBodyFields(request.headers, request.body);
-  if (route?.protocol === 'runway-video') {
+  if (route) {
     return typeof body?.model === 'string' && body.model.length > 0 ? body.model : undefined;
   }
   const service = body?.service ?? body?.model;
@@ -75,19 +163,17 @@ export function nativeVideoFacts(request: SerializedHttpRequest): NativeVideoFac
   if (route.action !== 'create') return { protocol: route.protocol, action: route.action, count: 0 };
   const body = parseJsonObject(request.body);
   if (!body) throw new Error('Video submission requires a JSON object');
-  const parameters = body.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters)
-    ? body.parameters as Record<string, unknown> : {};
-  const count = route.protocol === 'veo-video' ? veoVideoCount(parameters) : 1;
-  const rawDuration = route.protocol === 'veo-video' ? parameters.durationSeconds : body.duration;
-  const duration = route.protocol === 'runway-video' && rawDuration === 'auto' ? undefined : positiveInteger(rawDuration);
-  if (!Number.isSafeInteger(count) || count <= 0) throw new Error('Video sample count must be a positive integer');
+  const entry = api(route.protocol);
+  const fields = entry.fields(body);
+  const count = fields.count === undefined ? 1 : fields.count;
+  const duration = entry.autoDuration?.includes(fields.duration) ? undefined : positiveInteger(fields.duration);
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) throw new Error('Video sample count must be a positive integer');
   if (duration === null) throw new Error('Video duration must be a positive integer');
   if (duration !== undefined && !Number.isSafeInteger(duration * count)) throw new Error('Video quantity exceeds the safe integer limit');
-  const resolution = route.protocol === 'veo-video' ? parameters.resolution : body.resolution;
   return {
     protocol: route.protocol, action: route.action, count,
     ...(duration === undefined ? {} : { duration }),
-    ...(typeof resolution === 'string' ? { resolution } : {}),
+    ...(typeof fields.resolution === 'string' ? { resolution: fields.resolution } : {}),
   };
 }
 
@@ -99,7 +185,7 @@ function positiveInteger(value: unknown): number | undefined | null {
 }
 
 /** Gemini API uses `numberOfVideos`; Vertex AI uses `sampleCount`. Both must agree when present. */
-function veoVideoCount(parameters: Record<string, unknown>): number {
+function veoVideoCount(parameters: JsonObject): number {
   const numberOfVideos = positiveInteger(parameters.numberOfVideos);
   const sampleCount = positiveInteger(parameters.sampleCount);
   if (numberOfVideos === null || sampleCount === null) return Number.NaN;

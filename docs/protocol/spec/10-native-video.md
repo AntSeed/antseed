@@ -1,6 +1,6 @@
 # Native video API integration
 
-AntSeed relays native Runway and Veo video requests to seller-operated APIs. It does not run video jobs, cache artifacts, or proxy result downloads. Sellers own execution, result URLs, storage, and refund policy.
+AntSeed relays native Runway, Veo, MiniMax, Wan, and Seedance video requests to seller-operated APIs. It does not run video jobs, cache artifacts, or proxy result downloads. Sellers own execution, result URLs, storage, and refund policy.
 
 ## Supported requests
 
@@ -10,12 +10,19 @@ AntSeed relays native Runway and Veo video requests to seller-operated APIs. It 
 | `runway-video` | GET, DELETE | `/v1/tasks/{id}` |
 | `veo-video` | POST | `/v1beta/models/{model}:predictLongRunning` |
 | `veo-video` | GET | `/v1beta/{operation-name}` |
+| `minimax-video` | POST | `/v2/video_generation` |
+| `minimax-video` | GET | `/v2/query/video_generation/{task_id}` |
+| `minimax-video` | DELETE | `/v2/video_generation/{task_id}` |
+| `wan-video` | POST | `/api/v1/services/aigc/video-generation/video-synthesis` |
+| `wan-video` | GET | `/api/v1/tasks/{task_id}` |
+| `seedance-video` | POST | `/api/v3/contents/generations/tasks` |
+| `seedance-video` | GET, DELETE | `/api/v3/contents/generations/tasks/{id}` |
 
-Runway uses the body `model` as the service; Veo uses the path model. Service names must equal seller model names. Request bodies are forwarded byte-for-byte, and chat aliases, pins, and model rewrites are not applied. Video services appear in `GET /v1/models?type=videos`.
+Veo uses the path model as the service; every other API uses the body `model`. Each API's paths, job ID field, and billing fields are declared in one table in `packages/api-adapter/src/native-video.ts`. Service names must equal seller model names. Request bodies are forwarded byte-for-byte, and chat aliases, pins, and model rewrites are not applied. Video services appear in `GET /v1/models?type=videos`.
 
 ## Billing
 
-A create is charged when the seller returns an accepted Runway task `id` or Veo operation `name`. Polling and cancellation are free. Pricing uses `video_generations` or `video_seconds`; per-second pricing requires an explicit duration. Veo reads `numberOfVideos` or `sampleCount`.
+A create is charged when the seller returns an accepted job ID: Runway and Seedance `id`, Veo `name`, MiniMax `task_id`, or Wan `output.task_id`. Polling and cancellation are free. Pricing uses `video_generations` or `video_seconds`; per-second pricing requires an explicit positive duration (`duration`, Veo `parameters.durationSeconds`, Wan `parameters.duration`). Runway `auto`, Seedance `-1`, and Seedance `frames` requests have no explicit duration, so they need `video_generations` pricing. Veo reads `numberOfVideos` or `sampleCount`; every other API bills one video per create.
 
 ## Routing and ownership
 

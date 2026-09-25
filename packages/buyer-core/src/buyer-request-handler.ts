@@ -21,7 +21,7 @@ import type { ResponseAuthSampler } from './interfaces.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import { verifyResponseAuth } from './response-auth.js';
 import { isFreeUnitBillingModel } from '@antseed/protocol/billing';
-import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
+import { isNativeVideoProtocol, type ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
   detectRequestServiceApiProtocol,
   selectTargetProtocolForRequest,
@@ -146,7 +146,7 @@ export class BuyerRequestHandler {
         }
       } else {
         if (
-          (requestProtocol === "openai-images" || requestProtocol === "runway-video" || requestProtocol === "veo-video")
+          (requestProtocol === "openai-images" || isNativeVideoProtocol(requestProtocol))
           && (
             !billingRoute
             || billingRoute.serviceApiProtocol !== requestProtocol

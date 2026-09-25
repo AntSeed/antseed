@@ -10,9 +10,20 @@ export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'typesafe-systemone',
   'runway-video',
   'veo-video',
+  'minimax-video',
+  'wan-video',
+  'seedance-video',
 ] as const;
 
 export type ServiceApiProtocol = (typeof WELL_KNOWN_SERVICE_API_PROTOCOLS)[number];
+
+export const NATIVE_VIDEO_PROTOCOLS = ['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video'] as const;
+
+export type NativeVideoProtocol = (typeof NATIVE_VIDEO_PROTOCOLS)[number];
+
+export function isNativeVideoProtocol(value: unknown): value is NativeVideoProtocol {
+  return NATIVE_VIDEO_PROTOCOLS.includes(value as NativeVideoProtocol);
+}
 
 const SERVICE_API_PROTOCOL_SET = new Set<string>(WELL_KNOWN_SERVICE_API_PROTOCOLS);
 

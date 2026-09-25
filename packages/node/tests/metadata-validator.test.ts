@@ -352,7 +352,7 @@ describe('validateMetadata', () => {
       expect.arrayContaining([
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images, runway-video and veo-video only'),
+          message: expect.stringContaining('openai-images and native video protocols only'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',

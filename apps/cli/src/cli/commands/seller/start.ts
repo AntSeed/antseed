@@ -318,6 +318,9 @@ export function buildSellerPluginRuntimeEnv(
       ? 'TYPESAFE'
       : pluginPackage === '@antseed/provider-runway' ? 'RUNWAY'
       : pluginPackage === '@antseed/provider-veo' ? 'GEMINI'
+      : pluginPackage === '@antseed/provider-minimax' ? 'MINIMAX'
+      : pluginPackage === '@antseed/provider-wan' ? 'DASHSCOPE'
+      : pluginPackage === '@antseed/provider-seedance' ? 'ARK'
       : 'OPENAI'
   if (providerCfg.baseUrl) {
     runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl

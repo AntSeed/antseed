@@ -1,5 +1,6 @@
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
 import { parseVerifierCapabilities } from './verifier-capabilities.js';
+import { NATIVE_VIDEO_PROTOCOLS, isNativeVideoProtocol, type NativeVideoProtocol } from '@antseed/protocol/service-api';
 
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
@@ -7,8 +8,7 @@ export type CatalogServiceProtocol =
   | 'openai-responses'
   | 'openai-images'
   | 'typesafe-systemone'
-  | 'runway-video'
-  | 'veo-video';
+  | NativeVideoProtocol;
 
 export type CatalogServiceCapabilities = {
   contextWindow?: number;
@@ -88,8 +88,7 @@ const VALID_PROTOCOLS = new Set<string>([
   'openai-responses',
   'openai-images',
   'typesafe-systemone',
-  'runway-video',
-  'veo-video',
+  ...NATIVE_VIDEO_PROTOCOLS,
 ]);
 
 export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
@@ -100,8 +99,8 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
   if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
     return 'anthropic-messages';
   }
-  if (provider === 'runway') return 'runway-video';
-  if (provider === 'veo') return 'veo-video';
+  const videoProtocol = `${provider}-video`;
+  if (isNativeVideoProtocol(videoProtocol)) return videoProtocol;
   if (provider === 'typesafe') return 'typesafe-systemone';
   return null;
 }
@@ -183,7 +182,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
         const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
-        const type: NetworkServiceOfferType = protocol === 'runway-video' || protocol === 'veo-video'
+        const type: NetworkServiceOfferType = isNativeVideoProtocol(protocol)
           ? 'video'
           : protocol === 'typesafe-systemone'
           ? 'decision'

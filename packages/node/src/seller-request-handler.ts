@@ -27,7 +27,7 @@ import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
-import { nativeVideoAcceptance, nativeVideoRoute, requestService, type NativeVideoRoute } from '@antseed/api-adapter';
+import { nativeVideoAcceptance, nativeVideoResourceKey, nativeVideoRoute, requestService, type NativeVideoRoute } from '@antseed/api-adapter';
 import type { ResourceOwnershipStore } from './resources/resource-ownership-store.js';
 import { estimateUnitRequestCost, type BillingRequestFacts } from '@antseed/buyer-core';
 import type { ServiceApiProtocol } from './types/service-api.js';
@@ -52,11 +52,6 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 function headerValue(headers: Record<string, string>, name: string): string | undefined {
   const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
   return entry?.[1]?.trim();
-}
-
-/** Veo operation names may be polled with or without their `models/<model>/` prefix. */
-function videoResourceKey(protocol: NativeVideoRoute['protocol'], resourceId: string): string {
-  return protocol === 'veo-video' ? resourceId.replace(/^models\/[^/]+\//, '') : resourceId;
 }
 
 export interface SellerRequestHandlerDeps {
@@ -743,7 +738,7 @@ export class SellerRequestHandler {
     const buyer = buyerPeerId.toLowerCase();
     try {
       if (route.action !== 'create') {
-        if (store.getOwner(route.protocol, videoResourceKey(route.protocol, route.resourceId!)) === buyer) return false;
+        if (store.getOwner(route.protocol, nativeVideoResourceKey(route.protocol, route.resourceId!)) === buyer) return false;
         this._sendJsonError(mux, request.requestId, 404, 'resource_not_found', 'Video job not found');
         return true;
       }
@@ -778,7 +773,7 @@ export class SellerRequestHandler {
     try {
       this._deps.resourceOwnershipStore?.recordAcceptedCreate(
         route.protocol,
-        videoResourceKey(route.protocol, resourceId),
+        nativeVideoResourceKey(route.protocol, resourceId),
         buyerPeerId.toLowerCase(),
         idempotencyKey,
         { statusCode: response.statusCode, headers: response.headers, body: response.body ?? new Uint8Array(0) },

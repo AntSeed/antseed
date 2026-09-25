@@ -1,4 +1,4 @@
-import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
+import { isNativeVideoProtocol, type SerializedHttpRequest, type ServiceApiProtocol } from './types.js';
 import { nativeVideoRoute } from './native-video.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
@@ -62,8 +62,8 @@ export function inferProviderDefaultServiceApiProtocols(providerName: string): S
   if (OPENAI_CHAT_PROVIDER_NAMES.has(normalized)) return ['openai-chat-completions'];
   if (OPENAI_RESPONSES_PROVIDER_NAMES.has(normalized)) return ['openai-responses'];
   if (TYPESAFE_PROVIDER_NAMES.has(normalized)) return ['typesafe-systemone'];
-  if (normalized === 'runway') return ['runway-video'];
-  if (normalized === 'veo') return ['veo-video'];
+  const videoProtocol = `${normalized}-video`;
+  if (isNativeVideoProtocol(videoProtocol)) return [videoProtocol];
   return [];
 }
 

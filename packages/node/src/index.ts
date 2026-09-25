@@ -73,6 +73,8 @@ export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from
 export {
   WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  NATIVE_VIDEO_PROTOCOLS,
+  isNativeVideoProtocol,
   SERVICE_CAPABILITY_MODALITIES,
   MAX_CAPABILITY_TOKEN_COUNT,
   MAX_CAPABILITY_SUPPORTED_PARAMETERS,
@@ -82,6 +84,7 @@ export {
   type DomainVerificationMethod,
   type GithubVerificationClaim,
   type ServiceApiProtocol,
+  type NativeVideoProtocol,
   type ServiceCapabilities,
   type ServiceCapabilityModality,
   type PeerMetadata,

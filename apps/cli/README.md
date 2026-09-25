@@ -580,7 +580,7 @@ disk persistence and no per-inference-response proof in this cache.
 
 ## Native video services
 
-Use `@antseed/provider-runway` or `@antseed/provider-veo` to sell native video services. Buyers can discover them with `GET /v1/models?type=videos` and send native Runway or Veo requests to the buyer proxy. See [native video integration](../../docs/protocol/spec/10-native-video.md).
+Use `@antseed/provider-runway`, `@antseed/provider-veo`, `@antseed/provider-minimax`, `@antseed/provider-wan`, or `@antseed/provider-seedance` to sell native video services. Buyers can discover them with `GET /v1/models?type=videos` and send native provider requests to the buyer proxy. See [native video integration](../../docs/protocol/spec/10-native-video.md).
 
 ## Links
 

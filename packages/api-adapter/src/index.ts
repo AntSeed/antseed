@@ -1,4 +1,4 @@
-export { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, requestService, type NativeVideoRoute, type NativeVideoProtocol, type NativeVideoFacts } from './native-video.js';
+export { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, nativeVideoResourceKey, requestService, type NativeVideoRoute, type NativeVideoFacts } from './native-video.js';
 
 export {
   transformRequest,
@@ -46,6 +46,9 @@ export {
   type SerializedHttpResponse,
   type SerializedHttpResponseChunk,
   type ServiceApiProtocol,
+  type NativeVideoProtocol,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  NATIVE_VIDEO_PROTOCOLS,
   isKnownServiceApiProtocol,
+  isNativeVideoProtocol,
 } from './types.js';

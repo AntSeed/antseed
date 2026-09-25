@@ -1,5 +1,6 @@
-import { nativeVideoRoute, nativeVideoAcceptance } from '@antseed/api-adapter'
+import { nativeVideoRoute } from '@antseed/api-adapter'
 import { ResourceRoutes } from './resource-routes.js'
+import { prepareVideoRequest, recordVideoAcceptance } from './native-video-proxy.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
@@ -171,8 +172,6 @@ export interface BuyerProxyConfig {
 // generic 404 would repeat identically on every peer.
 const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
-const VIDEO_IDEMPOTENCY_KEY_HEADER = 'x-antseed-idempotency-key'
-const VIDEO_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
 
@@ -214,6 +213,9 @@ function isValidRoutedModelTarget(value: string): boolean {
 
 /** Returns `request` with its body's model field rewritten to `serviceId`, or unchanged if nothing rewrote. */
 function withRoutedModel(request: SerializedHttpRequest, serviceId: string): SerializedHttpRequest {
+  // Native video bodies are forwarded byte-for-byte and some APIs carry the
+  // model in the path, so the requested model is the only valid route target.
+  // Images go through the regular model rewrite like chat.
   if (nativeVideoRoute(request)) return request;
   const rewritten = overrideRoutedModelInBody(request.body, request.headers, serviceId)
   return rewritten.overridden
@@ -2279,24 +2281,14 @@ export class BuyerProxy {
       return
     }
 
-    if (nativeVideo?.action === 'create') {
-      const suppliedKey = (serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] ?? serializedReq.headers['idempotency-key'])?.trim()
-      if (suppliedKey !== undefined && !VIDEO_IDEMPOTENCY_KEY_PATTERN.test(suppliedKey)) {
-        res.writeHead(400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: { code: 'invalid_idempotency_key', message: 'Idempotency key must be 1-128 characters of [A-Za-z0-9._:-]' } }))
+    if (nativeVideo) {
+      const prepared = prepareVideoRequest(nativeVideo, serializedReq.headers, this._resourceRoutes)
+      if ('error' in prepared) {
+        res.writeHead(prepared.error.statusCode, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(prepared.error.body))
         return
       }
-      serializedReq.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = suppliedKey || randomUUID()
-    } else if (nativeVideo) {
-      const route = this._resourceRoutes.resolve(nativeVideo.protocol, nativeVideo.resourceId!)
-      if (!route) {
-        res.writeHead(404, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: { code: 'video_route_not_found', message: 'Unknown video job' } }))
-        return
-      }
-      serializedReq.headers['x-antseed-pin-peer'] = route.sellerPeerId
-      serializedReq.headers['x-antseed-provider'] = route.provider
-      serializedReq.headers['x-antseed-service'] = route.service
+      serializedReq = { ...serializedReq, headers: prepared.headers }
     }
 
     // Snapshot the session overrides before any await so a concurrent
@@ -3260,14 +3252,14 @@ export class BuyerProxy {
         }
 
         const videoRoute = nativeVideoRoute(requestForPeer)
-        if (videoRoute) {
-          upstreamResponse.headers['x-antseed-seller-peer'] = selectedPeer.peerId
-          if (videoRoute.action === 'create') upstreamResponse.headers[VIDEO_IDEMPOTENCY_KEY_HEADER] = requestForPeer.headers[VIDEO_IDEMPOTENCY_KEY_HEADER]!
-          const resourceId = videoRoute.action === 'create' ? nativeVideoAcceptance(videoRoute.protocol, upstreamResponse) : null
-          if (resourceId && requestedService) {
-            this._resourceRoutes.record({ protocol: videoRoute.protocol, resourceId, sellerPeerId: selectedPeer.peerId.toLowerCase(), provider: selectedRoutePlan.provider, service: requestedService })
-            await this._persistResourceRoutes().catch(error => console.error('[proxy] Accepted video route was not persisted:', error))
-          }
+        if (videoRoute && recordVideoAcceptance(
+          videoRoute,
+          requestForPeer.headers,
+          upstreamResponse,
+          { peerId: selectedPeer.peerId, provider: selectedRoutePlan.provider, service: requestedService },
+          this._resourceRoutes,
+        )) {
+          await this._persistResourceRoutes().catch(error => console.error('[proxy] Accepted video route was not persisted:', error))
         }
         let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
         response = adaptPeerResponse(response)

@@ -94,6 +94,12 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
       return 'export RUNWAY_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
     case 'veo':
       return 'export GEMINI_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
+    case 'minimax':
+      return 'export MINIMAX_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
+    case 'wan':
+      return 'export DASHSCOPE_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
+    case 'seedance':
+      return 'export ARK_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
     default:
       return `set the credentials required by ${pluginName}`;
   }

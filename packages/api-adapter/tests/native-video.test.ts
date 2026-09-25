@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, requestService, detectRequestServiceApiProtocol, selectTargetProtocolForRequest } from '../src/index.js';
+import { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, nativeVideoResourceKey, requestService, detectRequestServiceApiProtocol, selectTargetProtocolForRequest, inferProviderDefaultServiceApiProtocols, isNativeVideoProtocol, NATIVE_VIDEO_PROTOCOLS } from '../src/index.js';
 
 describe('native video API contracts', () => {
   const request = (path: string, body: object = {}, method = 'POST') => ({ requestId: 'request', method, path, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) });
@@ -57,5 +57,41 @@ describe('native video API contracts', () => {
     expect(() => veo({ durationSeconds: '6.5' })).toThrow(/duration/);
     expect(nativeVideoFacts(request('/v1/text_to_video', { model: 'seedance2', duration: 'auto' }))?.duration).toBeUndefined();
     expect(() => nativeVideoFacts(request('/v1/text_to_video', { duration: 'soon' }))).toThrow(/duration/);
+  });
+
+  it('describes MiniMax, Wan and Seedance with the same create, poll and cancel lifecycle', () => {
+    expect(nativeVideoRoute(request('/v2/video_generation'))).toEqual({ protocol: 'minimax-video', action: 'create' });
+    expect(nativeVideoRoute(request('/v2/query/video_generation/424010985738629', {}, 'GET'))).toMatchObject({ protocol: 'minimax-video', action: 'status', resourceId: '424010985738629' });
+    expect(nativeVideoRoute(request('/v2/video_generation/424010985738629', {}, 'DELETE'))).toMatchObject({ protocol: 'minimax-video', action: 'cancel' });
+    expect(nativeVideoRoute(request('/v2/video_generation/424010985738629', {}, 'GET'))).toBeNull();
+    expect(nativeVideoRoute(request('/api/v1/services/aigc/video-generation/video-synthesis'))).toEqual({ protocol: 'wan-video', action: 'create' });
+    expect(nativeVideoRoute(request('/api/v1/tasks/0385dc79-5ff8', {}, 'GET'))).toMatchObject({ protocol: 'wan-video', action: 'status' });
+    expect(nativeVideoRoute(request('/api/v1/tasks/0385dc79-5ff8', {}, 'DELETE'))).toBeNull();
+    expect(nativeVideoRoute(request('/api/v3/contents/generations/tasks'))).toEqual({ protocol: 'seedance-video', action: 'create' });
+    expect(nativeVideoRoute(request('/api/v3/contents/generations/tasks/cgt-1', {}, 'DELETE'))).toMatchObject({ protocol: 'seedance-video', action: 'cancel', resourceId: 'cgt-1' });
+
+    const response = (body: object) => ({ requestId: 'request', statusCode: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) });
+    expect(nativeVideoAcceptance('minimax-video', response({ task_id: '424010985738629' }))).toBe('424010985738629');
+    expect(nativeVideoAcceptance('wan-video', response({ output: { task_id: 'task', task_status: 'PENDING' } }))).toBe('task');
+    expect(nativeVideoAcceptance('wan-video', response({ output: { task_id: 'task', task_status: 'FAILED' } }))).toBeNull();
+    expect(nativeVideoAcceptance('seedance-video', response({ id: 'cgt-1' }))).toBe('cgt-1');
+    expect(nativeVideoResourceKey('veo-video', 'models/veo/operations/job')).toBe('operations/job');
+    expect(nativeVideoResourceKey('seedance-video', 'cgt-1')).toBe('cgt-1');
+  });
+
+  it('reads billing quantities from each API field shape', () => {
+    expect(nativeVideoFacts(request('/v2/video_generation', { model: 'MiniMax-H3', duration: 5, resolution: '2K' }))).toMatchObject({ count: 1, duration: 5, resolution: '2K' });
+    expect(nativeVideoFacts(request('/api/v1/services/aigc/video-generation/video-synthesis', { parameters: { duration: 10, resolution: '720P' } }))).toMatchObject({ duration: 10, resolution: '720P' });
+    expect(nativeVideoFacts(request('/api/v3/contents/generations/tasks', { duration: 5 }))?.duration).toBe(5);
+    expect(nativeVideoFacts(request('/api/v3/contents/generations/tasks', { duration: -1 }))?.duration).toBeUndefined();
+    expect(nativeVideoFacts(request('/api/v3/contents/generations/tasks', { duration: 5, frames: 57 }))?.duration).toBeUndefined();
+  });
+
+  it('shares one native video protocol list', () => {
+    expect(NATIVE_VIDEO_PROTOCOLS).toEqual(['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video']);
+    expect(isNativeVideoProtocol('wan-video')).toBe(true);
+    expect(isNativeVideoProtocol('openai-images')).toBe(false);
+    expect(inferProviderDefaultServiceApiProtocols('seedance')).toEqual(['seedance-video']);
+    expect(detectRequestServiceApiProtocol(request('/v2/query/video_generation/1'))).toBe('minimax-video');
   });
 });

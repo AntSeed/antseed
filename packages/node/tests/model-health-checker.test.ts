@@ -106,6 +106,7 @@ describe('buildHealthProbeRequest', () => {
     expect(supportsHealthProbe('openai-images')).toBe(false);
     expect(supportsHealthProbe('runway-video')).toBe(false);
     expect(supportsHealthProbe('veo-video')).toBe(false);
+    expect(supportsHealthProbe('seedance-video')).toBe(false);
     expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(
       'Health probes are not supported for openai-images services',
     );

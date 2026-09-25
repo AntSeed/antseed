@@ -10,6 +10,9 @@ export interface TrustedPlugin {
 export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
   { name: 'runway', type: 'provider', description: 'Seller-operated Runway-compatible API', package: '@antseed/provider-runway' },
   { name: 'veo', type: 'provider', description: 'Seller-operated Veo-compatible API', package: '@antseed/provider-veo' },
+  { name: 'minimax', type: 'provider', description: 'Seller-operated MiniMax video API', package: '@antseed/provider-minimax' },
+  { name: 'wan', type: 'provider', description: 'Seller-operated Wan video API', package: '@antseed/provider-wan' },
+  { name: 'seedance', type: 'provider', description: 'Seller-operated Seedance video API', package: '@antseed/provider-seedance' },
   {
     name: 'anthropic',
     type: 'provider',

@@ -1,4 +1,4 @@
-import type { NativeVideoProtocol } from '@antseed/api-adapter'
+import { isNativeVideoProtocol, type NativeVideoProtocol } from '@antseed/api-adapter'
 
 const ROUTE_TTL_MS = 30 * 24 * 60 * 60_000
 const MAX_ROUTES = 10_000
@@ -22,7 +22,7 @@ export class ResourceRoutes {
     for (const entry of value) {
       if (entry && typeof entry.resourceId === 'string' && typeof entry.sellerPeerId === 'string'
         && typeof entry.provider === 'string' && typeof entry.service === 'string'
-        && ['runway-video', 'veo-video'].includes(entry.protocol) && Number.isFinite(entry.createdAt)) {
+        && isNativeVideoProtocol(entry.protocol) && Number.isFinite(entry.createdAt)) {
         this.routes.set(routeKey(entry.protocol, entry.resourceId), entry)
       }
     }

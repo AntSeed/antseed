@@ -9,6 +9,7 @@ import { canonicalModelKey } from '@antseed/node/model-identity'
 import {
   extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
+  isNativeVideoProtocol,
   selectTargetProtocolForRequest,
   type ServiceApiProtocol,
   type TargetProtocolSelection,
@@ -223,7 +224,7 @@ function selectAdvertisedServiceByProtocol(
   for (const provider of candidates) {
     const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
     if (!offer) continue
-    if ((requestProtocol === 'runway-video' || requestProtocol === 'veo-video') && offer.serviceId !== requestedService) continue
+    if (isNativeVideoProtocol(requestProtocol) && offer.serviceId !== requestedService) continue
     let supportedProtocols: ServiceApiProtocol[] = []
     if (offer.protocols.length > 0) {
       supportedProtocols = offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
@@ -232,8 +233,7 @@ function selectAdvertisedServiceByProtocol(
         || protocol === 'openai-responses'
         || protocol === 'openai-images'
         || protocol === 'typesafe-systemone'
-        || protocol === 'runway-video'
-        || protocol === 'veo-video'
+        || isNativeVideoProtocol(protocol)
       ))
     } else if (offer.protocol) {
       supportedProtocols = [offer.protocol]
@@ -286,7 +286,7 @@ export function resolvePeerRoutePlan(
   if (requestedService?.trim()) {
     const exactPlan = selectAdvertisedServiceByProtocol(peer, candidates, requestProtocol, requestedService)
     if (exactPlan) return exactPlan
-    if (requestProtocol === 'runway-video' || requestProtocol === 'veo-video') return null
+    if (isNativeVideoProtocol(requestProtocol)) return null
     const hasAdvertisedCanonicalOffer = candidates.some(
       (provider) => findAdvertisedServiceOffer(peer, provider, requestedService) !== null,
     )
