@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { nativeVideoAcceptance, veoDownloadPath, type NativeVideoRoute, type SerializedHttpResponse } from '@antseed/api-adapter'
 import type { ResourceRoutes } from './resource-routes.js'
+import { VIDEO_DOWNLOAD_STREAM_VERSION } from '@antseed/node'
 
 // Video creates are charged when the seller accepts the job. If that acceptance
 // response is lost, a retry must carry the same key so the seller can return the
@@ -73,7 +74,9 @@ export function rewriteVideoDownloadUrls(
   route: NativeVideoRoute,
   response: SerializedHttpResponse,
   localOrigin: string,
+  downloadCapability?: string,
 ): SerializedHttpResponse {
+  if (downloadCapability !== VIDEO_DOWNLOAD_STREAM_VERSION) return response
   if (route.protocol !== 'veo-video' || route.action !== 'status' || response.statusCode !== 200) return response
   let body
   try { body = JSON.parse(Buffer.from(response.body).toString()) } catch { return response }

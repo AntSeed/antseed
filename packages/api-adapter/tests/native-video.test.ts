@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, nativeVideoResourceKey, requestService, detectRequestServiceApiProtocol, selectTargetProtocolForRequest, inferProviderDefaultServiceApiProtocols, isNativeVideoProtocol, NATIVE_VIDEO_PROTOCOLS } from '../src/index.js';
-import { veoDownloadPath, videoContentRange } from '../src/index.js';
+import { veoDownloadPath } from '../src/index.js';
 
 describe('native video API contracts', () => {
   const request = (path: string, body: object = {}, method = 'POST') => ({ requestId: 'request', method, path, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) });
@@ -14,8 +14,6 @@ describe('native video API contracts', () => {
     expect(nativeVideoRoute(request(path))).toBeNull();
     for (const operation of ['../files/key', 'operations/%2e%2e', 'https://evil.test']) expect(() => veoDownloadPath(operation, 0)).toThrow();
     expect(() => veoDownloadPath('operations/task', -1)).toThrow();
-    expect(videoContentRange('bytes 0-65535/100000')).toEqual({ start: 0, end: 65535, total: 100000 });
-    for (const range of ['bytes 3-2/10', 'bytes 0-10/10', 'bytes 0-1/*', 'bytes 0-1/999999999999999999']) expect(videoContentRange(range)).toBeNull();
   });
 
   it('recognizes native paths and never translates into chat or another video API', () => {

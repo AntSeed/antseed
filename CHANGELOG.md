@@ -9,7 +9,8 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Added
 
 - Native Runway, Veo, MiniMax, Wan, and Seedance video relays for seller-operated APIs, with video discovery, acceptance-based billing, persistent job routing, seller-side job ownership, and idempotent create replay to prevent duplicate charges.
-- Direct Gemini Veo result downloads through the buyer proxy and original seller, with operation ownership checks, bounded byte-range transfers, and no exposure of seller API keys. Video validation and buyer-budget failures now return client errors rather than misleading seller `502` errors.
+- Direct Gemini Veo result downloads through the buyer proxy and original seller, with one ownership check, one status lookup and one streamed file fetch per download. Transfers use bounded P2P flow control, incremental response authentication, cancellation and a signed per-service download capability before rewriting URLs; seller API keys remain private. Video validation and buyer-budget failures now return client errors rather than misleading seller `502` errors.
+- Free video follow-up receipts remain verifiable after reconnecting even when the previous paid channel is no longer active; billable requests still require the expected payment channel.
 
 - Skills: new `antseed-decisions` skill teaches agents when to prefer a System One decision model over a chat model, how to discover one with `/v1/models?type=decisions`, and how to ask typed `choice`, `score`, and `noul` questions through `/v1/systemone` on the local buyer proxy.
 - `@antseed/provider-typesafe`: new seller plugin for System One decision models (TypeSafe Jev and compatible upstreams). Every service is advertised with the new `typesafe-systemone` service API protocol and relayed to `POST /v1/systemone`. Configure with `TYPESAFE_API_KEY` and an optional `TYPESAFE_BASE_URL`.

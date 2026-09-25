@@ -1,4 +1,6 @@
 import { keccak256 } from 'ethers';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { VIDEO_DOWNLOAD_MAX_BYTES } from '@antseed/protocol/http';
 import type { Wallet } from 'ethers';
 import type { ResponseAuthPayload } from '@antseed/protocol/messages';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/protocol/http';
@@ -110,7 +112,31 @@ export function hashRequest(request: SerializedHttpRequest): string {
 }
 
 export function hashResponse(response: SerializedHttpResponse): string {
+  if (response.streamedBody) return response.streamedBody.responseHash;
   return keccak256(encodeHttpResponse(stripStreamingHeader(response)));
+}
+
+export function createStreamingResponseHash(response: SerializedHttpResponse) {
+  const rawLength = response.headers['content-length'];
+  const byteLength = Number(rawLength);
+  if (!/^[1-9][0-9]*$/.test(rawLength ?? '') || !Number.isSafeInteger(byteLength) || byteLength > VIDEO_DOWNLOAD_MAX_BYTES) {
+    throw new Error('Invalid video content length');
+  }
+  const prefix = encodeHttpResponse({ ...stripStreamingHeader(response), body: new Uint8Array(0) });
+  new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).setUint32(prefix.length - 4, byteLength);
+  const hash = keccak_256.create().update(prefix);
+  let received = 0;
+  return {
+    update(data: Uint8Array): void {
+      received += data.length;
+      if (received > byteLength) throw new Error('Video exceeds content length');
+      hash.update(data);
+    },
+    finish(): NonNullable<SerializedHttpResponse['streamedBody']> {
+      if (received !== byteLength) throw new Error('Incomplete video');
+      return { byteLength, responseHash: `0x${bytesToHex(hash.digest())}` };
+    },
+  };
 }
 
 function buildResponseAuthSigningBytes(payload: Omit<ResponseAuthPayload, 'signature'>): Uint8Array {

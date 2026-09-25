@@ -23,7 +23,8 @@ import {
 import { debugLog, debugWarn } from './utils/debug.js';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
 import { VerificationMux } from './verification/verification-mux.js';
-import { createResponseAuthPayload } from './verification/response-auth.js';
+import { createResponseAuthPayload, createStreamingResponseHash } from './verification/response-auth.js';
+import { VIDEO_DOWNLOAD_STREAM_HEADER, VIDEO_DOWNLOAD_STREAM_VERSION } from '@antseed/protocol/http';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
 import { captureUnitBillingContext, computeFinalUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
@@ -498,6 +499,8 @@ export class SellerRequestHandler {
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
       let streamedResponseStarted = false;
+      const isDownload = videoRoute?.action === 'download' && request.headers[VIDEO_DOWNLOAD_STREAM_HEADER] === VIDEO_DOWNLOAD_STREAM_VERSION;
+      let downloadHash: ReturnType<typeof createStreamingResponseHash> | undefined;
       let heldDoneChunkData: Uint8Array | null = null;
       let responseStartedAt = startTime;
       let responseForAuth: SerializedHttpResponse | null = null;
@@ -527,7 +530,9 @@ export class SellerRequestHandler {
       try {
         try {
           const response = await this._executeRequest(provider, request, {
+            signal: isDownload ? mux.downloadSignal(request.requestId) : undefined,
             onResponseStart: (streamResponseStart) => {
+              if (isDownload) downloadHash = createStreamingResponseHash(streamResponseStart);
               streamedResponseStarted = true;
               responseStartedAt = Date.now();
               statusCode = streamResponseStart.statusCode;
@@ -537,6 +542,10 @@ export class SellerRequestHandler {
             },
             onResponseChunk: (chunk) => {
               if (!streamedResponseStarted) return;
+              if (downloadHash) {
+                downloadHash.update(chunk.data);
+                if (!chunk.done) return mux.sendDownloadChunk(chunk);
+              }
               // Hold the done chunk — send it after usage is parsed so we can append cost trailer
               if (chunk.done) {
                 heldDoneChunkData = chunk.data;
@@ -548,6 +557,7 @@ export class SellerRequestHandler {
           statusCode = response.statusCode;
           responseBody = response.body ?? new Uint8Array(0);
           responseForAuth = response;
+          if (downloadHash) responseForAuth = { ...response, streamedBody: downloadHash.finish() };
           if (statusCode >= 400) {
             const errBody = new TextDecoder().decode(responseBody).slice(0, 200);
             debugWarn(`[SellerHandler] Provider error response: status=${statusCode} provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) body=${errBody}`);
@@ -581,7 +591,11 @@ export class SellerRequestHandler {
           const message = err instanceof Error ? err.message : "Internal error";
           debugWarn(`[SellerHandler] Provider exception: provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) ${message}`);
           responseBody = new TextEncoder().encode(message);
-          if (streamedResponseStarted) {
+          if (streamedResponseStarted && isDownload) {
+            statusCode = 502;
+            responseForAuth = null;
+            mux.sendProxyError(request.requestId);
+          } else if (streamedResponseStarted) {
             const errorFrame = new TextEncoder().encode(`event: error\ndata: ${message}\n\n`);
             responseBody = errorFrame;
             mux.sendProxyChunk({
@@ -637,7 +651,7 @@ export class SellerRequestHandler {
             statusCode,
             latencyMs,
             inputBytes: request.body.length,
-            outputBytes: responseBody.length,
+            outputBytes: responseForAuth?.streamedBody?.byteLength ?? responseBody.length,
             responseBody,
             providerUsage: responseUsage,
           });

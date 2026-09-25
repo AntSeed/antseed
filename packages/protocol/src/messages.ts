@@ -11,6 +11,8 @@ export enum MessageType {
   // Chunked request upload (buyer→seller body streaming)
   HttpRequestChunk = 0x25,
   HttpRequestEnd   = 0x26,
+  HttpResponseAck = 0x27,
+  HttpRequestCancel = 0x28,
 
   // --- Payment Protocol (0x50-0x5F) ---
   SpendingAuth = 0x50,

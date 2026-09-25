@@ -222,7 +222,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels, hasWideServiceCounts);
     }
     if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
-      encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts);
+      encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts, metadata.version >= 13);
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -501,6 +501,7 @@ function encodeServiceCapabilities(
   parts: Uint8Array[],
   serviceCapabilities: PeerMetadata["providers"][number]["serviceCapabilities"],
   hasWideServiceCounts: boolean,
+  hasVideoDownloads: boolean,
 ): void {
   // Code-unit sort, not localeCompare: buyers verify signatures by re-encoding
   // decoded metadata, so entry order must not depend on the verifier's locale.
@@ -509,6 +510,8 @@ function encodeServiceCapabilities(
   pushServiceEntryCount(parts, entries.length, hasWideServiceCounts);
   for (const [serviceName, caps] of entries) {
     pushUtf8(parts, serviceName);
+    if (hasVideoDownloads) parts.push(new Uint8Array([caps.videoDownload === 'veo-stream-v1' ? 1 : 0]));
+    else if (caps.videoDownload !== undefined) throw new Error('Video downloads require metadata v13');
     let presence = 0;
     if (caps.contextWindow !== undefined) presence |= CAP_HAS_CONTEXT_WINDOW;
     if (caps.maxOutputTokens !== undefined) presence |= CAP_HAS_MAX_OUTPUT_TOKENS;
@@ -561,6 +564,7 @@ function decodeServiceCapabilities(
   setOffset: (offset: number) => void,
   checkBounds: (offset: number, needed: number, total: number) => void,
   hasWideServiceCounts: boolean,
+  hasVideoDownloads: boolean,
 ): PeerMetadata["providers"][number]["serviceCapabilities"] | undefined {
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
@@ -569,6 +573,13 @@ function decodeServiceCapabilities(
   for (let i = 0; i < entryCount; i += 1) {
     const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
     offset = serviceOffset;
+    let videoDownload: ServiceCapabilities['videoDownload'];
+    if (hasVideoDownloads) {
+      checkBounds(offset, 1, data.length);
+      const version = data[offset++]!;
+      if (version > 1) throw new Error('Unsupported video download version');
+      if (version === 1) videoDownload = 'veo-stream-v1';
+    }
     checkBounds(offset, 1, data.length);
     const presence = data[offset]!;
     offset += 1;
@@ -620,6 +631,7 @@ function decodeServiceCapabilities(
       }
       caps.supportedParameters = parameters;
     }
+    if (videoDownload) caps.videoDownload = videoDownload;
     serviceCapabilities[serviceName] = caps;
   }
   setOffset(offset);
@@ -928,7 +940,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
-      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
+      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version >= 13)
       : undefined;
 
     // maxConcurrency: 2 bytes uint16

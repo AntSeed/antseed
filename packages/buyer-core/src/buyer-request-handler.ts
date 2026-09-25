@@ -3,6 +3,8 @@ import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
+  VIDEO_DOWNLOAD_STREAM_HEADER,
+  VIDEO_DOWNLOAD_STREAM_VERSION,
   type SerializedHttpRequest,
   type SerializedHttpResponse,
   type SerializedHttpResponseChunk,
@@ -19,7 +21,7 @@ import type { VerificationMux } from './verification-mux.js';
 import type { ResponseAuthSink } from './interfaces.js';
 import type { ResponseAuthSampler } from './interfaces.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
-import { verifyResponseAuth } from './response-auth.js';
+import { verifyResponseAuth, createStreamingResponseHash } from './response-auth.js';
 import { isFreeUnitBillingModel } from '@antseed/protocol/billing';
 import { isNativeVideoProtocol, type ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
@@ -39,7 +41,7 @@ export interface RequestStreamCallbacks {
     response: SerializedHttpResponse,
     metadata: RequestStreamResponseMetadata,
   ) => void;
-  onResponseChunk?: (chunk: SerializedHttpResponseChunk) => void;
+  onResponseChunk?: (chunk: SerializedHttpResponseChunk) => void | Promise<void>;
 }
 
 export interface RequestExecutionOptions {
@@ -183,6 +185,8 @@ export class BuyerRequestHandler {
       let streamStartResponse: SerializedHttpResponse | null = null;
       let forwardStreamToCallbacks = false;
       const streamChunks: Uint8Array[] = [];
+      const isDownload = nativeVideoRoute(req)?.action === 'download' && req.headers[VIDEO_DOWNLOAD_STREAM_HEADER] === VIDEO_DOWNLOAD_STREAM_VERSION;
+      let downloadHash: ReturnType<typeof createStreamingResponseHash> | undefined;
       let activeTimeout: ReturnType<typeof setTimeout> | null = null;
       let activeTimeoutMs = streamInitialResponseTimeoutMs;
       const abortSignal = options?.signal;
@@ -283,7 +287,21 @@ export class BuyerRequestHandler {
         req,
         (response: SerializedHttpResponse, metadata) => {
           if (settled) return;
+          if (isDownload && streamStarted && !metadata.streamingStart) {
+            fail(new Error('Video download interrupted'));
+            return;
+          }
           if (metadata.streamingStart) {
+            if (isDownload) {
+              try {
+                if (streamStarted || !callbacks?.onResponseChunk || response.statusCode !== 200 || response.body.length || response.headers[VIDEO_DOWNLOAD_STREAM_HEADER] !== VIDEO_DOWNLOAD_STREAM_VERSION || response.headers['content-type'] !== 'video/mp4') throw new Error('Invalid video stream');
+                downloadHash = createStreamingResponseHash(stripPeerControlledResponseHeaders(response));
+              } catch (error) {
+                mux.cancelProxyRequest(req.requestId);
+                fail(error as Error);
+                return;
+              }
+            }
             streamStarted = true;
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
@@ -305,9 +323,23 @@ export class BuyerRequestHandler {
           );
           finish(response);
         },
-        (chunk) => {
+        async (chunk) => {
           if (settled) return;
           if (!streamStarted) return;
+
+          if (downloadHash) {
+            try {
+              if (Date.now() - streamStartedAtMs > maxStreamDurationMs) throw new Error('Video stream exceeded max duration');
+              resetTimeout(streamIdleTimeoutMs);
+              downloadHash.update(chunk.data);
+              await callbacks!.onResponseChunk!(chunk);
+              if (chunk.done) finish({ ...streamStartResponse!, body: new Uint8Array(0), streamedBody: downloadHash.finish() });
+            } catch (error) {
+              mux.cancelProxyRequest(req.requestId);
+              fail(error as Error);
+            }
+            return;
+          }
 
           resetTimeout(streamIdleTimeoutMs);
 
@@ -385,7 +417,7 @@ export class BuyerRequestHandler {
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
-      this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
+      this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux, isFreeService);
       return adaptPeerResponse(retriedResponse);
     }
 
@@ -393,7 +425,7 @@ export class BuyerRequestHandler {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
     }
 
-    this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
+    this._recordResponseAuth(peer, req, response, requestedService, verificationMux, isFreeService);
     return adaptPeerResponse(response);
   }
 
@@ -425,14 +457,16 @@ export class BuyerRequestHandler {
     response: SerializedHttpResponse,
     requestedService: string | undefined,
     verificationMux: VerificationMux,
+    isFreeService: boolean,
   ): void {
     if (!shouldExpectResponseAuth(peer, response, requestedService)) {
       return;
     }
+    response = { ...response, headers: { ...response.headers } };
 
     const storage = this._deps.verificationStorage;
     const advertisedService = requestedService ?? 'unknown';
-    const expectedChannelId = this._deps.negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
+    const expectedChannelId = isFreeService ? null : this._deps.negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
     const responseAuthPromise = verificationMux.waitForResponseAuth(
       request.requestId,
       this._config.responseAuthTimeoutMs ?? DEFAULT_RESPONSE_AUTH_GRACE_MS,

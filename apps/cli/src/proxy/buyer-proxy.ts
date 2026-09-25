@@ -11,6 +11,7 @@ import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
+  VIDEO_DOWNLOAD_STREAM_VERSION,
   adaptPeerFaultErrorResponse,
   computeTrustScore,
   decodeSweepRequest,
@@ -3119,7 +3120,13 @@ export class BuyerProxy {
     // Forward through P2P
     const wantsStreaming = clientWantsStreaming && !nativeVideoRoute(requestForPeer)
     if (nativeVideoRoute(requestForPeer)?.action === 'download') {
-      await downloadVideo(requestForPeer, res, (request, signal) => this._node.sendRequest(selectedPeer, request, { signal, pinned: true }), requestSignal)
+      const capability = requestedService ? selectedPeer.providerServiceCapabilities?.[selectedRoutePlan.provider]?.services[requestedService]?.videoDownload : undefined
+      if (capability !== VIDEO_DOWNLOAD_STREAM_VERSION) {
+        res.writeHead(501, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Seller does not support video downloads' }))
+        return { done: true }
+      }
+      await downloadVideo(requestForPeer, res, (request, callbacks, signal) => this._node.sendRequestStream(selectedPeer, request, callbacks, { signal, pinned: true }), requestSignal)
       return { done: true }
     }
     const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
@@ -3268,7 +3275,8 @@ export class BuyerProxy {
         }
         const address = this._server?.address()
         const port = typeof address === 'object' && address ? address.port : this._port
-        const videoResponse = videoRoute ? rewriteVideoDownloadUrls(videoRoute, upstreamResponse, `http://127.0.0.1:${port}`) : upstreamResponse
+        const downloadCapability = requestedService ? selectedPeer.providerServiceCapabilities?.[selectedRoutePlan.provider]?.services[requestedService]?.videoDownload : undefined
+        const videoResponse = videoRoute ? rewriteVideoDownloadUrls(videoRoute, upstreamResponse, `http://127.0.0.1:${port}`, downloadCapability) : upstreamResponse
         let response = adaptBuyerFaultErrorResponse(videoResponse, requestProtocol)
         response = adaptPeerResponse(response)
         if (

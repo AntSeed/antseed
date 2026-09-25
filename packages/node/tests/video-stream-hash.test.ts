@@ -1,0 +1,33 @@
+import { expect, it } from 'vitest';
+import { createStreamingResponseHash, hashResponse, createResponseAuthPayload, verifyResponseAuth } from '../src/verification/response-auth.js';
+import { Wallet } from 'ethers';
+
+const request = { requestId: 'video', method: 'GET', path: '/v1beta/operations/job/videos/0:download', headers: {}, body: new Uint8Array() };
+const body = new Uint8Array(3 * 1024 * 1024 + 17).fill(42);
+const response = { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'video/mp4', 'content-length': String(body.length), 'x-antseed-streaming': '1' }, body };
+
+it('incremental hashing exactly matches v1 response authentication for any chunk boundaries', () => {
+  for (const size of [65536, 12345]) {
+    const hash = createStreamingResponseHash(response);
+    for (let offset = 0; offset < body.length; offset += size) hash.update(body.subarray(offset, offset + size));
+    const streamed = { ...response, body: new Uint8Array(), streamedBody: hash.finish() };
+    expect(hashResponse(streamed)).toBe(hashResponse(response));
+    const wallet = Wallet.createRandom();
+    const context = { request, buyerPeerId: '11'.repeat(20), sellerPeerId: wallet.address, advertisedService: 'veo' };
+    const auth = createResponseAuthPayload({ ...context, response: streamed, provider: 'veo', responseStartedAt: 1, responseCompletedAt: 2 }, wallet as unknown as Wallet);
+    expect(verifyResponseAuth(auth, { ...context, response }).valid).toBe(true);
+    const corrupt = new Uint8Array(body);
+    corrupt[0] ^= 1;
+    expect(verifyResponseAuth(auth, { ...context, response: { ...response, body: corrupt } }).valid).toBe(false);
+  }
+});
+
+it('rejects missing, oversized, excessive and truncated bodies', () => {
+  for (const length of ['', '0', '999999999', '-1', 'NaN']) expect(() => createStreamingResponseHash({ ...response, headers: { 'content-length': length } })).toThrow();
+  const truncated = createStreamingResponseHash(response);
+  truncated.update(body.subarray(0, 20));
+  expect(() => truncated.finish()).toThrow('Incomplete');
+  const excessive = createStreamingResponseHash(response);
+  excessive.update(body);
+  expect(() => excessive.update(new Uint8Array(1))).toThrow('exceeds');
+});

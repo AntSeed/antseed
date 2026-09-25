@@ -16,7 +16,6 @@ import {
   CONNECTION_CAPABILITY_SIGNED_SDP_V1,
   CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
-import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -162,7 +161,7 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(METADATA_VERSION);
+    expect(metadata?.version).toBe(12);
     expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
       components: [{ unit: 'output_images', priceUsd: 0.04 }],
@@ -178,7 +177,7 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(METADATA_VERSION);
+    expect(metadata?.version).toBe(12);
     expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

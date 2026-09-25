@@ -53,4 +53,4 @@ export {
   isNativeVideoProtocol,
 } from './types.js';
 
-export { veoDownloadPath, videoContentRange, VIDEO_DOWNLOAD_CHUNK_BYTES, VIDEO_DOWNLOAD_MAX_BYTES } from './native-video.js';
+export { veoDownloadPath } from './native-video.js';

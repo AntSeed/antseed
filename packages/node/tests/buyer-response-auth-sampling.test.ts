@@ -7,6 +7,29 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '../src/types/protocol.js';
 
 describe('BuyerRequestHandler response auth sampling', () => {
+  it.each([
+    { free: true, validSignature: true, error: null },
+    { free: false, validSignature: true, error: 'channel_id_mismatch' },
+    { free: true, validSignature: false, error: 'invalid_signature' },
+  ])('checks receipt identity and signatures without requiring a stale paid channel for free requests: %j', async scenario => {
+    const seller = identityFromPrivateKeyHex('11'.repeat(32));
+    const buyer = identityFromPrivateKeyHex('22'.repeat(32));
+    const peer = { peerId: seller.peerId, capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1] } as PeerInfo;
+    const request = { requestId: 'free-video-reconnect', method: 'GET', path: '/v1beta/operations/job/videos/0:download', headers: {}, body: new Uint8Array() };
+    const response = { requestId: request.requestId, statusCode: 200, headers: {}, body: new Uint8Array([42]) };
+    const payload = createResponseAuthPayload({ request, response, buyerPeerId: buyer.peerId, sellerPeerId: seller.peerId, advertisedService: 'veo', provider: 'veo', responseStartedAt: 100, responseCompletedAt: 200, channelId: '0x' + '33'.repeat(32) }, seller.wallet);
+    if (!scenario.validSignature) payload.signature = '00'.repeat(65);
+    const maybeStoreResponseAuthSample = vi.fn(async () => null);
+    const handler = new BuyerRequestHandler({}, {
+      localPeerId: buyer.peerId,
+      negotiator: { bpm: { getActiveSession: () => ({ sessionId: '0x' + '44'.repeat(32) }) } },
+      verificationSampler: { maybeStoreResponseAuthSample },
+    } as any);
+    (handler as any)._recordResponseAuth(peer, request, response, 'veo', { waitForResponseAuth: async () => payload }, scenario.free);
+    await vi.waitFor(() => expect(maybeStoreResponseAuthSample).toHaveBeenCalledOnce());
+    expect(maybeStoreResponseAuthSample).toHaveBeenCalledWith(expect.objectContaining({ verified: scenario.error === null, verificationError: scenario.error }));
+  });
+
   it('passes verified response auth evidence to the sampler', async () => {
     const seller = identityFromPrivateKeyHex('11'.repeat(32));
     const buyer = identityFromPrivateKeyHex('22'.repeat(32));
@@ -39,6 +62,8 @@ describe('BuyerRequestHandler response auth sampling', () => {
     }, seller.wallet);
 
     const maybeStoreResponseAuthSample = vi.fn(async () => null);
+    let deliverAuth!: () => void;
+    const authReady = new Promise<void>(resolve => { deliverAuth = resolve; });
     const handler = new BuyerRequestHandler(
       {},
       {
@@ -57,20 +82,22 @@ describe('BuyerRequestHandler response auth sampling', () => {
           cancelProxyRequest: vi.fn(),
         })) as any,
         getVerificationMux: vi.fn(() => ({
-          waitForResponseAuth: vi.fn(async () => responseAuth),
+          waitForResponseAuth: vi.fn(async () => { await authReady; return responseAuth; }),
         })) as any,
         registerPaymentMux: vi.fn(),
       },
     );
 
-    await handler.sendRequest(peer, request);
+    const received = await handler.sendRequest(peer, request);
+    received.headers['x-antseed-seller-peer'] = seller.peerId;
+    deliverAuth();
 
     await vi.waitFor(() => {
       expect(maybeStoreResponseAuthSample).toHaveBeenCalledOnce();
     });
     expect(maybeStoreResponseAuthSample).toHaveBeenCalledWith(expect.objectContaining({
       request,
-      response,
+      response: expect.objectContaining({ headers: { 'content-type': 'application/json' } }),
       responseAuth,
       verified: true,
       verificationError: null,
