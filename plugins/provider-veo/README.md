@@ -22,3 +22,16 @@ POST /v1beta/models/veo-3.1-generate-preview:predictLongRunning
 ```
 
 Poll with `GET /v1beta/{operation-name}`. See [native video integration](../../docs/protocol/spec/10-native-video.md) for billing, routing, ownership, and retry behavior.
+
+## Result delivery
+
+With `GEMINI_BASE_URL=https://generativelanguage.googleapis.com`, completed video URLs are rewritten by an updated buyer proxy into local download URLs. The seller retrieves the file using its private Gemini key after checking job ownership. Downloads are free and limited to 64 MiB. No public download server, cloud storage, or extra database is required.
+
+Fetch the returned `video.uri` directly, including when using the Gemini SDK for generation and polling. The Google JavaScript SDK's `files.download()` rebuilds a Google Files API path and does not handle these local HTTP URLs.
+
+```typescript
+const response = await fetch(video.uri);
+if (!response.ok) throw new Error(`Video download failed: ${response.status}`);
+```
+
+Seller-operated APIs that return their own hosted result URLs continue to work unchanged; those URLs must be accessible without seller credentials. Never share the seller's API key with buyers. See the protocol guide for timeouts, concurrency limits, and cancellation behavior.

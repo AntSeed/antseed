@@ -1,6 +1,8 @@
 export const ANTSEED_MODEL_CONTEXT_WINDOW = 280_000;
 export const ANTSEED_MODEL_MAX_OUTPUT_TOKENS = 8_192;
 
+export const NATIVE_VIDEO_PROTOCOLS = ['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video'] as const;
+
 export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'anthropic-messages',
   'openai-chat-completions',
@@ -8,16 +10,10 @@ export const WELL_KNOWN_SERVICE_API_PROTOCOLS = [
   'openai-responses',
   'openai-images',
   'typesafe-systemone',
-  'runway-video',
-  'veo-video',
-  'minimax-video',
-  'wan-video',
-  'seedance-video',
+  ...NATIVE_VIDEO_PROTOCOLS,
 ] as const;
 
 export type ServiceApiProtocol = (typeof WELL_KNOWN_SERVICE_API_PROTOCOLS)[number];
-
-export const NATIVE_VIDEO_PROTOCOLS = ['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video'] as const;
 
 export type NativeVideoProtocol = (typeof NATIVE_VIDEO_PROTOCOLS)[number];
 

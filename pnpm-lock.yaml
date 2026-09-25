@@ -921,6 +921,9 @@ importers:
 
   plugins/provider-veo:
     dependencies:
+      '@antseed/api-adapter':
+        specifier: workspace:*
+        version: link:../../packages/api-adapter
       '@antseed/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core

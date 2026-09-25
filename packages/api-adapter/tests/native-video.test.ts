@@ -1,8 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { nativeVideoRoute, nativeVideoAcceptance, nativeVideoFacts, nativeVideoResourceKey, requestService, detectRequestServiceApiProtocol, selectTargetProtocolForRequest, inferProviderDefaultServiceApiProtocols, isNativeVideoProtocol, NATIVE_VIDEO_PROTOCOLS } from '../src/index.js';
+import { veoDownloadPath, videoContentRange } from '../src/index.js';
 
 describe('native video API contracts', () => {
   const request = (path: string, body: object = {}, method = 'POST') => ({ requestId: 'request', method, path, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) });
+
+  it('routes downloads by the owned operation, not the upstream file URL', () => {
+    const path = veoDownloadPath('models/veo/operations/task', 0);
+    const download = request(path, {}, 'GET');
+    expect(nativeVideoRoute(download)).toEqual({ protocol: 'veo-video', action: 'download', resourceId: 'models/veo/operations/task', resultIndex: 0 });
+    expect(detectRequestServiceApiProtocol(download)).toBe('veo-video');
+    expect(nativeVideoFacts(download)).toEqual({ protocol: 'veo-video', action: 'download', count: 0 });
+    expect(nativeVideoRoute(request(path))).toBeNull();
+    for (const operation of ['../files/key', 'operations/%2e%2e', 'https://evil.test']) expect(() => veoDownloadPath(operation, 0)).toThrow();
+    expect(() => veoDownloadPath('operations/task', -1)).toThrow();
+    expect(videoContentRange('bytes 0-65535/100000')).toEqual({ start: 0, end: 65535, total: 100000 });
+    for (const range of ['bytes 3-2/10', 'bytes 0-10/10', 'bytes 0-1/*', 'bytes 0-1/999999999999999999']) expect(videoContentRange(range)).toBeNull();
+  });
 
   it('recognizes native paths and never translates into chat or another video API', () => {
     expect(detectRequestServiceApiProtocol(request('/v1/text_to_video'))).toBe('runway-video');

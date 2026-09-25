@@ -1,10 +1,28 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { prepareVideoRequest, recordVideoAcceptance, VIDEO_IDEMPOTENCY_KEY_HEADER } from './native-video-proxy.js'
+import { prepareVideoRequest, recordVideoAcceptance, rewriteVideoDownloadUrls, VIDEO_IDEMPOTENCY_KEY_HEADER } from './native-video-proxy.js'
 import { ResourceRoutes } from './resource-routes.js'
 
 const seller = 'a'.repeat(40)
 const response = (body: object) => ({ requestId: 'r', statusCode: 200, headers: {} as Record<string, string>, body: Buffer.from(JSON.stringify(body)) })
+
+test('Veo download URLs point to the local proxy without changing the signed upstream response', () => {
+  const route = { protocol: 'veo-video', action: 'status', resourceId: 'models/veo/operations/task' } as const
+  const uri = 'https://generativelanguage.googleapis.com/v1beta/files/file:download?alt=media'
+  const upstream = response({ done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri } }] } } })
+  upstream.headers['Content-Length'] = String(upstream.body.length)
+  const rewritten = rewriteVideoDownloadUrls(route, upstream, 'http://127.0.0.1:8377')
+  assert.equal(JSON.parse(Buffer.from(rewritten.body).toString()).response.generateVideoResponse.generatedSamples[0].video.uri, 'http://127.0.0.1:8377/v1beta/models/veo/operations/task/videos/0:download')
+  assert.equal(JSON.parse(upstream.body.toString()).response.generateVideoResponse.generatedSamples[0].video.uri, uri)
+  assert.equal(rewritten.headers['Content-Length'], undefined)
+  const hosted = response({ done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri: 'https://seller.test/video' } }] } } })
+  assert.equal(rewriteVideoDownloadUrls(route, hosted, 'http://127.0.0.1:8377'), hosted)
+  const routes = new ResourceRoutes()
+  routes.record({ protocol: 'veo-video', resourceId: route.resourceId, sellerPeerId: seller, provider: 'veo', service: 'veo' })
+  const restarted = new ResourceRoutes()
+  restarted.hydrate(routes.snapshot())
+  assert.deepEqual(prepareVideoRequest({ ...route, action: 'download', resultIndex: 0 }, {}, restarted), { headers: { 'x-antseed-pin-peer': seller, 'x-antseed-provider': 'veo', 'x-antseed-service': 'veo' } })
+})
 
 test('video creates reuse a valid client idempotency key, generate one otherwise, and reject malformed keys', () => {
   const routes = new ResourceRoutes()

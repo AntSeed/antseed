@@ -132,6 +132,34 @@ it('meters native video acceptance once, preserves buyer ownership, and serves f
 });
 
 describe('native video job ownership and idempotency', () => {
+  it('authorizes Veo downloads against the operation owner without charging for bytes', async () => {
+    const provider = makeProvider(0, 0, {
+      name: 'veo', services: ['veo'], serviceApiProtocols: { veo: ['veo-video'] },
+      serviceUnitBillingModels: { veo: { 'veo-video': { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1 }] } } },
+    });
+    provider.handleRequest = vi.fn(async request => ({ requestId: request.requestId, statusCode: 206, headers: { 'content-type': 'video/mp4' }, body: Buffer.from('video') }));
+    const dbPath = join(mkdtempSync(join(tmpdir(), 'antseed-video-download-')), 'resources.db');
+    let store = new ResourceOwnershipStore(dbPath);
+    store.recordAcceptedCreate('veo-video', 'operations/job', 'b'.repeat(40));
+    store.close();
+    store = new ResourceOwnershipStore(dbPath);
+    const recordSpend = vi.fn();
+    const handler = makeSellerRequestHandler({ providers: [provider], sellerPaymentManager: makeSpmMock({ recordSpend, hasSession: () => false }), channelsClient: {} as any, sessionTracker: null, announcer: null, emit: () => false, resourceOwnershipStore: store });
+    try {
+      for (const buyer of ['b'.repeat(40), 'c'.repeat(40)]) {
+        const frames: Uint8Array[] = [];
+        const payment = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any;
+        const { mux } = handler.handleConnection(makeConn(frames), buyer, payment);
+        const request = { requestId: buyer, method: 'GET', path: '/v1beta/models/veo/operations/job/videos/0:download', headers: { 'x-antseed-service': 'veo', range: 'bytes=0-65535' }, body: new Uint8Array() };
+        await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest(request) });
+        expect(decodeHttpResponse(decodeFrame(frames.at(-1)!)!.message.payload).statusCode).toBe(buyer.startsWith('b') ? 206 : 404);
+        expect(payment.sendNeedAuth).not.toHaveBeenCalled();
+        expect(payment.sendPaymentRequired).not.toHaveBeenCalled();
+      }
+      expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+      expect(recordSpend).not.toHaveBeenCalled();
+    } finally { store.close(); }
+  });
   const buyer = 'b'.repeat(40);
   const other = 'c'.repeat(40);
   const pricing = { version: 1 as const, components: [{ unit: 'video_seconds' as const, priceUsd: 0.1 }] };
@@ -215,6 +243,75 @@ describe('native video job ownership and idempotency', () => {
     expect((await create(buyer, { 'x-antseed-idempotency-key': 'bad key!' })).statusCode).toBe(400);
     expect(provider.handleRequest).not.toHaveBeenCalled();
     store.close();
+  });
+
+  it('replays accepted creates after a seller restart without another upstream request or charge', async () => {
+    const key = { 'x-antseed-idempotency-key': 'restart-key' };
+    const first = setup();
+    const original = await first.create(buyer, key);
+    first.store.close();
+    const restarted = setup(first.dbPath);
+    try {
+      const replay = await restarted.create(buyer, key);
+      expect(replay.statusCode).toBe(200);
+      expect(replay.body).toEqual(original.body);
+      expect(replay.headers['x-antseed-idempotent-replay']).toBe('true');
+      expect(restarted.provider.handleRequest).not.toHaveBeenCalled();
+      expect(restarted.recordSpend).not.toHaveBeenCalled();
+      expect(restarted.payment.sendNeedAuth).not.toHaveBeenCalled();
+    } finally {
+      restarted.store.close();
+    }
+  });
+
+  it('rejects an in-flight duplicate and replays it once the original create is accepted', async () => {
+    const { provider, recordSpend, create, store } = setup();
+    const key = { 'x-antseed-idempotency-key': 'concurrent-key' };
+    let releaseCreate!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
+    const pending = new Promise<void>(resolve => { releaseCreate = resolve; });
+    provider.handleRequest = vi.fn(async request => {
+      markStarted();
+      await pending;
+      return { requestId: request.requestId, statusCode: 200, headers: {}, body: Buffer.from('{"id":"task-1"}') };
+    });
+    const original = create(buyer, key);
+    try {
+      await started;
+      const duplicate = await create(buyer, key);
+      expect(duplicate.statusCode).toBe(409);
+      expect(JSON.parse(new TextDecoder().decode(duplicate.body)).error.code).toBe('idempotency_in_progress');
+      expect(recordSpend).not.toHaveBeenCalled();
+      releaseCreate();
+      expect((await original).statusCode).toBe(200);
+      const replay = await create(buyer, key);
+      expect(replay.statusCode).toBe(200);
+      expect(replay.headers['x-antseed-idempotent-replay']).toBe('true');
+      expect(provider.handleRequest).toHaveBeenCalledTimes(1);
+      expect(recordSpend).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseCreate();
+      await original;
+      store.close();
+    }
+  });
+
+  it('does not charge or remember upstream rejections as accepted jobs', async () => {
+    const { provider, recordSpend, create, store } = setup();
+    const key = { 'x-antseed-idempotency-key': 'rejected-key' };
+    provider.handleRequest = vi.fn(async request => ({
+      requestId: request.requestId, statusCode: 400, headers: {}, body: Buffer.from('{"error":{"message":"Invalid parameters"}}'),
+    }));
+    try {
+      expect((await create(buyer, key)).statusCode).toBe(400);
+      expect((await create(buyer, key)).statusCode).toBe(400);
+      expect(provider.handleRequest).toHaveBeenCalledTimes(2);
+      expect(recordSpend.mock.calls.every(([, amount]) => amount === 0n)).toBe(true);
+      expect(store.getReplay(buyer, 'runway-video', 'rejected-key')).toBeNull();
+    } finally {
+      store.close();
+    }
   });
 
   it('refuses video when ownership storage is unavailable', async () => {

@@ -5,9 +5,10 @@ export type { NativeVideoProtocol };
 
 export interface NativeVideoRoute {
   protocol: NativeVideoProtocol;
-  action: 'create' | 'status' | 'cancel';
+  action: 'create' | 'status' | 'cancel' | 'download';
   resourceId?: string;
   model?: string;
+  resultIndex?: number;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -43,6 +44,24 @@ const ID = '[A-Za-z0-9_-]+';
 const SIMPLE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 const VEO_OPERATION = new RegExp(`^(?:models/[A-Za-z0-9._-]+/)?operations/${ID}$`);
 const FAILED_STATUSES = ['FAILED', 'CANCELLED', 'CANCELED'];
+export const VIDEO_DOWNLOAD_CHUNK_BYTES = 64 * 1024;
+export const VIDEO_DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024;
+const VEO_DOWNLOAD = new RegExp(`^/v1beta/((?:models/[A-Za-z0-9._-]+/)?operations/${ID})/videos/([0-9]{1,3}):download$`);
+
+export function veoDownloadPath(operation: string, resultIndex: number): string {
+  if (!VEO_OPERATION.test(operation) || !Number.isInteger(resultIndex) || resultIndex < 0 || resultIndex > 999) {
+    throw new Error('Invalid video download');
+  }
+  return `/v1beta/${operation}/videos/${resultIndex}:download`;
+}
+
+export function videoContentRange(value: string | undefined): { start: number; end: number; total: number } | null {
+  const match = /^bytes ([0-9]+)-([0-9]+)\/([0-9]+)$/.exec(value ?? '');
+  if (!match) return null;
+  const [start, end, total] = match.slice(1).map(Number) as [number, number, number];
+  if (![start, end, total].every(Number.isSafeInteger) || start > end || end >= total || total > VIDEO_DOWNLOAD_MAX_BYTES) return null;
+  return { start, end, total };
+}
 
 function object(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
@@ -109,6 +128,8 @@ function api(protocol: NativeVideoProtocol): NativeVideoApi {
 
 export function nativeVideoRoute(request: Pick<SerializedHttpRequest, 'path' | 'method'>): NativeVideoRoute | null {
   const path = request.path.split('?')[0] ?? '';
+  const download = request.method === 'GET' ? VEO_DOWNLOAD.exec(path) : null;
+  if (download) return { protocol: 'veo-video', action: 'download', resourceId: download[1]!, resultIndex: Number(download[2]) };
   for (const entry of NATIVE_VIDEO_APIS) {
     const create = request.method === 'POST' ? entry.createPaths.exec(path) : null;
     if (create) return { protocol: entry.protocol, action: 'create', ...(create[1] ? { model: create[1] } : {}) };

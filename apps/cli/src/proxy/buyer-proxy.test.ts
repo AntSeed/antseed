@@ -1499,6 +1499,19 @@ test('model-only routing does not fail over after a buyer-attributed failure', a
   assert.equal(JSON.parse(res.body).error.code, ANTSEED_BUYER_FAULT_ERROR_CODE)
 })
 
+test('video validation and buyer budget failures return client errors without penalizing sellers', async () => {
+  for (const [code, status] of [['invalid-request', 400], ['buyer-budget-too-low', 422]] as const) {
+    const peer = makePeer('a', ['veo'])
+    peer.providerServiceApiProtocols = { veo: { services: { veo: ['veo-video'] } } }
+    const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+    ;(proxy as any)._node.sendRequest = async () => { throw buyerFault('Invalid video request', code) }
+    const result = await invokeProxy(proxy, makeProxyRequest({ path: '/v1beta/models/veo:predictLongRunning', body: { instances: [{ prompt: 'boat' }] } }))
+    assert.equal(result.statusCode, status)
+    assert.equal(JSON.parse(result.body).error.code, ANTSEED_BUYER_FAULT_ERROR_CODE)
+    assert.equal((proxy as any)._peerHealth.get(peer.peerId)?.failureStreak ?? 0, 0)
+  }
+})
+
 test('pinned proxy request reports when the pinned peer is not discoverable', async () => {
   const pinnedPeerId = 'a'.repeat(40)
   const otherPeer = makePeer('b', ['openai'])

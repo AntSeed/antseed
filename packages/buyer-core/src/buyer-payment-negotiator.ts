@@ -32,6 +32,7 @@ import { parseResponseUsage } from './response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '@antseed/protocol/json-codec';
+import { nativeVideoRoute } from '@antseed/api-adapter';
 import type { UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
@@ -269,17 +270,22 @@ export class BuyerPaymentNegotiator {
     route: SelectedBillingRoute | null,
   ): void {
     if (route) {
-      const captured = captureUnitBillingContext({
-        sellerPeerId: route.sellerPeerId,
-        provider: route.provider,
-        service: route.service,
-        serviceApiProtocol: route.serviceApiProtocol,
-        request,
-      });
-      if (captured.requestFacts.video && route.unitModel) {
-        const estimatedCost = estimateUnitRequestCost(route.unitModel, captured);
-        if (estimatedCost > this._bpm.maxPerRequestUsdc) throw new Error('Video request exceeds maxPerRequestUsdc');
+      let captured;
+      let estimatedCost = 0n;
+      try {
+        captured = captureUnitBillingContext({
+          sellerPeerId: route.sellerPeerId,
+          provider: route.provider,
+          service: route.service,
+          serviceApiProtocol: route.serviceApiProtocol,
+          request,
+        });
+        if (captured.requestFacts.video && route.unitModel) estimatedCost = estimateUnitRequestCost(route.unitModel, captured);
+      } catch (cause) {
+        if (!nativeVideoRoute(request)) throw cause;
+        throw buyerFault(cause instanceof Error ? cause.message : 'Invalid video request', 'invalid-request', { cause });
       }
+      if (estimatedCost > this._bpm.maxPerRequestUsdc) throw buyerFault('Video request exceeds maxPerRequestUsdc', 'buyer-budget-too-low');
       this._bpm.trackRequestBilling(request.requestId, {
         context: captured.context,
         requestFacts: captured.requestFacts,

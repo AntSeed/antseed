@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { nativeVideoAcceptance, type NativeVideoRoute, type SerializedHttpResponse } from '@antseed/api-adapter'
+import { nativeVideoAcceptance, veoDownloadPath, type NativeVideoRoute, type SerializedHttpResponse } from '@antseed/api-adapter'
 import type { ResourceRoutes } from './resource-routes.js'
 
 // Video creates are charged when the seller accepts the job. If that acceptance
@@ -67,4 +67,28 @@ export function recordVideoAcceptance(
   if (!resourceId || !seller.service) return false
   routes.record({ protocol: route.protocol, resourceId, sellerPeerId: seller.peerId.toLowerCase(), provider: seller.provider, service: seller.service })
   return true
+}
+
+export function rewriteVideoDownloadUrls(
+  route: NativeVideoRoute,
+  response: SerializedHttpResponse,
+  localOrigin: string,
+): SerializedHttpResponse {
+  if (route.protocol !== 'veo-video' || route.action !== 'status' || response.statusCode !== 200) return response
+  let body
+  try { body = JSON.parse(Buffer.from(response.body).toString()) } catch { return response }
+  const samples = body?.response?.generateVideoResponse?.generatedSamples
+  if (body?.done !== true || body.error || !Array.isArray(samples)) return response
+  let changed = false
+  for (const [index, sample] of samples.entries()) {
+    if (index > 999 || typeof sample?.video?.uri !== 'string') continue
+    let url
+    try { url = new URL(sample.video.uri) } catch { continue }
+    if (url.origin !== 'https://generativelanguage.googleapis.com' || !/^\/v1beta\/files\/[A-Za-z0-9_-]+:download$/.test(url.pathname)) continue
+    sample.video.uri = new URL(veoDownloadPath(route.resourceId!, index), localOrigin).href
+    changed = true
+  }
+  if (!changed) return response
+  const headers = Object.fromEntries(Object.entries(response.headers).filter(([key]) => !['content-length', 'content-encoding', 'etag', 'digest', 'content-md5'].includes(key.toLowerCase())))
+  return { ...response, headers, body: Buffer.from(JSON.stringify(body)) }
 }

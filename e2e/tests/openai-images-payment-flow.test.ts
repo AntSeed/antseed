@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import OpenAI from 'openai';
 import { createServer as createNetServer } from 'node:net';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -12,6 +12,7 @@ import type { NodePaymentsConfig, PeerInfo, Provider } from '@antseed/node';
 import { createNativeVideoProvider } from '@antseed/provider-core';
 import { createLocalBootstrap } from './helpers/local-bootstrap.js';
 import { MockOpenAIImageProvider } from './helpers/mock-openai-provider.js';
+import veoPlugin from '../../plugins/provider-veo/src/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -223,12 +224,12 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
   let rpcUrl = '';
 
   beforeAll(async () => {
-    tempHomeDir = await mkdtemp(join(tmpdir(), 'antseed-home-'));
-    process.env['HOME'] = tempHomeDir;
-    process.env['USERPROFILE'] = tempHomeDir;
     await execFileAsync('pnpm', ['--filter', '@antseed/node', 'build'], {
       cwd: join(import.meta.dirname, '..', '..'),
     });
+    tempHomeDir = await mkdtemp(join(tmpdir(), 'antseed-home-'));
+    process.env['HOME'] = tempHomeDir;
+    process.env['USERPROFILE'] = tempHomeDir;
   });
 
   afterEach(async () => {
@@ -305,6 +306,62 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
 
     return { provider: imageProvider, port, discoveredSeller: discoveredSeller! };
   }
+
+  it.each(['tcp-encrypted', 'webrtc'] as const)('downloads a completed Gemini video over %s without exposing seller credentials or charging twice', async transport => {
+    await setupRpc();
+    const originalFetch = globalThis.fetch;
+    const video = Buffer.alloc(180_000, 42);
+    const origin = 'https://generativelanguage.googleapis.com';
+    const operation = 'models/veo/operations/job';
+    let submissions = 0;
+    let ranges = 0;
+    vi.stubGlobal('fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith(`${origin}/`)) return originalFetch(input, init);
+      expect(new Headers(init?.headers).get('x-goog-api-key')).toBe('seller-secret');
+      if (init?.method === 'POST') {
+        submissions += 1;
+        return Response.json({ name: operation });
+      }
+      if (url === `${origin}/v1beta/${operation}`) return Response.json({ name: operation, done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri: `${origin}/v1beta/files/file:download?alt=media` } }] } } });
+      expect(url).toBe(`${origin}/v1beta/files/file:download?alt=media`);
+      ranges += 1;
+      const range = new Headers(init?.headers).get('range')!.slice(6).split('-').map(Number);
+      const start = range[0]!;
+      const end = Math.min(range[1]!, video.length - 1);
+      return new Response(video.subarray(start, end + 1), { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': `bytes ${start}-${end}/${video.length}` } });
+    });
+    try {
+      const provider = await veoPlugin.createProvider({ GEMINI_BASE_URL: origin, GEMINI_API_KEY: 'seller-secret', ANTSEED_ALLOWED_SERVICES: 'veo', ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: '{"veo":{"veo-video":{"version":1,"components":[{"unit":"video_seconds","priceUsd":0.01}]}}}' });
+      const { port, discoveredSeller } = await setupProxyNetwork(provider);
+      const manager = (buyerNode as any)._connectionManager;
+      if (transport === 'webrtc') {
+        expect(manager._transportMode).toBe('webrtc');
+        const createConnection = manager.createConnection.bind(manager);
+        manager.createConnection = (config: any) => createConnection({ ...config, remoteCapabilities: config.remoteCapabilities.filter((capability: string) => capability !== 'transport.tcp-enc.v1') });
+      }
+      const base = `http://127.0.0.1:${port}`;
+      const created = await fetch(`${base}/v1beta/models/veo:predictLongRunning`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ instances: [{ prompt: 'boat' }], parameters: { durationSeconds: 4 } }) });
+      expect(created.status).toBe(200);
+      expect((await created.json()).name).toBe(operation);
+      const poll = await fetch(`${base}/v1beta/${operation}`);
+      const status = await poll.json();
+      const uri = status.response.generateVideoResponse.generatedSamples[0].video.uri;
+      expect(uri).toBe(`${base}/v1beta/${operation}/videos/0:download`);
+      expect(JSON.stringify(status)).not.toContain('seller-secret');
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const download = await fetch(uri);
+        expect(download.status).toBe(200);
+        expect(download.headers.get('content-type')).toBe('video/mp4');
+        expect(Buffer.from(await download.arrayBuffer())).toEqual(video);
+      }
+      expect(ranges).toBe(6);
+      expect(submissions).toBe(1);
+      expect(manager.getConnection(discoveredSeller.peerId).transportDescription).toBe(transport);
+      expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(40_000n);
+      expect((await fetch(`${base}/v1beta/operations/unknown/videos/0:download`)).status).toBe(404);
+    } finally { vi.unstubAllGlobals(); }
+  }, 60_000);
 
   it('negotiates payment and records image usage for images.generate', async () => {
     await setupRpc();

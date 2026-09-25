@@ -1,6 +1,7 @@
 import { nativeVideoRoute } from '@antseed/api-adapter'
 import { ResourceRoutes } from './resource-routes.js'
-import { prepareVideoRequest, recordVideoAcceptance } from './native-video-proxy.js'
+import { prepareVideoRequest, recordVideoAcceptance, rewriteVideoDownloadUrls } from './native-video-proxy.js'
+import { downloadVideo } from './video-download.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
@@ -3117,6 +3118,10 @@ export class BuyerProxy {
 
     // Forward through P2P
     const wantsStreaming = clientWantsStreaming && !nativeVideoRoute(requestForPeer)
+    if (nativeVideoRoute(requestForPeer)?.action === 'download') {
+      await downloadVideo(requestForPeer, res, (request, signal) => this._node.sendRequest(selectedPeer, request, { signal, pinned: true }), requestSignal)
+      return { done: true }
+    }
     const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, peerResponseProtocol, { pinned })
@@ -3261,7 +3266,10 @@ export class BuyerProxy {
         )) {
           await this._persistResourceRoutes().catch(error => console.error('[proxy] Accepted video route was not persisted:', error))
         }
-        let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        const address = this._server?.address()
+        const port = typeof address === 'object' && address ? address.port : this._port
+        const videoResponse = videoRoute ? rewriteVideoDownloadUrls(videoRoute, upstreamResponse, `http://127.0.0.1:${port}`) : upstreamResponse
+        let response = adaptBuyerFaultErrorResponse(videoResponse, requestProtocol)
         response = adaptPeerResponse(response)
         if (
           adaptResponse
@@ -3384,7 +3392,7 @@ export class BuyerProxy {
       if (fault === 'buyer') {
         const buyerResponse = adaptBuyerFaultErrorResponse({
           requestId: requestForPeer.requestId,
-          statusCode: 503,
+          statusCode: faultCode === 'invalid-request' ? 400 : faultCode === 'buyer-budget-too-low' ? 422 : 503,
           headers: {
             'content-type': 'application/json',
             [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',

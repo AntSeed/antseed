@@ -140,6 +140,15 @@ describe('BuyerPaymentNegotiator', () => {
       })).toThrow('maxPerRequestUsdc');
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
     });
+    it('attributes malformed video quantities to the buyer', () => {
+      const request: SerializedHttpRequest = { requestId: 'video-invalid', method: 'POST', path: '/v1/text_to_video', headers: { 'content-type': 'application/json' }, body: enc.encode(JSON.stringify({ model: 'gen4.5', duration: -1 })) };
+      try {
+        negotiator.trackRequestBillingContext(request, 'gen4.5', { sellerPeerId: SELLER_PEER_ID, provider: 'runway', service: 'gen4.5', serviceApiProtocol: 'runway-video', unitModel: { version: 1, components: [{ unit: 'video_seconds', priceUsd: 0.1 }] } });
+        expect.fail('Expected invalid request');
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'invalid-request', attribution: 'buyer' });
+      }
+    });
     it('no-ops when peer is not locked', async () => {
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
