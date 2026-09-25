@@ -6,6 +6,8 @@
 
 .page-header {
   container: chat-header / inline-size;
+  position: relative;
+  z-index: 20;
   background: var(--chat-header-bg);
   padding: 6px 16px;
   min-height: 49px;
@@ -100,7 +102,7 @@
 
 .page-header-right {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
