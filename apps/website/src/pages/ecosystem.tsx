@@ -15,7 +15,7 @@ type EcosystemProject = {
   color: string;
   colorSoft: string;
   logo?: string;
-  theme: 'stats' | 'scan' | 'diem';
+  theme: 'stats' | 'scan' | 'diem' | 'market';
 };
 
 type Resource = {
@@ -47,6 +47,19 @@ const resources: Resource[] = [
 ];
 
 const projects: EcosystemProject[] = [
+  {
+    name: 'antseedmarkets',
+    href: 'https://antseedmarkets.com',
+    category: 'lANTS marketplace',
+    oneLiner: "Trade lANTS with 0 fees, built on OpenSea's Seaport, Opensourced since day 1.",
+    description:
+      'Trade staked ANTS NFTs through a Seaport-based marketplace. Staked ANTS go to the buyer with specific terms such as locked period and staked Antseed seller.',
+    glyph: 'AM',
+    status: 'Live',
+    color: '#22c55e',
+    colorSoft: 'rgba(34, 197, 94, 0.2)',
+    theme: 'market',
+  },
   {
     name: 'Diem Antseed',
     href: 'https://diemantseed.com',
@@ -126,6 +139,23 @@ function ResourceCard({resource}: {resource: Resource}) {
 }
 
 function ProductPreview({project}: {project: EcosystemProject}) {
+  if (project.theme === 'market') {
+    return (
+      <div className={`${styles.preview} ${styles.previewMarket}`}>
+        <div className={styles.previewTop}><span>antseedmarkets</span><i>Seaport</i></div>
+        <div className={styles.marketNft}>
+          <small>lANTS NFT</small>
+          <strong>Staking positions</strong>
+          <em>Listed through Seaport</em>
+        </div>
+        <div className={styles.marketRows}>
+          <span><b>Listed</b><em>OpenSea stack</em></span>
+          <span><b>Pool</b><em>Provider stake</em></span>
+        </div>
+      </div>
+    );
+  }
+
   if (project.theme === 'stats') {
     return (
       <div className={`${styles.preview} ${styles.previewStats}`}>
