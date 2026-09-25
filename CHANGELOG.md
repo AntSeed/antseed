@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop AI VPN: give the chat model selector spare header width instead of reserving it for the right-side controls, so model names are not truncated when there is room.
 - Desktop AI VPN: add integrated copy-link buttons beside Claim rewards and Manage staking so the authenticated dashboard can be opened in another browser on the same computer. Keep open and copy actions independent, explain how to reopen expired dashboard sessions, and remove the Network rewards card from Profile while retaining the dedicated Rewards page.
 - ANTS dashboard: keep seller loading states visible through bounded explorer recovery, retain previously loaded sellers while updating, and offer retry only after recovery fails. Distinguish partial own-pool results from a complete seller list and avoid caching temporary fallback results as fresh.
 - Desktop AI VPN: replace Help in the sidebar with a Rewards tab for ANTS claims and staking, using a solid brand ant inside an outlined circle. Add Help under Profile while keeping its credit balance, usage statistics, payment channels, and wallet controls unchanged.
