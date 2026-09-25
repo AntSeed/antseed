@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  completedRequestBillingModel, evaluateUnitBilling, parseMicroUsdc,
+  completedRequestPrice, evaluateUnitBilling, parseMicroUsdc,
   unitUsageFromReport, unitUsageToBillingReport,
   validateUnitBillingModelV1, validateUnitBillingUsage, validateUnitBillingUsageReportV1,
   type UnitBillingContext, type UnitBillingModelV1, type UnitBillingUsageReportV1,
@@ -13,7 +13,8 @@ const context: UnitBillingContext = {
 
 describe('shared unit billing', () => {
   it.each(['0', '1', '1000', '40000'])('computes %s micro-USDC exactly', price => {
-    const model = completedRequestBillingModel(price);
+    const model: UnitBillingModelV1 = { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(price) / 1_000_000 }] };
+    expect(completedRequestPrice(model)).toBe(BigInt(price));
     expect(evaluateUnitBilling(model, context, { units: { completed_requests: 1 } })).toBe(BigInt(price));
     expect(evaluateUnitBilling(model, context, { units: { completed_requests: 0 } })).toBe(0n);
   });
@@ -36,8 +37,8 @@ describe('shared unit billing', () => {
     expect(() => unitUsageFromReport(report as UnitBillingUsageReportV1)).toThrow();
   });
   it('rejects request prices that change charge after metadata encoding', () => {
-    expect(() => completedRequestBillingModel('16777217')).toThrow('float32');
-    expect(() => completedRequestBillingModel('9007199254740991')).toThrow('float32');
+    expect(() => completedRequestPrice({ version: 1, components: [{ unit: 'completed_requests', priceUsd: 16777217 / 1_000_000 }] })).toThrow('float32');
+    expect(() => completedRequestPrice({ version: 1, components: [{ unit: 'completed_requests', priceUsd: 9007199254740991 / 1_000_000 }] })).toThrow('float32');
   });
   it('rejects mixed units and request matching rules', () => {
     const component = { unit: 'completed_requests' as const, priceUsd: 0.001 };
@@ -45,7 +46,7 @@ describe('shared unit billing', () => {
     expect(validateUnitBillingModelV1({ version: 1, components: [{ ...component, match: { model: 'route' } }] })).not.toEqual([]);
   });
   it('enforces observed usage, request limits, report version and exact price', () => {
-    const model = completedRequestBillingModel('1000');
+    const model = { version: 1 as const, components: [{ unit: 'completed_requests' as const, priceUsd: 0.001 }] };
     const usage = { units: { completed_requests: 1 } };
     const report = unitUsageToBillingReport(usage);
     expect(validateUnitBillingUsage(model, context, report, 1000n, 1.4, usage)).toBe(1000n);

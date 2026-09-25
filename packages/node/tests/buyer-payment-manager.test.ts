@@ -134,7 +134,7 @@ describe('BuyerPaymentManager', () => {
 
   // ── authorizeSpending ──────────────────────────────────────────
   describe('completed-request responses', () => {
-    const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
+    const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, unitModel: { version: 1 as const, components: [{ unit: 'completed_requests' as const, priceUsd: 0.001 }] } };
     const peer = 'a'.repeat(40);
     async function open() {
       const channelId = await manager.authorizeSpending(peer, mux, 1000n, TEST_PRICING);
@@ -163,7 +163,7 @@ describe('BuyerPaymentManager', () => {
         manager.observeUnitResponse(peer, 'rejected', false);
         manager.observeUnitResponse(peer, 'authorized', true);
         await manager.authorizeUnitResponse(peer, 'authorized', mux);
-        manager.trackUnitRequest(peer, 'free', { ...offer, priceMicroUsdc: '0' });
+        manager.trackUnitRequest(peer, 'free', { ...offer, unitModel: { version: 1, components: [{ unit: 'completed_requests', priceUsd: 0 }] } });
         manager.observeUnitResponse(peer, 'free', true);
         manager.trackRequestBilling('image', {
           context: { sellerPeerId: peer, provider: 'images', service: 'image' }, requestFacts: {},
@@ -200,7 +200,7 @@ describe('BuyerPaymentManager', () => {
     });
     it('enforces the local fee budget and prevents token-path double charging', async () => {
       await open();
-      expect(() => manager.trackUnitRequest(peer, 'expensive', { ...offer, priceMicroUsdc: '100001' })).toThrow('budget');
+      expect(() => manager.trackUnitRequest(peer, 'expensive', { ...offer, unitModel: { version: 1, components: [{ unit: 'completed_requests', priceUsd: 0.100001 }] } })).toThrow('budget');
       manager.trackUnitRequest(peer, 'fixed', offer);
       await expect(manager.signPerRequestAuth(peer, { requestId: 'fixed', inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT })).rejects.toThrow('validated response');
     });
@@ -215,9 +215,12 @@ describe('BuyerPaymentManager', () => {
     });
     it('snapshots the fee and signs it once across concurrent duplicate paths', async () => {
       const channelId = await open();
-      const mutable = { ...offer };
+      const mutable = structuredClone(offer);
+      mutable.unitModel.components[0]!.priceUsd = Math.fround(0.001);
       manager.trackUnitRequest(peer, 'fixed', mutable);
-      mutable.priceMicroUsdc = '9000';
+      expect(manager.getRequestBilling('fixed')?.unitModel).toEqual(mutable.unitModel);
+      mutable.unitModel.components[0]!.priceUsd = 0.009;
+      expect(manager.getRequestBilling('fixed')?.unitModel?.components[0]?.priceUsd).toBe(Math.fround(0.001));
       manager.observeUnitResponse(peer, 'fixed', true);
       await Promise.all([
         manager.authorizeUnitResponse(peer, 'fixed', mux),

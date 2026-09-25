@@ -36,7 +36,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
-import { parseMicroUsdc } from '@antseed/protocol/service-billing';
+import { completedRequestPrice } from '@antseed/protocol/billing';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -234,11 +234,12 @@ export class SellerRequestHandler {
 
       const service = this._extractRequestedService(request)!;
       const unitBilling = completedRequestOffer(provider, service);
+      const unitPrice = unitBilling ? completedRequestPrice(unitBilling.unitModel) : undefined;
       try {
-        if (unitBilling) {
+        if (unitPrice !== undefined) {
           if (request.method !== 'POST'
             || this._extractRequestedProvider(request) !== provider.name.toLowerCase()) throw new Error('Completed-request POST and matching provider required');
-          if (parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
+          if (unitPrice > 0n && (!this._deps.sellerPaymentManager || !this._deps.channelsClient)) throw new Error('Seller payments unavailable');
         }
       } catch (error) {
         mux.sendProxyResponse({ requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' },
@@ -250,7 +251,7 @@ export class SellerRequestHandler {
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
         : undefined;
-      const isFreeService = unitBilling ? parseMicroUsdc(unitBilling.priceMicroUsdc) === 0n : isZeroTokenPricing(requestPricing)
+      const isFreeService = unitPrice !== undefined ? unitPrice === 0n : isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
       // Reject with 402 if no active payment session and channels client is configured.
@@ -266,9 +267,9 @@ export class SellerRequestHandler {
             request.requestId, buyerPeerId, requestPricing,
           );
           if (requirements) {
-            if (unitBilling) {
-              requirements.minBudgetPerRequest = unitBilling.priceMicroUsdc;
-              if (BigInt(requirements.suggestedAmount) < parseMicroUsdc(unitBilling.priceMicroUsdc)) requirements.suggestedAmount = unitBilling.priceMicroUsdc;
+            if (unitPrice !== undefined) {
+              requirements.minBudgetPerRequest = unitPrice.toString();
+              if (BigInt(requirements.suggestedAmount) < unitPrice) requirements.suggestedAmount = unitPrice.toString();
             }
             debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
             const paymentBody = JSON.stringify({

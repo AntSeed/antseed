@@ -1,33 +1,33 @@
 import type { ProviderAnnouncement } from './peer-metadata.js';
 import { isKnownServiceApiProtocol, type ServiceApiProtocol } from './service-api.js';
-import { isCompletedRequestBillingModel, usdToMicroUsdc, validateUnitBillingModelV1, type ServiceUnitBillingModelsV1 } from './billing.js';
-export { parseMicroUsdc } from './billing.js';
+import { completedRequestPrice, type UnitBillingModelV1, type ServiceUnitBillingModelsV1 } from './billing.js';
+export { completedRequestPrice, parseMicroUsdc } from './billing.js';
 
 export interface ServiceBillingOffer {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  priceMicroUsdc: string;
+  unitModel: UnitBillingModelV1;
 }
 
-export function resolveCompletedRequestPrice(
+export function resolveCompletedRequestBilling(
   models: ServiceUnitBillingModelsV1[string] | undefined,
-): Pick<ServiceBillingOffer, 'serviceApiProtocol' | 'priceMicroUsdc'> {
-  let price: Pick<ServiceBillingOffer, 'serviceApiProtocol' | 'priceMicroUsdc'> | undefined;
+): Pick<ServiceBillingOffer, 'serviceApiProtocol' | 'unitModel'> {
+  let billing: Pick<ServiceBillingOffer, 'serviceApiProtocol' | 'unitModel'> | undefined;
+  let price: bigint | undefined;
   for (const [serviceApiProtocol, model] of Object.entries(models ?? {})) {
-    if (!isKnownServiceApiProtocol(serviceApiProtocol) || !model || !isCompletedRequestBillingModel(model)) {
+    if (!isKnownServiceApiProtocol(serviceApiProtocol) || !model) {
       throw new Error('Invalid completed-request billing model');
     }
-    const errors = validateUnitBillingModelV1(model);
-    if (errors.length) throw new Error(errors.join('; '));
-    const priceMicroUsdc = usdToMicroUsdc(model.components[0]!.priceUsd).toString();
-    if (price && price.priceMicroUsdc !== priceMicroUsdc) {
+    const modelPrice = completedRequestPrice(model);
+    if (price !== undefined && price !== modelPrice) {
       throw new Error('Ambiguous completed-request price; all API protocols must use the same unit price');
     }
-    price ??= { serviceApiProtocol, priceMicroUsdc };
+    price = modelPrice;
+    billing ??= { serviceApiProtocol, unitModel: model };
   }
-  if (!price) throw new Error('Missing completed-request billing model');
-  return price;
+  if (!billing) throw new Error('Missing completed-request billing model');
+  return billing;
 }
 
 export function resolveServiceBillingOffer(
@@ -39,7 +39,7 @@ export function resolveServiceBillingOffer(
   if (matches.length !== 1) throw new Error('Missing or ambiguous signed completed-request offer');
   const announcement = matches[0]!;
   const models = announcement.serviceUnitBillingModels?.[service];
-  const price = resolveCompletedRequestPrice(models);
+  const billing = resolveCompletedRequestBilling(models);
   for (const protocol of Object.keys(models ?? {})) {
     if (!announcement.serviceApiProtocols?.[service]?.includes(protocol as ServiceApiProtocol)) {
       throw new Error('Invalid completed-request billing model');
@@ -48,5 +48,5 @@ export function resolveServiceBillingOffer(
   if (announcement.serviceApiProtocols?.[service]?.some(protocol => !models?.[protocol])) {
     throw new Error('Missing completed-request billing model');
   }
-  return { provider, service, ...price };
+  return { provider, service, ...billing };
 }

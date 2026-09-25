@@ -37,12 +37,11 @@ export function parseMicroUsdc(value: string): bigint {
   return BigInt(value);
 }
 
-export function completedRequestBillingModel(priceMicroUsdc: string): UnitBillingModelV1 {
-  const priceUsd = Number(parseMicroUsdc(priceMicroUsdc)) / 1_000_000;
-  const model: UnitBillingModelV1 = { version: 1, components: [{ unit: 'completed_requests', priceUsd }] };
+export function completedRequestPrice(model: UnitBillingModelV1): bigint {
+  if (!isCompletedRequestBillingModel(model)) throw new Error('Invalid completed-request billing model');
   const errors = validateUnitBillingModelV1(model);
   if (errors.length) throw new Error(errors.join('; '));
-  return model;
+  return usdToMicroUsdc(model.components[0]!.priceUsd);
 }
 
 export type ServiceUnitBillingModelsV1 = Record<

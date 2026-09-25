@@ -39,10 +39,10 @@ import {
 } from './pricing.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
-import { completedRequestBillingModel, evaluateUnitBilling, isCompletedRequestBillingModel, isFreeUnitBillingModel, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { completedRequestPrice, evaluateUnitBilling, isCompletedRequestBillingModel, isFreeUnitBillingModel, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { completedRequestUsage } from './unit-billing.js';
 import { buyerFault, faultCodeOf } from './errors.js';
-import { parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
+import type { ServiceBillingOffer } from '@antseed/protocol/service-billing';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -174,12 +174,12 @@ export class BuyerPaymentManager {
   }
 
   trackUnitRequest(peerId: string, requestId: string, offer: ServiceBillingOffer): void {
-    if (parseMicroUsdc(offer.priceMicroUsdc) > this.maxPerRequestUsdc) throw new Error('Unit price exceeds buyer per-request budget');
+    if (completedRequestPrice(offer.unitModel) > this.maxPerRequestUsdc) throw new Error('Unit price exceeds buyer per-request budget');
     if (this._requestBillingEntries.has(requestId)) throw new Error('Request ID already used');
     this._unitBillingPeers.add(peerId);
     this.trackRequestBilling(requestId, {
       context: { sellerPeerId: peerId, provider: offer.provider, service: offer.service, serviceApiProtocol: offer.serviceApiProtocol, unitLimits: { completed_requests: 1 } },
-      requestFacts: {}, unitModel: completedRequestBillingModel(offer.priceMicroUsdc),
+      requestFacts: {}, unitModel: offer.unitModel,
       tokenPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
     });
     this.bindUnitRequestChannel(peerId, requestId);

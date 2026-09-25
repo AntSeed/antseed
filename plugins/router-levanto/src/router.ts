@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PeerInfo, RouteRecommendation, RouteSelectionContext, ModelRouterAdapter, RoutingUsageObservation, SerializedHttpRequest } from '@antseed/node';
-import { resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
+import { completedRequestPrice, resolveServiceBillingOffer, canonicalRoutingJson, createRoutingServiceMetadata, resolveRoutingPreferences } from '@antseed/node';
 import { LEVANTO_ROUTING_PATH, validateRoutingRequest, validateRoutingResponse } from './validation.js';
 import { CacheObservations } from './cache-observations.js';
 
@@ -67,7 +67,7 @@ export class LevantoRoutingAdapter implements ModelRouterAdapter {
       },
       body: new TextEncoder().encode(JSON.stringify({ ...payload, service: selected.offer.service })),
     }, {
-      signal: context.signal, unitBilling: selected.offer, maxFeeMicroUsdc: selected.offer.priceMicroUsdc,
+      signal: context.signal, unitBilling: selected.offer, maxFeeMicroUsdc: completedRequestPrice(selected.offer.unitModel).toString(),
       acceptResponse: response => {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(response.body));
         const ranked = validateRoutingResponse(parsed, payload);

@@ -286,8 +286,9 @@ real backend token measurements; predicted inference tokens are not such usage.
 The SDK uses the same unit-cost evaluator and cumulative payment channel as image
 billing, but a different measurement adapter. Images measure `output_images`;
 routing measures accepted `completed_requests`. The SDK supplies the existing
-provider header; no unit-price or service-contract header is sent. The buyer keeps the
-selected advertised price locally and uses it as the purchase maximum. A seller price change after
+provider header; no unit-price or service-contract header is sent. Like images, the
+buyer retains the advertised unit billing model for accounting and derives its
+price for the purchase maximum. A seller price change after
 discovery can therefore cause a payment disagreement after execution, but cannot
 automatically increase the buyer's authorization. See
 `docs/protocol/unit-billing-services.md` for provider configuration.

@@ -46,7 +46,7 @@ backend tokens. Supporting token-priced routing requires actual usage reporting.
 ## Request and payment flow
 
 1. The seller advertises a signed offer identifying provider, service, API format
-   and unit price. The buyer verifies it and applies its own maximum price.
+   and unit billing model. The buyer verifies it and applies its own maximum price.
 2. The buyer sends the normal request with `unitBilling: offer` and a synchronous
    `acceptResponse` callback. Only literal `true` accepts delivery. The SDK adds the
    existing provider header; no unit-price or service-contract header is sent.
@@ -62,6 +62,12 @@ backend tokens. Supporting token-priced routing requires actual usage reporting.
    authorization; duplicate response/NeedAuth processing cannot charge twice.
 
 Buyer price limits, channel correlation and exact charge validation remain.
+Like images, completed requests carry the advertised `UnitBillingModelV1`
+through to accounting (`offer.unitModel`). The SDK derives a micro-USDC amount
+only for price checks and payment negotiation; it does not rebuild a billing
+model from that amount. Request tracking snapshots the model so later changes
+cannot change an in-flight purchase's agreed charge.
+
 A provider that returns HTTP success with an invalid payload can cause a seller
 charge that the buyer refuses to authorize. Providers must validate their own
 responses; buyer validation is not a substitute for seller-side validation.

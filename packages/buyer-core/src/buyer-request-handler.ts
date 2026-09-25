@@ -1,3 +1,4 @@
+import { completedRequestPrice } from '@antseed/protocol/billing';
 import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_STREAMING_RESPONSE_HEADER,
@@ -11,7 +12,7 @@ import type { BuyerPeerView } from './interfaces.js';
 import type { BuyerConnection } from './interfaces.js';
 import type { ProxyMux } from './proxy-mux.js';
 import { PaymentMux } from './payment-mux.js';
-import { parseMicroUsdc, type ServiceBillingOffer } from '@antseed/protocol/service-billing';
+import type { ServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { ConnectionState } from '@antseed/protocol/connection-state';
 import type { BuyerPaymentNegotiator, SelectedBillingRoute } from './buyer-payment-negotiator.js';
 import { debugLog, debugWarn } from './debug.js';
@@ -128,7 +129,7 @@ export class BuyerRequestHandler {
         if (expected !== undefined && value !== expected) throw new Error('Completed-request request does not match agreed offer');
       }
       req = { ...req, headers: { ...req.headers, ...agreementHeaders } };
-      if (!negotiator && parseMicroUsdc(unitBilling.priceMicroUsdc) > 0n) throw new Error('Buyer payments must be enabled');
+      if (!negotiator && completedRequestPrice(unitBilling.unitModel) > 0n) throw new Error('Buyer payments must be enabled');
       negotiator?.bpm.trackUnitRequest(peer.peerId, req.requestId, unitBilling);
     }
     if (negotiator) {
@@ -158,7 +159,7 @@ export class BuyerRequestHandler {
     }
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
-    const isFreeService = unitBilling ? parseMicroUsdc(unitBilling.priceMicroUsdc) === 0n : requestedService
+    const isFreeService = unitBilling ? completedRequestPrice(unitBilling.unitModel) === 0n : requestedService
       ? (billingRoute ? isBillingRouteFree(billingRoute) : isPeerServiceFree(peer, requestedService))
       : false;
     if (negotiator && requestedService && !unitBilling) {

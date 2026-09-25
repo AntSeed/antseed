@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
+import { completedRequestPrice, parseMicroUsdc, resolveServiceBillingOffer } from '@antseed/protocol/service-billing';
 import { completedRequestOffer } from './billing/service.js';
 import { isCompletedRequestBillingModel, validateUnitBillingModelV1 } from '@antseed/protocol/billing';
 import { homedir } from "node:os";
@@ -1410,7 +1410,7 @@ export class AntseedNode extends EventEmitter {
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     if (options?.unitBilling) {
-      const agreed = { ...options.unitBilling };
+      const agreed = structuredClone(options.unitBilling);
       const maximum = options.maxFeeMicroUsdc;
       const acceptResponse = options.acceptResponse;
       const snapshot = structuredClone(peer);
@@ -1419,8 +1419,9 @@ export class AntseedNode extends EventEmitter {
       if (!metadata || metadata.peerId !== snapshot.peerId || !this._peerLookup
         || !await this._peerLookup.verifyMetadataSignature(metadata)) throw new Error('Verified completed-request metadata required');
       const offer = resolveServiceBillingOffer(metadata.providers, agreed.provider, agreed.service);
-      if (offer.serviceApiProtocol !== agreed.serviceApiProtocol || offer.priceMicroUsdc !== agreed.priceMicroUsdc) throw new Error('Completed-request offer changed');
-      if (maximum === undefined || parseMicroUsdc(offer.priceMicroUsdc) > parseMicroUsdc(maximum)) throw new Error('Unit price exceeds buyer limit');
+      const price = completedRequestPrice(offer.unitModel);
+      if (offer.serviceApiProtocol !== agreed.serviceApiProtocol || price !== completedRequestPrice(agreed.unitModel)) throw new Error('Completed-request offer changed');
+      if (maximum === undefined || price > parseMicroUsdc(maximum)) throw new Error('Unit price exceeds buyer limit');
       if (!acceptResponse) throw new Error('Completed-request requests require response acceptance');
       return this._buyerHandler.sendRequest(snapshot, request, undefined, { ...options, unitBilling: offer, acceptResponse });
     }

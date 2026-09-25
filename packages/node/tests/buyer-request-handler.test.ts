@@ -10,7 +10,7 @@ import type {
 import type { PeerInfo } from '../src/types/peer.js';
 
 describe('explicit completed-request buyer requests', () => {
-  const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
+  const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, unitModel: { version: 1 as const, components: [{ unit: 'completed_requests' as const, priceUsd: 0.001 }] } };
   const peer = { peerId: 'a'.repeat(40) } as PeerInfo;
   const request = {
     requestId: 'fixed', method: 'POST', path: '/_antseed/route',
@@ -57,7 +57,7 @@ describe('explicit completed-request buyer requests', () => {
   });
   it('executes a non-Levanto contract through the same request and payment path', async () => {
     const state = setup([{ statusCode: 200, body: { summary: 'Done' } }]);
-    const summaryOffer = { provider: 'summarizer', service: 'summary', serviceApiProtocol: 'typesafe-systemone' as const, priceMicroUsdc: '1000' };
+    const summaryOffer = { provider: 'summarizer', service: 'summary', serviceApiProtocol: 'typesafe-systemone' as const, unitModel: { version: 1 as const, components: [{ unit: 'completed_requests' as const, priceUsd: 0.001 }] } };
     const response = await state.handler.sendRequest(peer, {
       ...request, path: '/summary',
       headers: { 'content-type': 'application/json', 'x-antseed-provider': summaryOffer.provider },

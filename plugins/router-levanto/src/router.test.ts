@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PeerInfo, RouteRecommendation, RouteSelectionContext, SerializedHttpRequest } from '@antseed/node';
+import { completedRequestPrice } from '@antseed/node';
 import { LevantoRoutingAdapter } from './router.js';
 
 const sellerId = 'a'.repeat(40);
 const inferenceId = 'b'.repeat(40);
-const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, priceMicroUsdc: '1000' };
-function providers(priceMicroUsdc = offer.priceMicroUsdc): NonNullable<PeerInfo['metadata']>['providers'] {
+const offer = { provider: 'levanto', service: 'levanto-route', serviceApiProtocol: 'levanto-routing' as const, unitModel: { version: 1 as const, components: [{ unit: 'completed_requests' as const, priceUsd: 0.001 }] } };
+function providers(priceMicroUsdc = '1000'): NonNullable<PeerInfo['metadata']>['providers'] {
   return [{ provider: offer.provider, services: [offer.service], defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }, maxConcurrency: 1, currentLoad: 0,
     serviceApiProtocols: { [offer.service]: [offer.serviceApiProtocol] },
     serviceUnitBillingModels: { [offer.service]: { [offer.serviceApiProtocol]: { version: 1, components: [{ unit: 'completed_requests', priceUsd: Number(priceMicroUsdc) / 1_000_000 }] } } },
@@ -111,7 +112,7 @@ describe('Levanto buyer adapter', () => {
       const pricedPeer = { ...peer, metadata: { ...peer.metadata!, providers: providers(price) } };
       await pricedState.adapter.selectRoute(request(), [pricedPeer], pricedState.context);
       const options = pricedState.sendRequest.mock.calls.at(-1)![2];
-      expect(options.unitBilling?.priceMicroUsdc).toBe(price);
+      expect(completedRequestPrice(options.unitBilling!.unitModel).toString()).toBe(price);
       expect(options.maxFeeMicroUsdc).toBe(price);
     }
   });
