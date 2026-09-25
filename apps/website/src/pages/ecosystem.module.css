@@ -340,6 +340,81 @@
   text-transform: uppercase;
 }
 
+.previewMarket {
+  padding: 14px;
+  background:
+    radial-gradient(circle at 76% 18%, rgba(34, 197, 94, 0.24), transparent 34%),
+    linear-gradient(135deg, #052e1b, #07130d 70%);
+  color: #ecfdf5;
+}
+
+.previewMarket .previewTop span {
+  color: #86efac;
+  font-size: 15px;
+}
+
+.marketNft {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(134, 239, 172, 0.28);
+  border-radius: 14px;
+  background: rgba(4, 22, 13, 0.9);
+}
+
+.marketNft small {
+  display: block;
+  font-family: var(--as-font-data);
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.66;
+}
+
+.marketNft strong {
+  display: block;
+  margin-top: 3px;
+  color: #86efac;
+  font-family: var(--as-font-data);
+  font-size: 22px;
+  line-height: 28px;
+}
+
+.marketNft em {
+  display: block;
+  margin-top: 4px;
+  color: #bbf7d0;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.marketRows {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.marketRows span {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(5, 46, 27, 0.6);
+  font-family: var(--as-font-data);
+  font-size: 10px;
+}
+
+.marketRows b {
+  color: #86efac;
+}
+
+.marketRows em {
+  color: #a7f3d0;
+  font-style: normal;
+}
+
 .logoWrap {
   position: absolute;
   z-index: 2;
