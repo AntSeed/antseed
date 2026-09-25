@@ -198,7 +198,6 @@ export default function Providers(): JSX.Element {
       description="Build an Antseed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
     >
       <PageHero
-        kicker="Providers"
         title={
           <>
             Serve AI on the open market.<br />

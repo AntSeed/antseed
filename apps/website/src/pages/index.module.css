@@ -371,6 +371,154 @@
   transform: translateY(-24px);
 }
 
+/* Shared grid footprint prevents layout jumps while the hero views crossfade. */
+.heroVisualStack {
+  position: relative;
+  aspect-ratio: 660 / 924;
+  min-width: 0;
+  container-type: inline-size;
+}
+.heroVisualLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(12px) scale(.985);
+  transition: opacity 350ms ease, transform 450ms cubic-bezier(.22, 1, .36, 1), visibility 450ms;
+}
+/* Compact app scene: 660 × 924, with its 524 × 648 card at (68, 0).
+   Use the identical bounds for both replacement cards at every viewport. */
+.heroVisualLayer:not(:first-child) {
+  inset: 0 auto auto 10.3030303%;
+  width: 79.3939394%;
+  height: 98.1818182cqw;
+}
+.heroVisualLayer:not(:first-child) > * {
+  height: 100%;
+  box-sizing: border-box;
+}
+.heroVisualLayer .heroTerminal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+.heroVisualLayer .heroTerminalBody {
+  flex: 1;
+  min-height: 0;
+  overflow: visible;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.cliSteps {
+  display: flex;
+  flex-shrink: 0;
+  gap: 5px;
+  border-top: 1px solid #ffffff20;
+  padding-top: 8px;
+}
+.cliSteps button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #a9bcb0;
+  font: 11px var(--as-font-ui);
+  cursor: pointer;
+}
+.cliSteps button[aria-pressed='true'] { background: #16a66a24; color: #65e7ac; }
+.cliSteps button:focus-visible { outline: 2px solid #65e7ac; }
+.cliSteps button span { opacity: .65; }
+@container (max-width: 360px) {
+  .cliSteps button { font-size: 10px; gap: 3px; }
+  .heroVisualStack .heroVisualLayer .heroTerminalBody { font-size: 13px; line-height: 1.45; padding-block: 4px; }
+  .heroVisualLayer .tDots { display: none; }
+}
+.heroVisualLayer .terminalBar { flex-wrap: wrap; }
+.heroVisualLayer .terminalStatus,
+.heroVisualLayer .useCopyBtn { font-size: 13px; }
+.heroVisualLayer .heroTerminalBody .tComment { color: #a9bcb0; }
+.heroVisualActive {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+.heroCtaStack {
+  display: grid;
+  width: 100%;
+}
+.heroCtaPane {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+.heroCtaPane[data-active='true'] {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+.heroCtaPane > a,
+.heroCtaPane > .ctaBlock > a:first-child {
+  min-width: 220px;
+  min-height: 48px;
+  justify-content: center;
+}
+.heroCopy { min-width: 0; }
+.useSwitchBtn { min-height: 44px; }
+.useSwitchBtn:focus-visible { outline: 2px solid var(--as-green); outline-offset: 3px; }
+@media (min-width: 997px) {
+  .heroCtaPane { align-items: flex-start; }
+}
+@media (max-width: 996px) {
+  .heroSplit .heroCopy { width: 100%; }
+  .heroSplit .heroVisualStack {
+    max-width: 520px;
+    margin: 32px auto 0;
+    transform: none;
+  }
+  .heroSplit .heroSubStatic { max-width: 40ch; margin-inline: auto; }
+}
+@media (max-width: 480px) {
+  .heroCopy > .ctaBlock { width: 100%; }
+  .heroCopy .useSwitch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    max-width: 380px;
+    border-radius: 20px;
+  }
+  .heroCopy .useSwitchBtn {
+    padding: 8px 5px;
+    font-size: 12px;
+    line-height: 17px;
+    border-radius: 16px;
+  }
+  .heroCtaPane .useNote { font-size: 12px; line-height: 18px; }
+  .heroVisualLayer .terminalBar { gap: 6px; padding: 0; }
+  .heroVisualLayer .terminalStatus { font-size: 12px; }
+  .heroVisualLayer .useCopyBtn { font-size: 12px; min-height: 36px; }
+  .heroVisualLayer .heroTerminalBody { padding: 8px 0; font-size: 14px; word-break: normal; overflow-wrap: anywhere; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .heroVisualLayer { transition: none; transform: none; }
+}
+
 /* stats — value: Geist Bold 36/48 −1px · label: 16/24 Medium ink */
 .statsRow {
   display: flex;

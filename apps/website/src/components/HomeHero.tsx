@@ -6,7 +6,6 @@ import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {useNetworkStats} from '../lib/useNetworkStats';
 import {Button, ArrowRight} from './ui';
 import Link from '@docusaurus/Link';
-import {CommandChip} from './CommandChip';
 import {HeroDemo, DEMO_BEATS, DEMO_TOTAL_FRAMES} from './HeroDemo';
 
 /**
@@ -440,7 +439,7 @@ export function DownloadCta({
 /* Hero use switch — three ways in. The desktop app is the default; the CLI
    and agent paths reuse the commands documented in
    docs/guides/using-the-api.md and skills/join-buyer/SKILL.md. */
-type HeroUse = 'app' | 'cli' | 'agent';
+export type HeroUse = 'app' | 'cli' | 'agent';
 
 const HERO_USES: {id: HeroUse; label: string}[] = [
   {id: 'app', label: 'Download the app'},
@@ -461,23 +460,27 @@ const sp = {text: ' '};
 const HERO_CLI_LINES: HeroTermLine[] = [
   cm('# Install the CLI'),
   cmd({text: 'npm', cls: 'tPurple'}, sp, {text: 'install', cls: 'tBlue'}, sp, {text: '-g', cls: 'tYellow'}, sp, {text: '@antseed/cli', cls: 'tOrange'}),
-  cm('# Start the buyer: your API endpoint, on this machine'),
+  cm('# Start your local endpoint'),
   cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer start', cls: 'tBlue'}),
-  out('Proxy listening on http://localhost:8377'),
-  cm('# Call it like any OpenAI-compatible API'),
-  cmd(
-    {text: 'curl', cls: 'tPurple'}, sp, {text: 'localhost:8377/v1/chat/completions', cls: 'tBlue'}, {text: ' \\\n    '},
-    {text: '-H', cls: 'tYellow'}, sp, {text: "'content-type: application/json'", cls: 'tGreen'}, {text: ' \\\n    '},
-    {text: '-d', cls: 'tYellow'}, {text: " '{"}, {text: '"model"', cls: 'tBlue'}, {text: ': '}, {text: '"deepseek-v4-flash"', cls: 'tOrange'},
-    {text: ', '}, {text: '"messages"', cls: 'tBlue'}, {text: ': [{'}, {text: '"role"', cls: 'tBlue'}, {text: ': '}, {text: '"user"', cls: 'tGreen'},
-    {text: ', '}, {text: '"content"', cls: 'tBlue'}, {text: ': '}, {text: '"Hello"', cls: 'tGreen'}, {text: "}]}'"},
-  ),
-  cm('# Fund it when you want paid models (free ones need nothing)'),
-  cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer deposit', cls: 'tBlue'}),
+  out('→ localhost:8377'),
+];
+
+const HERO_CLI_STEPS = [
+  {label: 'Connect', lines: HERO_CLI_LINES},
+  {label: 'Discover', lines: [
+    cm('# Find available models'),
+    cmd({text: 'curl', cls: 'tPurple'}, {text: ' -s \\\n  localhost:8377/v1/models', cls: 'tBlue'}),
+    cm('# One endpoint. Your choice.'),
+  ]},
+  {label: 'Track usage', lines: [
+    cm('# Inspect tokens and spend'),
+    cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer metering', cls: 'tBlue'}),
+    cm('# Fund access to paid models'),
+    cmd({text: 'antseed', cls: 'tPurple'}, sp, {text: 'buyer deposit', cls: 'tBlue'}),
+  ]},
 ];
 
 const JOIN_BUYER_SKILL_URL = 'https://github.com/AntSeed/antseed/tree/main/skills/join-buyer';
-const JOIN_BUYER_INSTALL = 'gh skill install AntSeed/antseed join-buyer';
 
 function useCopy(text: string) {
   const [copied, setCopied] = useState(false);
@@ -506,9 +509,23 @@ function CopyButton({text, label = 'Copy'}: {text: string; label?: string}) {
   );
 }
 
-/** Static mini terminal for the hero: the CLI steps, copy-able as one script. */
-function HeroTerminal({lines}: {lines: HeroTermLine[]}) {
-  const script = lines
+/** Typed terminal demo; copying always includes the complete command script. */
+function HeroTerminal({lines, footer}: {lines: HeroTermLine[]; footer?: ReactNode}) {
+  const total = lines.reduce((n, l) => n + l.tokens.reduce((s, t) => s + t.text.length, 0), 0);
+  const [visible, setVisible] = useState(0);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setVisible(total);
+      return;
+    }
+    const timer = window.setInterval(() => setVisible(n => {
+      if (n >= total) window.clearInterval(timer);
+      return Math.min(total, n + 4);
+    }), 24);
+    return () => window.clearInterval(timer);
+  }, [total]);
+  let position = 0;
+  const script = HERO_CLI_STEPS.flatMap(step => step.lines)
     .filter((l) => l.kind === 'cmd')
     .map((l) => l.tokens.map((t) => t.text).join(''))
     .join('\n');
@@ -521,19 +538,26 @@ function HeroTerminal({lines}: {lines: HeroTermLine[]}) {
           <i style={{background: '#676663'}} />
         </span>
         <span className={styles.terminalStatus}>Use it from the CLI</span>
-        <CopyButton text={script} label="Copy commands" />
+        <CopyButton text={script} label="Copy all" />
       </div>
       <pre className={styles.heroTerminalBody}>
-        {lines.map((l, i) => (
-          <span key={i}>
+        {lines.map((l, i) => {
+          const start = position;
+          position += l.tokens.reduce((n, t) => n + t.text.length, 0);
+          if (visible <= start) return null;
+          let tokenPosition = start;
+          return <span key={i}>
             {l.kind === 'cmd' && <span className={styles.tGreen}>$ </span>}
-            {l.tokens.map((t, j) => (
-              <span key={j} className={t.cls ? styles[t.cls] : undefined}>{t.text}</span>
-            ))}
+            {l.tokens.map((t, j) => {
+              const count = Math.max(0, Math.min(t.text.length, visible - tokenPosition));
+              tokenPosition += t.text.length;
+              return <span key={j} className={t.cls ? styles[t.cls] : undefined}>{t.text.slice(0, count)}</span>;
+            })}
             {'\n'}
-          </span>
-        ))}
+          </span>;
+        })}
       </pre>
+      {footer}
     </div>
   );
 }
@@ -544,8 +568,23 @@ function readUseParam(): HeroUse | null {
   return v === 'cli' || v === 'agent' || v === 'app' ? v : null;
 }
 
-export function HeroUseCta() {
-  const [use, setUse] = useState<HeroUse>('app');
+export function HeroCliVisual() {
+  const [step, setStep] = useState(0);
+  const [manual, setManual] = useState(false);
+  useEffect(() => {
+    if (manual || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = window.setInterval(() => setStep(s => (s + 1) % HERO_CLI_STEPS.length), 7500);
+    return () => window.clearInterval(timer);
+  }, [manual]);
+  return <HeroTerminal key={step} lines={HERO_CLI_STEPS[step].lines} footer={
+    <div className={styles.cliSteps} aria-label="CLI walkthrough steps">
+      {HERO_CLI_STEPS.map((s, i) => <button key={s.label} type="button" aria-pressed={step === i}
+        onClick={() => {setManual(true); setStep(i);}}><span>{i + 1}</span>{s.label}</button>)}
+    </div>
+  } />;
+}
+
+export function HeroUseCta({use, setUse}: {use: HeroUse; setUse: (value: HeroUse) => void}) {
   // ?use=cli / ?use=agent preselects a path (docs and social links). Read after
   // mount so server and client render the same default.
   useEffect(() => {
@@ -562,31 +601,26 @@ export function HeroUseCta() {
             role="tab"
             aria-selected={use === u.id}
             className={`${styles.useSwitchBtn} ${use === u.id ? styles.useSwitchBtnActive : ''}`}
+            aria-controls="hero-use-visual"
+            id={`hero-tab-${u.id}`}
             onClick={() => setUse(u.id)}>
             {u.label}
           </button>
         ))}
       </div>
-      {use === 'app' && <DownloadCta />}
-      {use === 'cli' && (
-        <div className={`${styles.ctaBlock} ${styles.usePanel}`}>
-          <HeroTerminal lines={HERO_CLI_LINES} />
-          <span className={styles.useNote}>
-            No account. Mac, Windows, Linux, or a headless server.{' '}
-            <Link to="/docs/guides/using-the-api" className={styles.useLink}>Full API guide →</Link>
-          </span>
+      <div className={styles.heroCtaStack}>
+        <div className={styles.heroCtaPane} aria-hidden={use !== 'app'} inert={use !== 'app'} data-active={use === 'app'}>
+          <DownloadCta />
         </div>
-      )}
-      {use === 'agent' && (
-        <div className={`${styles.ctaBlock} ${styles.usePanel}`}>
-          <CommandChip command={JOIN_BUYER_INSTALL} />
-          <span className={styles.useNote}>
-            Installs the join-buyer skill into your agent with the GitHub CLI. The agent then
-            installs, starts, funds and wires itself to localhost:8377.{' '}
-            <a href={JOIN_BUYER_SKILL_URL} className={styles.useLink} target="_blank" rel="noopener noreferrer">View the skill →</a>
-          </span>
+        <div className={styles.heroCtaPane} aria-hidden={use !== 'cli'} inert={use !== 'cli'} data-active={use === 'cli'}>
+          <Button to="/docs/guides/using-the-api" size="lg" arrow>Set up the CLI</Button>
+          <span className={styles.useNote}>Mac, Windows, Linux, or your server.</span>
         </div>
-      )}
+        <div className={styles.heroCtaPane} aria-hidden={use !== 'agent'} inert={use !== 'agent'} data-active={use === 'agent'}>
+          <Button href={JOIN_BUYER_SKILL_URL} size="lg" arrow>Get the agent skill</Button>
+          <span className={styles.useNote}>Install one skill. Let your agent take it from here.</span>
+        </div>
+      </div>
     </div>
   );
 }

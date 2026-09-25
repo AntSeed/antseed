@@ -16,7 +16,8 @@ import {PrivacyPanel} from '../components/PrivacyPanel';
 import {WhoItsFor} from '../components/WhoItsFor';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
 import {HeroDemo} from '../components/HeroDemo';
-import {HeroDotCanvas, DownloadCta, HeroStatsRow, HeroUseCta, StackedHero} from '../components/HomeHero';
+import {HeroDotCanvas, DownloadCta, HeroStatsRow, HeroUseCta, HeroCliVisual, StackedHero, type HeroUse} from '../components/HomeHero';
+import {HeroAgentVisual} from '../components/HeroAgentVisual';
 import {LogoMarquee} from '../components/LogoMarquee';
 import {OwnedByNoOne} from '../components/NetworkPanel';
 import {SellSection} from '../components/SellSection';
@@ -30,9 +31,31 @@ import {FinalCtaBand} from '../components/FinalCtaBand';
 const HERO_LAYOUT: 'stacked' | 'split' = 'split';
 
 function Hero() {
+  const [use, setUse] = useState<HeroUse>('app');
+  const [visualHeight, setVisualHeight] = useState(0);
   const demoRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef(0);
   const shutdownRef = useRef(0);
+
+  useEffect(() => {
+    const host = demoRef.current;
+    if (!host) return;
+    // Reserve the tallest view, including the agent's command drawer, for all
+    // three tabs. Changing tabs must never move the headline or stats.
+    const panels = Array.from(host.querySelectorAll<HTMLElement>('[data-view] > div'));
+    const update = () => setVisualHeight(Math.ceil(Math.max(
+      host.clientWidth * 924 / 660,
+      ...panels.map(panel => {
+        const drawer = panel.querySelector<HTMLElement>('[data-agent-install]');
+        return Math.max(panel.scrollHeight, drawer ? drawer.offsetTop + drawer.offsetHeight : 0) + 24;
+      }),
+    )));
+    const observer = new ResizeObserver(update);
+    panels.forEach(panel => observer.observe(panel));
+    observer.observe(host);
+    update();
+    return () => observer.disconnect();
+  }, []);
 
   if (HERO_LAYOUT !== 'split') {
     return <StackedHero title="Run your agents on your terms" caption="Start for free. Keep using your tools." />;
@@ -51,10 +74,19 @@ function Hero() {
           <p className={styles.heroSubStatic}>
             Save on every AI model. No usage limits, no middleman, always anonymous.
           </p>
-          <HeroUseCta />
+          <HeroUseCta use={use} setUse={setUse} />
         </div>
-        <div className={`${styles.demoFrame} ${styles.demoFrameSplit}`} ref={demoRef}>
-          <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} compact />
+        <div className={`${styles.demoFrame} ${styles.demoFrameSplit} ${styles.heroVisualStack}`} ref={demoRef}
+          style={{minHeight: visualHeight || undefined}} id="hero-use-visual" role="tabpanel" aria-labelledby={`hero-tab-${use}`}>
+          <div className={`${styles.heroVisualLayer} ${use === 'app' ? styles.heroVisualActive : ''}`} data-view="app" inert={use !== 'app'} aria-hidden={use !== 'app'}>
+            <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} compact />
+          </div>
+          <div className={`${styles.heroVisualLayer} ${use === 'cli' ? styles.heroVisualActive : ''}`} data-view="cli" inert={use !== 'cli'} aria-hidden={use !== 'cli'}>
+            <HeroCliVisual key={use === 'cli' ? 'typing' : 'idle'} />
+          </div>
+          <div className={`${styles.heroVisualLayer} ${use === 'agent' ? styles.heroVisualActive : ''}`} data-view="agent" inert={use !== 'agent'} aria-hidden={use !== 'agent'}>
+            <HeroAgentVisual active={use === 'agent'} />
+          </div>
         </div>
         <HeroStatsRow />
       </div>

@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Website: switch the homepage hero between app, typed CLI walkthrough, and animated agent routing views with shared ant scenery, smooth transitions, matching setup buttons, stable responsive layouts, and a copyable agent skill command. Remove the Providers label above the provider-page headline.
+
 - Desktop AI VPN: replace Help in the sidebar with a Rewards tab for ANTS claims and staking, using a solid brand ant inside an outlined circle. Add Help under Profile while keeping its credit balance, usage statistics, payment channels, and wallet controls unchanged.
 - Desktop AI VPN: add plain Settings and Help icons beside the credit balance across page headers and remove Prefs from the sidebar. Settings opens the existing Preferences page; the Profile Help shortcut remains available.
 - ANTS Network page: lead with current contract-calculated staker, buyer, and seller reward budgets, separate emission bucket allowances from actual rewards, and explain remainder settlement to the burn destination and Reserve beyond its base allowance. Share a block-pinned, batched network snapshot with Overview; show next-epoch changes separately, identify Anvil and stale/unavailable data, and load historical usage, legacy emissions, and verification details only when expanded. Remove the Editable column.
