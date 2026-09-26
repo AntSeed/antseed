@@ -1,5 +1,6 @@
 import { poolApyRange, poolApyEstimates, formatYieldPercent as percent, EXTREME_YIELD_LABEL, EXTREME_YIELD_NOTE, YIELD_DISPLAY_LIMIT } from '../pool-yield';
 import { usePageData } from '../data';
+import { poolDetailOptions } from '../pool-data';
 import { api } from '../api';
 import { Button, Card } from './ui';
 import { Modal } from '@antseed/ui';
@@ -123,11 +124,12 @@ interface TableProps {
   pools: PoolView[];
   currentEpoch: number;
   loading: boolean;
+  walletSyncing?: boolean;
   onOpen: (pool: PoolView) => void;
   onStake: (pool: PoolView) => void;
 }
 
-export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: TableProps) {
+export function PoolsTable({ pools, currentEpoch, loading, walletSyncing = false, onOpen, onStake }: TableProps) {
   const [filter, setFilter] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [sortBy, setSortBy] = useState<PoolSortMetric>('apy');
@@ -191,7 +193,7 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
       key: 'volume', label: sortHeader('volume', 'Last epoch'), sortDirection: sortBy === 'volume' ? sortDirection : 'none', title: 'Settled USDC volume in the last completed epoch.', align: 'right', mono: true,
       render: p => { const volume = lastEpochVolume(p, currentEpoch); return volume === null ? '—' : formatUsdcCompact(volume); },
     },
-    { key: 'yours', label: 'Your stake', align: 'right', mono: true, render: p => <YourStakeCell pool={p} /> },
+    { key: 'yours', label: 'Your stake', align: 'right', mono: true, render: p => walletSyncing ? <span className="dim">Updating…</span> : <YourStakeCell pool={p} /> },
     {
       key: 'actions',
       label: '',
@@ -213,14 +215,14 @@ export function PoolsTable({ pools, currentEpoch, loading, onOpen, onStake }: Ta
         {stakeablePools.length > 5 ? (
           <Input label="" mono={false} width="md" placeholder="Search seller or agent id" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter pools" />
         ) : null}
-        {mineCount > 0 ? (
+        {mineCount > 0 && !walletSyncing ? (
           <button type="button" className="lock-preset" aria-pressed={onlyMine} onClick={() => setOnlyMine((v) => !v)}>
             my pools · {mineCount}
           </button>
         ) : null}
-        <span className="muted small">
+        {!loading ? <span className="muted small">
           {needle || onlyMine ? `${formatInt(filtered.length)} of ` : ''}{formatInt(stakeablePools.length)} {stakeablePools.length === 1 ? 'seller' : 'sellers'}
-        </span>
+        </span> : null}
       </div>
       {stakeablePools.some(pool => pool.displaySource?.error) ? <p className="hint">Some Antscan statistics are unavailable or may lag. Missing historical yield is shown as —; open a provider for details.</p> : null}
       <Table
@@ -255,8 +257,9 @@ export interface StakePanelProps {
 }
 
 export function PoolDrawer({ pool: initialPool, view, onClose, stake }: { pool: PoolView; view: PoolsView; onClose: () => void; stake?: StakePanelProps }) {
-  const detail = usePageData(`pool:${initialPool.agentId}`, () => api.pool(initialPool.agentId));
+  const detail = usePageData(`pool:${initialPool.agentId}`, () => api.pool(initialPool.agentId), 60_000, poolDetailOptions);
   const pool = detail.data ?? initialPool;
+  const walletSyncing = detail.data ? detail.reconciling : !!view.walletSyncing;
   const historyRefreshFailed = !!detail.error || (!!detail.data && detail.data.volumeStatus !== 'available');
   const history = historyRefreshFailed && initialPool.volumeStatus === 'available' ? initialPool : pool;
   const historyEpoch = history === initialPool ? view.currentEpoch : detail.data?.currentEpoch ?? view.currentEpoch;
@@ -324,14 +327,14 @@ export function PoolDrawer({ pool: initialPool, view, onClose, stake }: { pool: 
         <aside className="vault-side" aria-label="Your position and staking">
           <Card>
             <h3>Your position</h3>
-            <div className="vault-your">
+            {walletSyncing ? <p className="hint" role="status">Updating… Waiting for Antscan to include your latest transaction.</p> : <div className="vault-your">
               <div><span className="tile-label">Staked</span><strong>{yourStake > 0n ? formatAnts(pool.yourStake) : '—'}</strong></div>
               <div><span className="tile-label">Pending activation</span><strong className={yourPending > 0n ? 'pending-amount' : undefined}>{yourPending > 0n ? formatAnts(pool.yourPendingStake) : '—'}</strong></div>
               <div><span className="tile-label">Power</span><strong>{yourStake > 0n ? formatAnts(pool.yourPower) : '—'}</strong></div>
               <div><span className="tile-label">Pool share</span><strong>{yourStake > 0n ? formatBps(pool.yourPoolShareBps) : '—'}</strong></div>
               <div><span className="tile-label">Positions</span><strong>{pool.yourPositionIds?.length || '—'}</strong></div>
-            </div>
-            {yourPending > 0n ? <p className="hint">Pending stake starts earning at its activation epoch; it is listed under <a href={href('positions')}>My positions</a> with its start date.</p> : null}
+            </div>}
+            {!walletSyncing && yourPending > 0n ? <p className="hint">Pending stake starts earning at its activation epoch; it is listed under <a href={href('positions')}>My positions</a> with its start date.</p> : null}
           </Card>
           <Card>
             <h3>Stake into {poolName(pool)}</h3>

@@ -17,9 +17,9 @@ import { VprHeaderActions } from './vpr/VprHeaderActions';
 import styles from './VprShell.module.scss';
 
 /* Views built on VprPage carry the credits pill inside their pinned header,
-   so the shell's floating pill would duplicate it. Home and chat keep the
-   floating one. */
+   so the shell's floating pill would duplicate it. */
 const VIEWS_WITH_HEADER_CREDITS: ReadonlySet<ViewName> = new Set([
+  'chat',
   'explore',
   'model',
   'tools',

@@ -66,11 +66,19 @@ function AuthGate() {
           ANTS<span>staking</span>
         </div>
         <p>
-          Open this dashboard with <code>antseed ants</code>.
+          <strong>Reopen your rewards or staking dashboard</strong>
         </p>
         <p className="muted small">
-          The CLI starts the local server and opens the browser with a one-time session token. This page has no token (or the server rejected it), so it cannot read
-          wallet or chain data.
+          This link is missing a valid session or is no longer valid. Open a fresh link to continue.
+        </p>
+        <p className="muted small">
+          <strong>Using the AntSeed desktop app?</strong><br />
+          Go to <strong>Rewards</strong>, then select <strong>Claim rewards</strong> or <strong>Manage staking</strong>. To use another browser, choose{' '}
+          <strong>Copy link</strong> beside the action and paste it into the browser where you use your wallet.
+        </p>
+        <p className="muted small">
+          <strong>Using the CLI?</strong><br />
+          Run <code>antseed ants</code> to reopen the dashboard.
         </p>
       </Card>
     </div>

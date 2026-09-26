@@ -9,7 +9,9 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Changed
 
 - Website: switch the homepage hero between app, typed CLI walkthrough, and animated agent routing views with shared ant scenery, smooth transitions, matching setup buttons, stable responsive layouts, and a copyable agent skill command. Remove the Providers label above the provider-page headline.
-
+- Desktop AI VPN: keep the chat model menu above the chat body so its lower models remain visible and selectable when opened from the header, and give the model name spare header width instead of reserving it for the right-side controls.
+- Desktop AI VPN: add integrated copy-link buttons beside Claim rewards and Manage staking so the authenticated dashboard can be opened in another browser on the same computer. Keep open and copy actions independent, explain how to reopen expired dashboard sessions, and remove the Network rewards card from Profile while retaining the dedicated Rewards page.
+- ANTS dashboard: keep seller loading states visible through bounded explorer recovery, retain previously loaded sellers while updating, and offer retry only after recovery fails. Distinguish partial own-pool results from a complete seller list and avoid caching temporary fallback results as fresh.
 - Desktop AI VPN: replace Help in the sidebar with a Rewards tab for ANTS claims and staking, using a solid brand ant inside an outlined circle. Add Help under Profile while keeping its credit balance, usage statistics, payment channels, and wallet controls unchanged.
 - Desktop AI VPN: add plain Settings and Help icons beside the credit balance across page headers and remove Prefs from the sidebar. Settings opens the existing Preferences page; the Profile Help shortcut remains available.
 - ANTS Network page: lead with current contract-calculated staker, buyer, and seller reward budgets, separate emission bucket allowances from actual rewards, and explain remainder settlement to the burn destination and Reserve beyond its base allowance. Share a block-pinned, batched network snapshot with Overview; show next-epoch changes separately, identify Anvil and stale/unavailable data, and load historical usage, legacy emissions, and verification details only when expanded. Remove the Editable column.
@@ -18,6 +20,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Website: blog post "Introducing ANTS Staking" (`/blog/ants-staking`) covering the ways to earn ANTS as a buyer, provider, or staker, how to compare providers, staking positions, and how to open the dashboard with `antseed ants`.
 - Sellers: add an optional persistent free tier for fully zero-priced services with `seller.freeTier.maxRequestsPerAddress`, `seller.freeTier.maxRequestsPerIp` (IPv6 grouped by /64), and a configurable sliding `windowMs`. Limits apply across all free services, are enforced together when both are set, survive reconnects and restarts, return HTTP 429 with retry timing and the binding limit (`limitedBy`) when exhausted, and leave paid traffic unchanged.
 
 - ANTS dashboard: transactions signed by an EIP-7702 smart account (for example a MetaMask smart account, which routes calls through its delegation framework) are now accepted when the same account sent them and the reviewed contract emitted an event; previously the job was reported as failed although the transaction succeeded.
@@ -79,6 +82,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- ANTS dashboard: treat post-transaction indexer lag as a syncing state rather than a failed refresh. Retain reward and position snapshots with updating labels, preserve reconciliation across navigation, clear old wallet data on account changes, and prevent actions based on stale reward or position data. Keep the seller list and network statistics available while only your own stake figures wait for the indexer, and refresh waiting views automatically every few seconds until it catches up.
+- Desktop AI VPN: prevent the chat browser-preview button from overlapping Help, Settings, and the credit balance. Keep header controls readable in narrow windows, give message search its own row when needed, and truncate long page titles with the full title available on hover instead of squeezing the balance.
 - Desktop: replace the legacy VPR artwork in the chat welcome screen and title bar with a font-independent AI VPN SVG wordmark matching the original lettering, preserving the ant icon and installer/update compatibility.
 
 - Linux desktop: use space-free installation, executable, and icon names; install the Chromium sandbox helper with root-owned setuid permissions; and fix Debian package removal and upgrades, including recovery from the broken 0.2.44 maintainer script, without changing macOS or Windows upgrade identities.

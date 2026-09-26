@@ -42,6 +42,24 @@ benefit depends on the timing and overlap of actual view requests.
 
 ## Failure behavior
 
+- Explorer REST reads keep the request pending through at most two attempts:
+  eight seconds per attempt, a 750ms minimum delay, and an 18-second budget per
+  resource read (not for the entire dashboard, which also performs chain reads).
+  Network failures, timeouts, HTTP 408/429 and 5xx responses qualify for retry.
+  `Retry-After` is honored when another full attempt fits within the budget;
+  otherwise the failure is returned. Other 4xx responses and invalid JSON are
+  not retried. Transaction submissions are unaffected.
+- Cacheable identical explorer REST reads share an in-flight promise even past
+  the cache TTL. Freshness begins at completion, and invalidated reads cannot
+  repopulate the cache for another wallet.
+- The seller list stays loading during active reads and automatic recovery.
+  Existing rows remain visible as previously loaded data. Only after failure
+  does the page offer **Try again** and explain whether the displayed list is
+  stale or limited to the wallet's own pools. Temporary chain-only results are
+  not cached as fresh by the API or any frontend pool consumer; returning to
+  the page revalidates them. An intentionally unconfigured explorer remains a
+  supported chain-only mode, without automatic recovery or a retry prompt.
+
 - A failed Multicall deployment probe propagates its error; it does not trigger
   individual-call fallback. Only a successful empty-code response selects that
   fallback, whose concurrency is bounded.
@@ -105,6 +123,17 @@ reward freshness are validated independently. With Antscan configured, failed
 position reads surface an error rather than falling back to per-position RPC
 calls; unavailable rewards remain `null`, not zero. Explicitly unconfigured local
 setups retain chain reads. Transaction preparation and authorization remain live.
+
+Post-transaction read barriers return HTTP 202 with `state: "syncing"` rather
+than a display error. The dashboard retains the last successful snapshot with an
+"Updating…" label and re-reads every three seconds while the tab is visible,
+until Antscan catches up; no manual refresh is required.
+Positions show an empty-wallet message only after a successful, current read.
+Pool and seller-detail reads are not blocked by a wallet barrier: public
+statistics still load (falling back to chain reads for network totals), while
+the response sets `walletSyncing` and omits the wallet's own pool figures. The
+dashboard labels those figures "Updating…", re-reads them on the same schedule,
+and does not cache the response.
 
 Pool statistics use a separate, wallet-independent GraphQL snapshot of current
 and previous epochs, also cached for 15 seconds. It does not fetch wallet

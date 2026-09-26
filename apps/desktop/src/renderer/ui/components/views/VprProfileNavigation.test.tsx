@@ -37,23 +37,27 @@ function findButton(children: ReactNode, label: string): (() => void) | undefine
   return undefined;
 }
 
-it('keeps the existing Profile content and adds Help after the wallet details', () => {
+it('keeps Profile content without the network rewards card and shows Help after wallet details', () => {
   const markup = renderToStaticMarkup(<VprCreditsView />);
   for (const label of [
     'Your balance', 'Add Credits', 'Withdraw unused credits', 'Requests', 'Tokens',
-    'Sellers', 'Network rewards', 'Payment channels', 'Signer', 'Wallet',
+    'Sellers', 'Payment channels', 'Signer', 'Wallet',
     'Back up private key', 'Import private key', 'Authorize a wallet', 'Help &amp; support',
   ]) {
     expect(markup).toContain(label);
   }
+  expect(markup).not.toContain('Network rewards');
+  expect(markup).not.toContain('ANTS pending this epoch');
+  expect(markup).not.toContain('Earn ANTS from your usage');
   expect(markup.indexOf('Help &amp; support')).toBeGreaterThan(markup.indexOf('Authorize a wallet'));
 });
 
-it('opens Help from Profile without changing the Rewards or Activity shortcuts', () => {
+it('keeps Help and Activity shortcuts on Profile without a Rewards shortcut', () => {
   const onSelectView = vi.fn();
   renderToStaticMarkup(<VprCreditsView onSelectView={onSelectView} />);
   const children = vi.mocked(VprCard).mock.calls.map(([props]) => props.children);
-  for (const [label, view] of [['Help', 'help'], ['Rewards', 'rewards'], ['Activity', 'activity']]) {
+  expect(findButton(children, 'Rewards')).toBeUndefined();
+  for (const [label, view] of [['Help', 'help'], ['Activity', 'activity']]) {
     const onClick = findButton(children, label);
     expect(onClick).toBeTypeOf('function');
     onClick?.();

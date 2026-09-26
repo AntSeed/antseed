@@ -1,5 +1,6 @@
 import type { AntsContext } from './context.js';
 import type { RewardPositions } from './position-feed.js';
+import { IndexerSyncingError } from '../read-state.js';
 
 /** Live position status older than this is rejected; Antscan refreshes it every 15s. */
 const LIVE_MAX_AGE_SECONDS = 15;
@@ -28,7 +29,7 @@ export async function liveWalletPositions(ctx: AntsContext, epoch: number): Prom
   const fresh = now - liveSource.fetchedAt < LIVE_MAX_AGE_SECONDS && liveSource.fetchedAt <= now + CLOCK_SKEW_SECONDS;
   if (liveSource.currentEpoch !== epoch || liveSource.stale || !liveSource.complete || data.liveError || !fresh) throw new Error(data.liveError ?? 'Antscan live position status is stale or incomplete');
   const barrier = ctx.positionReadBarriers?.get(ctx.address.toLowerCase());
-  if (barrier && (liveSource.fetchedAt <= barrier.at || data.source.indexedBlock < barrier.block)) throw new Error('Antscan live positions have not caught up with your transaction');
+  if (barrier && (liveSource.fetchedAt <= barrier.at || data.source.indexedBlock < barrier.block)) throw new IndexerSyncingError('Antscan live positions have not caught up with your transaction');
   if (data.positions.some(row => row.power == null || row.nextPower == null || row.withdrawableEpoch === null || row.maxLockedNext === null || row.changePending === null)) throw new Error('Antscan live position fields are incomplete');
   return data;
 }
@@ -49,7 +50,7 @@ export function validateWalletRewards(ctx: AntsContext, epoch: number, data: Rew
   if (source.schemaVersion !== 1 || data.currentEpoch !== epoch || source.stale || !fresh) throw new Error('Antscan reward snapshot is stale');
   if (!source.complete || !source.historyComplete || source.historyFromBlock > source.indexedBlock) throw new Error('Antscan reward history is incomplete');
   const barrier = ctx.positionReadBarriers?.get(ctx.address.toLowerCase());
-  if (barrier && source.indexedBlock < barrier.block) throw new Error('Antscan rewards have not caught up with your transaction');
+  if (barrier && source.indexedBlock < barrier.block) throw new IndexerSyncingError('Antscan rewards have not caught up with your transaction');
   if (data.positions.some(row => row.rewards.status !== 'available' || row.rewards.pending === null)) throw new Error('Some indexed position rewards are unavailable');
   return data;
 }

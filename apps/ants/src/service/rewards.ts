@@ -1,6 +1,7 @@
 import { ZeroAddress } from 'ethers';
 import { claimEpochRewards, pendingEpochRewards, previewPoolRewards, type SellerPoolsClient, type SellerPoolsRewardsClient } from '@antseed/node/payments';
 import { indexedWalletRewards } from './indexed-wallet.js';
+import { IndexerSyncingError } from '../read-state.js';
 import type { AbstractSigner } from 'ethers';
 import type { AntsContext } from './context.js';
 import { closedPositionIds } from './positions.js';
@@ -80,6 +81,7 @@ export async function rewards(ctx: AntsContext): Promise<RewardsView> {
         stakerSource = { indexedBlock: snapshot.source.indexedBlock, indexedAt: snapshot.source.indexedAt };
         stakerPositions = snapshot.positions.map(row => ({ id: row.id, agentId: row.agentId, amount: BigInt(row.rewards.pending!), closedAtEpoch: row.closedAtEpoch }));
       } catch (error) {
+        if (error instanceof IndexerSyncingError) throw error;
         stakerAvailable = false;
         stakerSource = { error: error instanceof Error ? error.message : String(error) };
       }
