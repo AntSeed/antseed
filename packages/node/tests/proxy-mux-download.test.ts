@@ -10,7 +10,7 @@ function pair() {
   return { buyer, seller, errors };
 }
 
-const request = { requestId: 'download', method: 'GET', path: '/video', headers: { 'x-antseed-video-download': 'veo-stream-v1' }, body: new Uint8Array() };
+const request = { requestId: 'download', method: 'GET', path: '/video', headers: { 'x-antseed-video-download': 'video-stream-v1' }, body: new Uint8Array() };
 const start = { requestId: request.requestId, statusCode: 200, headers: { 'x-antseed-streaming': '1' }, body: new Uint8Array() };
 
 it('waits for the consumer before acknowledging each bounded chunk', async () => {
@@ -95,4 +95,16 @@ it('bounds an abandoned acknowledgement wait', async () => {
     release();
     vi.useRealTimers();
   }
+});
+
+it('accepts small JSON POST downloads and rejects large or other-method download bodies', async () => {
+  const { buyer, seller, errors } = pair();
+  const handled: string[] = [];
+  seller.onProxyRequest(async incoming => { handled.push(incoming.requestId); seller.sendProxyResponse({ ...start, requestId: incoming.requestId, headers: {} }); });
+  const body = new TextEncoder().encode('{"queue_id":"q"}');
+  buyer.sendProxyRequest({ ...request, requestId: 'post', method: 'POST', body }, () => {}, () => {});
+  buyer.sendProxyRequest({ ...request, requestId: 'large', method: 'POST', body: new Uint8Array(4097) }, () => {}, () => {});
+  buyer.sendProxyRequest({ ...request, requestId: 'put', method: 'PUT', body }, () => {}, () => {});
+  await vi.waitFor(() => expect(errors.length).toBe(2));
+  expect(handled).toEqual(['post']);
 });

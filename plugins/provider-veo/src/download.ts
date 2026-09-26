@@ -1,5 +1,6 @@
 import { nativeVideoRoute, requestService } from '@antseed/api-adapter';
-import { VIDEO_DOWNLOAD_STREAM_HEADER, VIDEO_DOWNLOAD_STREAM_VERSION, VIDEO_DOWNLOAD_CHUNK_BYTES, VIDEO_DOWNLOAD_MAX_BYTES, ANTSEED_STREAMING_RESPONSE_HEADER, type Provider, type SerializedHttpResponse } from '@antseed/node';
+import { VIDEO_DOWNLOAD_STREAM_HEADER, VIDEO_DOWNLOAD_STREAM_VERSION, type Provider, type SerializedHttpResponse } from '@antseed/node';
+import { streamVideoResponse, videoDownloadError, videoDownloadSignal } from '@antseed/provider-core';
 
 const GOOGLE_ORIGIN = 'https://generativelanguage.googleapis.com';
 
@@ -33,7 +34,7 @@ export function withVeoDownloads(provider: Provider, baseUrl: string, apiKey: st
     ...provider,
     async handleRequest(request) {
       if (nativeVideoRoute(request)?.action !== 'download') return provider.handleRequest(request);
-      return { requestId: request.requestId, statusCode: 400, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ error: 'Streaming download required' })) };
+      return videoDownloadError(request, 400, 'unsupported_video_download', 'A streaming video download is required');
     },
     serviceCapabilities: Object.fromEntries(provider.services.map(service => {
       const { videoDownload: _download, ...capabilities } = provider.serviceCapabilities?.[service] ?? {};
@@ -42,18 +43,15 @@ export function withVeoDownloads(provider: Provider, baseUrl: string, apiKey: st
     async handleRequestStream(request, callbacks): Promise<SerializedHttpResponse> {
       const route = nativeVideoRoute(request);
       if (route?.action !== 'download') return provider.handleRequestStream ? provider.handleRequestStream(request, callbacks) : provider.handleRequest(request);
-      const error = (statusCode: number, code: string, message: string): SerializedHttpResponse => ({
-        requestId: request.requestId, statusCode, headers: { 'content-type': 'application/json' },
-        body: Buffer.from(JSON.stringify({ error: { code, message } })),
-      });
+      const error = (statusCode: number, code: string, message: string) => videoDownloadError(request, statusCode, code, message);
       if (!provider.services.includes(requestService(request) ?? '')) return error(400, 'unsupported_video_request', 'Unsupported video service');
       if (new URL(baseUrl).origin !== GOOGLE_ORIGIN) return error(400, 'unsupported_video_download', 'Downloads require the direct Gemini endpoint');
       if (request.headers[VIDEO_DOWNLOAD_STREAM_HEADER] !== VIDEO_DOWNLOAD_STREAM_VERSION || !callbacks.signal) return error(400, 'unsupported_video_download', 'A streaming video download is required');
       if (activeDownloads >= 2) return error(429, 'video_download_busy', 'Too many concurrent video downloads');
       activeDownloads += 1;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([callbacks.signal, controller.signal, AbortSignal.timeout(5 * 60_000)]);
-      let started = false;
+      const download = videoDownloadSignal(callbacks.signal);
+      const { signal } = download;
+      let streaming = false;
       try {
         const status = await fetch(`${GOOGLE_ORIGIN}/v1beta/${route.resourceId}`, {
           headers: { 'x-goog-api-key': apiKey }, redirect: 'error', signal,
@@ -73,51 +71,17 @@ export function withVeoDownloads(provider: Provider, baseUrl: string, apiKey: st
           || [...url.searchParams].some(([key, value]) => key !== 'alt' || value !== 'media')) {
           return error(502, 'unsafe_video_url', 'Upstream returned an unsupported video URL');
         }
-        const download = await fetch(url, {
+        const file = await fetch(url, {
           headers: { 'x-goog-api-key': apiKey, 'accept-encoding': 'identity' },
           redirect: 'error', signal,
         });
-        const lengthHeader = download.headers.get('content-length');
-        const length = Number(lengthHeader);
-        if (download.status !== 200 || !/^[1-9][0-9]*$/.test(lengthHeader ?? '') || !Number.isSafeInteger(length) || length > VIDEO_DOWNLOAD_MAX_BYTES
-          || download.headers.get('content-type')?.split(';')[0] !== 'video/mp4'
-          || ![null, 'identity'].includes(download.headers.get('content-encoding'))) {
-          await download.body?.cancel();
-          return error(length > VIDEO_DOWNLOAD_MAX_BYTES ? 413 : [404, 410].includes(download.status) ? download.status : 502, 'video_download_unavailable', 'Video is unavailable or exceeds download limits');
-        }
-        const reader = download.body?.getReader();
-        if (!reader) return error(502, 'video_download_unavailable', 'Empty video response');
-        const response: SerializedHttpResponse = { requestId: request.requestId, statusCode: 200, headers: {
-          'content-type': 'video/mp4', 'content-length': String(length), 'cache-control': 'no-store',
-          [ANTSEED_STREAMING_RESPONSE_HEADER]: '1', [VIDEO_DOWNLOAD_STREAM_HEADER]: VIDEO_DOWNLOAD_STREAM_VERSION,
-        }, body: new Uint8Array(0) };
-        let received = 0;
-        try {
-          callbacks.onResponseStart(response);
-          started = true;
-          while (true) {
-            signal.throwIfAborted();
-            const { value, done } = await reader.read();
-            if (done) break;
-            received += value.length;
-            if (received > length) throw new Error('Video exceeds declared length');
-            for (let offset = 0; offset < value.length; offset += VIDEO_DOWNLOAD_CHUNK_BYTES) {
-              signal.throwIfAborted();
-              await callbacks.onResponseChunk({ requestId: request.requestId, data: value.subarray(offset, offset + VIDEO_DOWNLOAD_CHUNK_BYTES), done: false });
-            }
-          }
-          if (received !== length) throw new Error('Incomplete video');
-          await callbacks.onResponseChunk({ requestId: request.requestId, data: new Uint8Array(0), done: true });
-          return response;
-        } finally {
-          await reader.cancel().catch(() => {});
-          reader.releaseLock();
-        }
-      } catch {
-        if (started) throw new Error('Video download interrupted');
+        streaming = true;
+        return await streamVideoResponse(request, file, callbacks, download);
+      } catch (cause) {
+        if (streaming) throw cause;
         return error(signal.aborted ? 504 : 502, 'video_download_failed', 'Could not download video from Gemini');
       } finally {
-        controller.abort();
+        download.done();
         activeDownloads -= 1;
       }
     },

@@ -23,7 +23,7 @@ it('incremental hashing exactly matches v1 response authentication for any chunk
 });
 
 it('rejects missing, oversized, excessive and truncated bodies', () => {
-  for (const length of ['', '0', '999999999', '-1', 'NaN']) expect(() => createStreamingResponseHash({ ...response, headers: { 'content-length': length } })).toThrow();
+  for (const length of ['', '0', '-1', 'NaN', '4294967296']) expect(() => createStreamingResponseHash({ ...response, headers: { 'content-length': length } })).toThrow();
   const truncated = createStreamingResponseHash(response);
   truncated.update(body.subarray(0, 20));
   expect(() => truncated.finish()).toThrow('Incomplete');

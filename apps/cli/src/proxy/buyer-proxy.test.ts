@@ -74,7 +74,8 @@ for (const provider of ['runway', 'veo'] as const) {
       assert.deepEqual(submissions.map(result => result.statusCode), [200, 200])
       const state = JSON.parse(await readFile(join(directory, 'buyer.state.json'), 'utf8'))
       assert.equal(state.unrelated, 'preserved')
-      assert.equal(state.resourceRoutes.length, 2)
+      assert.equal(state.resourceRoutes.filter((route: { resourceId: string }) => !route.resourceId.startsWith('idempotency:')).length, 2)
+      assert.equal(state.resourceRoutes.filter((route: { resourceId: string }) => route.resourceId.startsWith('idempotency:')).length, 2)
       const restored = new ResourceRoutes()
       restored.hydrate(state.resourceRoutes)
       const restarted = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
@@ -142,18 +143,21 @@ test('native resource follow-ups fail when the recorded provider loses support i
   }
 })
 
-test('native video forwards an idempotency key without retrying uncertain creates', async () => {
+test('native video creates are not retried automatically, and a client retry with the same key stays on the original seller', async () => {
   const peers = [makePeer('a', ['runway']), makePeer('b', ['runway'])]
   for (const peer of peers) peer.providerServiceApiProtocols = { runway: { services: { model: ['runway-video'] } } }
   const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter())
-  const sent: string[] = []
-  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: SerializedHttpRequest) => {
-    sent.push(request.headers['x-antseed-idempotency-key']!)
+  const sent: Array<{ key: string; peer: string }> = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: SerializedHttpRequest) => {
+    sent.push({ key: request.headers['x-antseed-idempotency-key']!, peer: peer.peerId })
     throw new Error('uncertain connection loss')
   }
-  const failed = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'idempotency-key': 'client-key-1' } }))
-  assert.ok(failed.statusCode >= 400)
-  assert.deepEqual(sent, ['client-key-1'])
+  const create = () => invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'idempotency-key': 'client-key-1' } }))
+  assert.ok((await create()).statusCode >= 400)
+  assert.equal(sent.length, 1)
+  for (let retry = 0; retry < 3; retry += 1) assert.ok((await create()).statusCode >= 400)
+  assert.deepEqual(sent.map(entry => entry.key), Array(4).fill('client-key-1'))
+  assert.deepEqual(new Set(sent.map(entry => entry.peer)), new Set([sent[0]!.peer]))
 
   const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/v1/text_to_video', body: { model: 'model', duration: 8 }, headers: { 'x-antseed-idempotency-key': 'bad key!' } }))
   assert.equal(invalid.statusCode, 400)

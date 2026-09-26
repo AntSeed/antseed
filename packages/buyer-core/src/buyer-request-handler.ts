@@ -329,7 +329,7 @@ export class BuyerRequestHandler {
 
           if (downloadHash) {
             try {
-              if (Date.now() - streamStartedAtMs > maxStreamDurationMs) throw new Error('Video stream exceeded max duration');
+              // Downloads have no total duration limit; the idle timeout below ends stalled transfers.
               resetTimeout(streamIdleTimeoutMs);
               downloadHash.update(chunk.data);
               await callbacks!.onResponseChunk!(chunk);

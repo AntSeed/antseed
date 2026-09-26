@@ -510,7 +510,7 @@ function encodeServiceCapabilities(
   pushServiceEntryCount(parts, entries.length, hasWideServiceCounts);
   for (const [serviceName, caps] of entries) {
     pushUtf8(parts, serviceName);
-    if (hasVideoDownloads) parts.push(new Uint8Array([caps.videoDownload === 'veo-stream-v1' ? 1 : 0]));
+    if (hasVideoDownloads) parts.push(new Uint8Array([caps.videoDownload === 'video-stream-v1' ? 1 : 0]));
     else if (caps.videoDownload !== undefined) throw new Error('Video downloads require metadata v13');
     let presence = 0;
     if (caps.contextWindow !== undefined) presence |= CAP_HAS_CONTEXT_WINDOW;
@@ -578,7 +578,7 @@ function decodeServiceCapabilities(
       checkBounds(offset, 1, data.length);
       const version = data[offset++]!;
       if (version > 1) throw new Error('Unsupported video download version');
-      if (version === 1) videoDownload = 'veo-stream-v1';
+      if (version === 1) videoDownload = 'video-stream-v1';
     }
     checkBounds(offset, 1, data.length);
     const presence = data[offset]!;

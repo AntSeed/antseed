@@ -30,6 +30,12 @@ interface NativeVideoApi {
   createPaths: RegExp;
   /** Status (GET) and cancel (DELETE) paths; the first capture group is the job ID. */
   jobPaths: { GET?: RegExp; DELETE?: RegExp };
+  /**
+   * Follow-ups that are POSTs carrying the job ID in the JSON body (Venice).
+   * `download` answers with the finished MP4 itself, so it is streamed.
+   */
+  bodyJobPaths?: { path: RegExp; action: 'download' | 'cancel' }[];
+  bodyJobId?: (body: JsonObject) => unknown;
   jobId: (body: JsonObject) => unknown;
   jobIdPattern: RegExp;
   failedStatus?: (body: JsonObject) => unknown;
@@ -110,19 +116,45 @@ const NATIVE_VIDEO_APIS: NativeVideoApi[] = [
     fields: body => ({ duration: body.frames === undefined ? body.duration : undefined, resolution: body.resolution }),
     autoDuration: [-1, '-1'],
   },
+  {
+    protocol: 'venice-video',
+    createPaths: /^\/api\/v1\/video\/queue$/,
+    jobPaths: {},
+    bodyJobPaths: [
+      { path: /^\/api\/v1\/video\/retrieve$/, action: 'download' },
+      { path: /^\/api\/v1\/video\/complete$/, action: 'cancel' },
+    ],
+    bodyJobId: body => body.queue_id,
+    jobId: body => body.queue_id,
+    jobIdPattern: SIMPLE_ID,
+    // Venice sends durations as strings such as "5s".
+    fields: body => ({ duration: typeof body.duration === 'string' ? body.duration.replace(/s$/, '') : body.duration, resolution: body.resolution }),
+    autoDuration: ['auto', 'Auto', '-1', '1 gen'],
+  },
 ];
 
 function api(protocol: NativeVideoProtocol): NativeVideoApi {
   return NATIVE_VIDEO_APIS.find(entry => entry.protocol === protocol)!;
 }
 
-export function nativeVideoRoute(request: Pick<SerializedHttpRequest, 'path' | 'method'>): NativeVideoRoute | null {
+/**
+ * Classifies a native video request. Pass the body for APIs that carry the job
+ * ID in it; without a body such follow-ups are still recognised but have no
+ * `resourceId`, which callers treat as an unknown job.
+ */
+export function nativeVideoRoute(request: Pick<SerializedHttpRequest, 'path' | 'method'> & { body?: Uint8Array }): NativeVideoRoute | null {
   const path = request.path.split('?')[0] ?? '';
   const download = request.method === 'GET' ? VEO_DOWNLOAD.exec(path) : null;
   if (download) return { protocol: 'veo-video', action: 'download', resourceId: download[1]!, resultIndex: Number(download[2]) };
   for (const entry of NATIVE_VIDEO_APIS) {
     const create = request.method === 'POST' ? entry.createPaths.exec(path) : null;
     if (create) return { protocol: entry.protocol, action: 'create', ...(create[1] ? { model: create[1] } : {}) };
+    const bodyJob = request.method === 'POST' ? entry.bodyJobPaths?.find(candidate => candidate.path.test(path)) : undefined;
+    if (bodyJob) {
+      const resourceId = request.body ? entry.bodyJobId!(parseJsonObject(request.body) ?? {}) : undefined;
+      const valid = typeof resourceId === 'string' && entry.jobIdPattern.test(resourceId);
+      return { protocol: entry.protocol, action: bodyJob.action, ...(valid ? { resourceId } : {}) };
+    }
     const job = entry.jobPaths[request.method as 'GET' | 'DELETE']?.exec(path);
     if (job) return { protocol: entry.protocol, action: request.method === 'GET' ? 'status' : 'cancel', resourceId: job[1]! };
   }

@@ -1,6 +1,6 @@
 import { nativeVideoRoute } from '@antseed/api-adapter'
 import { ResourceRoutes } from './resource-routes.js'
-import { prepareVideoRequest, recordVideoAcceptance, rewriteVideoDownloadUrls } from './native-video-proxy.js'
+import { prepareVideoRequest, recordVideoAcceptance, recordVideoCreateAttempt, rewriteVideoDownloadUrls } from './native-video-proxy.js'
 import { downloadVideo } from './video-download.js'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -2284,7 +2284,8 @@ export class BuyerProxy {
     }
 
     if (nativeVideo) {
-      const prepared = prepareVideoRequest(nativeVideo, serializedReq.headers, this._resourceRoutes)
+      // Re-classify with the body: some APIs (Venice) carry the job ID in it.
+      const prepared = prepareVideoRequest(nativeVideoRoute(serializedReq) ?? nativeVideo, serializedReq.headers, this._resourceRoutes)
       if ('error' in prepared) {
         res.writeHead(prepared.error.statusCode, { 'content-type': 'application/json' })
         res.end(JSON.stringify(prepared.error.body))
@@ -3255,6 +3256,22 @@ export class BuyerProxy {
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
+        const videoRoute = nativeVideoRoute(requestForPeer)
+        if (videoRoute && recordVideoCreateAttempt(
+          videoRoute,
+          requestForPeer.headers,
+          { peerId: selectedPeer.peerId, provider: selectedRoutePlan.provider, service: requestedService },
+          this._resourceRoutes,
+        )) {
+          try {
+            await this._persistResourceRoutes()
+          } catch (error) {
+            console.error('[proxy] Video create route was not persisted:', error)
+            res.writeHead(503, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ error: { code: 'video_route_persistence_failed', message: 'Could not save the video create route; the request was not sent' } }))
+            return { done: true }
+          }
+        }
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
           signal: requestSignal,
           pinned,
@@ -3263,7 +3280,6 @@ export class BuyerProxy {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
-        const videoRoute = nativeVideoRoute(requestForPeer)
         if (videoRoute && recordVideoAcceptance(
           videoRoute,
           requestForPeer.headers,

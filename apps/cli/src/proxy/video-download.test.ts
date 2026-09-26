@@ -27,7 +27,7 @@ test('streams several MB with one request and no ranges', async () => {
   await serve(async (sent, callbacks) => {
     calls += 1
     assert.equal(sent.headers.range, undefined)
-    assert.equal(sent.headers['x-antseed-video-download'], 'veo-stream-v1')
+    assert.equal(sent.headers['x-antseed-video-download'], 'video-stream-v1')
     callbacks.onResponseStart!(start, { streaming: true })
     for (let offset = 0; offset < video.length; offset += 65536) {
       await callbacks.onResponseChunk!({ requestId: sent.requestId, data: video.subarray(offset, offset + 65536), done: false })
@@ -53,7 +53,7 @@ test('returns errors before a stream starts', async () => {
 })
 
 test('rejects missing and oversized lengths', async () => {
-  for (const length of ['', '999999999']) {
+  for (const length of ['', '4294967296']) {
     await serve(async (_request, callbacks) => {
       callbacks.onResponseStart!({ ...start, headers: { ...start.headers, 'content-length': length } }, { streaming: true })
       return start
@@ -88,4 +88,26 @@ test('propagates client disconnect to the single download request', async () => 
     await response.body!.cancel()
     await cancellation
   })
+})
+
+test('forwards a POST download body and passes JSON status answers through', async () => {
+  const body = Buffer.from('{"model":"wan-2.5","queue_id":"q"}')
+  const venice: SerializedHttpRequest = { requestId: 'venice', method: 'POST', path: '/api/v1/video/retrieve', headers: {}, body }
+  let sentBody: Uint8Array | undefined
+  const server = createServer((_incoming, response) => {
+    void downloadVideo(venice, response, async sent => {
+      sentBody = sent.body
+      return { requestId: sent.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"status":"PROCESSING"}') }
+    }, new AbortController().signal)
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { status: 'PROCESSING' })
+    assert.deepEqual(Buffer.from(sentBody!), body)
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })

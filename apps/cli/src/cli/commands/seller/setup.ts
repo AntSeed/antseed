@@ -100,6 +100,8 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
       return 'export DASHSCOPE_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
     case 'seedance':
       return 'export ARK_API_KEY=<seller-api-key>; configure a seller-operated baseUrl';
+    case 'venice':
+      return 'export VENICE_API_KEY=<seller-api-key>';
     default:
       return `set the credentials required by ${pluginName}`;
   }

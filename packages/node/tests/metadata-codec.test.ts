@@ -34,7 +34,7 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 describe('encodeMetadata / decodeMetadata', () => {
   it('round-trips service-scoped video downloads only in v13', () => {
     const metadata = makeMetadata();
-    metadata.providers[0]!.serviceCapabilities = { video: { outputs: ['video'], videoDownload: 'veo-stream-v1' } };
+    metadata.providers[0]!.serviceCapabilities = { video: { outputs: ['video'], videoDownload: 'video-stream-v1' } };
     expect(decodeMetadata(encodeMetadata(metadata)).providers[0]!.serviceCapabilities).toEqual(metadata.providers[0]!.serviceCapabilities);
     expect(() => encodeMetadata({ ...metadata, version: 12 })).toThrow('v13');
     delete metadata.providers[0]!.serviceCapabilities.video!.videoDownload;

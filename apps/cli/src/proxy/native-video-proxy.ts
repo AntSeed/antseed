@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { nativeVideoAcceptance, veoDownloadPath, type NativeVideoRoute, type SerializedHttpResponse } from '@antseed/api-adapter'
-import type { ResourceRoutes } from './resource-routes.js'
+import type { ResourceRoute, ResourceRoutes } from './resource-routes.js'
 import { VIDEO_DOWNLOAD_STREAM_VERSION } from '@antseed/node'
 
 // Video creates are charged when the seller accepts the job. If that acceptance
@@ -9,6 +9,15 @@ import { VIDEO_DOWNLOAD_STREAM_VERSION } from '@antseed/node'
 // proxy assigns the key because native video clients do not send one.
 export const VIDEO_IDEMPOTENCY_KEY_HEADER = 'x-antseed-idempotency-key'
 const VIDEO_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
+
+// The seller's stored acceptance only prevents a second charge if the retry
+// reaches that same seller. Each create is recorded against its idempotency key
+// before it is sent, so a retry with the same key is pinned to the original
+// seller and fails rather than starting a second paid job elsewhere. Job IDs
+// never contain ':', so these entries cannot collide with accepted job routes.
+function createAttemptId(idempotencyKey: string): string {
+  return `idempotency:${idempotencyKey}`
+}
 
 export interface VideoRequestError {
   statusCode: number
@@ -33,20 +42,36 @@ export function prepareVideoRequest(
     if (suppliedKey !== undefined && !VIDEO_IDEMPOTENCY_KEY_PATTERN.test(suppliedKey)) {
       return { error: { statusCode: 400, body: { error: { code: 'invalid_idempotency_key', message: 'Idempotency key must be 1-128 characters of [A-Za-z0-9._:-]' } } } }
     }
-    return { headers: { ...headers, [VIDEO_IDEMPOTENCY_KEY_HEADER]: suppliedKey || randomUUID() } }
+    const idempotencyKey = suppliedKey || randomUUID()
+    const previous = routes.resolve(route.protocol, createAttemptId(idempotencyKey))
+    return { headers: { ...headers, [VIDEO_IDEMPOTENCY_KEY_HEADER]: idempotencyKey, ...(previous ? pinHeaders(previous) : {}) } }
   }
-  const job = routes.resolve(route.protocol, route.resourceId!)
+  const job = route.resourceId ? routes.resolve(route.protocol, route.resourceId) : null
   if (!job) {
     return { error: { statusCode: 404, body: { error: { code: 'video_route_not_found', message: 'Unknown video job' } } } }
   }
+  return { headers: { ...headers, ...pinHeaders(job) } }
+}
+
+function pinHeaders(route: ResourceRoute): Record<string, string> {
   return {
-    headers: {
-      ...headers,
-      'x-antseed-pin-peer': job.sellerPeerId,
-      'x-antseed-provider': job.provider,
-      'x-antseed-service': job.service,
-    },
+    'x-antseed-pin-peer': route.sellerPeerId,
+    'x-antseed-provider': route.provider,
+    'x-antseed-service': route.service,
   }
+}
+
+/** Records which seller receives a create. Returns true when the route should be persisted before sending. */
+export function recordVideoCreateAttempt(
+  route: NativeVideoRoute,
+  requestHeaders: Record<string, string>,
+  seller: { peerId: string; provider: string; service: string | null },
+  routes: ResourceRoutes,
+): boolean {
+  const idempotencyKey = requestHeaders[VIDEO_IDEMPOTENCY_KEY_HEADER]
+  if (route.action !== 'create' || !idempotencyKey || !seller.service) return false
+  routes.record({ protocol: route.protocol, resourceId: createAttemptId(idempotencyKey), sellerPeerId: seller.peerId.toLowerCase(), provider: seller.provider, service: seller.service })
+  return true
 }
 
 /**

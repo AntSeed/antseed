@@ -14,6 +14,7 @@ import { createNativeVideoProvider } from '@antseed/provider-core';
 import { createLocalBootstrap } from './helpers/local-bootstrap.js';
 import { MockOpenAIImageProvider } from './helpers/mock-openai-provider.js';
 import veoPlugin from '../../plugins/provider-veo/src/index.js';
+import venicePlugin from '../../plugins/provider-venice/src/index.js';
 
 const execFileAsync = promisify(execFile);
 const liveVeoKey = process.env['ANTSEED_LIVE_VEO_KEY'];
@@ -461,7 +462,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
       rogue = new AntseedNode({ role: 'buyer', dataDir: rogueDir, dhtPort: 0, bootstrapNodes: bootstrap!.bootstrapConfig, allowPrivateIPs: true, noOfficialBootstrap: true, payments: { ...makePaymentsConfig(rpcUrl), enabled: false } });
       await rogue.start();
       const beforeDenied = upstreamCalls;
-      const denied = await rogue.sendRequest(discoveredSeller, { requestId: randomUUID(), method: 'GET', path: `/v1beta/${accepted.name}/videos/0:download`, headers: { 'x-antseed-service': model, 'x-antseed-provider': 'veo', 'x-antseed-video-download': 'veo-stream-v1' }, body: new Uint8Array() }, { pinned: true });
+      const denied = await rogue.sendRequest(discoveredSeller, { requestId: randomUUID(), method: 'GET', path: `/v1beta/${accepted.name}/videos/0:download`, headers: { 'x-antseed-service': model, 'x-antseed-provider': 'veo', 'x-antseed-video-download': 'video-stream-v1' }, body: new Uint8Array() }, { pinned: true });
       expect(denied.statusCode).toBe(404);
       expect(upstreamCalls).toBe(beforeDenied);
       checks.push('different buyer denied access to this actual job before any Google request');
@@ -546,7 +547,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
         cancel() { upstreamCancelled = true; },
       });
       const headers: Record<string, string> = { 'content-type': 'video/mp4' };
-      if (currentMode !== 'missing') headers['content-length'] = String(currentMode === 'oversize' ? 64 * 1024 * 1024 + 1 : video.length + (currentMode === 'short' ? -1 : currentMode === 'long' ? 1 : 0));
+      if (currentMode !== 'missing') headers['content-length'] = String(currentMode === 'oversize' ? 2 ** 32 : video.length + (currentMode === 'short' ? -1 : currentMode === 'long' ? 1 : 0));
       return new Response(body, { headers });
     });
     try {
@@ -567,7 +568,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
       const uri = status.response.generateVideoResponse.generatedSamples[0].video.uri;
       expect(uri).toBe(`${base}/v1beta/${operation}/videos/0:download`);
       expect(JSON.stringify(status)).not.toContain('seller-secret');
-      expect(discoveredSeller.providerServiceCapabilities?.veo?.services.veo?.videoDownload).toBe('veo-stream-v1');
+      expect(discoveredSeller.providerServiceCapabilities?.veo?.services.veo?.videoDownload).toBe('video-stream-v1');
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const lookupsBefore = statusLookups;
         const download = await fetch(uri);
@@ -620,13 +621,81 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
       }
       const beforeDenied = statusLookups;
       (sellerNode as any)._resourceOwnership.recordAcceptedCreate('veo-video', 'operations/someone-elses-job', '11'.repeat(20));
-      const denied = await buyerNode!.sendRequest(discoveredSeller, { requestId: 'non-owner', method: 'GET', path: '/v1beta/models/veo/operations/someone-elses-job/videos/0:download', headers: { 'x-antseed-service': 'veo', 'x-antseed-provider': 'veo', 'x-antseed-video-download': 'veo-stream-v1' }, body: new Uint8Array() }, { pinned: true });
+      const denied = await buyerNode!.sendRequest(discoveredSeller, { requestId: 'non-owner', method: 'GET', path: '/v1beta/models/veo/operations/someone-elses-job/videos/0:download', headers: { 'x-antseed-service': 'veo', 'x-antseed-provider': 'veo', 'x-antseed-video-download': 'video-stream-v1' }, body: new Uint8Array() }, { pinned: true });
       expect(denied.statusCode).toBe(404);
       expect(statusLookups).toBe(beforeDenied);
       expect(submissions).toBe(1);
       expect(manager.getConnection(discoveredSeller.peerId).transportDescription).toBe(transport);
       expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(40_000n);
       expect((await fetch(`${base}/v1beta/operations/unknown/videos/0:download`)).status).toBe(404);
+    } finally { vi.unstubAllGlobals(); }
+  }, 60_000);
+
+  it.each(['tcp-encrypted', 'webrtc'] as const)('runs a Venice queue, streamed retrieve and complete over %s with one charge', async transport => {
+    await setupRpc();
+    const originalFetch = globalThis.fetch;
+    const origin = 'https://api.venice.ai';
+    const video = Buffer.alloc(3 * 1024 * 1024 + 17, 9);
+    const calls: Array<{ path: string; body: any }> = [];
+    let ready = false;
+    vi.stubGlobal('fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith(`${origin}/`)) {
+        const headers = new Headers(init?.headers);
+        headers.set('connection', 'close');
+        return originalFetch(input, { ...init, headers });
+      }
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer seller-secret');
+      const path = new URL(url).pathname;
+      const body = JSON.parse(Buffer.from(init!.body as Uint8Array).toString());
+      calls.push({ path, body });
+      if (path === '/api/v1/video/queue') return Response.json({ model: body.model, queue_id: 'queue-1' });
+      if (path === '/api/v1/video/complete') return Response.json({ success: true });
+      if (!ready) return Response.json({ status: 'PROCESSING', average_execution_time: 1000, execution_duration: 10 });
+      return new Response(video, { headers: { 'content-type': 'video/mp4', 'content-length': String(video.length) } });
+    });
+    try {
+      const provider = await venicePlugin.createProvider({ VENICE_API_KEY: 'seller-secret', ANTSEED_ALLOWED_SERVICES: 'wan-2.5', ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: '{"wan-2.5":{"venice-video":{"version":1,"components":[{"unit":"video_seconds","priceUsd":0.01}]}}}' });
+      const { port, discoveredSeller } = await setupProxyNetwork(provider);
+      const manager = (buyerNode as any)._connectionManager;
+      if (transport === 'webrtc') {
+        const createConnection = manager.createConnection.bind(manager);
+        manager.createConnection = (config: any) => createConnection({ ...config, remoteCapabilities: config.remoteCapabilities.filter((capability: string) => capability !== 'transport.tcp-enc.v1') });
+      }
+      expect(discoveredSeller.providerServiceCapabilities?.venice?.services['wan-2.5']?.videoDownload).toBe('video-stream-v1');
+      const base = `http://127.0.0.1:${port}`;
+      const post = (path: string, body: object) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const created = await post('/api/v1/video/queue', { model: 'wan-2.5', prompt: 'boat', duration: '5s' });
+      expect(created.status).toBe(200);
+      expect((await created.json()).queue_id).toBe('queue-1');
+      expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(50_000n);
+      const pending = await post('/api/v1/video/retrieve', { model: 'wan-2.5', queue_id: 'queue-1' });
+      expect(pending.status).toBe(200);
+      expect((await pending.json()).status).toBe('PROCESSING');
+      ready = true;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const download = await post('/api/v1/video/retrieve', { model: 'wan-2.5', queue_id: 'queue-1' });
+        expect(download.status).toBe(200);
+        expect(download.headers.get('content-type')).toBe('video/mp4');
+        expect(Buffer.from(await download.arrayBuffer())).toEqual(video);
+      }
+      const completed = await post('/api/v1/video/complete', { model: 'other', queue_id: 'queue-1' });
+      expect(completed.status).toBe(200);
+      expect(calls.at(-1)).toEqual({ path: '/api/v1/video/complete', body: { model: 'wan-2.5', queue_id: 'queue-1' } });
+      expect((await post('/api/v1/video/retrieve', { model: 'wan-2.5', queue_id: 'unknown' })).status).toBe(404);
+      expect((await post('/api/v1/video/retrieve', { model: 'wan-2.5' })).status).toBe(404);
+      const callsBefore = calls.length;
+      (sellerNode as any)._resourceOwnership.recordAcceptedCreate('venice-video', 'someone-elses', '11'.repeat(20));
+      const denied = await buyerNode!.sendRequest(discoveredSeller, { requestId: 'non-owner', method: 'POST', path: '/api/v1/video/complete', headers: { 'content-type': 'application/json', 'x-antseed-service': 'wan-2.5', 'x-antseed-provider': 'venice' }, body: Buffer.from('{"queue_id":"someone-elses"}') }, { pinned: true });
+      expect(denied.statusCode).toBe(404);
+      expect(calls.length).toBe(callsBefore);
+      expect(calls.filter(call => call.path === '/api/v1/video/queue')).toHaveLength(1);
+      expect(manager.getConnection(discoveredSeller.peerId).transportDescription).toBe(transport);
+      expect(buyerNode!.buyerPaymentManager!.getVerifiedCost(discoveredSeller.peerId)).toBe(50_000n);
+      await vi.waitFor(() => {
+        const auths = (buyerNode as any)._verificationStorage.listResponseAuthsBySeller(discoveredSeller.peerId);
+        expect(auths.filter((auth: any) => !auth.verified).map((auth: any) => auth.verificationError)).toEqual([]);
+      });
     } finally { vi.unstubAllGlobals(); }
   }, 60_000);
 

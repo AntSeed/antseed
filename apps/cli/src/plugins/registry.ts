@@ -13,6 +13,7 @@ export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
   { name: 'minimax', type: 'provider', description: 'Seller-operated MiniMax video API', package: '@antseed/provider-minimax' },
   { name: 'wan', type: 'provider', description: 'Seller-operated Wan video API', package: '@antseed/provider-wan' },
   { name: 'seedance', type: 'provider', description: 'Seller-operated Seedance video API', package: '@antseed/provider-seedance' },
+  { name: 'venice', type: 'provider', description: 'Venice video API', package: '@antseed/provider-venice' },
   {
     name: 'anthropic',
     type: 'provider',

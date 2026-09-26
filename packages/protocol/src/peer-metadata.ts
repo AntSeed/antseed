@@ -36,7 +36,7 @@ export type ServiceCapabilityModality = (typeof SERVICE_CAPABILITY_MODALITIES)[n
  * optional: absent means unknown, so buyers fall back to their own defaults.
  */
 export interface ServiceCapabilities {
-  videoDownload?: 'veo-stream-v1';
+  videoDownload?: 'video-stream-v1';
   /** Total context window in tokens. */
   contextWindow?: number;
   /** Maximum output tokens per response. */
@@ -74,7 +74,7 @@ const SERVICE_CAPABILITY_MODALITY_SET = new Set<string>(SERVICE_CAPABILITY_MODAL
  */
 export function validateServiceCapabilityFields(caps: ServiceCapabilities): string[] {
   const errors: string[] = [];
-  if (caps.videoDownload !== undefined && caps.videoDownload !== 'veo-stream-v1') errors.push('Unsupported video download version');
+  if (caps.videoDownload !== undefined && caps.videoDownload !== 'video-stream-v1') errors.push('Unsupported video download version');
   for (const key of ["contextWindow", "maxOutputTokens"] as const) {
     const value = caps[key];
     if (value === undefined) continue;

@@ -752,7 +752,7 @@ export class SellerRequestHandler {
     const buyer = buyerPeerId.toLowerCase();
     try {
       if (route.action !== 'create') {
-        if (store.getOwner(route.protocol, nativeVideoResourceKey(route.protocol, route.resourceId!)) === buyer) return false;
+        if (route.resourceId && store.getOwner(route.protocol, nativeVideoResourceKey(route.protocol, route.resourceId)) === buyer) return false;
         this._sendJsonError(mux, request.requestId, 404, 'resource_not_found', 'Video job not found');
         return true;
       }

@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import type { ServerResponse } from 'node:http'
-import { VIDEO_DOWNLOAD_STREAM_HEADER, VIDEO_DOWNLOAD_STREAM_VERSION, VIDEO_DOWNLOAD_MAX_BYTES, type RequestStreamCallbacks, type SerializedHttpRequest, type SerializedHttpResponse } from '@antseed/node'
+import { VIDEO_DOWNLOAD_STREAM_HEADER, VIDEO_DOWNLOAD_STREAM_VERSION, VIDEO_DOWNLOAD_MAX_BYTES, VIDEO_DOWNLOAD_IDLE_TIMEOUT_MS, type RequestStreamCallbacks, type SerializedHttpRequest, type SerializedHttpResponse } from '@antseed/node'
 
 type SendDownload = (request: SerializedHttpRequest, callbacks: RequestStreamCallbacks, signal: AbortSignal) => Promise<SerializedHttpResponse>
 let activeDownloads = 0
@@ -12,13 +12,21 @@ export async function downloadVideo(request: SerializedHttpRequest, response: Se
   }
   if (activeDownloads >= 2) { error(429, 'video_download_busy'); return }
   activeDownloads += 1
+  // No total time limit: large videos on slow links finish as long as bytes keep arriving.
   const controller = new AbortController()
-  const signal = AbortSignal.any([clientSignal, controller.signal, AbortSignal.timeout(5 * 60_000)])
+  let idle: ReturnType<typeof setTimeout> | undefined
+  const progress = () => {
+    clearTimeout(idle)
+    idle = setTimeout(() => controller.abort(new Error('Video download stalled')), VIDEO_DOWNLOAD_IDLE_TIMEOUT_MS)
+  }
+  progress()
+  const signal = AbortSignal.any([clientSignal, controller.signal])
   const headers = Object.fromEntries(Object.entries(request.headers).filter(([key]) => !['range', 'if-range', 'content-length', 'accept-encoding'].includes(key.toLowerCase())))
   let length = 0
   let received = 0
   try {
-    const result = await send({ ...request, headers: { ...headers, [VIDEO_DOWNLOAD_STREAM_HEADER]: VIDEO_DOWNLOAD_STREAM_VERSION }, body: new Uint8Array(0) }, {
+    const body = request.method === 'GET' ? new Uint8Array(0) : request.body
+    const result = await send({ ...request, headers: { ...headers, [VIDEO_DOWNLOAD_STREAM_HEADER]: VIDEO_DOWNLOAD_STREAM_VERSION }, body }, {
       onResponseStart: (start, metadata) => {
         if (!metadata.streaming) return
         length = Number(start.headers['content-length'])
@@ -30,10 +38,17 @@ export async function downloadVideo(request: SerializedHttpRequest, response: Se
         received += chunk.data.length
         if (!length || received > length) throw new Error('Invalid video size')
         if (chunk.data.length && !response.write(Buffer.from(chunk.data))) await once(response, 'drain', { signal })
+        progress()
       },
     }, signal)
     signal.throwIfAborted()
     if (!response.headersSent) {
+      // A JSON answer instead of a stream: a status such as Venice "PROCESSING", or a seller error.
+      if (result.headers['content-type']?.startsWith('application/json') && result.statusCode < 500) {
+        response.writeHead(result.statusCode, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        response.end(Buffer.from(result.body))
+        return
+      }
       error([400, 404, 409, 410, 413, 429, 503, 504].includes(result.statusCode) ? result.statusCode : 502, 'video_download_unavailable')
       return
     }
@@ -43,6 +58,7 @@ export async function downloadVideo(request: SerializedHttpRequest, response: Se
     if (response.headersSent || clientSignal.aborted) response.destroy()
     else error(signal.aborted ? 504 : 502, 'video_download_failed')
   } finally {
+    clearTimeout(idle)
     controller.abort()
     activeDownloads -= 1
   }

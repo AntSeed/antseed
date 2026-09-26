@@ -321,6 +321,7 @@ export function buildSellerPluginRuntimeEnv(
       : pluginPackage === '@antseed/provider-minimax' ? 'MINIMAX'
       : pluginPackage === '@antseed/provider-wan' ? 'DASHSCOPE'
       : pluginPackage === '@antseed/provider-seedance' ? 'ARK'
+      : pluginPackage === '@antseed/provider-venice' ? 'VENICE'
       : 'OPENAI'
   if (providerCfg.baseUrl) {
     runtimeEnv[`${envPrefix}_BASE_URL`] = providerCfg.baseUrl

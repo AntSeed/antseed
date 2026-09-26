@@ -100,10 +100,46 @@ describe('native video API contracts', () => {
   });
 
   it('shares one native video protocol list', () => {
-    expect(NATIVE_VIDEO_PROTOCOLS).toEqual(['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video']);
+    expect(NATIVE_VIDEO_PROTOCOLS).toEqual(['runway-video', 'veo-video', 'minimax-video', 'wan-video', 'seedance-video', 'venice-video']);
     expect(isNativeVideoProtocol('wan-video')).toBe(true);
     expect(isNativeVideoProtocol('openai-images')).toBe(false);
     expect(inferProviderDefaultServiceApiProtocols('seedance')).toEqual(['seedance-video']);
     expect(detectRequestServiceApiProtocol(request('/v2/query/video_generation/1'))).toBe('minimax-video');
+  });
+});
+
+describe('Venice video API', () => {
+  const request = (path: string, body: object = {}, headers: Record<string, string> = {}) => ({ requestId: 'request', method: 'POST', path, headers: { 'content-type': 'application/json', ...headers }, body: new TextEncoder().encode(JSON.stringify(body)) });
+
+  it('reads the job from the body for retrieve and complete', () => {
+    const queueId = '123e4567-e89b-12d3-a456-426614174000';
+    expect(nativeVideoRoute(request('/api/v1/video/queue', { model: 'wan-2.5' }))).toEqual({ protocol: 'venice-video', action: 'create' });
+    expect(nativeVideoRoute(request('/api/v1/video/retrieve', { model: 'wan-2.5', queue_id: queueId }))).toEqual({ protocol: 'venice-video', action: 'download', resourceId: queueId });
+    expect(nativeVideoRoute(request('/api/v1/video/complete', { queue_id: queueId }))).toEqual({ protocol: 'venice-video', action: 'cancel', resourceId: queueId });
+    expect(nativeVideoRoute({ method: 'POST', path: '/api/v1/video/retrieve' })).toEqual({ protocol: 'venice-video', action: 'download' });
+    for (const queue_id of ['../account', 5, '', undefined]) {
+      expect(nativeVideoRoute(request('/api/v1/video/retrieve', { queue_id }))?.resourceId).toBeUndefined();
+    }
+    expect(nativeVideoRoute({ ...request('/api/v1/video/retrieve'), method: 'GET' })).toBeNull();
+    expect(nativeVideoRoute(request('/api/v1/video/quote'))).toBeNull();
+    expect(detectRequestServiceApiProtocol(request('/api/v1/video/retrieve'))).toBe('venice-video');
+    expect(inferProviderDefaultServiceApiProtocols('venice')).toEqual(['venice-video']);
+  });
+
+  it('uses the routed service for follow-ups and the body model for creates', () => {
+    expect(requestService(request('/api/v1/video/queue', { model: 'wan-2.5' }))).toBe('wan-2.5');
+    expect(requestService(request('/api/v1/video/retrieve', { model: 'other', queue_id: 'q' }, { 'x-antseed-service': 'wan-2.5' }))).toBe('wan-2.5');
+  });
+
+  it('parses Venice duration strings and accepts only a returned queue_id', () => {
+    const facts = (duration: unknown) => nativeVideoFacts(request('/api/v1/video/queue', { model: 'm', duration }));
+    expect(facts('5s')?.duration).toBe(5);
+    expect(facts('10s')?.duration).toBe(10);
+    for (const auto of ['auto', 'Auto', '-1', '1 gen']) expect(facts(auto)?.duration).toBeUndefined();
+    expect(() => facts('abc')).toThrow();
+    expect(nativeVideoFacts(request('/api/v1/video/retrieve', { queue_id: 'q' }))).toEqual({ protocol: 'venice-video', action: 'download', count: 0 });
+    const response = (body: object, statusCode = 200) => ({ requestId: 'request', statusCode, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) });
+    expect(nativeVideoAcceptance('venice-video', response({ model: 'm', queue_id: 'q-1', download_url: 'https://x' }))).toBe('q-1');
+    expect(nativeVideoAcceptance('venice-video', response({ error: 'INSUFFICIENT_BALANCE' }, 402))).toBeNull();
   });
 });
