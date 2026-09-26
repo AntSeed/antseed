@@ -1796,3 +1796,82 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
     display: none;
   }
 }
+
+/* ============================================================
+   "Use it for" navbar dropdown — rich rows (icon, title, description)
+   ============================================================ */
+/* Docusaurus puts the item's className on the trigger link, not the menu, so
+   the menu is styled via the navbar dropdown selector (this is the only
+   dropdown in the navbar). */
+.navbar .dropdown__menu {
+  min-width: 300px;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid var(--as-line);
+  box-shadow: 0 16px 40px -16px rgba(0, 30, 18, 0.25);
+}
+
+.navbar .dropdown__menu > li > div {
+  padding: 0;
+}
+
+.usecase {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--as-heading);
+  transition: background 0.15s ease;
+}
+
+.usecase:hover,
+.usecase:focus-visible {
+  background: var(--as-soil-0);
+  text-decoration: none;
+  color: var(--as-heading);
+}
+
+.usecase__icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--as-green-deep);
+}
+
+.usecase__icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.usecase__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usecase__title {
+  font-family: var(--as-font-app);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.usecase__desc {
+  font-family: var(--as-font-app);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--as-text-2);
+}
+
+html[data-theme='dark'] .usecase:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* mobile sidebar: rows stack as plain menu entries */
+.navbar-sidebar .usecase {
+  padding: 8px 12px;
+}

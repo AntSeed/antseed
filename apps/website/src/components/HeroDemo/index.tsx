@@ -1185,6 +1185,7 @@ export function HeroDemo({
   frameRef,
   shutdownRef,
   className,
+  compact = false,
 }: {
   /** Shared frame counter (read by the hero dot canvas each rAF). */
   frameRef?: MutableRefObject<number>;
@@ -1194,13 +1195,17 @@ export function HeroDemo({
    */
   shutdownRef?: MutableRefObject<number>;
   className?: string;
+  /** Force the stacked single-column scene regardless of viewport width
+      (used when the demo shares the hero row with the copy). */
+  compact?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(0);
   const [shut, setShut] = useState<number | null>(null);
   const [interactive, setInteractive] = useState(false);
   const [scale, setScale] = useState(0.5);
-  const [mobile, setMobile] = useState(false);
+  const [mobileMq, setMobileMq] = useState(false);
+  const mobile = compact || mobileMq;
   const modeRef = useRef<PowerMode>('running');
   const originRef = useRef(0); // clock origin (ms) — frame 0 of the loop
   const frozenRef = useRef(0); // scene frame held during shutdown
@@ -1226,7 +1231,7 @@ export function HeroDemo({
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 768px)');
-    const update = () => setMobile(mq.matches);
+    const update = () => setMobileMq(mq.matches);
     update();
     mq.addEventListener('change', update);
     return () => mq.removeEventListener('change', update);

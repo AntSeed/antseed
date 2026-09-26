@@ -44,7 +44,7 @@ export default function Footer(): JSX.Element {
           <p className={styles.tagline}>
             The open market for AI inference.
             <br />
-            Peer-to-peer, no account, no middleman.
+            Run your agents on your terms
           </p>
           <div className={styles.social}>
             <a href="https://github.com/antseed" target="_blank" rel="noopener noreferrer" title="GitHub" aria-label="GitHub">
