@@ -9,13 +9,13 @@ const SOURCE = 'https://github.com/AntSeed/antseed/tree/main';
 const EXAMPLE_FEE_BPS = 200;
 const EXAMPLE_AUTH_MICROS = [0, 14_000, 31_000, 47_000];
 const STAGES = [
-  {name: 'Discover', target: 'discovery', label: '01 / LOOKUP', title: 'Find peers first. Match services locally.', detail: 'Query the wildcard, then subnet topics to enumerate peer endpoints. Fetch each endpoint’s signed metadata; service catalogs live there, not in per-service DHT topics.', wire: 'wildcard → subnets → endpoints → GET /metadata'},
-  {name: 'Verify', target: 'discovery', label: '02 / IDENTITY', title: 'An advertisement with a signature.', detail: 'Validate metadata schema, freshness, and signature. Match the requested service against the verified catalog before ranking eligible offers.', wire: 'verify metadata → filter catalog → candidate offers'},
-  {name: 'Rank', target: 'routing', label: '03 / LOCAL POLICY', title: 'Your machine chooses the route.', detail: 'Trust and allow/block rules gate eligibility. The shared model ranker prefers ready peers, then lower advertised prices; its blended score breaks price ties. Explicit pins and conversation affinity can affect the final choice.', wire: 'eligibility → cooldown status → price → tie-breaks'},
-  {name: 'Connect', target: 'transport', label: '04 / DIRECT TRANSPORT', title: 'Two peers. One encrypted channel.', detail: 'Modern nodes prefer mutually authenticated encrypted TCP. WebRTC DataChannels provide another supported transport.', wire: 'X25519 → HKDF-SHA256 → AES-256-GCM'},
-  {name: 'Stream', target: 'transport', label: '05 / DELIVERY', title: 'The response takes the peer connection.', detail: 'For paid delivery, a reservation is established before service. API requests and streaming responses then travel as binary frames between the buyer and the selected provider.', wire: 'reserved budget → HttpRequest → HttpResponseChunk'},
-  {name: 'Authorize', target: 'payments', label: '06 / OFFCHAIN', title: 'A signature, not a transaction per token.', detail: 'The buyer updates cumulative spending authorizations after responses and when additional headroom is needed. The reserved budget bounds spending, but a signature is not proof of delivered output.', wire: 'response accounting → SpendingAuth → next request'},
-  {name: 'Settle', target: 'payments', label: '07 / BASE', title: 'Service delivered. USDC settled.', detail: 'The provider submits the latest authorization to settle or close the channel. Settlement also creates public economic history.', wire: 'latest authorization → Base → provider payout'},
+  {name: 'Discover', target: 'discovery', label: '01 / LOOKUP', title: 'Find providers first. Match services on your machine.', detail: 'Your device asks the network for provider addresses, then downloads each provider’s signed listing. The listing says which models they offer and at what price.', wire: 'DHT lookup → provider addresses → listings'},
+  {name: 'Verify', target: 'discovery', label: '02 / IDENTITY', title: 'Every listing is signed.', detail: 'Your device checks that each listing is signed by its provider and is recent. Only providers that offer the service you asked for move on.', wire: 'check signature → filter services → candidates'},
+  {name: 'Rank', target: 'routing', label: '03 / LOCAL POLICY', title: 'Your machine picks the route.', detail: 'Your own trust level and allow/block lists decide who is eligible. Among those, ready providers with the lowest advertised price come first. Pinned providers and ongoing conversations can override that.', wire: 'your rules → ready? → price → tie-breaks'},
+  {name: 'Connect', target: 'transport', label: '04 / DIRECT TRANSPORT', title: 'Two peers. One encrypted connection.', detail: 'Your device connects straight to the chosen provider over an encrypted link where both sides prove who they are. Antseed is not in the middle.', wire: 'key exchange → shared secret → encrypted stream'},
+  {name: 'Stream', target: 'transport', label: '05 / DELIVERY', title: 'The response comes straight from the provider.', detail: 'For paid use, a budget is reserved first. Then the request and the streamed response travel directly between you and the provider.', wire: 'reserved budget → request → streamed response'},
+  {name: 'Authorize', target: 'payments', label: '06 / OFFCHAIN', title: 'A signature, not a transaction per token.', detail: 'After each response, your device signs the running total the provider may collect. Spending can never exceed the reserved budget. The signature covers payment, not proof of output quality.', wire: 'count usage → sign running total → next request'},
+  {name: 'Settle', target: 'payments', label: '07 / BASE', title: 'Service delivered. USDC settled.', detail: 'The provider submits your latest signature to Base and gets paid in USDC. That settlement becomes part of the public record.', wire: 'latest signature → Base → provider payout'},
 ];
 
 function Eyebrow({children}: {children: ReactNode}) {
@@ -44,13 +44,13 @@ function DocLink({to, children}: {to: string; children: ReactNode}) {
 }
 
 const TRACE_MESSAGES = [
-  ['ENUMERATING PEERS', 'Wildcard + subnets → peer endpoints'],
-  ['CHECKING ADVERTISEMENTS', 'Identity recovered · metadata fresh'],
-  ['LOCAL ROUTE SELECTED', 'Peer 02 matches this buyer’s policy'],
-  ['ENCRYPTED CHANNEL OPEN', 'Ephemeral keys · authenticated peers'],
+  ['FINDING PROVIDERS', 'Asking the network for provider addresses'],
+  ['CHECKING LISTINGS', 'Signatures valid · listings fresh'],
+  ['ROUTE CHOSEN LOCALLY', 'Peer 02 fits your settings and price'],
+  ['ENCRYPTED CONNECTION OPEN', 'Encrypted · both sides verified'],
   ['RESPONSE STREAMING', 'Output travels directly to the buyer'],
-  ['SPENDING AUTHORIZED', 'Illustrative authorization: 0.047 USDC'],
-  ['SETTLEMENT CONFIRMED', 'Base records the authorized payment'],
+  ['SPENDING SIGNED', 'Example: 0.047 USDC authorized'],
+  ['SETTLEMENT CONFIRMED', 'Payment recorded on Base'],
 ];
 
 const SWARM_NODES = [
@@ -184,7 +184,7 @@ function RequestTrace({motionPaused}: {motionPaused: boolean}) {
         ))}
         <div key={active} className={styles.sceneMessage} aria-hidden="true"><span>{TRACE_MESSAGES[active][0]}</span><strong>{TRACE_MESSAGES[active][1]}</strong>{active === 4 && <div className={styles.tokenStream}><i /><i /><i /><i /><i /><i /><i /></div>}</div>
         <div className={styles.baseCard} aria-hidden="true"><span className={styles.baseMark} /><strong>Base</strong><span>{active === 6 ? '0.047 USDC · settled ✓' : 'USDC settlement'}</span></div>
-        <span className={styles.sceneFootnote}>{direct ? 'Inference bypasses the discovery layer.' : 'DHT: endpoints. Metadata: services. Buyer: selection.'}</span>
+        <span className={styles.sceneFootnote}>{direct ? 'Requests skip the discovery layer entirely.' : 'The network finds addresses. Listings describe services. You choose.'}</span>
       </div>
       <div className={styles.playbackBar}><span>0{active + 1} / 07 <span>{direct ? 'DIRECT PEER SESSION' : 'DISCOVER & SELECT'}</span></span><button type="button" disabled={motionPaused || reducedMotion} onClick={() => setPlaying(current => !current)}>{motionPaused || reducedMotion ? 'Manual mode' : playing ? 'Ⅱ Pause walkthrough' : '▶ Play walkthrough'}</button></div>
       <div ref={controlsRef} className={styles.traceControls} role="group" aria-label="Explore the request lifecycle">
@@ -208,17 +208,17 @@ function PaymentChannel() {
   return (
     <div className={styles.paymentPanel}>
       <div className={styles.panelBar}><span>CHANNEL / 0x7f3a…</span><span>Interactive example</span></div>
-      <div className={styles.budget}><span>ReserveAuth / maximum budget</span><strong>2.00 <small>USDC</small></strong></div>
+      <div className={styles.budget}><span>Reserved budget (maximum)</span><strong>2.00 <small>USDC</small></strong></div>
       <div className={styles.authorizations}>
         {[1, 2, 3].map((request) => <div key={request} className={request <= requestCount ? styles.signed : ''}><span>Request 0{request}</span><code>{(EXAMPLE_AUTH_MICROS[request] / 1_000_000).toFixed(3)} USDC</code><span>{request <= requestCount ? 'Signed ✓' : 'Waiting'}</span></div>)}
       </div>
-      <div className={styles.settlement} aria-live="polite" aria-atomic="true"><span>{settled ? 'Gross settled amount' : 'Latest cumulative authorization'}</span><strong>{amount} <small>USDC</small></strong><p>{settled ? `${(payoutMicros / 1_000_000).toFixed(6)} to provider · ${(feeMicros / 1_000_000).toFixed(6)} protocol fee` : 'Each signature authorizes a cumulative total. Totals are not added together; settlement charges only the increase over the amount already settled.'}</p></div>
+      <div className={styles.settlement} aria-live="polite" aria-atomic="true"><span>{settled ? 'Gross settled amount' : 'Latest cumulative authorization'}</span><strong>{amount} <small>USDC</small></strong><p>{settled ? `${(payoutMicros / 1_000_000).toFixed(6)} to provider · ${(feeMicros / 1_000_000).toFixed(6)} protocol fee` : 'Each signature carries the running total, not a new amount. Settlement charges only what has not been settled yet.'}</p></div>
       <div className={styles.demoActions}>
         <button type="button" disabled={settled || requestCount === 3} onClick={() => setRequestCount(requestCount + 1)}>Send request <ArrowRight size={16} /></button>
         <button type="button" disabled={settled || requestCount === 0} onClick={() => setSettled(true)}>Close & settle</button>
         <button type="button" onClick={() => {setRequestCount(0); setSettled(false);}}>Reset</button>
       </div>
-      <p className={styles.finePrint}>{settled ? `${((2_000_000 - amountMicros) / 1_000_000).toFixed(3)} USDC of the reservation is released back to the buyer’s available deposit.` : 'Simulation only. One final settlement, no interim settlements or extra headroom.'} This example uses the source default of {EXAMPLE_FEE_BPS / 100}% and assumes a configured protocol reserve. It does not read the deployed fee.</p>
+      <p className={styles.finePrint}>{settled ? `${((2_000_000 - amountMicros) / 1_000_000).toFixed(3)} USDC of the reservation goes back to the buyer’s deposit.` : 'Simulation only. One final settlement, no headroom.'} The {EXAMPLE_FEE_BPS / 100}% fee is the default in the contract source and assumes a fee recipient is configured. The live fee may differ.</p>
     </div>
   );
 }
@@ -226,13 +226,13 @@ function PaymentChannel() {
 export default function NetworkPage() {
   const [motionPaused, setMotionPaused] = useState(false);
   return (
-    <Layout title="The peer-to-peer AI protocol" description="Inside Antseed: BitTorrent DHT discovery, buyer-owned routing, direct encrypted transport, and buyer-authorized USDC settlement on Base.">
+    <Layout title="The peer-to-peer AI protocol" description="Inside Antseed: your device finds providers over Mainline DHT, the same network BitTorrent uses, picks the route itself, talks to the provider directly, and pays in USDC on Base.">
       <Head><link rel="canonical" href="https://antseed.com/network/" /></Head>
       <main className={`${styles.page} ${motionPaused ? styles.paused : ''}`}>
         <header className={styles.hero}>
           <div className={styles.inner}>
             <div className={styles.heroTop}><Eyebrow>ANTSEED / NETWORK PROTOCOL</Eyebrow><button type="button" className={styles.motionToggle} aria-pressed={motionPaused} onClick={() => setMotionPaused(!motionPaused)}>{motionPaused ? 'Resume motion' : 'Pause motion'}</button></div>
-            <Reveal><h1>Antseed Network.<br /><span>Not another API gateway.</span></h1><p className={styles.heroLead}>A peer-to-peer protocol for buying intelligence. Discover peers through a BitTorrent DHT, inspect signed service catalogs, choose a route on your machine, and settle authorized spending in USDC on Base.</p></Reveal>
+            <Reveal><h1>Antseed Network.<br /><span>Not another API gateway.</span></h1><p className={styles.heroLead}>A peer-to-peer protocol for buying AI. Your device finds providers over the same Mainline DHT that BitTorrent uses, reads their signed price lists, picks the best one itself, and pays in USDC on Base.</p></Reveal>
             <div className={styles.ctas}><Button href="#discovery" size="lg" arrow>Follow a request</Button><Button href={SOURCE} variant="ghost" size="lg">Inspect the source</Button></div>
             <RequestTrace motionPaused={motionPaused} />
             <div className={styles.heroFooter}><span>Discovery is distributed.</span><span>Routing is local.</span><span>Delivery is direct.</span><span>Settlement is onchain.</span></div>
@@ -241,77 +241,77 @@ export default function NetworkPage() {
 
         <nav className={styles.chapterNav} aria-label="Protocol chapters"><div>{['discovery', 'routing', 'transport', 'payments', 'trust', 'incentives', 'resilience', 'protocol'].map((chapter, index) => <a key={chapter} href={`#${chapter}`}><span>0{index + 1}</span>{chapter}</a>)}</div></nav>
 
-        <Chapter id="discovery" number="01" title="Discover peers. Read catalogs. Match locally." intro="Antseed uses BitTorrent’s BEP-5 discovery primitive to find peer endpoints. The DHT does not index individual models or carry prompts. Service catalogs arrive separately in signed metadata.">
+        <Chapter id="discovery" number="01" title="Find providers. Read their listings. Choose locally." intro="Antseed finds providers over Mainline DHT, the same network BitTorrent uses. It only stores addresses. It never sees model names or prompts. Each provider’s service listing comes straight from that provider, signed.">
           <div className={styles.split}>
             <Reveal className={styles.discoveryPanel}>
-              <div className={styles.panelBar}><span>DISCOVERY / PEER ENUMERATION</span><span>Current protocol</span></div>
+              <div className={styles.panelBar}><span>DISCOVERY / FINDING PROVIDERS</span><span>Mainline DHT · BEP 5</span></div>
               <div className={styles.topic}>
-                <span>01 / Wildcard lookup</span><code>SHA1("antseed:*")</code>
-                <span>02 / Sequential subnet lookups</span><code>SHA1("antseed:subnet:0")</code><small>Repeat for subnet indexes 0 through 15.</small>
+                <span>01 / Ask the network</span><code>Same Mainline DHT that BitTorrent uses</code>
+                <span>02 / Scan for providers</span><code>Only addresses are stored, nothing else</code>
                 <div className={styles.shards}>{Array.from({length: 16}, (_, index) => <i key={index} style={{'--delay': `${index * 0.13}s`} as CSSProperties}>{index}</i>)}</div>
-                <small>Each seller announces one subnet, assigned from its peer ID. Buyers scan the subnets to enumerate peers.</small>
-                <span className={styles.downArrow}>↓ Deduplicate host:port endpoints</span>
-                <code>GET /metadata → verify → filter services</code>
+                <small>Your device sweeps the network and collects every provider address it finds.</small>
+                <span className={styles.downArrow}>↓ Download each provider’s listing</span>
+                <code>listing → verify signature → keep matching services</code>
               </div>
-              <div className={styles.metadata}><span>SIGNED PROVIDER METADATA</span><dl><div><dt>Services</dt><dd>Models + capabilities</dd></div><div><dt>Offer</dt><dd>Pricing + current load</dd></div><div><dt>Endpoint</dt><dd>Public peer address</dd></div><div><dt>Identity</dt><dd>Signature + timestamp</dd></div></dl></div>
+              <div className={styles.metadata}><span>SIGNED PROVIDER LISTING</span><dl><div><dt>Services</dt><dd>Models + capabilities</dd></div><div><dt>Offer</dt><dd>Pricing + current load</dd></div><div><dt>Endpoint</dt><dd>Public peer address</dd></div><div><dt>Identity</dt><dd>Signature + timestamp</dd></div></dl></div>
             </Reveal>
             <Reveal className={styles.prose}>
-              <h3>Peer discovery, not a model index.</h3><p>Every seller announces <code>antseed:*</code>, one of 16 <code>antseed:subnet:&#123;index&#125;</code> topics, and <code>antseed:peer:&#123;peerId&#125;</code>. Configured offerings can also announce capability topics. There are no per-service or per-provider-name announcements.</p>
-              <h3>Enumerate once. Filter the catalog locally.</h3><p>General discovery queries the wildcard first, then subnet topics sequentially. Foreground scans can stop at a time budget; background discovery completes the sweep. Buyers deduplicate endpoints, retrieve signed metadata, and filter its service catalog locally.</p><p>Keeping model names out of DHT announcements prevents the announcement count from growing with a seller’s catalog. A known peer can be resolved directly through its per-peer topic.</p>
-              <h3>An announcement is not a free pass.</h3><p>Default discovery settings validate metadata schema, signature, and freshness before accepting an offer. SDK options can relax signature and freshness checks. Capability declarations are provider claims, not proof of model quality.</p>
-              <h3>Bootstrap is an entrance, not a gateway.</h3><p>Default nodes join through Antseed bootstrap infrastructure. Those endpoints help establish discovery; they do not carry inference traffic. Bootstrap endpoints are configurable.</p>
+              <h3>Addresses, not a model index.</h3><p>Providers put only their address on the network, never their model names. So the network stays small no matter how many models a provider offers. If you already know a provider, your device can look it up directly.</p>
+              <h3>Scan once. Filter on your machine.</h3><p>Your device collects provider addresses, downloads each signed listing, and keeps the ones that offer what you asked for. A quick first scan gets you started. A background scan finishes the sweep.</p>
+              <h3>A listing is not a free pass.</h3><p>By default, a listing with a bad signature, a broken format, or a stale timestamp is ignored. A listing is the provider’s claim about what it offers, not proof of quality.</p>
+              <h3>Bootstrap is a door, not a gateway.</h3><p>New nodes join through Antseed’s bootstrap servers. Those servers only help you find peers. Your requests never pass through them, and you can point your node at other bootstrap servers.</p>
               <DocLink to="/docs/discovery">Read the discovery protocol</DocLink>
             </Reveal>
           </div>
         </Chapter>
 
-        <Chapter id="routing" number="02" title="The buyer is the router." intro="Your machine builds its own view of the network. It decides which providers are eligible and which offer to use. There is no hosted Antseed routing API making that decision.">
+        <Chapter id="routing" number="02" title="The buyer is the router." intro="Your machine builds its own picture of the network and decides which provider to use. There is no Antseed server making that choice for you.">
           <Reveal className={styles.funnel}>
-            {[['12', 'Discovered', 'Signed service advertisements'], ['08', 'Compatible', 'Service and protocol match'], ['04', 'Eligible', 'Trust + allow/block policy'], ['01', 'Selected', 'Ready peers, then price']].map(([count, label, description]) => <div key={label}><strong>{count}</strong><h3>{label}</h3><p>{description}</p></div>)}
+            {[['12', 'Found', 'Signed provider listings'], ['08', 'Compatible', 'Offer the service you asked for'], ['04', 'Eligible', 'Pass your trust and allow/block rules'], ['01', 'Selected', 'Ready first, then cheapest']].map(([count, label, description]) => <div key={label}><strong>{count}</strong><h3>{label}</h3><p>{description}</p></div>)}
           </Reveal>
           <p className={styles.finePrint}>Illustrative candidates, not live network counts.</p>
-          <div className={styles.textColumns}><div><h3>Policy belongs at the edge.</h3><p>Minimum trust and allow/block lists gate eligibility. Among eligible, ready peers, the shared ranker prefers lower advertised input-plus-output pricing, or the image-unit price. Its blended score breaks price ties. Pins and conversation affinity can override this ordering.</p><p>The routing preference for maximum input price is a scoring penalty, not a hard cap. The router’s separate <code>maxPricing</code> policy enforces hard price limits.</p></div><div><h3>Failures stay contextual.</h3><p>Cooldowns and recent errors affect your local route selection. A failed request is not a network-wide ban, and independent buyers can make different choices.</p></div><div><h3>Replace the decision layer.</h3><p>Router plugins let builders extend eligibility and provider selection. The buyer proxy also applies its shared model-routing policy, using the same discovery, transport, and payment layers.</p><DocLink to="/docs/router-api">Explore router plugins</DocLink></div></div>
+          <div className={styles.textColumns}><div><h3>Policy lives on your device.</h3><p>Your minimum trust level and allow/block lists decide who is eligible. Among eligible, ready providers, the lowest advertised price wins, with a blended score to break ties. Pinned providers and ongoing conversations can override the order.</p><p>A preferred maximum price nudges expensive providers down the list. A hard price cap is a separate setting that blocks anything above it.</p></div><div><h3>Failures stay local.</h3><p>If a provider fails for you, your device cools it down for a while and prefers others. Nobody is banned network-wide, and other buyers make their own calls.</p></div><div><h3>Swap the decision layer.</h3><p>Router plugins let you change how providers are chosen while keeping the same discovery, transport, and payment layers underneath.</p><DocLink to="/docs/router-api">Explore router plugins</DocLink></div></div>
         </Chapter>
 
-        <Chapter id="transport" number="03" dark title="After discovery, take the direct path." intro="The selected provider receives the request. Antseed does not need to sit between you. Modern peers establish an authenticated encrypted connection and stream API-compatible traffic as binary frames.">
-          <Reveal className={styles.transportDiagram}><div><span>01 / BUYER</span><strong>Your machine</strong><small>Routing policy · local state</small></div><div className={styles.encryptedPipe}><span>X25519 / HKDF-SHA256 / AES-256-GCM</span><div><i /><i /><i /></div><small>Requests → &nbsp; ← streamed responses</small></div><div><span>02 / PROVIDER</span><strong>Selected node</strong><small>Service execution · response</small></div></Reveal>
-          <div className={styles.boundaries}>{[['On your machine', 'Routing preferences, local history, and provider allow/block rules.'], ['Between the peers', 'Requests, response chunks, and protocol messages. The provider can read the request it serves.'], ['On Base', 'Deposits, payment authorizations submitted for settlement, usage accounting, stake, and rewards. Prompts and outputs are not written to Base.']].map(([title, text]) => <div key={title}><h3>{title}</h3><p>{text}</p></div>)}</div>
-          <p className={styles.transportNote}>Encrypted TCP is preferred when advertised; WebRTC DataChannels use DTLS and can use configured TURN relays. Legacy plaintext TCP remains a compatibility path unless secure transport is required. Transport encryption protects traffic between peers, not against the selected provider, and does not guarantee anonymity or no logging.</p>
-          <DocLink to="/docs/transport">Inspect the transport and handshake</DocLink>
+        <Chapter id="transport" number="03" dark title="After discovery, go direct." intro="Once a provider is chosen, your device talks to it directly. Antseed does not sit in between. The connection is encrypted, and both sides prove who they are.">
+          <Reveal className={styles.transportDiagram}><div><span>01 / BUYER</span><strong>Your machine</strong><small>Your rules · your history</small></div><div className={styles.encryptedPipe}><span>X25519 / HKDF-SHA256 / AES-256-GCM</span><div><i /><i /><i /></div><small>Requests → &nbsp; ← streamed responses</small></div><div><span>02 / PROVIDER</span><strong>Selected node</strong><small>Runs the model · streams the answer</small></div></Reveal>
+          <div className={styles.boundaries}>{[['On your machine', 'Routing preferences, local history, and your allow/block rules.'], ['Between the peers', 'Requests and responses. The provider you chose can read the request it serves.'], ['On Base', 'Deposits, payment authorizations, usage totals, stake, and rewards. Prompts and outputs never go on-chain.']].map(([title, text]) => <div key={title}><h3>{title}</h3><p>{text}</p></div>)}</div>
+          <p className={styles.transportNote}>Encrypted TCP is used whenever the provider supports it, with WebRTC as an alternative. Older unencrypted connections still work for compatibility unless you require encryption. Encryption protects traffic in transit. It does not hide anything from the provider you chose, and it does not promise anonymity or no logging.</p>
+          <DocLink to="/docs/transport">How the connection works</DocLink>
         </Chapter>
 
-        <Chapter id="payments" number="04" title="Continuous usage. Not a transaction per token." intro="Base handles custody and final settlement. The high-frequency request path stays peer-to-peer, using cumulative buyer signatures instead of an onchain transaction for every request.">
-          <div className={styles.split}><Reveal className={styles.prose}><h3>Reserve. Authorize. Settle.</h3><p>A buyer signs <code>ReserveAuth</code> to authorize a reservation before paid service. Subsequent <code>SpendingAuth</code> messages sign cumulative spending and a hash of usage metadata. Settlement charges the increase over the already-settled amount. Closing releases the unused reservation.</p><p>Authorizations can include bounded headroom for continued service. Signed spending is therefore not always identical to measured usage, and a provider can submit any valid authorization within the channel’s bounds.</p><h3>Separate custody from channel logic.</h3><p><code>AntseedDeposits</code> holds USDC. <code>AntseedChannels</code> manages reservations and settlement without holding the token. Contracts verify the buyer’s signature and enforce the channel’s reserved ceiling.</p><h3>Metering informs authorization.</h3><p>The buyer uses reported usage, local estimates, and unit-billing rules to decide what to authorize. Seller-side metering can persist signed receipts. Settlement verifies a spending signature, not a proof of output quality or independently verified inference.</p><p>The source contract defaults to a 2% protocol fee, configurable by its owner up to 10%. The deployed setting can differ. USDC is the settlement asset; desktop funding also offers card checkout where supported.</p><DocLink to="/docs/payments">Read the payment lifecycle</DocLink></Reveal><Reveal><PaymentChannel /></Reveal></div>
+        <Chapter id="payments" number="04" title="Pay as you go. Not a transaction per token." intro="Base holds the money and records the final settlement. Everything in between is a signature from your device, so there is no on-chain transaction per request.">
+          <div className={styles.split}><Reveal className={styles.prose}><h3>Reserve. Authorize. Settle.</h3><p>Before paid service starts, you sign a reservation that caps what the provider can collect. After each response, you sign the new running total. When the channel closes, the provider is paid that total and the unused reservation goes back to you.</p><p>Authorizations can include a little headroom so streaming does not stall. The signed total can run slightly ahead of measured usage, but never beyond the reservation.</p><h3>Money and logic live in separate contracts.</h3><p>One contract holds the USDC. Another handles reservations and settlement without ever holding funds. Both check your signature and enforce the cap.</p><h3>Metering guides what you sign.</h3><p>Your device uses the provider’s usage report and its own estimates to decide what to authorize. Settlement checks for a valid signature, not for the quality of the output.</p><p>The contract source defaults to a 2% protocol fee, and the owner can set it up to 10%. The live setting can differ. USDC is the settlement currency. The desktop app can also fund by card where available.</p><DocLink to="/docs/payments">How payments work</DocLink></Reveal><Reveal><PaymentChannel /></Reveal></div>
         </Chapter>
 
-        <Chapter id="trust" number="05" title="Trust with a trail you can inspect." intro="Open participation needs more than a display name. Buyers compute trust from settled history, recognized activity, seller-pool backing, and verified identity signals.">
-          <Reveal className={styles.trustGrid}>{[['60', 'History', 'Closed-channel count and settled USDC volume.'], ['15', 'Usage', 'Share of recognized usage in the last complete epoch.'], ['5', 'Power', 'Share of lock-weighted seller-pool power in the current epoch.'], ['20', 'Identity', 'Verified GitHub or domain history.']].map(([weight, title, text]) => <div key={title}><span>UP TO {weight} POINTS</span><h3>{title}</h3><p>{text}</p><div className={styles.weightTrack}><i style={{width: `${Number(weight) / 60 * 100}%`}} /></div></div>)}</Reveal>
-          <div className={styles.trustFooter}><p><strong>Public signals, local decisions.</strong> Buyers combine these signals with their own routing preferences and runtime failures. A proven wash-trading flag zeros the trust score; a high score is not a cryptographic proof of output quality.</p><DocLink to="/docs/reputation">How trust is computed</DocLink></div>
+        <Chapter id="trust" number="05" title="Trust you can check." intro="Anyone can join, so a name is not enough. Your device scores providers from their settled history, recent usage, locked ANTS backing, and verified identity.">
+          <Reveal className={styles.trustGrid}>{[['60', 'History', 'Completed channels and settled USDC volume.'], ['15', 'Usage', 'Share of recognized usage in the last epoch.'], ['5', 'Backing', 'Share of locked ANTS behind providers this epoch.'], ['20', 'Identity', 'Verified GitHub account or domain.']].map(([weight, title, text]) => <div key={title}><span>UP TO {weight} POINTS</span><h3>{title}</h3><p>{text}</p><div className={styles.weightTrack}><i style={{width: `${Number(weight) / 60 * 100}%`}} /></div></div>)}</Reveal>
+          <div className={styles.trustFooter}><p><strong>Public signals, your decision.</strong> Your device combines these scores with your own settings and recent failures. Proven wash trading sets the score to zero. A high score is a good sign, not a guarantee of quality.</p><DocLink to="/docs/reputation">How trust is computed</DocLink></div>
         </Chapter>
 
-        <Chapter id="incentives" number="06" title="Reward participation. Not just announcements." intro="USDC pays for authorized work. ANTS is a separate incentive layer for recognized usage and locked provider backing. These are different accounting systems, with different jobs.">
-          <Reveal className={styles.incentiveLoop}>{[['01', 'Deliver a service', 'A buyer authorizes paid usage.'], ['02', 'Settle in USDC', 'Payment creates economic history.'], ['03', 'Recognize activity', 'Eligibility and points policies apply.'], ['04', 'Allocate rewards', 'Usage and pool power inform ANTS rewards.']].map(([number, title, text]) => <div key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></div>)}</Reveal>
-          <div className={styles.textColumns}><div><h3>Stake is durable backing.</h3><p>Locked ANTS positions contribute seller-pool power. This is distinct from the USDC deposit used to pay for services.</p></div><div><h3>Not all volume earns rewards.</h3><p>Usage passes through eligibility and points policies. Payments can settle without earning rewards; a reward exclusion does not itself reverse a payment.</p></div><div><h3>Budgets are bounded.</h3><p>Reward allocations depend on activity and configured limits. Unallocated emissions follow explicit remainder and burn rules. Payouts are not guaranteed.</p><DocLink to="/docs/recognized-usage">Explore usage and incentives</DocLink></div></div>
+        <Chapter id="incentives" number="06" title="Rewards for real work." intro="USDC pays for the work. ANTS rewards recognized usage and providers who lock backing behind their service. Two separate systems with two separate jobs.">
+          <Reveal className={styles.incentiveLoop}>{[['01', 'Deliver a service', 'A buyer pays for usage.'], ['02', 'Settle in USDC', 'The payment goes on record.'], ['03', 'Recognize the usage', 'Eligibility rules apply.'], ['04', 'Allocate ANTS', 'Rewards follow usage and backing.']].map(([number, title, text]) => <div key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></div>)}</Reveal>
+          <div className={styles.textColumns}><div><h3>Stake is long-term backing.</h3><p>Providers lock ANTS behind their service. That is separate from the USDC buyers deposit to pay for it.</p></div><div><h3>Not all volume earns rewards.</h3><p>Usage must pass eligibility rules. A payment can settle without earning ANTS, and losing a reward never reverses a payment.</p></div><div><h3>Budgets have limits.</h3><p>Rewards depend on activity and configured caps. Anything left unallocated follows set remainder and burn rules. Payouts are not guaranteed.</p><DocLink to="/docs/recognized-usage">How rewards work</DocLink></div></div>
         </Chapter>
 
-        <Chapter id="resilience" number="07" title="Failure is part of the protocol." intro="Independent peers can go offline, fail requests, or advertise bad data. Recovery paths matter as much as the happy path.">
+        <Chapter id="resilience" number="07" title="Failure is part of the plan." intro="Independent providers go offline, fail requests, or publish bad data. What happens next matters as much as the happy path.">
           <div className={styles.failureList}>{[
-            ['A provider disappears.', 'Choose another eligible peer for subsequent requests, subject to pins and routing policy. To unlock a channel, the buyer’s configured deposits operator calls requestClose(), waits the 15-minute grace period, then calls withdraw(). Remaining funds return to the buyer’s deposit balance, not automatically to an external wallet.'],
-            ['A peer repeatedly fails.', 'Local failure signals and cooldowns deprioritize it. This does not require a central operator to remove the peer for everyone.'],
-            ['Metadata is forged or stale.', 'Under the default discovery configuration, signature, schema, and freshness checks reject invalid advertisements before they enter the buyer’s accepted candidate set.'],
-            ['Infrastructure is unavailable.', 'Alternate configured bootstrap nodes can help discovery. Settlement still depends on Base and reachable RPC infrastructure; peer-to-peer does not mean dependency-free.'],
-            ['Contract policy changes.', 'Contract owners retain administrative powers, including channel pause controls, fee configuration, and registry address updates. Peer-to-peer delivery does not make the settlement layer immutable or free of administrative trust.'],
+            ['A provider disappears.', 'Your device moves on to another eligible provider. To unlock the money reserved for that channel, your account requests a close, waits 15 minutes, and withdraws. The funds return to your deposit balance.'],
+            ['A provider keeps failing.', 'Your device cools it down and prefers others. No central operator has to step in.'],
+            ['A listing is forged or stale.', 'Signature, format, and freshness checks drop it before it is ever considered.'],
+            ['Infrastructure goes down.', 'Other bootstrap servers can still get you into the network. Settlement still needs Base and a working RPC endpoint, so peer-to-peer does not mean zero dependencies.'],
+            ['Contract rules change.', 'Contract owners keep admin powers: pausing channels, setting the fee, and updating addresses. Peer-to-peer delivery does not make the settlement layer immutable.'],
           ].map(([title, text], index) => <Reveal key={title} className={styles.failure}><span>0{index + 1}</span><h3>{title}</h3><p>{text}</p></Reveal>)}</div>
-          <DocLink to="/docs/security">Read the security boundaries</DocLink>
+          <DocLink to="/docs/security">Where the security boundaries are</DocLink>
         </Chapter>
 
-        <Chapter id="protocol" number="08" dark title="Every layer is inspectable." intro="The stack is the product: discovery, encrypted transport, metering, settlement, and reputation working together. Read the specification. Inspect the implementation. Build on the same primitives.">
+        <Chapter id="protocol" number="08" dark title="Every layer is open." intro="Discovery, encrypted transport, metering, settlement, and reputation, all open source. Read the spec, inspect the code, and build on the same pieces.">
           <div className={styles.stack}>{[
             ['05', 'Reputation', 'Trust scoring and identity signals', 'reputation', 'reputation'],
             ['04', 'Payments', 'USDC channels and settlement', 'payments', 'payments'],
-            ['03', 'Metering', 'Usage accounting and signed receipts', 'metering', 'metering'],
-            ['02', 'Transport', 'Peer authentication and encrypted framing', 'transport', 'p2p'],
-            ['01', 'Discovery', 'DHT announcements and signed metadata', 'discovery', 'discovery'],
+            ['03', 'Metering', 'Counting usage and signing receipts', 'metering', 'metering'],
+            ['02', 'Transport', 'Verified peers and encrypted traffic', 'transport', 'p2p'],
+            ['01', 'Discovery', 'Finding peers and signed listings', 'discovery', 'discovery'],
           ].map(([number, title, description, doc, directory]) => <div key={number}><span>{number}</span><h3>{title}</h3><p>{description}</p><Link to={`/docs/${doc}`}>Spec ↗</Link><a href={`${SOURCE}/packages/node/src/${directory}`}>Source ↗</a></div>)}</div>
           <div className={styles.closing}><h3>Run a node. Build a provider.<br />Make the network your own.</h3><div className={styles.ctas}><Button to="/docs/overview" variant="white" size="lg" arrow>Read the protocol</Button><Button to="/providers" variant="light" size="lg">Become a provider</Button></div><p>Open source · Independent peers · USDC settlement on Base</p></div>
         </Chapter>

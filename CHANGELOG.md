@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Website: rewrite the network page copy in plain language, describing discovery as Mainline DHT (the same network BitTorrent uses) without protocol implementation details.
 - Website: switch the homepage hero between app, typed CLI walkthrough, and animated agent routing views with shared ant scenery, smooth transitions, matching setup buttons, stable responsive layouts, and a copyable agent skill command. Remove the Providers label above the provider-page headline.
 - Desktop AI VPN: keep the chat model menu above the chat body so its lower models remain visible and selectable when opened from the header, and give the model name spare header width instead of reserving it for the right-side controls.
 - Desktop AI VPN: add integrated copy-link buttons beside Claim rewards and Manage staking so the authenticated dashboard can be opened in another browser on the same computer. Keep open and copy actions independent, explain how to reopen expired dashboard sessions, and remove the Network rewards card from Profile while retaining the dedicated Rewards page.
