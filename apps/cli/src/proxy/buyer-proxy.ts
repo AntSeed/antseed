@@ -1,5 +1,8 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { buildRoutingServices } from './routing-services.js'
+import { RoutingCatalogCache } from './routing-catalog-cache.js'
+import { routingMetadataForService } from './router-execution.js'
 import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -814,6 +817,7 @@ export class BuyerProxy {
    * Per-chat selections and explicit request pins can override this default.
    */
   private _routingSelection: RoutingSelection = { kind: 'model', model: null }
+  private readonly _routingCatalogs = new RoutingCatalogCache()
   private _conversations!: ConversationStore
   /**
    * Wall-clock of the last model-request activity (dispatch or streamed
@@ -1114,7 +1118,7 @@ export class BuyerProxy {
     }
   }
 
-  private _validateRoutingSelection(value: unknown, peers?: PeerInfo[]): asserts value is RoutingSelection {
+  private _validateRoutingSelection(value: unknown): asserts value is RoutingSelection {
     if (!isRoutingSelection(value)) throw new Error('Invalid routing selection')
     if (value.kind === 'model' && value.model !== null && !isValidRoutedModelTarget(value.model)) throw new Error('Invalid model selection')
     if (value.kind === 'router') {
@@ -1122,18 +1126,23 @@ export class BuyerProxy {
       if (!router?.selectRoute && !router?.getModelRouterAdapter) throw new Error('The loaded router does not support routing-service selection')
       if (router.getModelRouterAdapter) {
         if (!value.service) throw new Error('Select an exact routing-service target')
-        if (!peers) return
+        return
       }
-      const metadata = router.getModelRouterAdapter ? router.getModelRouterAdapter(value.service!, peers!).routingMetadata : router.routingMetadata
+      const metadata = routingMetadataForService(router)
       if (metadata) validateRoutingServiceMetadata(metadata)
       resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, value.preferences ?? {})
     }
   }
 
   private async _validateRoutingService(value: RoutingSelection): Promise<void> {
-    if (value.kind === 'router' && this._node.router?.getModelRouterAdapter) {
-      this._validateRoutingSelection(value, await this._getPeers())
-    }
+    const router = this._node.router
+    if (value.kind !== 'router' || !router?.getModelRouterAdapter || !value.service) return
+    const peers = await this._getPeers()
+    const adapter = router.getModelRouterAdapter(value.service, peers)
+    const { catalog } = await this._routingCatalogs.get(adapter, value.service, peers, AbortSignal.timeout(10_000))
+    const metadata = routingMetadataForService(adapter, catalog)
+    if (metadata) validateRoutingServiceMetadata(metadata)
+    resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, value.preferences ?? {})
   }
 
   private _setRoutingSelection(value: RoutingSelection): void {
@@ -1824,6 +1833,12 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/routing-services' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, services: await buildRoutingServices(await this._getPeers(), this._node.router, this._routingCatalogs) }))
+      return
+    }
+
     if (path === '/_antseed/route' && method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, selection: this._routingSelection }))
@@ -2474,7 +2489,7 @@ export class BuyerProxy {
       // Actual inference is dispatched below; stop waiting here on disconnect or after two minutes.
       routerSelection = await executeRouterSelection({
         node: this._node, router: selectedRouter, request: serializedReq, peers: routingPeers, candidates,
-        conversationKey: routingConversationKey, selection,
+        conversationKey: routingConversationKey, selection, catalogs: this._routingCatalogs,
         signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
         onRoutingRequest: requestId => {
           // Register the recommendation's separate billing ID before it is sent.

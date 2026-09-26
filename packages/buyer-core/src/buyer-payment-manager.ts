@@ -1400,6 +1400,11 @@ export class BuyerPaymentManager {
     // Advance cumulative amount by the accepted cost, then add overdraft headroom
     // for the next request (so the seller has budget to serve it).
     // maxSignable already caps at reserve ceiling, so one cap is sufficient
+    const alreadyCounted = this._serviceTokensCounted.has(responseStats.requestId);
+    if (alreadyCounted) {
+      acceptedCost = 0n;
+      verifiedCostDelta = 0n;
+    }
     const prevAmount = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
     const previousVerifiedCost = this._verifiedCost.get(sellerPeerId) ?? 0n;
     const nextVerifiedCost = previousVerifiedCost + verifiedCostDelta;
@@ -1415,7 +1420,6 @@ export class BuyerPaymentManager {
 
     // Update cumulative metadata. NeedAuth may have counted this response
     // first, so deduplicate the response's service amount and usage together.
-    const alreadyCounted = this._serviceTokensCounted.has(responseStats.requestId);
     const newMeta = this._advanceUsageMetadata(
       this._metadata.get(sellerPeerId),
       responseStats.service,

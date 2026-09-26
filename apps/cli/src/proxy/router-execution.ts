@@ -2,7 +2,8 @@ import { buildNetworkServiceOffers, isModelRouteEligible, normalizedModelReputat
 import { detectRequestServiceApiProtocol } from './service-api-adapter.js'
 import { findMissingRequiredParameters, getExplicitProviderOverride, resolvePeerRoutePlan } from './routing.js'
 import { overrideRoutedModelInBody } from './request-utils.js'
-import { resolveRoutingPreferences, validateRoutingServiceMetadata, type RoutingSelection } from '@antseed/node'
+import { createRoutingServiceMetadata, resolveRoutingPreferences, validateRoutingServiceMetadata, type RoutingCatalogV1, type RoutingSelection, type ModelRouterAdapter } from '@antseed/node'
+import { RoutingCatalogCache } from './routing-catalog-cache.js'
 
 /**
  * Recommendation step before inference: build allowed destinations, ask the selected
@@ -10,6 +11,10 @@ import { resolveRoutingPreferences, validateRoutingServiceMetadata, type Routing
  * then sends the actual inference request; this module does not generate the answer.
  */
 export type ExecutionCandidate = RouteCandidate & { peer: PeerInfo; effectiveReputationScore: number | null }
+
+export function routingMetadataForService(adapter: Pick<ModelRouterAdapter, 'routingMetadata'> | Router, catalog?: RoutingCatalogV1) {
+  return catalog ? createRoutingServiceMetadata(catalog.preferencesSchema) : adapter.routingMetadata
+}
 
 export type ResolvedRouterRecommendation =
   | { serviceId: string; peerId: string; candidate: ExecutionCandidate }
@@ -71,10 +76,12 @@ export function resolveRouterRecommendations(routes: readonly RouteRecommendatio
   const seen = new Set<string>()
   for (const route of routes) {
     if (!route || typeof route.serviceId !== 'string' || !route.serviceId || route.inference !== undefined
+      || (route.provider !== undefined && (typeof route.provider !== 'string' || !route.provider.trim()))
       || (route.peerId !== undefined && (typeof route.peerId !== 'string' || !/^[0-9a-f]{40}$/.test(route.peerId)))) continue
     const modelCandidates: ExecutionCandidate[] = []
     for (const candidate of candidates) {
       if (candidate.serviceId !== route.serviceId || (route.peerId !== undefined && candidate.peerId !== route.peerId)) continue
+      if (route.provider !== undefined && route.provider !== candidate.provider) continue
       const key = JSON.stringify([candidate.peerId, candidate.provider, candidate.serviceId])
       if (seen.has(key)) continue
       seen.add(key)
@@ -110,16 +117,27 @@ export async function executeRouterSelection(args: {
   conversationKey: string | null;
   selection?: Extract<RoutingSelection, { kind: 'router' }>;
   signal: AbortSignal;
+  catalogs?: RoutingCatalogCache;
   onRoutingRequest?: (requestId: string) => void;
 }): Promise<{ request: SerializedHttpRequest; recommendations: ResolvedRouterRecommendation[] }> {
-  const { node, router, request, peers, candidates, conversationKey, signal } = args
+  const { node, router, request, peers, conversationKey, signal } = args
+  const allowedModels = args.selection?.allowedModels
+  let candidates = allowedModels === undefined ? args.candidates : args.candidates.filter(candidate =>
+    allowedModels.some(model => model.provider === candidate.provider && model.serviceId === candidate.serviceId))
+  if (!candidates.length && allowedModels !== undefined) throw new Error('No eligible models match this router’s model allowlist. Update Router settings or select a model.')
   // Resolve the adapter for the selected service, or use a router that implements selectRoute directly.
   const routingService = args.selection?.service ?? router.defaultRoutingService
   if (router.getModelRouterAdapter && !routingService) throw new Error('Select an exact routing-service target')
   const adapter = router.getModelRouterAdapter ? router.getModelRouterAdapter(routingService!, peers) : router
   if (!adapter.selectRoute) throw new Error('Selected router does not support model selection')
+  const catalogs = args.catalogs ?? new RoutingCatalogCache(0)
+  const { catalog } = await catalogs.get(adapter, routingService, peers, signal)
+  if (catalog) {
+    candidates = candidates.filter(candidate => catalog.models.some(model => model.provider === candidate.provider && model.serviceId === candidate.serviceId))
+    if (!candidates.length) throw new Error('No eligible allowed models are supported by this router')
+  }
   // Validate this adapter's preference schema and apply its defaults before calling it.
-  const metadata = adapter.routingMetadata
+  const metadata = routingMetadataForService(adapter, catalog)
   if (metadata) validateRoutingServiceMetadata(metadata)
   const preferences = resolveRoutingPreferences(metadata?.preferencesSchema ?? { type: 'object', properties: {}, additionalProperties: false }, args.selection?.preferences ?? {})
   signal.throwIfAborted()
@@ -137,6 +155,7 @@ export async function executeRouterSelection(args: {
       signal, conversationKey,
       preferences, preferencesSchemaHash: metadata?.preferencesSchemaHash,
       routingService: routingService ? structuredClone(routingService) : undefined,
+      ...(catalog ? { catalog: structuredClone(catalog) } : {}),
       candidates: candidates.map(({ peer: _peer, effectiveReputationScore: _score, ...candidate }) => ({ ...candidate })),
       acceptRecommendations: recommendations => {
         // Remember the accepted destinations and order so the adapter cannot return a different list later.
@@ -169,6 +188,10 @@ export async function executeRouterSelection(args: {
       request: requestForRouterCandidate(request, recommendationCandidates(resolved)[0]!),
       recommendations: resolved,
     }
+  } catch (error) {
+    // A rejected route may mean the router's catalog changed; fetch it fresh next time.
+    if (routingService) catalogs.invalidate(routingService)
+    throw error
   } finally {
     // Do not leave a listener attached after this recommendation attempt has finished.
     signal.removeEventListener('abort', onAbort)
