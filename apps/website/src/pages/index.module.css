@@ -90,16 +90,16 @@
 @media (min-width: 997px) {
   .heroSplit {
     text-align: left;
-    padding-top: 28px;
-    padding-bottom: 32px;
+    padding-top: 16px;
+    padding-bottom: 16px;
   }
 
   .heroSplitInner {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(320px, 33%, 400px);
+    grid-template-columns: minmax(0, 1fr) clamp(330px, 33%, 372px);
     grid-template-areas:
       'copy demo'
-      'stats demo';
+      'stats stats';
     grid-template-rows: auto auto;
     column-gap: 56px;
     align-items: center;
@@ -112,14 +112,14 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    align-self: end;
+    align-self: center;
   }
 
   .heroSplit .heroTitle {
     white-space: normal;
     font-size: clamp(44px, 4.4vw, 62px);
     line-height: 1.08;
-    margin-bottom: 12px;
+    margin-bottom: 20px;
   }
 
   .heroSplit .heroSub {
@@ -129,8 +129,9 @@
   /* static subtitle (split hero) — same type as the rotating line, but
      allowed to wrap */
   .heroSubStatic {
-    max-width: 40ch;
-    margin: 0 0 20px;
+    max-width: 500px;
+    text-wrap: balance;
+    margin: 0 0 28px;
     font-size: 18px;
     line-height: 26px;
     font-weight: 500;
@@ -165,15 +166,17 @@
   .heroSplit .statsRow {
     grid-area: stats;
     align-self: start;
+    justify-self: center;
     display: grid;
     grid-template-columns: repeat(4, auto);
-    justify-content: start;
-    gap: clamp(16px, 2.2vw, 32px);
-    margin-top: 36px;
+    justify-content: center;
+    gap: clamp(24px, 4vw, 64px);
+    margin-top: 4px;
   }
 
   .heroSplit .stat {
-    align-items: flex-start;
+    align-items: center;
+    text-align: center;
   }
 
   .heroSplit .statValue {
@@ -191,7 +194,7 @@
     transform: none;
     max-width: none;
     justify-self: end;
-    align-self: center;
+    align-self: start;
   }
 }
 
@@ -268,9 +271,9 @@
   display: inline-flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 8px;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 28px;
   border: 1px solid var(--as-line);
   border-radius: 999px;
   background: var(--as-soil-2);
@@ -280,10 +283,10 @@
   border: none;
   background: none;
   border-radius: 999px;
-  padding: 6px 14px;
+  padding: 4px 12px;
   font-family: var(--as-font-ui);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
   color: var(--as-text-2);
   cursor: pointer;
@@ -350,10 +353,11 @@
 }
 
 .useNote {
-  font-size: 12px;
-  line-height: 16px;
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 500;
-  color: var(--as-text-3);
+  color: var(--as-text-2);
 }
 
 .ctaCaption {
@@ -361,6 +365,54 @@
   line-height: 16px;
   font-weight: 500;
   color: var(--as-text);
+}
+
+/* Download button with the versions link beside it; caption below */
+.ctaRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.ctaRow + .ctaCaption {
+  margin-top: 6px;
+  color: var(--as-text-2);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* small green check before the caption so it reads as a feature, not a footnote */
+.ctaCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ctaCheck i {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--as-green-dim, rgba(16, 185, 129, 0.12));
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ctaCheck i::after {
+  content: '';
+  position: absolute;
+  left: 4.5px;
+  top: 2.5px;
+  width: 3.5px;
+  height: 6.5px;
+  border: solid var(--as-green-deep);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+
+@media (max-width: 640px) {
+  .ctaRow { justify-content: center; }
 }
 
 /* demo — the live composition floats directly on the hero, no chrome */
@@ -374,7 +426,7 @@
 /* Shared grid footprint prevents layout jumps while the hero views crossfade. */
 .heroVisualStack {
   position: relative;
-  aspect-ratio: 660 / 924;
+  aspect-ratio: 660 / 800;
   min-width: 0;
   container-type: inline-size;
 }
@@ -395,6 +447,26 @@
   inset: 0 auto auto 10.3030303%;
   width: 79.3939394%;
   height: 98.1818182cqw;
+}
+/* The CLI and agent cards use the full slot width (same footprint as the app
+   scene incl. its pill). The CLI card also takes the full height so the whole
+   command list fits; the agent card keeps its own height because its install
+   drawer hangs below it. */
+.heroVisualLayer[data-view="cli"],
+.heroVisualLayer[data-view="agent"] {
+  inset: 0 auto auto 0;
+  width: 100%;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+.heroVisualLayer[data-view="cli"] {
+  height: auto;
+  padding: 0 12px;
+}
+/* The agent card has no drawer any more, so it can fill the slot like the app scene. */
+.heroVisualLayer[data-view="agent"] {
+  height: 100%;
+  padding: 0 12px 8px;
 }
 .heroVisualLayer:not(:first-child) > * {
   height: 100%;
@@ -480,7 +552,7 @@
   justify-content: center;
 }
 .heroCopy { min-width: 0; }
-.useSwitchBtn { min-height: 44px; }
+@media (max-width: 996px) { .useSwitchBtn { min-height: 40px; } }
 .useSwitchBtn:focus-visible { outline: 2px solid var(--as-green); outline-offset: 3px; }
 @media (min-width: 997px) {
   .heroCtaPane { align-items: flex-start; }

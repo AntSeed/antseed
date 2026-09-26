@@ -31,7 +31,7 @@ import {useMarketplaceShowcase} from '../lib/useMarketplacePrices';
 
 type IconSize = (props: {size?: number}) => ReactNode;
 
-const VENDOR_GLYPHS = {
+export const VENDOR_GLYPHS = {
   Anthropic,
   OpenAI,
   Google,

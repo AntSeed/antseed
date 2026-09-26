@@ -1,5 +1,8 @@
 import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode} from 'react';
 import styles from '../pages/index.module.css';
+import cli from './HeroCliVisual.module.css';
+import {CommandChip} from './CommandChip';
+import ag from './HeroAgentVisual.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
 import {AllVersionsLink} from '../lib/AllVersionsLink';
 import {useMobileGetStarted} from '../lib/useMobileGetStarted';
@@ -177,10 +180,13 @@ export function HeroDotCanvas({
         originY = o.top - rect.top + 0.375 * o.height;
       }
       // Ant placement — scaled and centred on the demo in the split hero.
-      const antScale = compact ? 0.72 : 1;
+      let antScale = compact ? 0.5 : 1;
       let antCenterY = originY - 120;
       if (compact && origin) {
+        // Size the ant to the demo box (card + "Finding best seller" pill) so
+        // its top and bottom line up with the box, and centre it behind it.
         const o = origin.getBoundingClientRect();
+        antScale = Math.min(0.75, o.height / ANT_H);
         antCenterY = o.top - rect.top + 0.5 * o.height;
       }
       const antLeft = originX - (ANT_W * antScale) / 2;
@@ -426,12 +432,27 @@ export function DownloadCta({
   const onGetStarted = useMobileGetStarted();
   return (
     <div className={styles.ctaBlock}>
-      <Button href={download.href} osIcons size={size} className="vprBtn" onClick={onGetStarted}>
-        <span className="vprLabelDesktop">Download AI VPN</span>
-        <span className="vprLabelMobile">Get Started<ArrowRight /></span>
-      </Button>
-      {versionsLink && <AllVersionsLink />}
-      {caption && <span className={styles.ctaCaption}>{caption}</span>}
+      {versionsLink && caption ? (
+        <>
+          <div className={styles.ctaRow}>
+            <Button href={download.href} osIcons size={size} className="vprBtn" onClick={onGetStarted}>
+              <span className="vprLabelDesktop">Download AI VPN</span>
+              <span className="vprLabelMobile">Get Started<ArrowRight /></span>
+            </Button>
+            <AllVersionsLink />
+          </div>
+          <span className={`${styles.ctaCaption} ${styles.ctaCheck}`}><i aria-hidden="true" />{caption}</span>
+        </>
+      ) : (
+        <>
+          <Button href={download.href} osIcons size={size} className="vprBtn" onClick={onGetStarted}>
+            <span className="vprLabelDesktop">Download AI VPN</span>
+            <span className="vprLabelMobile">Get Started<ArrowRight /></span>
+          </Button>
+          {versionsLink && <AllVersionsLink />}
+          {caption && <span className={styles.ctaCaption}>{caption}</span>}
+        </>
+      )}
     </div>
   );
 }
@@ -568,23 +589,79 @@ function readUseParam(): HeroUse | null {
   return v === 'cli' || v === 'agent' || v === 'app' ? v : null;
 }
 
-export function HeroCliVisual() {
+const CLI_ALL = [
+  'npm install -g @antseed/cli',
+  'antseed buyer start',
+  "curl localhost:8377/v1/chat/completions -H 'content-type: application/json' -d '{\"model\": \"deepseek-v4-flash\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]}'",
+  'antseed buyer deposit',
+].join('\n');
+const CLI_ACTIVITY = ['Proxy listening on localhost:8377', 'Works with any OpenAI-compatible app', 'Antseed routes each request to a provider'];
+type CliTok = {cls: 'c'|'g'|'p'|'b'|'y'|'o'|'w'; text: string};
+const CLI_LINES: CliTok[][] = [
+  [{cls:'c',text:'# Install the CLI'}],
+  [{cls:'g',text:'$ '},{cls:'p',text:'npm'},{cls:'b',text:' install'},{cls:'y',text:' -g'},{cls:'o',text:' @antseed/cli'}],
+  [{cls:'c',text:'# Start your local endpoint'}],
+  [{cls:'g',text:'$ '},{cls:'p',text:'antseed'},{cls:'b',text:' buyer start'}],
+  [{cls:'w',text:'→ listening on localhost:8377'}],
+  [{cls:'c',text:'# Call it like any OpenAI API'}],
+  [{cls:'g',text:'$ '},{cls:'p',text:'curl'},{cls:'b',text:' localhost:8377/v1/chat/completions'},{cls:'w',text:' \\'}],
+  [{cls:'y',text:'    -H'},{cls:'o',text:" 'content-type: application/json'"},{cls:'w',text:' \\'}],
+  [{cls:'y',text:'    -d'},{cls:'o',text:' \'{"model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "Hello"}]}\''}],
+  [{cls:'c',text:'# Fund it for paid models (free ones need nothing)'}],
+  [{cls:'g',text:'$ '},{cls:'p',text:'antseed'},{cls:'b',text:' buyer deposit'}],
+];
+
+export function HeroCliVisual({active = true}: {active?: boolean}) {
   const [step, setStep] = useState(0);
-  const [manual, setManual] = useState(false);
+  const all = useCopy(CLI_ALL);
   useEffect(() => {
-    if (manual || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const timer = window.setInterval(() => setStep(s => (s + 1) % HERO_CLI_STEPS.length), 7500);
+    if (!active) return undefined;
+    setStep(0);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const timer = window.setInterval(() => setStep(s => (s + 1) % CLI_ACTIVITY.length), 2600);
     return () => window.clearInterval(timer);
-  }, [manual]);
-  return <HeroTerminal key={step} lines={HERO_CLI_STEPS[step].lines} footer={
-    <div className={styles.cliSteps} aria-label="CLI walkthrough steps">
-      {HERO_CLI_STEPS.map((s, i) => <button key={s.label} type="button" aria-pressed={step === i}
-        onClick={() => {setManual(true); setStep(i);}}><span>{i + 1}</span>{s.label}</button>)}
+  }, [active]);
+  return (
+    <div className={`${ag.card} ${!active ? ag.paused : ''}`}>
+      <div className={ag.top}><span><i /> Running on localhost.</span><small>:8377</small></div>
+      <div className={`${ag.scene} ${cli.scene}`}>
+        <div className={cli.terminal}>
+          <div className={cli.bar}>
+            <span className={cli.dots}><i style={{background: '#EF4444'}} /><i style={{background: '#F59E0B'}} /><i style={{background: '#676663'}} /></span>
+            <span className={cli.barTitle}>Use it from the CLI</span>
+            <button type="button" className={cli.copy} onClick={all.copy} aria-live="polite">{all.copied ? 'Copied' : 'Copy commands'}</button>
+          </div>
+          <pre className={cli.body}>
+            {CLI_LINES.map((line, i) => <span key={i}>{line.map((t, j) => <span key={j} className={cli[t.cls]}>{t.text}</span>)}{'\n'}</span>)}
+          </pre>
+        </div>
+      </div>
+      <div className={ag.activity}><span className={ag.indicator} /><span key={step} className={ag.activityText}>{CLI_ACTIVITY[step]}</span><span className={ag.steps}>{CLI_ACTIVITY.map((_, i) => <i key={i} className={step === i ? ag.current : ''} />)}</span></div>
     </div>
-  } />;
+  );
 }
 
-export function HeroUseCta({use, setUse}: {use: HeroUse; setUse: (value: HeroUse) => void}) {
+export function HeroUseSwitch({use, setUse}: {use: HeroUse; setUse: (value: HeroUse) => void}) {
+  return (
+    <div className={styles.useSwitch} role="tablist" aria-label="How do you want to use Antseed?">
+      {HERO_USES.map((u) => (
+        <button
+          key={u.id}
+          type="button"
+          role="tab"
+          aria-selected={use === u.id}
+          className={`${styles.useSwitchBtn} ${use === u.id ? styles.useSwitchBtnActive : ''}`}
+          aria-controls="hero-use-visual"
+          id={`hero-tab-${u.id}`}
+          onClick={() => setUse(u.id)}>
+          {u.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function HeroUseCta({use, setUse, showSwitch = true}: {use: HeroUse; setUse: (value: HeroUse) => void; showSwitch?: boolean}) {
   // ?use=cli / ?use=agent preselects a path (docs and social links). Read after
   // mount so server and client render the same default.
   useEffect(() => {
@@ -593,32 +670,18 @@ export function HeroUseCta({use, setUse}: {use: HeroUse; setUse: (value: HeroUse
   }, []);
   return (
     <div className={styles.ctaBlock}>
-      <div className={styles.useSwitch} role="tablist" aria-label="How do you want to use Antseed?">
-        {HERO_USES.map((u) => (
-          <button
-            key={u.id}
-            type="button"
-            role="tab"
-            aria-selected={use === u.id}
-            className={`${styles.useSwitchBtn} ${use === u.id ? styles.useSwitchBtnActive : ''}`}
-            aria-controls="hero-use-visual"
-            id={`hero-tab-${u.id}`}
-            onClick={() => setUse(u.id)}>
-            {u.label}
-          </button>
-        ))}
-      </div>
+      {showSwitch && <HeroUseSwitch use={use} setUse={setUse} />}
       <div className={styles.heroCtaStack}>
         <div className={styles.heroCtaPane} aria-hidden={use !== 'app'} inert={use !== 'app'} data-active={use === 'app'}>
-          <DownloadCta />
+          <DownloadCta caption="No signup required" />
         </div>
         <div className={styles.heroCtaPane} aria-hidden={use !== 'cli'} inert={use !== 'cli'} data-active={use === 'cli'}>
           <Button to="/docs/guides/using-the-api" size="lg" arrow>Set up the CLI</Button>
-          <span className={styles.useNote}>Mac, Windows, Linux, or your server.</span>
+          <span className={`${styles.useNote} ${styles.ctaCheck}`}><i aria-hidden="true" />Mac, Windows, Linux, or your server.</span>
         </div>
         <div className={styles.heroCtaPane} aria-hidden={use !== 'agent'} inert={use !== 'agent'} data-active={use === 'agent'}>
-          <Button href={JOIN_BUYER_SKILL_URL} size="lg" arrow>Get the agent skill</Button>
-          <span className={styles.useNote}>Install one skill. Let your agent take it from here.</span>
+          <CommandChip command="gh skill install AntSeed/antseed join-buyer" />
+          <span className={`${styles.useNote} ${styles.ctaCheck}`}><i aria-hidden="true" />Install one skill. Let your agent take it from here.</span>
         </div>
       </div>
     </div>

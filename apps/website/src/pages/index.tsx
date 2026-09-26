@@ -16,8 +16,8 @@ import {PrivacyPanel} from '../components/PrivacyPanel';
 import {WhoItsFor} from '../components/WhoItsFor';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
 import {HeroDemo} from '../components/HeroDemo';
-import {HeroDotCanvas, DownloadCta, HeroStatsRow, HeroUseCta, HeroCliVisual, StackedHero, type HeroUse} from '../components/HomeHero';
-import {HeroAgentVisual} from '../components/HeroAgentVisual';
+import {HeroDotCanvas, DownloadCta, HeroStatsRow, HeroUseCta, HeroUseSwitch, HeroCliVisual, StackedHero, type HeroUse} from '../components/HomeHero';
+import {HeroAgentMarket} from '../components/HeroAgentMarket';
 import {LogoMarquee} from '../components/LogoMarquee';
 import {OwnedByNoOne} from '../components/NetworkPanel';
 import {SellSection} from '../components/SellSection';
@@ -44,10 +44,10 @@ function Hero() {
     // three tabs. Changing tabs must never move the headline or stats.
     const panels = Array.from(host.querySelectorAll<HTMLElement>('[data-view] > div'));
     const update = () => setVisualHeight(Math.ceil(Math.max(
-      host.clientWidth * 924 / 660,
+      host.clientWidth * 800 / 660,
       ...panels.map(panel => {
         const drawer = panel.querySelector<HTMLElement>('[data-agent-install]');
-        return Math.max(panel.scrollHeight, drawer ? drawer.offsetTop + drawer.offsetHeight : 0) + 24;
+        return Math.max(panel.scrollHeight, drawer ? drawer.offsetTop + drawer.offsetHeight : 0) + 8;
       }),
     )));
     const observer = new ResizeObserver(update);
@@ -66,15 +66,17 @@ function Hero() {
       <HeroDotCanvas frameRef={frameRef} shutdownRef={shutdownRef} originRef={demoRef} compact />
       <div className={`${styles.heroInner} ${styles.heroSplitInner}`}>
         <div className={styles.heroCopy}>
+          <HeroUseSwitch use={use} setUse={setUse} />
           <h1 className={styles.heroTitle}>
             Run your agents
             <br className={styles.heroTitleBreak} />
             {' '}on your terms
           </h1>
           <p className={styles.heroSubStatic}>
-            Save on every AI model. No usage limits, no middleman, always anonymous.
+            An open market for AI inference – free models, lower prices on paid models, and control
+            over your usage and&nbsp;privacy.
           </p>
-          <HeroUseCta use={use} setUse={setUse} />
+          <HeroUseCta use={use} setUse={setUse} showSwitch={false} />
         </div>
         <div className={`${styles.demoFrame} ${styles.demoFrameSplit} ${styles.heroVisualStack}`} ref={demoRef}
           style={{minHeight: visualHeight || undefined}} id="hero-use-visual" role="tabpanel" aria-labelledby={`hero-tab-${use}`}>
@@ -82,10 +84,10 @@ function Hero() {
             <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} compact />
           </div>
           <div className={`${styles.heroVisualLayer} ${use === 'cli' ? styles.heroVisualActive : ''}`} data-view="cli" inert={use !== 'cli'} aria-hidden={use !== 'cli'}>
-            <HeroCliVisual key={use === 'cli' ? 'typing' : 'idle'} />
+            <HeroCliVisual active={use === 'cli'} />
           </div>
           <div className={`${styles.heroVisualLayer} ${use === 'agent' ? styles.heroVisualActive : ''}`} data-view="agent" inert={use !== 'agent'} aria-hidden={use !== 'agent'}>
-            <HeroAgentVisual active={use === 'agent'} />
+            <HeroAgentMarket active={use === 'agent'} />
           </div>
         </div>
         <HeroStatsRow />

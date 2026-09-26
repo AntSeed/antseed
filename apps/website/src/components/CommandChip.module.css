@@ -73,3 +73,23 @@
 @media (max-width: 480px) {
   .chip { font-size: 12px; padding: 0 12px 0 14px; }
 }
+
+/* Long commands on narrow screens: shrink the type and let the pill hug the viewport */
+.chip {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .chip {
+    font-size: 12px;
+    gap: 8px;
+    padding: 0 12px 0 14px;
+    height: 46px;
+  }
+  .cmd {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+}
